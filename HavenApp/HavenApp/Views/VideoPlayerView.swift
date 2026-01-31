@@ -79,8 +79,40 @@ struct VideoPlayerView: View {
     }
     
     private func setupPlayer() {
-        // Use the new helper to get a guaranteed playable URL (with extension)
-        let finalURL = MediaCacheService.shared.preparePlayableURL(for: url) ?? url
+        Task {
+            await setupPlayerAsync()
+        }
+    }
+    
+    private func setupPlayerAsync() async {
+        // 1. Check if we already have a local/cached version
+        var playableURL = MediaCacheService.shared.preparePlayableURL(for: url)
+        print("VideoPlayerView: Original URL: \(url.absoluteString)")
+        print("VideoPlayerView: Initial playableURL: \(playableURL?.absoluteString ?? "nil")")
+        print("VideoPlayerView: Source type: \(MediaCacheService.shared.getSource(for: url).rawValue)")
+        
+        // 2. If not cached and it's a remote URL, download it first
+        if playableURL == nil && !MediaCacheService.shared.getSource(for: url).isLocal {
+            print("VideoPlayerView: Downloading external video from \(url.absoluteString)")
+            
+            guard let data = await MediaCacheService.shared.fetchData(url: url) else {
+                await MainActor.run {
+                    print("VideoPlayerView: Failed to download video from \(url.absoluteString)")
+                    self.loadError = "Failed to download video."
+                }
+                return
+            }
+            
+            print("VideoPlayerView: Downloaded \(data.count) bytes")
+            
+            // After download, try to get the playable URL again
+            playableURL = MediaCacheService.shared.preparePlayableURL(for: url)
+            print("VideoPlayerView: Post-download playableURL: \(playableURL?.absoluteString ?? "nil")")
+        }
+        
+        // 3. Use playable URL if available, otherwise fall back to original
+        let finalURL = playableURL ?? url
+        print("VideoPlayerView: Final URL for playback: \(finalURL.absoluteString)")
         
         // Safety check for local files
         if finalURL.isFileURL {
@@ -88,15 +120,19 @@ struct VideoPlayerView: View {
             let actualPath = finalURL.resolvingSymlinksInPath().path
             
             if !FileManager.default.fileExists(atPath: actualPath) {
-                print("VideoPlayerView: Local file missing at \(actualPath)")
-                loadError = "Local file not found."
+                await MainActor.run {
+                    print("VideoPlayerView: Local file missing at \(actualPath)")
+                    self.loadError = "Local file not found."
+                }
                 return
             }
             
             if let attr = try? FileManager.default.attributesOfItem(atPath: actualPath),
                let size = attr[.size] as? UInt64, size < 200 {
-                print("VideoPlayerView: File too small (\(size) bytes)")
-                loadError = "Video file is invalid or too small."
+                await MainActor.run {
+                    print("VideoPlayerView: File too small (\(size) bytes)")
+                    self.loadError = "Video file is invalid or too small."
+                }
                 return
             }
         }
@@ -104,16 +140,18 @@ struct VideoPlayerView: View {
         let asset = AVURLAsset(url: finalURL)
         let playerItem = AVPlayerItem(asset: asset)
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-            let newPlayer = AVPlayer(playerItem: playerItem)
-            self.player = newPlayer
-            
-            // Watch for failures
-            NotificationCenter.default.addObserver(
-                forName: .AVPlayerItemDidPlayToEndTime,
-                object: playerItem,
-                queue: .main
-            ) { _ in }
+        await MainActor.run {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                let newPlayer = AVPlayer(playerItem: playerItem)
+                self.player = newPlayer
+                
+                // Watch for failures
+                NotificationCenter.default.addObserver(
+                    forName: .AVPlayerItemDidPlayToEndTime,
+                    object: playerItem,
+                    queue: .main
+                ) { _ in }
+            }
         }
     }
 }

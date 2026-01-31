@@ -784,20 +784,44 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
         playableLock.lock()
         defer { playableLock.unlock() }
         
-        if let existingInfo = playableURLs[localURL], FileManager.default.fileExists(atPath: existingInfo.path) {
-            return existingInfo
-        }
-        
-        // Create a temp symlink with .mp4 extension
+        // Create the expected symlink path
         let tempDir = FileManager.default.temporaryDirectory
         let symlinkName = localURL.lastPathComponent + ".mp4"
         let symlinkURL = tempDir.appendingPathComponent(symlinkName)
         
-        do {
-            // Remove existing if any
-            if FileManager.default.fileExists(atPath: symlinkURL.path) {
-                try FileManager.default.removeItem(at: symlinkURL)
+        // Check if we already have it in our dictionary AND the file exists
+        if let existingInfo = playableURLs[localURL], FileManager.default.fileExists(atPath: existingInfo.path) {
+            return existingInfo
+        }
+        
+        // Helper: Check if symlink FILE exists (not following the link)
+        // fileExists(atPath:) follows symlinks, so broken symlinks return false
+        // attributesOfItem throws if file doesn't exist, works for symlinks
+        let symlinkFileExists = (try? FileManager.default.attributesOfItem(atPath: symlinkURL.path)) != nil
+        
+        if symlinkFileExists {
+            // Check if it's pointing to the correct destination
+            if let destination = try? FileManager.default.destinationOfSymbolicLink(atPath: symlinkURL.path),
+               destination == localURL.path {
+                // Existing symlink is valid and points to the right place
+                playableURLs[localURL] = symlinkURL
+                print("MediaCacheService: Reusing existing symlink at \(symlinkURL.path)")
+                return symlinkURL
             }
+            
+            // Symlink exists but is broken or points to wrong destination - remove it
+            print("MediaCacheService: Removing stale/broken symlink at \(symlinkURL.path)")
+            do {
+                try FileManager.default.removeItem(at: symlinkURL)
+            } catch {
+                print("MediaCacheService: Failed to remove old symlink: \(error)")
+                // If we can't remove it, we can't proceed - return fallback
+                return localURL
+            }
+        }
+        
+        // Create symlink
+        do {
             try FileManager.default.createSymbolicLink(at: symlinkURL, withDestinationURL: localURL)
             playableURLs[localURL] = symlinkURL
             print("MediaCacheService: Created playable symlink at \(symlinkURL.path)")
