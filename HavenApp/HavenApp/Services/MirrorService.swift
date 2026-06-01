@@ -1,5 +1,8 @@
 import Foundation
 import Combine
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Service that mirrors owner media from external Blossom servers to local storage.
 ///
@@ -16,11 +19,27 @@ class MirrorService: ObservableObject {
         case complete
     }
 
+    struct LogEntry: Identifiable {
+        let id = UUID()
+        let timestamp: Date
+        let level: String
+        let message: String
+    }
+
     @Published var state: MirrorState = .idle
     @Published var progress: (completed: Int, total: Int)?
     @Published var statusText: String = ""
     @Published var lastResult: String = ""
     @Published var lastMirrorDate: Date?
+    @Published var logEntries: [LogEntry] = []
+
+    private func log(_ message: String, level: String = "INFO") {
+        logEntries.append(LogEntry(timestamp: Date(), level: level, message: message))
+        // Cap at 500 entries
+        if logEntries.count > 500 {
+            logEntries.removeFirst(logEntries.count - 500)
+        }
+    }
 
     // MARK: - Public API
 
@@ -31,27 +50,58 @@ class MirrorService: ObservableObject {
         state = .mirroring
         progress = nil
         statusText = "Starting..."
+        logEntries = []
+        log("Starting Blossom mirror operation...")
 
         Task {
+            // Request background execution time on iOS so the mirror completes
+            // even if the user switches apps mid-operation.
+            #if os(iOS)
+            let bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "BlossomMirrorSync", expirationHandler: nil)
+            #endif
+            defer {
+                #if os(iOS)
+                UIApplication.shared.endBackgroundTask(bgTaskId)
+                #endif
+                // Guarantee state resets even if the operation fails or is cancelled
+                if state == .mirroring {
+                    state = .idle
+                    progress = nil
+                    statusText = ""
+                }
+            }
+
             let service = BlossomService(configService: configService, nostrService: nostrService)
             var totalCount = 0
 
             // 1. Mirror from configured Blossom mirrors (BUD-04 /list endpoint)
-            if !configService.config.activeBlossomMirrors.isEmpty {
+            let mirrors = configService.config.activeBlossomMirrors
+            if !mirrors.isEmpty {
+                log("Found \(mirrors.count) configured mirror(s): \(mirrors.joined(separator: ", "))")
                 statusText = "Fetching blob list from mirrors..."
+                log("Fetching blob list from mirrors...")
                 let count = await service.mirrorAllFromExternal { completed, total in
                     Task { @MainActor in
                         self.progress = (completed, total)
                         self.statusText = "Mirroring from servers: \(completed)/\(total)"
                     }
+                } logMessage: { message, level in
+                    Task { @MainActor in
+                        self.log(message, level: level)
+                    }
                 }
+                log("Mirror from servers complete: \(count) new blob(s) mirrored")
                 totalCount += count
+            } else {
+                log("No external Blossom mirrors configured, skipping server mirror phase")
             }
 
             // 2. Mirror from note media URLs (handles any server) - includes all historical notes from local relay
             statusText = "Scanning notes for media..."
+            log("Scanning local relay for owner media URLs...")
             let ownerMedia = await self.fetchAllOwnerMedia(configService: configService, nostrService: nostrService)
-            
+            log("Found \(ownerMedia.count) media URL(s) from notes")
+
             // Deduplicate combined media by URL
             var seenURLs = Set<URL>()
             var noteMedia: [MediaItem] = []
@@ -60,14 +110,23 @@ class MirrorService: ObservableObject {
                     noteMedia.append(item)
                 }
             }
-            
+            if ownerMedia.count != noteMedia.count {
+                log("Deduplicated to \(noteMedia.count) unique URL(s)")
+            }
+
             statusText = "Mirroring media from notes (\(noteMedia.count) found)..."
+            log("Starting note media mirror (\(noteMedia.count) URLs to check)...")
             let noteCount = await service.mirrorFromNoteMedia(noteMedia) { completed, total in
                 Task { @MainActor in
                     self.progress = (completed, total)
                     self.statusText = "Mirroring from notes: \(completed)/\(total)"
                 }
+            } logMessage: { message, level in
+                Task { @MainActor in
+                    self.log(message, level: level)
+                }
             }
+            log("Mirror from notes complete: \(noteCount) new blob(s) mirrored")
             totalCount += noteCount
 
             // Update final state
@@ -76,12 +135,9 @@ class MirrorService: ObservableObject {
             statusText = ""
             lastMirrorDate = Date()
             lastResult = totalCount > 0 ? "Mirrored \(totalCount) files" : "All media already mirrored"
+            log(totalCount > 0 ? "Done — mirrored \(totalCount) file(s) to local storage" : "Done — all media already mirrored")
 
-            // Reset to idle after delay
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            if state == .complete {
-                state = .idle
-            }
+            // Keep state as .complete so the user can review logs and dismiss manually
         }
     }
 

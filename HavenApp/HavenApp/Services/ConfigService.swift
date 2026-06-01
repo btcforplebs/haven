@@ -12,6 +12,12 @@ import AppKit
 class ConfigService: ObservableObject {
     static let shared = ConfigService()
     @Published var config: HavenConfig
+    @Published var isSwitchingAccount: Bool = false
+    /// Explicit @Published hex pubkey for the active account. Computed properties
+    /// on ObservableObject don't reliably trigger SwiftUI re-renders in all
+    /// hosting contexts (e.g. macOS MenuBarExtra). This property is updated
+    /// whenever the active account changes.
+    @Published private(set) var activeAccountHexPubkey: String = ""
     
     // Config stored in App Support (standard macOS location for app preferences/state)
     private let configURL: URL
@@ -99,6 +105,9 @@ class ConfigService: ObservableObject {
         // Sync relay info to MediaCacheService for thread-safe access
         MediaCacheService.shared.updateLocalHost(config.sanitizedRelayURL)
         MediaCacheService.shared.updateBlossomDirectory(relayDataDir.appendingPathComponent(config.blossomPath))
+
+        // Seed the @Published hex pubkey from the loaded config
+        refreshActiveAccountHex()
     }
     
     func reload() {
@@ -134,6 +143,8 @@ class ConfigService: ObservableObject {
                 // Sync relay info
                 MediaCacheService.shared.updateLocalHost(config.sanitizedRelayURL)
                 MediaCacheService.shared.updateBlossomDirectory(self.relayDataDir.appendingPathComponent(loaded.blossomPath))
+
+                refreshActiveAccountHex()
             } catch {
                 #if DEBUG
                 print("ConfigService: Error reloading configuration: \(error)")
@@ -421,19 +432,21 @@ class ConfigService: ObservableObject {
         #endif
     }
     
-    /// Returns the hex pubkey for the currently active browsing account.
-    /// Falls back to the owner pubkey if no active account is set.
-    var activeAccountHexPubkey: String {
+    /// Recomputes `activeAccountHexPubkey` from the current config.
+    /// Called after any change to `activeAccountNpub` or `ownerNpub`.
+    func refreshActiveAccountHex() {
         let active = config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
         if !active.isEmpty, let decoded = Bech32.decode(active) {
-            return decoded.hexString
+            activeAccountHexPubkey = decoded.hexString
+            return
         }
         // Fall back to owner
         let ownerNpub = config.ownerNpub.trimmingCharacters(in: .whitespacesAndNewlines)
         if let decoded = Bech32.decode(ownerNpub) {
-            return decoded.hexString
+            activeAccountHexPubkey = decoded.hexString
+            return
         }
-        return ""
+        activeAccountHexPubkey = ""
     }
 
     /// Returns all accounts (owner + whitelisted) as npub strings, deduped
@@ -449,14 +462,42 @@ class ConfigService: ObservableObject {
     }
 
     /// Switches the active browsing account. Pass nil or ownerNpub to reset to owner.
+    /// Handles NIP-46 connection switching: disconnects the previous signer (if any)
+    /// and connects to the new account's signer (if configured).
     func switchActiveAccount(to npub: String?) {
         let target = npub?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if target == config.ownerNpub {
-            config.activeAccountNpub = ""
-        } else {
-            config.activeAccountNpub = target
+        let newValue = (target == config.ownerNpub) ? "" : target
+
+        // No-op if already on the target account
+        guard newValue != config.activeAccountNpub else { return }
+
+        // Disconnect previous NIP-46 signer if active
+        let previousNpub = config.activeAccountNpub.isEmpty ? config.ownerNpub : config.activeAccountNpub
+        if hasBunkerConfig(forNpub: previousNpub) && NIP46Service.shared.isConnected {
+            NIP46Service.shared.disconnect()
         }
+
+        isSwitchingAccount = true
+        config.activeAccountNpub = newValue
+        refreshActiveAccountHex()
+
+        // Connect to new account's NIP-46 signer if the active signing mode is nip46
+        let resolvedNpub = newValue.isEmpty ? config.ownerNpub : newValue
+        let mode = config.activeSigningMode()
+        if mode == "nip46" && hasBunkerConfig(forNpub: resolvedNpub) {
+            syncGlobalNIP46Fields(fromNpub: resolvedNpub)
+            NIP46Service.shared.connectFromConfig()
+        } else {
+            config.signingMode = mode
+        }
+
         save()
+
+        // Services process synchronously via Combine before the next run-loop cycle.
+        // Clear the flag once SwiftUI has had one cycle to recreate views with .id().
+        DispatchQueue.main.async { [weak self] in
+            self?.isSwitchingAccount = false
+        }
     }
     
     // MARK: - Per-Account Credential Management
@@ -501,6 +542,74 @@ class ConfigService: ObservableObject {
     func removeCredential(forNpub npub: String) {
         config.accountCredentials.removeValue(forKey: npub)
         NIP49Service.deletePasswordFromKeychain(forNpub: npub)
+        save()
+    }
+
+    // MARK: - Per-Account NIP-46 Bunker Configuration
+
+    func setBunkerConfig(_ bunkerConfig: AccountBunkerConfig, forNpub npub: String) {
+        config.accountBunkerConfigs[npub] = bunkerConfig
+        // Sync to global fields if this is the active account and signing mode is nip46
+        let activeNpub = config.activeAccountNpub.isEmpty ? config.ownerNpub : config.activeAccountNpub
+        if npub == activeNpub && config.activeSigningMode() == "nip46" {
+            syncGlobalNIP46Fields(fromNpub: npub)
+        }
+        save()
+    }
+
+    func getBunkerConfig(forNpub npub: String) -> AccountBunkerConfig? {
+        config.accountBunkerConfigs[npub]
+    }
+
+    func hasBunkerConfig(forNpub npub: String) -> Bool {
+        guard let cfg = config.accountBunkerConfigs[npub] else { return false }
+        return !cfg.bunkerURI.isEmpty || !cfg.signerPubkey.isEmpty
+    }
+
+    func removeBunkerConfig(forNpub npub: String) {
+        config.accountBunkerConfigs.removeValue(forKey: npub)
+        // If no accounts use NIP-46 anymore, reset global signing mode
+        if config.accountBunkerConfigs.isEmpty {
+            config.signingMode = "local"
+            config.nip46BunkerURI = ""
+            config.nip46SignerPubkey = ""
+            config.nip46RelayURL = ""
+            config.nip46Secret = ""
+        }
+        save()
+    }
+
+    /// Sets the user's preferred signing mode for a given account.
+    /// Handles NIP-46 connect/disconnect if this is the active account.
+    func setSigningMode(_ mode: String, forNpub npub: String) {
+        config.accountSigningModes[npub] = mode
+
+        // If this is the currently active account, apply immediately
+        let activeNpub = config.activeAccountNpub.isEmpty ? config.ownerNpub : config.activeAccountNpub
+        if npub == activeNpub {
+            if mode == "nip46" && hasBunkerConfig(forNpub: npub) {
+                syncGlobalNIP46Fields(fromNpub: npub)
+                NIP46Service.shared.connectFromConfig()
+            } else if mode == "local" {
+                if NIP46Service.shared.isConnected {
+                    NIP46Service.shared.disconnect()
+                }
+                config.signingMode = "local"
+            }
+        }
+        save()
+    }
+
+    /// Syncs the global NIP-46 fields from a per-account bunker config so NIP46Service can connect.
+    func syncGlobalNIP46Fields(fromNpub npub: String) {
+        guard let cfg = config.accountBunkerConfigs[npub] else { return }
+        config.signingMode = "nip46"
+        config.nip46BunkerURI = cfg.bunkerURI
+        config.nip46SignerPubkey = cfg.signerPubkey
+        config.nip46RelayURL = cfg.relayURL
+        config.nip46Secret = cfg.secret
+        config.nip46ClientSecretKey = cfg.clientSecretKey
+        config.nip46ClientPubkey = cfg.clientPubkey
         save()
     }
 
@@ -599,8 +708,21 @@ class ConfigService: ObservableObject {
         }
     }
 
+    /// Whether a local URL can be rewritten to an external share link.
+    /// Returns true for URLs that are already external, or local URLs when
+    /// macRelayHttpsURL or an active Blossom mirror is configured.
+    func hasExternalShareURL(for url: URL) -> Bool {
+        let host = url.host?.lowercased() ?? ""
+        let isLocal = host == "127.0.0.1" || host == "localhost" || host == "0.0.0.0"
+        guard isLocal else { return true }
+        if !config.macRelayHttpsURL.isEmpty { return true }
+        if !config.activeBlossomMirrors.isEmpty { return true }
+        return false
+    }
+
     /// Returns a shareable URL for a media item, rewriting local relay hosts
-    /// (127.0.0.1/localhost) to the configured Mac relay's https URL when available.
+    /// (127.0.0.1/localhost) to the configured Mac relay's https URL when available,
+    /// falling back to the first active Blossom mirror if no Mac relay URL is set.
     /// External URLs (e.g. existing mirror URLs) are returned unchanged.
     func externalShareURL(for url: URL) -> URL {
         let host = url.host?.lowercased() ?? ""
@@ -608,14 +730,24 @@ class ConfigService: ObservableObject {
         guard isLocal else { return url }
 
         let macHTTPS = config.macRelayHttpsURL
-        guard !macHTTPS.isEmpty, var components = URLComponents(string: macHTTPS) else {
-            return url
+        if !macHTTPS.isEmpty, var components = URLComponents(string: macHTTPS) {
+            // Preserve the path (typically just the blossom hash) and any query string.
+            let path = url.path.isEmpty ? "/" : url.path
+            components.path = (components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path) + path
+            components.query = url.query
+            if let result = components.url { return result }
         }
-        // Preserve the path (typically just the blossom hash) and any query string.
-        let path = url.path.isEmpty ? "/" : url.path
-        components.path = (components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path) + path
-        components.query = url.query
-        return components.url ?? url
+
+        // Fallback: use the first active Blossom mirror for shareable links
+        if let mirror = config.activeBlossomMirrors.first,
+           var components = URLComponents(string: mirror) {
+            let path = url.path.isEmpty ? "/" : url.path
+            components.path = (components.path.hasSuffix("/") ? String(components.path.dropLast()) : components.path) + path
+            components.query = url.query
+            if let result = components.url { return result }
+        }
+
+        return url
     }
 
 }

@@ -2,6 +2,7 @@ import SwiftUI
 import CoreImage
 import CoreImage.CIFilterBuiltins
 import UniformTypeIdentifiers
+import LocalAuthentication
 
 extension NumberFormatter {
     static var noSeparator: NumberFormatter {
@@ -17,6 +18,10 @@ struct SettingsView: View {
     @State private var selectedTab: SettingsTab = .accounts
     @State private var saveTask: Task<Void, Never>?
     @State private var isRestarting = false
+    @State private var showingSetupWizard = false
+    #if os(macOS)
+    @Environment(\.openWindow) private var openWindow
+    #endif
     var isEmbedded: Bool = false
     
     private var appVersion: String {
@@ -43,8 +48,10 @@ struct SettingsView: View {
         case appearance = "Appearance"
         case feed = "Feed Relays"
         case dm = "DM Relays"
+        case pushNotifications = "Push Notifications"
         case importNotes = "Import"
         case backup = "Backup"
+        case followingBackup = "Following Backup"
         case blastr = "Blastr"
         case blossom = "Blossom"
         case macRelay = "Mac Relay"
@@ -54,6 +61,19 @@ struct SettingsView: View {
 
         var id: String { self.rawValue }
 
+        var title: String {
+            switch self {
+            case .macRelay:
+                #if os(macOS)
+                return "Domain"
+                #else
+                return rawValue
+                #endif
+            default:
+                return rawValue
+            }
+        }
+
         var icon: String {
             switch self {
             case .accounts: return "person.badge.key"
@@ -61,11 +81,18 @@ struct SettingsView: View {
             case .appearance: return "paintpalette"
             case .feed: return "newspaper"
             case .dm: return "bubble.left.and.bubble.right"
+            case .pushNotifications: return "bell.badge"
             case .importNotes: return "square.and.arrow.down"
             case .backup: return "externaldrive.fill"
+            case .followingBackup: return "person.crop.circle.badge.clock"
             case .blastr: return "paperplane"
             case .blossom: return "server.rack"
-            case .macRelay: return "desktopcomputer"
+            case .macRelay:
+                #if os(macOS)
+                return "globe"
+                #else
+                return "desktopcomputer"
+                #endif
             case .advanced: return "gearshape.2"
             case .wallet: return "bitcoinsign.circle"
             case .logs: return "list.bullet.rectangle"
@@ -93,6 +120,11 @@ struct SettingsView: View {
         .onDisappear {
             saveTask?.cancel()
         }
+        #if os(macOS)
+        .onReceive(NotificationCenter.default.publisher(for: .havenOpenFeedRelaySettings)) { _ in
+            selectedTab = .feed
+        }
+        #endif
     }
 
     private var macOSBody: some View {
@@ -110,7 +142,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     // Header of active settings panel
                     HStack {
-                        Text(selectedTab.rawValue)
+                        Text(selectedTab.title)
                             .font(.title2.bold())
                             .foregroundColor(.white)
                         Spacer()
@@ -152,13 +184,50 @@ struct SettingsView: View {
             Divider()
                 .background(Color.platformSeparator)
                 .padding(.bottom, 12)
-            
+
+            #if os(macOS)
+            if !configService.config.hasCompletedSetup {
+                Button(action: {
+                    openWindow(id: "setup")
+                    NSApp.activate(ignoringOtherApps: true)
+                }) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 14))
+                            .foregroundColor(.yellow)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Setup Incomplete")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(.white)
+                            Text("Tap to complete setup")
+                                .font(.system(size: 10))
+                                .foregroundColor(.white.opacity(0.7))
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.white.opacity(0.5))
+                    }
+                    .padding(10)
+                    .background(Color.orange.opacity(0.15))
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 8)
+            }
+            #endif
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     settingsSidebarSection("Profile", items: [.accounts, .blocked])
                     settingsSidebarSection("Appearance", items: [.appearance])
-                    settingsSidebarSection("Relay Configuration", items: [.feed, .blastr, .blossom, .importNotes, .backup])
-                    settingsSidebarSection("System", items: [.wallet, .advanced, .logs])
+                    settingsSidebarSection("Relay Configuration", items: [.macRelay, .feed, .blastr, .blossom, .importNotes, .backup, .followingBackup])
+                    settingsSidebarSection("System", items: [.pushNotifications, .wallet, .advanced, .logs])
                 }
                 .padding(.horizontal, 8)
             }
@@ -232,7 +301,7 @@ struct SettingsView: View {
                                 .foregroundColor(.white)
                         }
                         
-                        Text(item.rawValue)
+                        Text(item.title)
                             .font(.system(size: 12, weight: selectedTab == item ? .semibold : .medium))
                             .foregroundColor(selectedTab == item ? .white : .secondary)
                         
@@ -258,6 +327,40 @@ struct SettingsView: View {
     #if os(iOS)
     private var iOSBody: some View {
         List {
+            if !configService.config.hasCompletedSetup {
+                Section {
+                    Button(action: { showingSetupWizard = true }) {
+                        HStack(spacing: 12) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.title2)
+                                .foregroundColor(.yellow)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Setup Incomplete")
+                                    .font(.headline)
+                                    .foregroundColor(.white)
+                                Text("Tap to complete setup and start your relay.")
+                                    .font(.caption)
+                                    .foregroundColor(.white.opacity(0.8))
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption.bold())
+                                .foregroundColor(.white.opacity(0.5))
+                        }
+                        .padding()
+                        .background(Color.orange.opacity(0.15))
+                        .cornerRadius(12)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.orange.opacity(0.3), lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+            }
+
             Section {
                 if needsRestart && relayManager.isRunning {
                     RestartBanner(action: restartRelay, isRestarting: isRestarting)
@@ -281,10 +384,12 @@ struct SettingsView: View {
                 tabLink(.blossom)
                 tabLink(.importNotes)
                 tabLink(.backup)
+                tabLink(.followingBackup)
                 tabLink(.macRelay)
             }
 
             Section("System") {
+                tabLink(.pushNotifications)
                 tabLink(.wallet)
                 tabLink(.advanced)
                 tabLink(.logs)
@@ -335,16 +440,32 @@ struct SettingsView: View {
                 .padding(.vertical, 8)
             }
             .listRowBackground(Color.clear)
+
+            // Spacer so the last section can scroll above the floating tab bar
+            #if os(iOS)
+            Section { EmptyView() }
+                .listRowBackground(Color.clear)
+                .frame(height: 60)
+            #endif
         }
         .listStyle(.insetGrouped)
         .navigationTitle("Settings")
+        .sheet(isPresented: $showingSetupWizard) {
+            SetupWizardView {
+                relayManager.startRelay(config: configService.config)
+            }
+            .environmentObject(configService)
+            .environmentObject(relayManager)
+            .environmentObject(NostrService.shared)
+            .environmentObject(StatsService.shared)
+        }
     }
     #endif
 
     private func tabLink(_ tab: SettingsTab) -> some View {
         NavigationLink(destination: destinationFor(tab)) {
             Label {
-                Text(tab.rawValue)
+                Text(tab.title)
                     .font(.body)
             } icon: {
                 ZStack {
@@ -366,8 +487,10 @@ struct SettingsView: View {
         case .appearance: return .purple
         case .feed: return .pink
         case .dm: return .mint
+        case .pushNotifications: return .blue
         case .importNotes: return .orange
         case .backup: return .indigo
+        case .followingBackup: return .teal
         case .blastr: return .cyan
         case .blossom: return .green
         case .macRelay: return .teal
@@ -397,22 +520,24 @@ struct SettingsView: View {
             case .appearance: AppearanceSettingsView()
             case .feed: FeedSettingsView()
             case .dm: DMSettingsView()
+            case .pushNotifications: PushNotificationSettingsView()
             case .importNotes: ImportSettingsView()
             case .backup: BackupSettingsView()
+            case .followingBackup: FollowingBackupSettingsView()
             case .blastr: BlastrSettingsView()
             case .blossom: BlossomSettingsView()
             case .macRelay:
                 #if os(iOS)
                 MacRelaySettingsView()
                 #else
-                EmptyView()
+                MacRelayDomainSettingsView()
                 #endif
             case .advanced: AdvancedSettingsView()
             case .wallet: WalletSettingsView()
             case .logs: LogsView(logStore: relayManager.logStore)
             }
         }
-        .navigationTitle(tab.rawValue)
+        .navigationTitle(tab.title)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
@@ -511,12 +636,22 @@ struct RestartBanner: View {
 struct AccountsSettingsView: View {
     @EnvironmentObject var configService: ConfigService
     @ObservedObject private var nostrService = NostrService.shared
-    
+    @ObservedObject private var nip46Service = NIP46Service.shared
+
     // Add Account Sheet
     @State private var showAddAccount = false
-    
+
+    // Account Detail Sheet
+    @State private var selectedAccountNpub: String? = nil
+
     // Import Key Sheet
     @State private var importingNpub: String? = nil
+
+    // Reveal Key Sheet
+    @State private var revealingNpub: String? = nil
+
+    // Connect Signer Sheet
+    @State private var connectingSignerNpub: String? = nil
 
     var body: some View {
         Form {
@@ -525,13 +660,16 @@ struct AccountsSettingsView: View {
                     accountRow(npub: npub)
                 }
                 .onDelete { indexSet in
-                    // allAccountNpubs prepends ownerNpub at index 0 — skip it
                     for index in indexSet {
                         guard index > 0 else { continue }
                         let npub = configService.allAccountNpubs[index]
                         configService.config.whitelistedNpubs.removeAll { $0.trimmingCharacters(in: .whitespacesAndNewlines) == npub }
+                        configService.removeBunkerConfig(forNpub: npub)
+                        configService.removeCredential(forNpub: npub)
+                        configService.config.accountSigningModes.removeValue(forKey: npub)
                         if configService.config.activeAccountNpub == npub {
                             configService.config.activeAccountNpub = ""
+                            configService.refreshActiveAccountHex()
                         }
                     }
                     configService.save()
@@ -539,9 +677,9 @@ struct AccountsSettingsView: View {
             } header: {
                 Text("Accounts")
             } footer: {
-                Text("Tap an account to make it active. Swipe left to remove a whitelisted account.")
+                Text("Each account can hold both a local key and a remote signer. Tap to manage signing. Swipe to remove.")
             }
-            
+
             Section {
                 Button(action: {
                     showAddAccount = true
@@ -563,16 +701,69 @@ struct AccountsSettingsView: View {
         )) { item in
             ImportKeySheetView(onDismiss: { importingNpub = nil }, configService: configService, npub: item.id)
         }
+        .sheet(item: Binding<IdentifiableString?>(
+            get: { revealingNpub.map { IdentifiableString(id: $0) } },
+            set: { revealingNpub = $0?.id }
+        )) { item in
+            RevealKeySheetView(onDismiss: { revealingNpub = nil }, configService: configService, npub: item.id)
+        }
+        .sheet(item: Binding<IdentifiableString?>(
+            get: { connectingSignerNpub.map { IdentifiableString(id: $0) } },
+            set: { connectingSignerNpub = $0?.id }
+        )) { item in
+            ConnectSignerSheetView(onDismiss: { connectingSignerNpub = nil }, configService: configService, npub: item.id)
+        }
+        .sheet(item: Binding<IdentifiableString?>(
+            get: { selectedAccountNpub.map { IdentifiableString(id: $0) } },
+            set: { selectedAccountNpub = $0?.id }
+        )) { item in
+            AccountDetailView(
+                configService: configService,
+                npub: item.id,
+                onImportKey: {
+                    selectedAccountNpub = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        importingNpub = item.id
+                    }
+                },
+                onConnectBunker: {
+                    selectedAccountNpub = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        connectingSignerNpub = item.id
+                    }
+                },
+                onRevealKey: {
+                    selectedAccountNpub = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        revealingNpub = item.id
+                    }
+                },
+                onRemoveAccount: {
+                    configService.config.whitelistedNpubs.removeAll { $0.trimmingCharacters(in: .whitespacesAndNewlines) == item.id }
+                    configService.removeBunkerConfig(forNpub: item.id)
+                    configService.removeCredential(forNpub: item.id)
+                    configService.config.accountSigningModes.removeValue(forKey: item.id)
+                    if configService.config.activeAccountNpub == item.id {
+                        configService.config.activeAccountNpub = ""
+                        configService.refreshActiveAccountHex()
+                    }
+                    configService.save()
+                }
+            )
+        }
     }
-    
+
     private func accountRow(npub: String) -> some View {
         let hex = Bech32.decode(npub)?.hexString ?? ""
         let profile = nostrService.profiles[hex]
         let displayName = profile?.bestName ?? String(npub.prefix(12)) + "..."
-        let isActive = (npub == configService.config.activeAccountNpub)
         let isOwner = (npub == configService.config.ownerNpub)
-        let hasKey = isOwner || configService.hasCredential(forNpub: npub)
-        
+        let activeNpub = configService.config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isActive = activeNpub.isEmpty ? isOwner : npub == activeNpub
+        let hasLocalKey = isOwner ? !configService.config.ownerNcryptsec.isEmpty : configService.hasCredential(forNpub: npub)
+        let hasBunker = configService.hasBunkerConfig(forNpub: npub)
+        let signingMode = configService.config.accountSigningModes[npub] ?? (hasBunker ? "nip46" : "local")
+
         return HStack(spacing: 12) {
             AvatarView(url: profile?.pictureURL, pubkey: hex)
                 .frame(width: 38, height: 38)
@@ -582,37 +773,474 @@ struct AccountsSettingsView: View {
                         lineWidth: 2
                     )
                 )
-                
+
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(displayName).fontWeight(.semibold)
                     if isOwner {
-                        Text("Owner").font(.system(size: 10, weight: .bold)).padding(.horizontal, 6).padding(.vertical, 2).background(Color.havenPurple.opacity(0.2)).foregroundColor(.havenPurple).cornerRadius(4)
-                    }
-                    if hasKey {
-                        Image(systemName: "key.fill").foregroundColor(.orange).font(.system(size: 10))
+                        Text("Owner")
+                            .font(.system(size: 10, weight: .bold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.havenPurple.opacity(0.2))
+                            .foregroundColor(.havenPurple)
+                            .cornerRadius(4)
                     }
                 }
-                Text(npub).font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
+
+                // Compact signing mode indicator
+                HStack(spacing: 4) {
+                    if hasBunker && signingMode == "nip46" {
+                        Image(systemName: "link")
+                            .font(.system(size: 9))
+                        Text("Remote Signer")
+                        if isActive {
+                            Circle()
+                                .fill(nip46Service.isConnected ? Color.green : Color.red)
+                                .frame(width: 5, height: 5)
+                        }
+                    } else if hasLocalKey {
+                        Image(systemName: "key.fill")
+                            .font(.system(size: 9))
+                            .foregroundColor(.orange)
+                        Text("Local Key")
+                    } else {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 9))
+                        Text("No signing key")
+                    }
+                }
+                .font(.caption)
+                .foregroundColor(.secondary)
             }
-            
+
             Spacer()
-            
-            if !hasKey {
-                Button("Import Key") {
-                    importingNpub = npub
-                }.font(.caption).buttonStyle(.bordered)
-            }
-            
+
             if isActive {
-                Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.green)
             }
+
+            Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundColor(.secondary)
         }
+        .padding(.vertical, 4)
         .contentShape(Rectangle())
         .onTapGesture {
-            configService.config.activeAccountNpub = npub
-            configService.save()
+            selectedAccountNpub = npub
         }
+    }
+}
+
+// MARK: - Account Detail View (Signing Management)
+
+struct AccountDetailView: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject var configService: ConfigService
+    @ObservedObject private var nostrService = NostrService.shared
+    @ObservedObject private var nip46Service = NIP46Service.shared
+    let npub: String
+
+    var onImportKey: () -> Void
+    var onConnectBunker: () -> Void
+    var onRevealKey: () -> Void
+    var onRemoveAccount: () -> Void
+
+    private var isOwner: Bool { npub == configService.config.ownerNpub }
+    private var activeNpub: String {
+        let a = configService.config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
+        return a.isEmpty ? configService.config.ownerNpub : a
+    }
+    private var isActive: Bool { npub == activeNpub }
+    private var hasLocalKey: Bool {
+        isOwner ? !configService.config.ownerNcryptsec.isEmpty : configService.hasCredential(forNpub: npub)
+    }
+    private var hasBunker: Bool { configService.hasBunkerConfig(forNpub: npub) }
+    private var currentMode: String {
+        configService.config.accountSigningModes[npub] ?? (hasBunker ? "nip46" : "local")
+    }
+
+    var body: some View {
+        NavigationView {
+            Form {
+                // Header
+                Section {
+                    headerSection
+                }
+
+                // Switch to account
+                if !isActive {
+                    Section {
+                        Button {
+                            configService.switchActiveAccount(to: npub)
+                            dismiss()
+                        } label: {
+                            Label("Switch to This Account", systemImage: "arrow.right.circle")
+                        }
+                    }
+                }
+
+                // Signing method picker
+                if hasLocalKey && hasBunker {
+                    Section {
+                        Picker("Signing Method", selection: Binding(
+                            get: { currentMode },
+                            set: { newMode in
+                                configService.setSigningMode(newMode, forNpub: npub)
+                            }
+                        )) {
+                            Text("Local Key").tag("local")
+                            Text("Remote Signer").tag("nip46")
+                        }
+                        .pickerStyle(.segmented)
+                    } header: {
+                        Text("Active Signing Method")
+                    } footer: {
+                        if currentMode == "nip46" {
+                            Text("Events will be signed by the remote signer (NIP-46).")
+                        } else {
+                            Text("Events will be signed with the locally stored private key.")
+                        }
+                    }
+                }
+
+                // Local Key section
+                Section {
+                    if hasLocalKey {
+                        HStack(spacing: 8) {
+                            Image(systemName: "key.fill")
+                                .foregroundColor(.orange)
+                            Text("Private key stored")
+                                .foregroundColor(.primary)
+                            Spacer()
+                            if !hasBunker {
+                                // Only show active badge when there's no choice
+                                Text("Active")
+                                    .font(.caption)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.green.opacity(0.2))
+                                    .foregroundColor(.green)
+                                    .cornerRadius(4)
+                            }
+                        }
+
+                        Button {
+                            authenticateAndReveal()
+                        } label: {
+                            Label("Reveal Key", systemImage: "eye")
+                        }
+
+                        Button(role: .destructive) {
+                            if isOwner {
+                                configService.config.ownerNcryptsec = ""
+                                configService.config.ownerNsec = ""
+                            } else {
+                                configService.removeCredential(forNpub: npub)
+                            }
+                            // If was using local and now removed, switch to bunker if available
+                            if currentMode == "local" && hasBunker {
+                                configService.setSigningMode("nip46", forNpub: npub)
+                            }
+                            configService.save()
+                        } label: {
+                            Label("Remove Local Key", systemImage: "trash")
+                        }
+                    } else {
+                        Button {
+                            onImportKey()
+                        } label: {
+                            Label("Import Private Key", systemImage: "key")
+                        }
+                    }
+                } header: {
+                    Text("Local Key")
+                }
+
+                // Remote Signer section
+                Section {
+                    if hasBunker {
+                        HStack(spacing: 8) {
+                            Image(systemName: "link")
+                                .foregroundColor(.blue)
+                            Text("Remote signer configured")
+                                .foregroundColor(.primary)
+                            Spacer()
+                            if isActive {
+                                Circle()
+                                    .fill(nip46Service.isConnected ? Color.green : Color.red)
+                                    .frame(width: 8, height: 8)
+                                Text(nip46Service.isConnected ? "Connected" : "Disconnected")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+
+                        Button(role: .destructive) {
+                            if nip46Service.isConnected && isActive {
+                                nip46Service.disconnect()
+                            }
+                            configService.removeBunkerConfig(forNpub: npub)
+                            // If was using nip46 and now removed, switch to local
+                            if currentMode == "nip46" {
+                                configService.setSigningMode("local", forNpub: npub)
+                            }
+                        } label: {
+                            Label("Disconnect Remote Signer", systemImage: "link.badge.plus")
+                        }
+                    } else {
+                        Button {
+                            onConnectBunker()
+                        } label: {
+                            Label("Connect Remote Signer", systemImage: "link.badge.plus")
+                        }
+                    }
+                } header: {
+                    Text("Remote Signer (NIP-46)")
+                }
+
+                // Remove account (non-owner only)
+                if !isOwner {
+                    Section {
+                        Button(role: .destructive) {
+                            onRemoveAccount()
+                            dismiss()
+                        } label: {
+                            Label("Remove Account", systemImage: "person.badge.minus")
+                        }
+                    }
+                }
+            }
+            .groupedFormStyleCompat()
+            .navigationTitle("Account")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            #else
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            #endif
+        }
+    }
+
+    private func authenticateAndReveal() {
+        let context = LAContext()
+        var error: NSError?
+
+        if context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) {
+            context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Authenticate to reveal your private key") { success, _ in
+                DispatchQueue.main.async {
+                    if success {
+                        onRevealKey()
+                    }
+                }
+            }
+        } else {
+            onRevealKey()
+        }
+    }
+
+    @ViewBuilder
+    private var headerSection: some View {
+        let hex = Bech32.decode(npub)?.hexString ?? ""
+        let profile = nostrService.profiles[hex]
+        let displayName = profile?.bestName ?? String(npub.prefix(12)) + "..."
+
+        HStack(spacing: 12) {
+            AvatarView(url: profile?.pictureURL, pubkey: hex)
+                .frame(width: 48, height: 48)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(displayName).fontWeight(.semibold)
+                    if isOwner {
+                        Text("Owner")
+                            .font(.system(size: 10, weight: .bold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.havenPurple.opacity(0.2))
+                            .foregroundColor(.havenPurple)
+                            .cornerRadius(4)
+                    }
+                    if isActive {
+                        Text("Active")
+                            .font(.system(size: 10, weight: .bold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.green.opacity(0.2))
+                            .foregroundColor(.green)
+                            .cornerRadius(4)
+                    }
+                }
+                Text(npub)
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+    }
+}
+
+// MARK: - Connect Signer Sheet
+
+struct ConnectSignerSheetView: View {
+    @Environment(\.dismiss) private var dismiss
+    var onDismiss: (() -> Void)? = nil
+    @ObservedObject var configService: ConfigService
+    let npub: String
+
+    @State private var bunkerURI: String = ""
+    @State private var isConnecting = false
+    @State private var errorMessage: String? = nil
+
+    var body: some View {
+        #if os(macOS)
+        VStack(spacing: 0) {
+            HStack {
+                Button("Cancel") { performDismiss() }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Text("Connect Remote Signer")
+                    .font(.headline)
+                Spacer()
+                Button("Connect") { connectBunker() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.havenPurple)
+                    .disabled(bunkerURI.isEmpty || isConnecting)
+            }
+            .padding()
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Paste the bunker:// URI from your remote signer app to connect it to this account.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                TextField("bunker://...", text: $bunkerURI)
+                    .textFieldStyle(.roundedBorder)
+                    .textContentType(.URL)
+
+                if let error = errorMessage {
+                    Label(error, systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
+
+                if isConnecting {
+                    HStack {
+                        ProgressView().controlSize(.small)
+                        Text("Connecting...").font(.caption).foregroundColor(.secondary)
+                    }
+                }
+            }
+            .padding()
+        }
+        .frame(width: 420)
+        #else
+        NavigationView {
+            Form {
+                Section {
+                    TextField("bunker://...", text: $bunkerURI)
+                        .textContentType(.URL)
+                        .autocapitalization(.none)
+                } header: {
+                    Text("Bunker URI")
+                } footer: {
+                    Text("Paste the bunker:// connection string from your remote signer app.")
+                }
+
+                if let error = errorMessage {
+                    Section {
+                        Label(error, systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    }
+                }
+
+                Section {
+                    Button(action: connectBunker) {
+                        HStack {
+                            Text("Connect")
+                            if isConnecting {
+                                Spacer()
+                                ProgressView().controlSize(.small)
+                            }
+                        }
+                    }
+                    .disabled(bunkerURI.isEmpty || isConnecting)
+                }
+            }
+            .navigationTitle("Connect Signer")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { performDismiss() }
+                }
+            }
+        }
+        #endif
+    }
+
+    private func connectBunker() {
+        isConnecting = true
+        errorMessage = nil
+
+        Task {
+            do {
+                let info = try NIP46Service.parseBunkerURI(bunkerURI)
+
+                var bunkerConfig = AccountBunkerConfig(
+                    bunkerURI: bunkerURI,
+                    signerPubkey: info.signerPubkey,
+                    relayURL: info.relayURL,
+                    secret: info.secret
+                )
+
+                // Generate a client keypair for this account's connection
+                if let keyPairCStr = GenerateKeyPairC() {
+                    let keyPairStr = String(cString: keyPairCStr)
+                    free(keyPairCStr)
+                    let parts = keyPairStr.split(separator: ":")
+                    if parts.count == 2 {
+                        bunkerConfig.clientSecretKey = String(parts[0])
+                        bunkerConfig.clientPubkey = String(parts[1])
+                    }
+                }
+
+                configService.setBunkerConfig(bunkerConfig, forNpub: npub)
+                // Set signing mode to nip46 for this account
+                configService.setSigningMode("nip46", forNpub: npub)
+
+                // If this is the active account, connect now
+                let activeNpub = configService.config.activeAccountNpub.isEmpty ? configService.config.ownerNpub : configService.config.activeAccountNpub
+                if npub == activeNpub && !NIP46Service.shared.isConnected {
+                    try await NIP46Service.shared.connect()
+                }
+
+                isConnecting = false
+                performDismiss()
+            } catch {
+                errorMessage = error.localizedDescription
+                isConnecting = false
+                configService.removeBunkerConfig(forNpub: npub)
+            }
+        }
+    }
+
+    private func performDismiss() {
+        onDismiss?()
+        dismiss()
     }
 }
 
@@ -850,7 +1478,13 @@ struct ImportKeySheetView: View {
             return
         }
         do {
-            try configService.setCredential(nsec: importNsec, password: importPassword, forNpub: npub)
+            if npub == configService.config.ownerNpub {
+                try configService.config.setEncryptedNsec(nsec: importNsec, password: importPassword)
+                _ = NIP49Service.storePasswordInKeychain(importPassword)
+                configService.save()
+            } else {
+                try configService.setCredential(nsec: importNsec, password: importPassword, forNpub: npub)
+            }
             performDismiss()
         } catch {
             importError = "Failed to import and encrypt key"
@@ -858,6 +1492,207 @@ struct ImportKeySheetView: View {
     }
 
     private func performDismiss() {
+        if let onDismiss = onDismiss {
+            onDismiss()
+        } else {
+            dismiss()
+        }
+    }
+}
+
+struct RevealKeySheetView: View {
+    @Environment(\.dismiss) private var dismiss
+    var onDismiss: (() -> Void)? = nil
+    @ObservedObject var configService: ConfigService
+    let npub: String
+
+    @State private var password = ""
+    @State private var revealedNsec: String? = nil
+    @State private var errorMessage: String? = nil
+    @State private var copied = false
+
+    var body: some View {
+        #if os(macOS)
+        VStack(spacing: 0) {
+            HStack {
+                Button("Cancel") {
+                    performDismiss()
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.secondary)
+
+                Spacer()
+
+                Text("Reveal Private Key")
+                    .font(.headline)
+
+                Spacer()
+
+                if revealedNsec == nil {
+                    Button("Unlock") {
+                        decryptKey()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.havenPurple)
+                    .disabled(password.isEmpty)
+                } else {
+                    Button("Done") {
+                        performDismiss()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Color.havenPurple)
+                }
+            }
+            .padding()
+            .background(Color.platformControlBackground.opacity(0.5))
+
+            VStack(alignment: .leading, spacing: 16) {
+                if let nsec = revealedNsec {
+                    revealedKeyContent(nsec: nsec)
+                } else {
+                    passwordEntryContent()
+                }
+            }
+            .padding(20)
+
+            Spacer()
+        }
+        .background(Color.platformSecondaryGroupedBackground)
+        .frame(width: 480, height: revealedNsec != nil ? 280 : 220)
+        #else
+        NavigationView {
+            Form {
+                if let nsec = revealedNsec {
+                    Section("Private Key") {
+                        revealedKeyContent(nsec: nsec)
+                    }
+                } else {
+                    Section("Enter Password") {
+                        SecureField("NIP-49 Password", text: $password)
+                            .textContentType(.password)
+                            .onSubmit { decryptKey() }
+                    }
+                    if let error = errorMessage {
+                        Text(error).foregroundColor(.red).font(.caption)
+                    }
+                }
+            }
+            .navigationTitle("Reveal Private Key")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { performDismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if revealedNsec == nil {
+                        Button("Unlock") { decryptKey() }
+                            .disabled(password.isEmpty)
+                    } else {
+                        Button("Done") { performDismiss() }
+                    }
+                }
+            }
+        }
+        #endif
+    }
+
+    @ViewBuilder
+    private func passwordEntryContent() -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Enter Password")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.secondary)
+
+            SecureField("NIP-49 Password", text: $password)
+                .textFieldStyle(.roundedBorder)
+                .textContentType(.password)
+                .font(.body)
+                .onSubmit { decryptKey() }
+        }
+
+        if let error = errorMessage {
+            Text(error)
+                .foregroundColor(.red)
+                .font(.caption)
+        }
+    }
+
+    @ViewBuilder
+    private func revealedKeyContent(nsec: String) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Your Private Key (nsec)")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.secondary)
+
+            Text(nsec)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundColor(.secondary)
+                .textSelection(.enabled)
+                .lineLimit(3)
+                .minimumScaleFactor(0.7)
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.platformControlBackground)
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.gray.opacity(0.2), lineWidth: 1)
+                )
+
+            Button {
+                copyNsec(nsec)
+            } label: {
+                Label(
+                    copied ? "Copied!" : "Copy to Clipboard",
+                    systemImage: copied ? "checkmark" : "doc.on.doc"
+                )
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+
+            Text("Keep this key safe. Anyone with your nsec has full control of your Nostr identity.")
+                .font(.caption2)
+                .foregroundColor(.orange)
+        }
+    }
+
+    private func decryptKey() {
+        guard !password.isEmpty else { return }
+        errorMessage = nil
+
+        let isOwner = (npub == configService.config.ownerNpub)
+
+        do {
+            let nsec: String
+            if isOwner {
+                nsec = try configService.config.getDecryptedNsec(password: password)
+            } else {
+                guard let ncryptsec = configService.config.accountCredentials[npub],
+                      !ncryptsec.isEmpty else {
+                    errorMessage = "No encrypted key found for this account"
+                    return
+                }
+                nsec = try NIP49Service.decrypt(ncryptsec: ncryptsec, password: password)
+            }
+            revealedNsec = nsec
+        } catch {
+            errorMessage = "Incorrect password or decryption failed"
+        }
+    }
+
+    private func copyNsec(_ nsec: String) {
+        PlatformClipboard.copy(nsec)
+        copied = true
+        Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            await MainActor.run { copied = false }
+        }
+    }
+
+    private func performDismiss() {
+        revealedNsec = nil
+        password = ""
+        errorMessage = nil
+
         if let onDismiss = onDismiss {
             onDismiss()
         } else {
@@ -983,17 +1818,27 @@ struct AdvancedSettingsView: View {
             }
             
             Section {
+                Toggle("Autoplay Videos", isOn: $configService.config.autoplayVideos)
                 Toggle("Disable Media Cache", isOn: $configService.config.disableMediaCache)
-                
+
+                Picker("Cache TTL", selection: $configService.config.cacheTTLDays) {
+                    Text("1 day").tag(1)
+                    Text("3 days").tag(3)
+                    Text("7 days").tag(7)
+                    Text("14 days").tag(14)
+                    Text("30 days").tag(30)
+                    Text("Never").tag(0)
+                }
+
                 Button(role: .destructive) {
                     MediaCacheService.shared.clearCache()
                 } label: {
                     Label("Clear Media Cache", systemImage: "trash")
                 }
             } header: {
-                Text("Media Cache")
+                Text("Media")
             } footer: {
-                Text("Clearing the cache will remove downloaded remote images but won't touch your local Blossom data.")
+                Text("When autoplay is off, videos show a thumbnail until tapped. Cache TTL controls how long downloaded media is kept before automatic cleanup. Clearing the cache will remove downloaded remote images but won't touch your local Blossom data.")
             }
 
             Section {
@@ -1014,16 +1859,6 @@ struct AdvancedSettingsView: View {
                 Text("WoT determines who can post to your inbox and chat relays. Lower depth is more private.")
             }
             
-            #if os(macOS)
-            Section {
-                Toggle("Allow Network Access", isOn: $configService.config.allowNetworkAccess)
-            } header: {
-                Text("Network")
-            } footer: {
-                Text("When enabled, the relay listens on all network interfaces (0.0.0.0) instead of localhost only. This makes your relay accessible over Tailscale, LAN, or other networks. Requires a relay restart to take effect.")
-            }
-            #endif
-            
             Section("Diagnostics & Startup") {
                 Picker("Log Level", selection: $configService.config.logLevel) {
                     Text("Debug").tag("DEBUG")
@@ -1038,6 +1873,21 @@ struct AdvancedSettingsView: View {
                 Toggle("Auto-start Relay", isOn: $configService.config.autoStartRelay)
             }
             
+            Section {
+                TextField("Push Server URL", text: $configService.config.pushServerURL)
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                    #else
+                    .autocorrectionDisabled()
+                    #endif
+            } header: {
+                Text("Push Server")
+            } footer: {
+                Text("URL of the push notification server. Only change this if you self-host your own push server.")
+            }
+
             Section {
                 Button(role: .destructive) {
                     showResetConfirmation = true
@@ -1106,13 +1956,18 @@ struct BackupSettingsView: View {
     @EnvironmentObject var configService: ConfigService
     @EnvironmentObject var relayManager: RelayProcessManager
 
+    enum ImportType {
+        case jsonl
+        case blossom
+    }
+
     @State private var isExportingJSONL = false
     @State private var isImportingJSONL = false
     @State private var isExportingBlossom = false
     @State private var isImportingBlossom = false
     @State private var statusMessage = ""
+    @State private var activeImportType: ImportType?
     @State private var showFileImporter = false
-    @State private var showBlossomImporter = false
     
     var body: some View {
         Form {
@@ -1236,10 +2091,14 @@ struct BackupSettingsView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         .fileImporter(isPresented: $showFileImporter, allowedContentTypes: [.zip], allowsMultipleSelection: false) { result in
-            handleJSONLImport(result)
-        }
-        .fileImporter(isPresented: $showBlossomImporter, allowedContentTypes: [.zip], allowsMultipleSelection: false) { result in
-            handleBlossomImport(result)
+            switch activeImportType {
+            case .jsonl:
+                handleJSONLImport(result)
+            case .blossom:
+                handleBlossomImport(result)
+            case .none:
+                break
+            }
         }
         #endif
     }
@@ -1279,10 +2138,11 @@ struct BackupSettingsView: View {
         panel.allowedContentTypes = [.zip]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        
+
         guard panel.runModal() == .OK, let url = panel.url else { return }
         performJSONLRestore(from: url)
         #else
+        activeImportType = .jsonl
         showFileImporter = true
         #endif
     }
@@ -1364,11 +2224,12 @@ struct BackupSettingsView: View {
         panel.allowedContentTypes = [.zip]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
-        
+
         guard panel.runModal() == .OK, let url = panel.url else { return }
         performBlossomRestore(from: url)
         #else
-        showBlossomImporter = true
+        activeImportType = .blossom
+        showFileImporter = true
         #endif
     }
     
@@ -1679,6 +2540,38 @@ struct WalletSettingsView: View {
                 }
             }
 
+            // Cashu Ecash Mint
+            Section {
+                TextEditor(text: $configService.config.cashuMintURL)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(minHeight: 60)
+                    .padding(4)
+                    .background(Color.platformControlBackground)
+                    .cornerRadius(6)
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    .keyboardType(.URL)
+                    #endif
+                    .onChange(of: configService.config.cashuMintURL) { _, _ in
+                        configService.save()
+                    }
+            } header: {
+                Text("Cashu Mint URL")
+            } footer: {
+                Text("Enter a Cashu mint URL to enable the ecash wallet. Example: https://mint.minibits.cash/Bitcoin")
+            }
+
+            if !configService.config.cashuMintURL.isEmpty {
+                Section("Ecash Wallet") {
+                    HStack {
+                        Text("Balance")
+                        Spacer()
+                        Text("\(CashuService.shared.balanceSats) sats")
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+
             // Bitcoin Taproot wallet derived from Nostr keypair (BIP-341)
             Section {
                 Toggle(isOn: $configService.config.showBitcoinWallet) {
@@ -1958,6 +2851,118 @@ struct ThemeCard: View {
         .buttonStyle(.plain)
         .onHover { hovering in
             isHovered = hovering
+        }
+    }
+}
+#endif
+
+#if os(macOS)
+/// macOS settings page for configuring the relay domain, port, and Cloudflare tunnel.
+struct MacRelayDomainSettingsView: View {
+    @EnvironmentObject var configService: ConfigService
+
+    var body: some View {
+        Form {
+            // MARK: - Domain
+            Section {
+                TextField("relay.yourdomain.com", text: $configService.config.relayURL)
+                    .font(.system(.body, design: .monospaced))
+                    .autocorrectionDisabled()
+                    .textFieldStyle(.roundedBorder)
+
+                if !configService.config.sanitizedRelayURL.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                                .font(.caption)
+                            Text("wss://\(configService.config.sanitizedRelayURL)")
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundColor(.secondary)
+                                .textSelection(.enabled)
+                        }
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                                .font(.caption)
+                            Text("https://\(configService.config.sanitizedRelayURL)")
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundColor(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+            } header: {
+                Text("Relay Domain")
+            } footer: {
+                Text("Enter a domain to make your relay publicly accessible. Leave blank for local-only. Accepts any format (https://, wss://, or bare domain).")
+            }
+
+            // MARK: - Port
+            Section {
+                HStack {
+                    Text("Port")
+                    Spacer()
+                    TextField("3355", value: $configService.config.relayPort, formatter: NumberFormatter.noSeparator)
+                        .frame(width: 80)
+                        .textFieldStyle(.roundedBorder)
+                        .multilineTextAlignment(.trailing)
+                }
+            } header: {
+                Text("Network")
+            } footer: {
+                Text("The relay listens on all network interfaces (0.0.0.0). Default port is 3355.")
+            }
+
+            // MARK: - Cloudflare Tunnel Instructions
+            Section {
+                VStack(alignment: .leading, spacing: 12) {
+                    instructionStep(1, "Install cloudflared",
+                        "brew install cloudflared")
+                    instructionStep(2, "Authenticate with Cloudflare",
+                        "cloudflared tunnel login")
+                    instructionStep(3, "Create a tunnel",
+                        "cloudflared tunnel create haven")
+                    instructionStep(4, "Route your domain to the tunnel",
+                        "cloudflared tunnel route dns haven \(configService.config.sanitizedRelayURL.isEmpty ? "relay.yourdomain.com" : configService.config.sanitizedRelayURL)")
+                    instructionStep(5, "Run the tunnel",
+                        "cloudflared tunnel run --url http://localhost:\(configService.config.relayPort) haven")
+                }
+                .padding(.vertical, 4)
+            } header: {
+                Text("Cloudflare Tunnel Setup")
+            } footer: {
+                Text("To keep the tunnel running in the background, use `brew services start cloudflared` or add it to your login items.")
+            }
+        }
+        .groupedFormStyleCompat()
+    }
+
+    private func instructionStep(_ number: Int, _ title: String, _ command: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("\(number). \(title)")
+                .font(.subheadline.bold())
+            HStack {
+                Text(command)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .textSelection(.enabled)
+                    .padding(6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.05))
+                    .cornerRadius(4)
+                Button {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(command, forType: .string)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Copy to clipboard")
+            }
         }
     }
 }

@@ -14,18 +14,48 @@ struct DMInboxView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 if dmService.conversations.isEmpty {
-                    VStack(spacing: 16) {
-                        Image(systemName: "bubble.right")
-                            .font(.system(size: 48, weight: .thin))
-                            .foregroundColor(.secondary.opacity(0.5))
-                        Text("No Messages Yet")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(.primary)
-                        Text("Tap + to start a conversation")
-                            .font(.system(size: 13))
-                            .foregroundColor(.secondary)
+                    GeometryReader { geometry in
+                        ScrollView(.vertical, showsIndicators: false) {
+                            VStack(spacing: 20) {
+                                Spacer()
+
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.havenPurple.opacity(0.08))
+                                        .frame(width: 100, height: 100)
+                                    Circle()
+                                        .fill(Color.havenPurple.opacity(0.05))
+                                        .frame(width: 130, height: 130)
+                                    Image(systemName: "bubble.left.and.bubble.right")
+                                        .font(.system(size: 36, weight: .light))
+                                        .foregroundStyle(
+                                            LinearGradient(
+                                                colors: [.havenPurple, .havenPurpleLight],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            )
+                                        )
+                                }
+
+                                VStack(spacing: 8) {
+                                    Text("No Messages Yet")
+                                        .font(.system(size: 18, weight: .semibold))
+                                        .foregroundColor(.primary)
+                                    Text("Start an encrypted conversation\nwith the compose button above")
+                                        .font(.system(size: 14))
+                                        .foregroundColor(.secondary)
+                                        .multilineTextAlignment(.center)
+                                        .lineSpacing(2)
+                                }
+
+                                Spacer()
+                            }
+                            .frame(width: geometry.size.width, height: geometry.size.height)
+                        }
+                        .refreshable {
+                            dmService.refresh()
+                        }
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(Color(red: 0.08, green: 0.08, blue: 0.1).ignoresSafeArea())
                 } else {
                     List {
@@ -58,10 +88,19 @@ struct DMInboxView: View {
                     }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: { showingCompose = true }) {
-                        Image(systemName: "square.and.pencil")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(.havenPurple)
+                    HStack(spacing: 16) {
+                        Button(action: { dmService.markAllAsRead() }) {
+                            Image(systemName: "checkmark.circle")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(.havenPurple)
+                        }
+                        .help("Mark all as read")
+
+                        Button(action: { showingCompose = true }) {
+                            Image(systemName: "square.and.pencil")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(.havenPurple)
+                        }
                     }
                 }
             }
@@ -73,12 +112,21 @@ struct DMInboxView: View {
             #else
             .toolbar {
                 ToolbarItem(placement: .automatic) {
-                    Button(action: { showingCompose = true }) {
-                        Image(systemName: "square.and.pencil")
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(.havenPurple)
+                    HStack(spacing: 12) {
+                        Button(action: { dmService.markAllAsRead() }) {
+                            Image(systemName: "checkmark.circle")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(.havenPurple)
+                        }
+                        .help("Mark all as read")
+
+                        Button(action: { showingCompose = true }) {
+                            Image(systemName: "square.and.pencil")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(.havenPurple)
+                        }
+                        .help("New Message")
                     }
-                    .help("New Message")
                 }
             }
             .sheet(isPresented: $showingCompose) {
@@ -107,7 +155,7 @@ struct MacComposeView: View {
     @State private var isSending = false
 
     private var searchResults: [String] {
-        if searchText.isEmpty { return [] }
+        if searchText.count < 2 { return [] }
         return Array(nostrService.profiles.keys.filter { pubkey in
             let profile = nostrService.profiles[pubkey]
             let name = profile?.bestName ?? ""
@@ -257,9 +305,9 @@ struct ConversationRow: View {
     private var lastMessagePreview: String {
         let message = conversation.lastMessage?.content ?? ""
         if message.isEmpty {
-            return "(empty message)"
+            return "No message content"
         }
-        return message.prefix(50).trimmingCharacters(in: .whitespaces) + (message.count > 50 ? "…" : "")
+        return message.prefix(60).trimmingCharacters(in: .whitespaces) + (message.count > 60 ? "…" : "")
     }
 
     private var lastMessageTime: String {
@@ -269,48 +317,64 @@ struct ConversationRow: View {
         return formatter.localizedString(for: lastMessage.timestamp, relativeTo: Date())
     }
 
-    var body: some View {
-        HStack(spacing: 12) {
-            AvatarView(url: counterpartyProfile?.pictureURL, pubkey: conversation.id)
-                .frame(width: 48, height: 48)
+    private var hasUnread: Bool {
+        conversation.unreadCount > 0
+    }
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
+    var body: some View {
+        HStack(spacing: 14) {
+            ZStack(alignment: .topTrailing) {
+                AvatarView(url: counterpartyProfile?.pictureURL, pubkey: conversation.id)
+                    .frame(width: 52, height: 52)
+                    .clipShape(Circle())
+
+                if hasUnread {
+                    Circle()
+                        .fill(Color.havenPurple)
+                        .frame(width: 14, height: 14)
+                        .overlay(
+                            Circle()
+                                .stroke(Color(red: 0.12, green: 0.12, blue: 0.16), lineWidth: 2)
+                        )
+                        .offset(x: 2, y: -1)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
                     Text(counterpartyName)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 15, weight: hasUnread ? .bold : .semibold))
                         .foregroundColor(.primary)
                         .lineLimit(1)
 
                     Spacer(minLength: 0)
 
                     Text(lastMessageTime)
-                        .font(.system(size: 11, weight: .regular))
-                        .foregroundColor(.secondary)
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundColor(hasUnread ? .havenPurple : .secondary)
                 }
 
                 HStack(spacing: 8) {
                     Text(lastMessagePreview)
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
+                        .font(.system(size: 13, weight: hasUnread ? .medium : .regular))
+                        .foregroundColor(hasUnread ? .primary.opacity(0.8) : .secondary)
+                        .lineLimit(2)
 
-                    if conversation.unreadCount > 0 {
+                    if conversation.unreadCount > 1 {
                         Spacer(minLength: 0)
 
-                        ZStack {
-                            Circle()
-                                .fill(Color.havenPurple)
-
-                            Text("\(conversation.unreadCount)")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(.white)
-                        }
-                        .frame(width: 20, height: 20)
+                        Text("\(conversation.unreadCount)")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(Color.havenPurple)
+                            .clipShape(Capsule())
                     }
                 }
             }
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 10)
         .contentShape(Rectangle())
     }
 }

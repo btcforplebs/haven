@@ -15,7 +15,7 @@ COPY config.py ./
 RUN mkdir -p /app/certs /app/data
 
 # Expose port
-EXPOSE 8000
+EXPOSE 7766
 
 # Run the server
 CMD ["python", "main.py"]

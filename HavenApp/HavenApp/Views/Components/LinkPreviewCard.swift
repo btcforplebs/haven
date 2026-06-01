@@ -1,0 +1,141 @@
+import SwiftUI
+
+/// A rich link preview card that fetches and displays OpenGraph metadata.
+/// Matches the visual style of QuotedNoteView for consistency.
+struct LinkPreviewCard: View {
+    let url: URL
+
+    @State private var metadata: LinkPreviewMetadata?
+    @State private var isLoading = true
+
+    var body: some View {
+        Group {
+            if let metadata = metadata, metadata.title != nil {
+                cardContent(metadata)
+            } else if isLoading {
+                shimmerPlaceholder
+            }
+            // If fetch failed or no title, render nothing (graceful degradation)
+        }
+        .onAppear { loadMetadata() }
+    }
+
+    // MARK: - Card Content
+
+    @ViewBuilder
+    private func cardContent(_ meta: LinkPreviewMetadata) -> some View {
+        Button {
+            PlatformURL.open(url)
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                // OG image thumbnail
+                if let imageURL = meta.imageURL {
+                    ogImageView(imageURL)
+                }
+
+                // Text content
+                VStack(alignment: .leading, spacing: 3) {
+                    // Site name
+                    if let siteName = meta.siteName, !siteName.isEmpty {
+                        Text(siteName)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(.secondary.opacity(0.7))
+                            .lineLimit(1)
+                    }
+
+                    // Title
+                    if let title = meta.title {
+                        Text(title)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.primary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+
+                    // Description
+                    if let desc = meta.description, !desc.isEmpty {
+                        Text(desc)
+                            .font(.system(size: 12, weight: .regular))
+                            .foregroundColor(.secondary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+
+                    // Domain
+                    Text(displayDomain)
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundColor(.secondary.opacity(0.6))
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(10)
+            .background(Color.platformTertiaryGroupedBackground)
+            .cornerRadius(8)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.havenPurple.opacity(0.15), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - OG Image
+
+    private func ogImageView(_ imageURL: URL) -> some View {
+        CachedAsyncImage(url: imageURL) { image in
+            image
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+        } placeholder: {
+            Color.platformTertiaryGroupedBackground
+        }
+        .frame(width: 72, height: 72)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    // MARK: - Placeholder
+
+    private var shimmerPlaceholder: some View {
+        HStack(spacing: 10) {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color.platformTertiaryGroupedBackground)
+                .frame(width: 72, height: 72)
+
+            VStack(alignment: .leading, spacing: 6) {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color.platformTertiaryGroupedBackground)
+                    .frame(height: 12)
+                    .frame(maxWidth: 180)
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color.platformTertiaryGroupedBackground)
+                    .frame(height: 10)
+                    .frame(maxWidth: 140)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(10)
+        .background(Color.platformTertiaryGroupedBackground.opacity(0.5))
+        .cornerRadius(8)
+    }
+
+    // MARK: - Helpers
+
+    private var displayDomain: String {
+        guard let host = url.host else { return url.absoluteString }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
+
+    private func loadMetadata() {
+        guard metadata == nil, isLoading else { return }
+        Task {
+            let result = await LinkPreviewService.shared.fetchMetadata(for: url)
+            await MainActor.run {
+                withAnimation(.easeIn(duration: 0.15)) {
+                    self.metadata = result
+                    self.isLoading = false
+                }
+            }
+        }
+    }
+}

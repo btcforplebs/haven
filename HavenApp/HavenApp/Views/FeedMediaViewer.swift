@@ -136,42 +136,21 @@ struct FeedMediaViewer: View {
             VStack {
                 HStack {
                     if !isLoadingType && !isMirroring {
-                        if isOnMirror {
-                            HStack(spacing: 8) {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .font(.system(size: 16, weight: .semibold))
-                                    Text("Mirrored to Blossom")
-                                        .font(.system(size: 12, weight: .bold, design: .rounded))
-                                }
-                                .foregroundColor(.white.opacity(0.95))
-                                .padding(.vertical, 8)
-                                .padding(.horizontal, 14)
-                                .background(
-                                    Capsule()
-                                        .fill(Color(red: 0.2, green: 0.8, blue: 0.6).opacity(0.8))
-                                        .overlay(
-                                            Capsule()
-                                                .stroke(Color.white.opacity(0.15), lineWidth: 1)
-                                        )
-                                )
-
-                                Button(action: {
-                                    let link = getMirroredLink()
-                                    PlatformClipboard.copy(link)
-                                    withAnimation(.spring()) {
-                                        isCopied = true
-                                    }
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                                        withAnimation(.easeInOut(duration: 0.3)) {
-                                            isCopied = false
-                                        }
-                                    }
-                                }) {
+                        let hash = extractSHA256FromURL()
+                        let port = configService.config.relayPort
+                        #if os(macOS)
+                        let localURL = URL(string: "http://127.0.0.1:\(port)/\(hash)")
+                        #else
+                        let localURL = URL(string: "https://localhost:\(port)/\(hash)")
+                        #endif
+                        
+                        if let localURL = localURL, configService.hasExternalShareURL(for: localURL) {
+                            if isOnMirror {
+                                HStack(spacing: 8) {
                                     HStack(spacing: 6) {
-                                        Image(systemName: isCopied ? "checkmark.circle.fill" : "doc.on.doc.fill")
-                                            .font(.system(size: 14, weight: .semibold))
-                                        Text(isCopied ? "Copied!" : "Copy Link")
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .font(.system(size: 16, weight: .semibold))
+                                        Text("Mirrored to Blossom")
                                             .font(.system(size: 12, weight: .bold, design: .rounded))
                                     }
                                     .foregroundColor(.white.opacity(0.95))
@@ -179,42 +158,73 @@ struct FeedMediaViewer: View {
                                     .padding(.horizontal, 14)
                                     .background(
                                         Capsule()
-                                            .fill(isCopied ? Color(red: 0.2, green: 0.8, blue: 0.6).opacity(0.8) : Color.white.opacity(0.2))
+                                            .fill(Color(red: 0.2, green: 0.8, blue: 0.6).opacity(0.8))
                                             .overlay(
                                                 Capsule()
                                                     .stroke(Color.white.opacity(0.15), lineWidth: 1)
                                             )
                                     )
+
+                                    Button(action: {
+                                        let link = getMirroredLink()
+                                        PlatformClipboard.copy(link)
+                                        withAnimation(.spring()) {
+                                            isCopied = true
+                                        }
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                                            withAnimation(.easeInOut(duration: 0.3)) {
+                                                isCopied = false
+                                            }
+                                        }
+                                    }) {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: isCopied ? "checkmark.circle.fill" : "doc.on.doc.fill")
+                                                .font(.system(size: 14, weight: .semibold))
+                                            Text(isCopied ? "Copied!" : "Copy Link")
+                                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                        }
+                                        .foregroundColor(.white.opacity(0.95))
+                                        .padding(.vertical, 8)
+                                        .padding(.horizontal, 14)
+                                        .background(
+                                            Capsule()
+                                                .fill(isCopied ? Color(red: 0.2, green: 0.8, blue: 0.6).opacity(0.8) : Color.white.opacity(0.2))
+                                                .overlay(
+                                                    Capsule()
+                                                        .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                                                )
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                                .shadow(color: Color.black.opacity(0.3), radius: 4)
+                                .padding(20)
+                            } else {
+                                Button {
+                                    mirrorToBlossomTapped()
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "arrow.down.circle.fill")
+                                            .font(.system(size: 16, weight: .semibold))
+                                        Text("Mirror to Blossom")
+                                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                                    }
+                                    .foregroundColor(.white.opacity(0.95))
+                                    .padding(.vertical, 8)
+                                    .padding(.horizontal, 14)
+                                    .background(
+                                        Capsule()
+                                            .fill(Color.black.opacity(0.6))
+                                            .overlay(
+                                                Capsule()
+                                                    .stroke(Color.white.opacity(0.15), lineWidth: 1)
+                                            )
+                                    )
+                                    .shadow(color: Color.black.opacity(0.3), radius: 4)
+                                    .padding(20)
                                 }
                                 .buttonStyle(.plain)
                             }
-                            .shadow(color: Color.black.opacity(0.3), radius: 4)
-                            .padding(20)
-                        } else {
-                            Button {
-                                mirrorToBlossomTapped()
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "arrow.down.circle.fill")
-                                        .font(.system(size: 16, weight: .semibold))
-                                    Text("Mirror to Blossom")
-                                        .font(.system(size: 12, weight: .bold, design: .rounded))
-                                }
-                                .foregroundColor(.white.opacity(0.95))
-                                .padding(.vertical, 8)
-                                .padding(.horizontal, 14)
-                                .background(
-                                    Capsule()
-                                        .fill(Color.black.opacity(0.6))
-                                        .overlay(
-                                            Capsule()
-                                                .stroke(Color.white.opacity(0.15), lineWidth: 1)
-                                        )
-                                )
-                                .shadow(color: Color.black.opacity(0.3), radius: 4)
-                                .padding(20)
-                            }
-                            .buttonStyle(.plain)
                         }
                     }
                     Spacer()
@@ -274,8 +284,20 @@ struct FeedMediaViewer: View {
                 deleteStatusView(status)
             }
         }
+        #if os(iOS)
+        .onAppear {
+            AppDelegate.allowLandscape = true
+        }
+        .onDisappear {
+            AppDelegate.allowLandscape = false
+            // Force back to portrait when leaving the viewer
+            if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
+                windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
+            }
+        }
+        #endif
     }
-    
+
     private func performDismiss() {
         if let onDismiss = onDismiss {
             onDismiss()
@@ -336,7 +358,16 @@ struct FeedMediaViewer: View {
         mirrorStatus = .loading
 
         Task {
+            // Request background execution time on iOS so the mirror completes
+            // even if the user dismisses the viewer or switches apps.
+            #if os(iOS)
+            let bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "BlossomMirror", expirationHandler: nil)
+            #endif
+
             defer {
+                #if os(iOS)
+                UIApplication.shared.endBackgroundTask(bgTaskId)
+                #endif
                 isMirroring = false
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
                     withAnimation(.easeOut(duration: 0.4)) {
@@ -472,10 +503,11 @@ struct FeedMediaViewer: View {
         if !hash.isEmpty {
             let port = configService.config.relayPort
             #if os(macOS)
-            return "http://127.0.0.1:\(port)/\(hash)"
+            let localURL = URL(string: "http://127.0.0.1:\(port)/\(hash)")!
             #else
-            return "https://localhost:\(port)/\(hash)"
+            let localURL = URL(string: "https://localhost:\(port)/\(hash)")!
             #endif
+            return configService.externalShareURL(for: localURL).absoluteString
         }
         return url.absoluteString
     }
@@ -518,7 +550,7 @@ struct FeedMediaViewer: View {
 
         // 3. Fallback to standard network request if cache fetch returns nil (e.g. uncached remote resource)
         var request = URLRequest(url: url)
-        request.timeoutInterval = 30
+        request.timeoutInterval = 120  // 2 minutes — 30s was too short for video files
 
         let (data, response) = try await URLSession.shared.data(for: request)
         

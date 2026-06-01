@@ -7,13 +7,15 @@ struct NWCService {
         case notConnected
         case invalidResponse
         case encryptionError
-        
+        case responseDecodeError
+
         var errorDescription: String? {
             switch self {
             case .invalidURI: return "Invalid NWC URI"
             case .notConnected: return "Failed to connect to NWC relay"
             case .invalidResponse: return "Invalid response from NWC relay"
-            case .encryptionError: return "Failed to encrypt/decrypt payload"
+            case .encryptionError: return "Failed to encrypt/decrypt NWC payload"
+            case .responseDecodeError: return "Wallet returned an unexpected response format"
             }
         }
     }
@@ -45,23 +47,29 @@ struct NWCService {
     struct CodableAny: Codable {
         let value: Any
         init(_ value: Any) { self.value = value }
-        
+
         init(from decoder: Decoder) throws {
             let container = try decoder.singleValueContainer()
-            if let intVal = try? container.decode(Int.self) { value = intVal }
+            if container.decodeNil() { value = NSNull() }
+            else if let intVal = try? container.decode(Int.self) { value = intVal }
             else if let doubleVal = try? container.decode(Double.self) { value = doubleVal }
             else if let boolVal = try? container.decode(Bool.self) { value = boolVal }
             else if let strVal = try? container.decode(String.self) { value = strVal }
-            else { throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unknown type") }
+            else if let arrVal = try? container.decode([CodableAny].self) { value = arrVal.map { $0.value } }
+            else if let dictVal = try? container.decode([String: CodableAny].self) { value = dictVal.mapValues { $0.value } }
+            else { throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported JSON type") }
         }
-        
+
         func encode(to encoder: Encoder) throws {
             var container = encoder.singleValueContainer()
-            if let intVal = value as? Int { try container.encode(intVal) }
+            if value is NSNull { try container.encodeNil() }
+            else if let intVal = value as? Int { try container.encode(intVal) }
             else if let doubleVal = value as? Double { try container.encode(doubleVal) }
             else if let boolVal = value as? Bool { try container.encode(boolVal) }
             else if let strVal = value as? String { try container.encode(strVal) }
-            else { throw EncodingError.invalidValue(value, EncodingError.Context(codingPath: encoder.codingPath, debugDescription: "Invalid JSON value")) }
+            else if let arrVal = value as? [Any] { try container.encode(arrVal.map { CodableAny($0) }) }
+            else if let dictVal = value as? [String: Any] { try container.encode(dictVal.mapValues { CodableAny($0) }) }
+            else { throw EncodingError.invalidValue(value, EncodingError.Context(codingPath: encoder.codingPath, debugDescription: "Unsupported JSON type")) }
         }
     }
     
@@ -270,7 +278,8 @@ struct NWCService {
                                 RelayProcessManager.shared.addLog("NWC: Failed to decrypt or decode response: \(error)", level: "ERROR")
                                 isCompleted = true
                                 wsClient.disconnect()
-                                continuation.resume(throwing: NWCError.encryptionError)
+                                let nwcError: NWCError = (error is NIP04Service.NIP04Error) ? .encryptionError : .responseDecodeError
+                                continuation.resume(throwing: nwcError)
                             }
                         } else if type == "OK" {
                             RelayProcessManager.shared.addLog("NWC: OK response: \(array.count > 2 ? String(describing: array[2]) : "no message")", level: "INFO")
@@ -474,7 +483,8 @@ struct NWCService {
                                 RelayProcessManager.shared.addLog("NWC: Balance decode failed: \(error)", level: "ERROR")
                                 isCompleted = true
                                 wsClient.disconnect()
-                                continuation.resume(throwing: NWCError.encryptionError)
+                                let nwcError: NWCError = (error is NIP04Service.NIP04Error) ? .encryptionError : .responseDecodeError
+                                continuation.resume(throwing: nwcError)
                             }
                         } else if type == "NOTICE", array.count >= 2, let msg = array[1] as? String {
                             RelayProcessManager.shared.addLog("NWC: Balance NOTICE: \(msg)", level: "WARN")
@@ -671,7 +681,8 @@ struct NWCService {
                                 RelayProcessManager.shared.addLog("NWC: make_invoice decode failed: \(error)", level: "ERROR")
                                 isCompleted = true
                                 wsClient.disconnect()
-                                continuation.resume(throwing: NWCError.encryptionError)
+                                let nwcError: NWCError = (error is NIP04Service.NIP04Error) ? .encryptionError : .responseDecodeError
+                                continuation.resume(throwing: nwcError)
                             }
                         } else if type == "NOTICE", array.count >= 2, let msg = array[1] as? String {
                             RelayProcessManager.shared.addLog("NWC: make_invoice NOTICE: \(msg)", level: "WARN")

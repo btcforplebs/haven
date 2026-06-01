@@ -19,14 +19,23 @@ struct MessageComposerView: View {
     @State private var showPhotoPicker = false
 
     private var searchResults: [String] {
-        if searchText.isEmpty {
+        if searchText.count < 2 {
             return []
         }
+        let searchLower = searchText.lowercased()
+
+        // Decode npub to hex pubkey for direct lookup
+        if searchLower.hasPrefix("npub1"),
+           let decoded = Bech32.decode(searchText),
+           decoded.hrp == "npub" {
+            return [decoded.hexString]
+        }
+
         return Array(nostrService.profiles.keys.filter { pubkey in
             let profile = nostrService.profiles[pubkey]
             let name = profile?.bestName ?? ""
-            return name.lowercased().contains(searchText.lowercased()) ||
-                   pubkey.lowercased().contains(searchText.lowercased())
+            return name.lowercased().contains(searchLower) ||
+                   pubkey.lowercased().contains(searchLower)
         }.prefix(10))
     }
 
@@ -132,82 +141,82 @@ struct MessageComposerView: View {
                 // Message Content
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
-                        // Message input
                         ZStack(alignment: .topLeading) {
                             TextEditor(text: $messageText)
                                 .textEditorStyle(.plain)
-                                .font(.system(size: 14))
+                                .font(.system(size: 15))
                                 .scrollContentBackground(.hidden)
-                                .frame(minHeight: 100)
+                                .frame(minHeight: 120)
 
                             if messageText.isEmpty {
-                                Text("Your message...")
-                                    .font(.system(size: 14))
-                                    .foregroundColor(.secondary.opacity(0.6))
-                                    .padding(8)
+                                Text("Write a message...")
+                                    .font(.system(size: 15))
+                                    .foregroundColor(.secondary.opacity(0.5))
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 8)
+                                    .allowsHitTesting(false)
                             }
                         }
                         .padding(12)
-                        .background(Color.platformTertiaryGroupedBackground)
-                        .cornerRadius(8)
 
                         // Image preview
                         if let image = selectedImage {
-                            VStack(alignment: .trailing, spacing: 8) {
+                            ZStack(alignment: .topTrailing) {
                                 Image(uiImage: image)
                                     .resizable()
                                     .scaledToFill()
                                     .frame(maxHeight: 200)
-                                    .cornerRadius(6)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
 
                                 Button(action: {
                                     selectedImage = nil
                                     selectedImageData = nil
                                 }) {
                                     Image(systemName: "xmark.circle.fill")
-                                        .foregroundColor(.secondary)
+                                        .font(.system(size: 22))
+                                        .foregroundColor(.white)
+                                        .shadow(radius: 2)
                                 }
+                                .padding(8)
                             }
+                            .padding(.horizontal, 12)
                         }
 
                         Spacer()
                     }
-                    .padding(16)
+                    .padding(.horizontal, 4)
                 }
 
                 // Actions
-                HStack(spacing: 12) {
-                    #if os(iOS)
-                    Button(action: {}) {
-                        Image(systemName: "photo")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(.havenPurple)
-                            .padding(12)
-                            .background(Color.havenPurple.opacity(0.12))
-                            .cornerRadius(8)
-                    }
-                    #endif
+                Divider()
+                    .opacity(0.5)
 
+                HStack(spacing: 12) {
                     Spacer()
 
-                    Button(action: sendMessage) {
-                        if isSending {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                                .frame(width: 40, height: 40)
-                        } else {
-                            Image(systemName: "paperplane.fill")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundColor(.white)
-                                .padding(12)
-                                .background(canSend ? Color.havenPurple : Color.havenPurple.opacity(0.4))
-                                .cornerRadius(8)
+                    if isSending {
+                        ProgressView()
+                            .frame(height: 36)
+                    } else {
+                        Button(action: sendMessage) {
+                            HStack(spacing: 6) {
+                                Text("Send")
+                                    .font(.system(size: 14, weight: .semibold))
+                                Image(systemName: "paperplane.fill")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 10)
+                            .background(canSend ? Color.havenPurple : Color.havenPurple.opacity(0.3))
+                            .clipShape(Capsule())
                         }
+                        .buttonStyle(.plain)
+                        .disabled(!canSend)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(!canSend || isSending)
                 }
-                .padding(16)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
             }
             .background(Color(red: 0.08, green: 0.08, blue: 0.1).ignoresSafeArea())
             .navigationTitle("New Message")

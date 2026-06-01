@@ -430,6 +430,89 @@ struct MediaUploadNotificationBanner: View {
     }
 }
 
+// MARK: - Post Action Notification Banner
+
+struct PostActionNotificationBanner: View {
+    @ObservedObject private var manager = PendingPostManager.shared
+
+    var body: some View {
+        VStack(spacing: 6) {
+            if manager.isShowing, let actionType = manager.actionType {
+                PostActionPill(
+                    actionType: actionType,
+                    timeRemaining: manager.timeRemaining,
+                    onUndo: { manager.cancel() },
+                    onEdit: actionType.canEdit ? { manager.requestEdit() } : nil
+                )
+                .transition(.asymmetric(
+                    insertion: .move(edge: .top).combined(with: .opacity),
+                    removal: .opacity.combined(with: .scale(scale: 0.8))
+                ))
+            }
+        }
+        .padding(.top, 12)
+        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: manager.isShowing)
+    }
+}
+
+// MARK: - Post Action Pill
+
+struct PostActionPill: View {
+    let actionType: PendingPostManager.ActionType
+    let timeRemaining: Double
+    let onUndo: () -> Void
+    let onEdit: (() -> Void)?
+
+    private let totalTime = PendingPostManager.ActionType.countdownDuration
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: actionType.icon)
+                .font(.system(size: 14, weight: .bold))
+
+            Text("\(actionType.label) in \(max(1, Int(ceil(timeRemaining))))s")
+                .font(.system(size: 14, weight: .bold))
+
+            // Progress bar
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.3))
+                    Capsule()
+                        .fill(Color.white)
+                        .frame(width: max(0, geo.size.width * (timeRemaining / totalTime)))
+                        .animation(.linear(duration: 0.1), value: timeRemaining)
+                }
+            }
+            .frame(width: 60, height: 4)
+
+            if let onEdit {
+                Button("Edit") { onEdit() }
+                    .font(.system(size: 13, weight: .bold))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(Color.white.opacity(0.25))
+                    .clipShape(Capsule())
+            }
+
+            Button("Undo") { onUndo() }
+                .font(.system(size: 13, weight: .bold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .background(Color.white.opacity(0.25))
+                .clipShape(Capsule())
+        }
+        .padding(.vertical, 12)
+        .padding(.horizontal, 24)
+        .background(
+            Capsule()
+                .fill(actionType.themedColor)
+                .shadow(color: Color.black.opacity(0.4), radius: 8, x: 0, y: 4)
+        )
+        .foregroundColor(.white)
+        .buttonStyle(.plain)
+    }
+}
+
 // MARK: - Upload Pill
 
 struct UploadPill: View {

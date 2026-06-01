@@ -50,9 +50,16 @@ class ZapService: ObservableObject {
             }
             
             // 2. Build Zap Request (Kind 9734)
+            // Include external relays so the provider can publish the receipt where it's queryable
+            var relayList = [ConfigService.shared.config.nostrURL]
+            let externalRelays = ConfigService.shared.config.feedRelays.isEmpty
+                ? ["wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"]
+                : ConfigService.shared.config.feedRelays
+            relayList.append(contentsOf: externalRelays)
+
             var tags: [[String]] = [
                 ["p", notePubkey],
-                ["relays", ConfigService.shared.config.nostrURL], // Use Haven's own relay for receipts
+                ["relays"] + relayList,
                 ["amount", String(amountMsat)]
             ]
             
@@ -64,7 +71,7 @@ class ZapService: ObservableObject {
             let lnurlTag = lud16.lowercased().hasPrefix("lnurl:") ? String(lud16.dropFirst(6)) : lud16
             tags.append(["lnurl", lnurlTag])
             
-            guard let signedZapReq = NostrService.shared.signEvent(kind: 9734, content: message, tags: tags) else {
+            guard let signedZapReq = await NostrService.shared.signEventAsync(kind: 9734, content: message, tags: tags) else {
                 RelayProcessManager.shared.addLog("Zap: Failed to sign Zap Request", level: "ERROR")
                 throw ZapError.signFailed
             }

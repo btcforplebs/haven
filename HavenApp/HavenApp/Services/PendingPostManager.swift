@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 
 @MainActor
 class PendingPostManager: ObservableObject {
@@ -44,9 +45,7 @@ class PendingPostManager: ObservableObject {
             }
         }
 
-        var totalTime: Double {
-            self == .repost ? 5.0 : 10.0
-        }
+        static let countdownDuration: Double = 5.0
 
         var canEdit: Bool { self != .repost }
     }
@@ -58,18 +57,33 @@ class PendingPostManager: ObservableObject {
         let quoteTo: FeedNote?
     }
 
-    @Published var bannerNoteId: String?
+    @Published var isShowing = false
     @Published var actionType: ActionType?
-    @Published var timeRemaining: Double = 10.0
+    @Published var timeRemaining: Double = 5.0
     @Published var editRequest: EditRequest?
 
+    private var bannerNoteId: String?
     private var pendingEvent: NostrEvent?
     private var pendingContent: String = ""
     private var pendingReplyTo: FeedNote?
     private var pendingQuoteTo: FeedNote?
     private var countdown: Task<Void, Never>?
+    private var cancellables = Set<AnyCancellable>()
 
-    private init() {}
+    private init() {
+        // Cancel any pending post when the active account switches,
+        // preventing a post composed under one account from being
+        // published under a different account's signing key.
+        ConfigService.shared.$config
+            .map { $0.activeAccountNpub }
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.cancel()
+            }
+            .store(in: &cancellables)
+    }
 
     func startPost(event: NostrEvent, content: String, replyTo: FeedNote?, quoteTo: FeedNote?, nostrService: NostrService) {
         clearPrevious()
@@ -80,7 +94,8 @@ class PendingPostManager: ObservableObject {
         pendingQuoteTo = quoteTo
         bannerNoteId = event.id
         actionType = type
-        timeRemaining = type.totalTime
+        timeRemaining = ActionType.countdownDuration
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { isShowing = true }
         beginCountdown { nostrService.postEvent(event) }
     }
 
@@ -91,7 +106,8 @@ class PendingPostManager: ObservableObject {
         pendingQuoteTo = nil
         bannerNoteId = sourceNote.id
         actionType = .repost
-        timeRemaining = ActionType.repost.totalTime
+        timeRemaining = ActionType.countdownDuration
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { isShowing = true }
 
         // NIP-18: always repost the ORIGINAL event, not a repost wrapper.
         // For kind 6 notes, repostedEventId points to the original kind 1 event.
@@ -106,13 +122,15 @@ class PendingPostManager: ObservableObject {
             // NIP-18: e tag MUST include a relay URL as its third entry.
             let relayHint = ConfigService.shared.config.feedRelays.first
                 ?? ConfigService.shared.config.blastrRelays.first
-                ?? ""
+                ?? ConfigService.shared.config.nostrURL
 
-            guard let signed = nostrService.signEvent(
-                kind: 6, content: embedded,
-                tags: [["e", originalId, relayHint], ["p", originalPubkey]]
-            ) else { return }
-            nostrService.postEvent(signed)
+            Task {
+                guard let signed = await nostrService.signEventAsync(
+                    kind: 6, content: embedded,
+                    tags: [["e", originalId, relayHint], ["p", originalPubkey]]
+                ) else { return }
+                nostrService.postEvent(signed)
+            }
             FeedService.shared.repostedEventIds.insert(originalId)
         }
     }
@@ -124,10 +142,11 @@ class PendingPostManager: ObservableObject {
             FeedService.shared.removeNote(id: event.id)
         }
         pendingEvent = nil
-        withAnimation {
-            bannerNoteId = nil
+        withAnimation(.easeOut(duration: 0.4)) {
+            isShowing = false
             actionType = nil
         }
+        bannerNoteId = nil
     }
 
     func requestEdit() {
@@ -140,10 +159,11 @@ class PendingPostManager: ObservableObject {
             FeedService.shared.removeNote(id: event.id)
         }
         pendingEvent = nil
-        withAnimation {
-            bannerNoteId = nil
+        withAnimation(.easeOut(duration: 0.4)) {
+            isShowing = false
             actionType = nil
         }
+        bannerNoteId = nil
         editRequest = EditRequest(content: content, replyTo: replyTo, quoteTo: quoteTo)
     }
 
@@ -154,23 +174,25 @@ class PendingPostManager: ObservableObject {
             FeedService.shared.removeNote(id: event.id)
         }
         pendingEvent = nil
+        isShowing = false
         bannerNoteId = nil
         actionType = nil
     }
 
     private func beginCountdown(onComplete: @escaping @MainActor () -> Void) {
-        let ticks = Int(timeRemaining * 10)
+        let endTime = Date().addingTimeInterval(ActionType.countdownDuration)
         countdown = Task { @MainActor in
-            for _ in 0..<ticks {
+            while Date() < endTime {
                 try? await Task.sleep(nanoseconds: 100_000_000)
                 if Task.isCancelled { return }
-                self.timeRemaining -= 0.1
+                self.timeRemaining = max(0, endTime.timeIntervalSinceNow)
             }
             if Task.isCancelled { return }
-            withAnimation {
-                self.bannerNoteId = nil
+            withAnimation(.easeOut(duration: 0.4)) {
+                self.isShowing = false
                 self.actionType = nil
             }
+            self.bannerNoteId = nil
             onComplete()
         }
     }

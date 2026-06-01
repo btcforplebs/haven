@@ -11,6 +11,7 @@ struct ProfileView: View {
 
     @EnvironmentObject var nostrService: NostrService
     @StateObject private var feedService = FeedService.shared
+    @StateObject private var dmService = DMService.shared
     @EnvironmentObject var configService: ConfigService
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
@@ -29,20 +30,9 @@ struct ProfileView: View {
     
     @State private var showSweep = false
     @State private var showLightning = false
-    @State private var showAmountPicker = false
-    @State private var zapAmountSats: String = ""
+    @State private var zapSheetContext: ZapSheetContext?
     @State private var copiedNpub = false
     @State private var copiedLightning = false
-    @State private var copiedBitcoinAddress = false
-    @State private var copiedSPAddress = false
-
-    // Bitcoin on-chain
-    @State private var bitcoinBalance: Int? = nil
-    @State private var bitcoinAddress: String? = nil
-
-    // Silent Payment address
-    @State private var silentPaymentAddress: String? = nil
-
     // Lightning (NWC) balance — own profile only
     @State private var lightningBalanceSats: Int? = nil
     @State private var isLoadingLightningBalance = false
@@ -52,6 +42,10 @@ struct ProfileView: View {
 
     // Compose post
     @State private var showingCompose = false
+    @State private var composeContext: ComposeContext?
+
+    // Settings (iOS — accessed from toolbar)
+    @State private var showingSettings = false
 
     // Message composer
     @State private var showingMessageComposer = false
@@ -60,8 +54,8 @@ struct ProfileView: View {
     @State private var showingDMInbox = false
 
     // Wallet views
-    @State private var showingOnChain = false
     @State private var showingLightning = false
+    @State private var showingCashu = false
 
     // Following / followers count
     @State private var followingCount: Int? = nil
@@ -75,6 +69,12 @@ struct ProfileView: View {
     @State private var profileClients: [WebSocketClient] = []
     @State private var profileCancellables = Set<AnyCancellable>()
     @State private var seenNoteIds = Set<String>()
+    @State private var isLoadingOlderNotes = false
+    @State private var hasMoreNotes = true
+
+    // Total counts from local relay (own profile)
+    @State private var totalNoteCount: Int? = nil
+    @State private var totalMediaCount: Int? = nil
 
     @State private var selectedSection: ProfileSection = .notes
 
@@ -86,7 +86,7 @@ struct ProfileView: View {
     }
 
     private var isOwnProfile: Bool {
-        nostrService.activeHexPubkey == pubkey
+        configService.activeAccountHexPubkey == pubkey
     }
 
     // NWC wallet belongs to the owner only — don't re-fetch balance for whitelisted accounts.
@@ -172,7 +172,9 @@ struct ProfileView: View {
     }
 
     private var sectionCount: (notes: Int, media: Int, replies: Int) {
-        (topNotes.count, mediaNotes.count, replyNotes.count)
+        let notes = (isOwnProfile ? totalNoteCount : nil) ?? topNotes.count
+        let media = (isOwnProfile ? totalMediaCount : nil) ?? mediaNotes.count
+        return (notes, media, replyNotes.count)
     }
 
     // MARK: - Body
@@ -180,7 +182,7 @@ struct ProfileView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                if !embeddedInNavigation && !isOwnProfile {
+                if !embeddedInNavigation && (!isOwnProfile || onDismiss != nil) {
                     dismissHeader
                 }
                 headerBlock
@@ -197,11 +199,8 @@ struct ProfileView: View {
                 divider
                 sectionTabBar
                 sectionContent
-                    #if os(iOS)
-                    .padding(.bottom, 90)
-                    #else
-                    .padding(.bottom, 32)
-                    #endif
+                    .environment(\.feedActions, .make(feedService: feedService, nostrService: nostrService))
+                    .tabBarBottomPadding()
             }
             .frame(maxWidth: 720)
             .frame(maxWidth: .infinity)
@@ -214,9 +213,8 @@ struct ProfileView: View {
         .onAppear {
             nostrService.fetchMissingProfiles(for: [pubkey], force: true)
             fetchAuthorNotes()
-            deriveBitcoinAddress()
-            deriveSilentPaymentAddress()
             fetchLightningBalance()
+            fetchLocalRelayCounts()
             #if os(macOS)
             installKeyMonitor()
             #endif
@@ -247,26 +245,6 @@ struct ProfileView: View {
             BitcoinSweepDisclaimerView(onDismiss: { showSweep = false })
                 .environmentObject(ConfigService.shared)
         }
-        .sheet(isPresented: $showingOnChain) {
-            NavigationStack {
-                WalletOnChainTab()
-                    .environmentObject(nostrService)
-                    .environmentObject(configService)
-                    .navigationTitle("On-Chain")
-                    #if os(iOS)
-                    .navigationBarTitleDisplayMode(.inline)
-                    #endif
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Close") { showingOnChain = false }
-                                .foregroundColor(.havenPurple)
-                        }
-                    }
-            }
-            #if os(macOS)
-            .frame(minWidth: 500, minHeight: 550)
-            #endif
-        }
         .sheet(isPresented: $showingLightning) {
             NavigationStack {
                 WalletLightningTab()
@@ -287,30 +265,76 @@ struct ProfileView: View {
             .frame(minWidth: 500, minHeight: 550)
             #endif
         }
+        .sheet(isPresented: $showingCashu) {
+            NavigationStack {
+                WalletCashuTab()
+                    .environmentObject(nostrService)
+                    .environmentObject(configService)
+                    .navigationTitle("Ecash")
+                    #if os(iOS)
+                    .navigationBarTitleDisplayMode(.inline)
+                    #endif
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Close") { showingCashu = false }
+                                .foregroundColor(.havenPurple)
+                        }
+                    }
+            }
+            #if os(macOS)
+            .frame(minWidth: 500, minHeight: 550)
+            #endif
+        }
         .sheet(isPresented: $showingCompose) {
             ComposeView(onDismiss: { showingCompose = false })
                 .environmentObject(nostrService)
                 .environmentObject(configService)
         }
+        .sheet(item: $composeContext) { ctx in
+            ComposeView(onDismiss: { composeContext = nil }, replyTo: ctx.replyTo, quoteTo: ctx.quoteTo, initialContent: ctx.initialContent)
+                .environmentObject(nostrService)
+                .environmentObject(configService)
+        }
         #if os(iOS)
         .toolbar {
-            ToolbarItemGroup(placement: .navigationBarLeading) {
+            ToolbarItem(placement: .navigationBarLeading) {
                 if isOwnProfile {
-                    Button(action: { showingOnChain = true }) {
-                        Image(systemName: "bitcoinsign.circle.fill")
-                            .foregroundColor(.orange)
-                    }
-                    Button(action: { showingLightning = true }) {
-                        Image(systemName: "bolt.fill")
-                            .foregroundColor(.yellow)
+                    HStack(spacing: 18) {
+                        if isOwnerProfile {
+                            Button(action: { showingLightning = true }) {
+                                Image(systemName: "bolt.fill")
+                                    .font(.system(size: 18))
+                                    .foregroundColor(.yellow)
+                            }
+                        }
+                        Button(action: { showingCashu = true }) {
+                            Image(systemName: "banknote.fill")
+                                .font(.system(size: 18))
+                                .foregroundColor(Color(red: 0.65, green: 0.45, blue: 0.2))
+                        }
                     }
                 }
             }
             ToolbarItem(placement: .navigationBarTrailing) {
                 if isOwnProfile {
-                    Button(action: { showingDMInbox = true }) {
-                        Image(systemName: "bubble.right.fill")
-                            .foregroundColor(.havenPurple)
+                    HStack(spacing: 20) {
+                        Button(action: { showingDMInbox = true }) {
+                            Image(systemName: "bubble.right.fill")
+                                .foregroundColor(.havenPurple)
+                                .overlay(alignment: .topTrailing) {
+                                    if dmService.totalUnreadCount > 0 {
+                                        Circle()
+                                            .fill(.red)
+                                            .frame(width: 8, height: 8)
+                                            .offset(x: 3, y: -3)
+                                    }
+                                }
+                        }
+
+                        Button(action: { showingSettings = true }) {
+                            Image(systemName: "gearshape.fill")
+                                .foregroundColor(.secondary)
+                        }
                     }
                 } else {
                     Button(action: { showingMessageComposer = true }) {
@@ -332,19 +356,27 @@ struct ProfileView: View {
                     .environmentObject(configService)
             }
         }
+        .sheet(isPresented: $showingSettings) {
+            NavigationStack {
+                SettingsView()
+                    .environmentObject(RelayProcessManager.shared)
+                    .environmentObject(ConfigService.shared)
+                    .environmentObject(NostrService.shared)
+                    .environmentObject(StatsService.shared)
+                    .navigationTitle("Settings")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Close") { showingSettings = false }
+                                .foregroundColor(.havenPurple)
+                        }
+                    }
+            }
+        }
         #else
         .toolbar {
             ToolbarItem(placement: .automatic) {
-                if isOwnProfile {
-                    Button(action: { showingOnChain = true }) {
-                        Image(systemName: "bitcoinsign.circle.fill")
-                            .foregroundColor(.orange)
-                    }
-                    .help("On-Chain")
-                }
-            }
-            ToolbarItem(placement: .automatic) {
-                if isOwnProfile {
+                if isOwnerProfile {
                     Button(action: { showingLightning = true }) {
                         Image(systemName: "bolt.fill")
                             .foregroundColor(.yellow)
@@ -354,9 +386,26 @@ struct ProfileView: View {
             }
             ToolbarItem(placement: .automatic) {
                 if isOwnProfile {
+                    Button(action: { showingCashu = true }) {
+                        Image(systemName: "banknote.fill")
+                            .foregroundColor(Color(red: 0.65, green: 0.45, blue: 0.2))
+                    }
+                    .help("Ecash")
+                }
+            }
+            ToolbarItem(placement: .automatic) {
+                if isOwnProfile {
                     Button(action: { showingDMInbox = true }) {
                         Image(systemName: "bubble.right.fill")
                             .foregroundColor(.havenPurple)
+                            .overlay(alignment: .topTrailing) {
+                                if dmService.totalUnreadCount > 0 {
+                                    Circle()
+                                        .fill(.red)
+                                        .frame(width: 7, height: 7)
+                                        .offset(x: 2, y: -2)
+                                }
+                            }
                     }
                     .help("Messages")
                 }
@@ -385,7 +434,46 @@ struct ProfileView: View {
             LightningAnimationView(isAnimating: $showLightning)
                 .allowsHitTesting(false)
         }
+        .overlay(alignment: .top) {
+            if onDismiss != nil {
+                VStack(spacing: 6) {
+                    FollowNotificationBanner()
+                    ZapNotificationBanner()
+                }
+                .padding(.top, 4)
+                .allowsHitTesting(true)
+            }
+        }
         #if os(iOS)
+        .overlay(alignment: .bottomTrailing) {
+            if isOwnProfile {
+                Button(action: { showingCompose = true }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "square.and.pencil")
+                            .font(.system(size: 15, weight: .bold))
+                        Text("Post")
+                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                    }
+                    .foregroundColor(.white)
+                    .frame(height: 48)
+                    .padding(.horizontal, 18)
+                    .background(
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    gradient: Gradient(colors: [Color.havenPurple, Color.havenPurpleLight]),
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .shadow(color: Color.havenPurple.opacity(0.35), radius: 8, x: 0, y: 4)
+                    )
+                }
+                .padding(.trailing, 20)
+                .padding(.bottom, 90)
+                .hoverEffect(.lift)
+            }
+        }
         .fullScreenCover(isPresented: isPresentingViewer) {
             if let item = selectedMedia {
                 mediaViewerContent(for: item)
@@ -394,21 +482,17 @@ struct ProfileView: View {
         #else
         .overlay(fullScreenOverlay)
         #endif
-        .alert("Zap Amount", isPresented: $showAmountPicker) {
-            #if os(iOS)
-            TextField("Amount in sats", text: $zapAmountSats)
-                .keyboardType(.numberPad)
-            #else
-            TextField("Amount in sats", text: $zapAmountSats)
-            #endif
-            Button("Zap!") {
-                if let amount = Int(zapAmountSats), let lud16 = lightningAddress {
+        .sheet(item: $zapSheetContext) { context in
+            CustomZapSheet(defaultAmount: context.defaultAmount) { amount in
+                if let lud16 = lightningAddress {
                     Task { await zapProfile(lud16: lud16, amount: amount) }
                 }
             }
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("Enter the amount of sats to zap.")
+            #if os(iOS)
+            .presentationDetents([.height(380), .medium])
+            .presentationDragIndicator(.visible)
+            .presentationBackground(Color(red: 0.08, green: 0.08, blue: 0.1))
+            #endif
         }
     }
 
@@ -625,27 +709,28 @@ struct ProfileView: View {
                 .buttonStyle(.plain)
 
                 if !ConfigService.shared.config.nwcURI.isEmpty, lightningAddress != nil {
-                    Button(action: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Zap \(defaultZapSats)")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .foregroundColor(.orange)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(Color.orange.opacity(0.15))
+                    .cornerRadius(6)
+                    .contentShape(RoundedRectangle(cornerRadius: 6))
+                    .onLongPressGesture {
+                        #if os(iOS)
+                        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                        #endif
+                        zapSheetContext = ZapSheetContext(defaultAmount: defaultZapSats)
+                    }
+                    .onTapGesture {
                         if let lud16 = lightningAddress {
                             Task { await zapProfile(lud16: lud16) }
                         }
-                    }) {
-                        HStack(spacing: 5) {
-                            Image(systemName: "bolt.fill")
-                                .font(.system(size: 12, weight: .semibold))
-                            Text("Zap \(defaultZapSats)")
-                                .font(.system(size: 13, weight: .semibold))
-                        }
-                        .foregroundColor(.orange)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 7)
-                        .background(Color.orange.opacity(0.15))
-                        .cornerRadius(6)
-                    }
-                    .buttonStyle(.plain)
-                    .onLongPressGesture {
-                        zapAmountSats = String(defaultZapSats)
-                        showAmountPicker = true
                     }
                 }
             }
@@ -668,18 +753,14 @@ struct ProfileView: View {
                     value: shortInt(feedService.followedPubkeys.filter { $0 != pubkey }.count),
                     label: "FOLLOWING"
                 )
-                statDivider
-                statCell(
-                    value: lightningBalanceSats.map(shortSats) ?? (isLoadingLightningBalance ? "…" : "—"),
-                    label: "⚡ LIGHTNING",
-                    tint: lightningBalanceSats != nil ? .orange : .secondary
-                )
-                statDivider
-                statCell(
-                    value: bitcoinBalance.map(shortSats) ?? "—",
-                    label: "\u{20BF} ON-CHAIN",
-                    tint: (bitcoinBalance ?? 0) > 0 ? .orange : .secondary
-                )
+                if isOwnerProfile {
+                    statDivider
+                    statCell(
+                        value: lightningBalanceSats.map(shortSats) ?? (isLoadingLightningBalance ? "…" : "—"),
+                        label: "⚡ LIGHTNING",
+                        tint: lightningBalanceSats != nil ? .orange : .secondary
+                    )
+                }
             } else {
                 statCell(
                     value: followingCount.map(shortInt) ?? "—",
@@ -691,12 +772,6 @@ struct ProfileView: View {
                     label: "FOLLOWERS",
                     tint: followersCount == nil ? Color(red: 0.2, green: 0.9, blue: 0.7).opacity(0.55) : .primary
                 )
-                statDivider
-                if let bal = bitcoinBalance, bal > 0 {
-                    statCell(value: shortSats(bal), label: "\u{20BF} ON-CHAIN", tint: .orange)
-                } else {
-                    statCell(value: "—", label: "\u{20BF} ON-CHAIN")
-                }
             }
         }
         .padding(.horizontal, 16)
@@ -781,59 +856,6 @@ struct ProfileView: View {
                 )
             }
 
-            if let address = bitcoinAddress {
-                identityDivider
-                identityRow(
-                    label: "BITCOIN",
-                    value: formattedAddress(address),
-                    icon: "bitcoinsign.circle.fill",
-                    tint: Color(red: 1.0, green: 0.6, blue: 0.1),
-                    copied: copiedBitcoinAddress,
-                    trailing: bitcoinBalanceTrailing,
-                    action: { copyToClipboard(address); triggerCopied($copiedBitcoinAddress) }
-                )
-
-                if isOwnProfile, let bal = bitcoinBalance, bal > 0 {
-                    Button(action: { showSweep = true }) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "arrow.up.right.circle.fill")
-                                .font(.system(size: 12, weight: .semibold))
-                            Text("Sweep \(shortSats(bal)) sats to wallet")
-                                .font(.system(size: 12, weight: .semibold))
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 10, weight: .semibold))
-                        }
-                        .foregroundColor(.orange)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(Color.orange.opacity(0.08))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            if let spAddr = silentPaymentAddress {
-                identityDivider
-                identityRow(
-                    label: "SILENT PAYMENT",
-                    value: formattedAddress(spAddr),
-                    icon: "eye.slash.fill",
-                    tint: Color(red: 0.6, green: 0.4, blue: 1.0),
-                    copied: copiedSPAddress,
-                    trailing: AnyView(
-                        Text("BETA")
-                            .font(.system(size: 9, weight: .black))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.red)
-                            .cornerRadius(4)
-                    ),
-                    action: { copyToClipboard(spAddr); triggerCopied($copiedSPAddress) }
-                )
-            }
-
             if let website = profile?.website, !website.isEmpty,
                let url = URL(string: website.hasPrefix("http") ? website : "https://\(website)") {
                 identityDivider
@@ -863,18 +885,6 @@ struct ProfileView: View {
             .padding(.leading, 16)
     }
 
-    private var bitcoinBalanceTrailing: AnyView {
-        if let bal = bitcoinBalance, bal > 0 {
-            return AnyView(
-                Text("\(formatSats(bal))")
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundColor(.orange)
-            )
-        } else {
-            return AnyView(EmptyView())
-        }
-    }
-
     private func zapInlineButton(lud16: String) -> AnyView {
         if isOwnerProfile {
             if let bal = lightningBalanceSats {
@@ -888,25 +898,26 @@ struct ProfileView: View {
         }
         guard !ConfigService.shared.config.nwcURI.isEmpty else { return AnyView(EmptyView()) }
         return AnyView(
-            Button(action: {
-                Task { await zapProfile(lud16: lud16) }
-            }) {
-                HStack(spacing: 3) {
-                    Image(systemName: "bolt.fill")
-                        .font(.system(size: 10, weight: .bold))
-                    Text("\(defaultZapSats)")
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                }
-                .foregroundColor(.orange)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Color.orange.opacity(0.15))
-                .cornerRadius(4)
+            HStack(spacing: 3) {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 10, weight: .bold))
+                Text("\(defaultZapSats)")
+                    .font(.system(size: 11, weight: .bold, design: .monospaced))
             }
-            .buttonStyle(.plain)
+            .foregroundColor(.orange)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.orange.opacity(0.15))
+            .cornerRadius(4)
+            .contentShape(RoundedRectangle(cornerRadius: 4))
             .onLongPressGesture {
-                zapAmountSats = String(defaultZapSats)
-                showAmountPicker = true
+                #if os(iOS)
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                #endif
+                zapSheetContext = ZapSheetContext(defaultAmount: defaultZapSats)
+            }
+            .onTapGesture {
+                Task { await zapProfile(lud16: lud16) }
             }
         )
     }
@@ -1033,6 +1044,22 @@ struct ProfileView: View {
                     FeedNoteRow(
                         note: note,
                         profile: profile,
+                        rowData: FeedNoteRowData.resolve(
+                            for: note,
+                            feedService: feedService,
+                            nostrService: nostrService
+                        ),
+                        onReply: {
+                            if note.kind == 6, let refId = note.repostedEventId,
+                               let original = feedService.findNote(id: refId) {
+                                composeContext = ComposeContext(replyTo: original, quoteTo: nil)
+                            } else {
+                                composeContext = ComposeContext(replyTo: note, quoteTo: nil)
+                            }
+                        },
+                        onQuote: {
+                            composeContext = ComposeContext(replyTo: nil, quoteTo: note)
+                        },
                         onProfile: { pubkey in
                             showingProfileKey = IdentifiableString(id: pubkey)
                         },
@@ -1045,6 +1072,22 @@ struct ProfileView: View {
                         .onTapGesture {
                             showingNoteDetail = note
                         }
+                }
+
+                // Infinite scroll sentinel
+                if hasMoreNotes && !notes.isEmpty {
+                    Color.clear
+                        .frame(height: 1)
+                        .onAppear {
+                            loadOlderProfileNotes()
+                        }
+                    if isLoadingOlderNotes {
+                        ProgressView()
+                            .scaleEffect(0.6)
+                            .tint(Color.havenPurple)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                    }
                 }
             }
             .padding(.top, 4)
@@ -1059,20 +1102,38 @@ struct ProfileView: View {
         let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 3)
         let gridSpacing: CGFloat = 6
         #endif
-        
+
         let items = displayMedia
-        
-        return LazyVGrid(columns: columns, spacing: gridSpacing) {
-            ForEach(items) { mediaItem in
-                MediaGridItem(item: mediaItem) {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        selectedMedia = mediaItem
+
+        return VStack(spacing: 0) {
+            LazyVGrid(columns: columns, spacing: gridSpacing) {
+                ForEach(items) { mediaItem in
+                    MediaGridItem(item: mediaItem) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            selectedMedia = mediaItem
+                        }
                     }
                 }
             }
+            .padding(.horizontal, 8)
+            .padding(.top, 2)
+
+            // Infinite scroll sentinel for media
+            if hasMoreNotes && !items.isEmpty {
+                Color.clear
+                    .frame(height: 1)
+                    .onAppear {
+                        loadOlderProfileNotes()
+                    }
+                if isLoadingOlderNotes {
+                    ProgressView()
+                        .scaleEffect(0.6)
+                        .tint(Color.havenPurple)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                }
+            }
         }
-        .padding(.horizontal, 8)
-        .padding(.top, 2)
     }
 
     @ViewBuilder
@@ -1090,16 +1151,18 @@ struct ProfileView: View {
             VStack {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack {
-                        Button(action: {
-                            PlatformClipboard.copy(item.shareURL(with: configService).absoluteString)
-                        }) {
-                            Image(systemName: "doc.on.doc")
-                                .font(.system(size: 16, weight: .semibold))
-                                .padding(10)
-                                .background(Color.white.opacity(0.1))
-                                .cornerRadius(8)
+                        if configService.hasExternalShareURL(for: item.url) {
+                            Button(action: {
+                                PlatformClipboard.copy(item.shareURL(with: configService).absoluteString)
+                            }) {
+                                Image(systemName: "doc.on.doc")
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .padding(10)
+                                    .background(Color.white.opacity(0.1))
+                                    .cornerRadius(8)
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
 
                         #if os(iOS)
                         if item.type == .image || item.type == .video {
@@ -1303,17 +1366,52 @@ struct ProfileView: View {
         profileNotes.removeAll()
         seenNoteIds.removeAll()
         isLoadingNotes = false
+        isLoadingOlderNotes = false
+        hasMoreNotes = true
         followingCount = nil
         followsMe = false
         followersCount = nil
         followerPubkeys.removeAll()
+        totalNoteCount = nil
+        totalMediaCount = nil
 
         fetchAuthorNotes()
-        deriveBitcoinAddress()
-        deriveSilentPaymentAddress()
         fetchLightningBalance()
+        fetchLocalRelayCounts()
 
         try? await Task.sleep(nanoseconds: 500_000_000)
+    }
+
+    // MARK: - Local relay counts (own profile)
+
+    private func fetchLocalRelayCounts() {
+        guard isOwnProfile else { return }
+        guard RelayProcessManager.shared.isRunning && !RelayProcessManager.shared.isBooting else { return }
+
+        let config = ConfigService.shared.config
+        #if os(macOS)
+        let baseURLString = "ws://127.0.0.1:\(config.relayPort)"
+        #else
+        let baseURLString = "wss://127.0.0.1:\(config.relayPort)"
+        #endif
+        guard let baseURL = URL(string: baseURLString) else { return }
+
+        Task {
+            // Fetch kind 1 note count
+            let noteCount = await nostrService.fetchCount(
+                from: [baseURL],
+                filter: ["kinds": [1], "authors": [pubkey]]
+            )
+            if let count = noteCount, count > 0 {
+                await MainActor.run { totalNoteCount = count }
+            }
+
+            // Fetch media count via blossom blob list
+            let blobs = await StatsService.shared.fetchBlobList(for: pubkey)
+            if !blobs.isEmpty {
+                await MainActor.run { totalMediaCount = blobs.count }
+            }
+        }
     }
 
     // MARK: - Lightning balance (own profile)
@@ -1375,8 +1473,18 @@ struct ProfileView: View {
             "wss://relay.primal.net",
             "wss://relay.nos.social"
         ] : feedRelays
-        // Cap at 1 external relay to avoid multiplying data fetches across all relays.
-        relayURLs.append(contentsOf: externalStrs.prefix(1).compactMap { URL(string: $0) })
+        // Use up to 3 external relays to improve chances of finding the user's data.
+        relayURLs.append(contentsOf: externalStrs.prefix(3).compactMap { URL(string: $0) })
+
+        // If we have the user's NIP-65 relay list, also query their preferred relays
+        if let userRelays = nostrService.relayLists[pubkey] {
+            let existingStrings = Set(relayURLs.map { $0.absoluteString })
+            for relayStr in userRelays.prefix(3) {
+                if !existingStrings.contains(relayStr), let url = URL(string: relayStr) {
+                    relayURLs.append(url)
+                }
+            }
+        }
 
         for url in relayURLs {
             let client = WebSocketClient()
@@ -1398,6 +1506,11 @@ struct ProfileView: View {
                             "authors": [pubkey],
                             "limit": 50
                         ]
+                        let profileFilter: [String: Any] = [
+                            "kinds": [0],
+                            "authors": [pubkey],
+                            "limit": 1
+                        ]
                         let contactFilter: [String: Any] = [
                             "kinds": [3],
                             "authors": [pubkey],
@@ -1408,7 +1521,7 @@ struct ProfileView: View {
                             "#p": [pubkey],
                             "limit": 100
                         ]
-                        let req: [Any] = ["REQ", "profile-\(UUID().uuidString.prefix(6))", notesFilter, contactFilter, followersFilter]
+                        let req: [Any] = ["REQ", "profile-\(UUID().uuidString.prefix(6))", notesFilter, profileFilter, contactFilter, followersFilter]
                         if let data = try? JSONSerialization.data(withJSONObject: req),
                            let str = String(data: data, encoding: .utf8) {
                             client.send(text: str)
@@ -1435,7 +1548,23 @@ struct ProfileView: View {
            let eventData = try? JSONSerialization.data(withJSONObject: eventDict),
            let event = try? JSONDecoder().decode(NostrEvent.self, from: eventData) {
 
-            guard event.pubkey == pubkey else { return }
+            // Handle kind 0 (profile metadata) from the target user
+            if event.kind == 0, event.pubkey == pubkey {
+                if let contentData = event.content.data(using: .utf8),
+                   let metadata = try? JSONSerialization.jsonObject(with: contentData) as? [String: Any] {
+                    var prof = nostrService.profiles[pubkey] ?? FeedProfile(pubkey: pubkey)
+                    prof.name = metadata["name"] as? String
+                    prof.displayName = metadata["display_name"] as? String
+                    prof.pictureURL = (metadata["picture"] as? String).flatMap { URL(string: $0) }
+                    prof.nip05 = metadata["nip05"] as? String
+                    prof.about = metadata["about"] as? String
+                    prof.lud16 = metadata["lud16"] as? String
+                    prof.lud06 = metadata["lud06"] as? String
+                    prof.website = metadata["website"] as? String
+                    nostrService.profiles[pubkey] = prof
+                }
+                return
+            }
 
             if event.kind == 3 {
                 let pTags = event.tags.filter { $0.count >= 2 && $0[0] == "p" }
@@ -1456,6 +1585,9 @@ struct ProfileView: View {
                 }
                 return
             }
+
+            // For notes (kind 1, 6, 30023), only show from the target user
+            guard event.pubkey == pubkey else { return }
 
             guard !seenNoteIds.contains(event.id) else { return }
             seenNoteIds.insert(event.id)
@@ -1483,6 +1615,43 @@ struct ProfileView: View {
             }
         } else if type == "EOSE" {
             isLoadingNotes = false
+            // Also mark older-notes loading as done when any EOSE arrives
+            if isLoadingOlderNotes {
+                isLoadingOlderNotes = false
+            }
+        }
+    }
+
+    private func loadOlderProfileNotes() {
+        guard !isLoadingOlderNotes, hasMoreNotes else { return }
+        guard let oldest = profileNotes.last else { return }
+        isLoadingOlderNotes = true
+
+        let untilTimestamp = Int(oldest.createdAt.timeIntervalSince1970)
+        let countBefore = profileNotes.count
+
+        // Use the already-connected clients to request older notes
+        for client in profileClients {
+            let subId = "older-\(UUID().uuidString.prefix(6))"
+            let filter: [String: Any] = [
+                "kinds": [1, 6, 30023],
+                "authors": [pubkey],
+                "until": untilTimestamp,
+                "limit": 50
+            ]
+            let req: [Any] = ["REQ", subId, filter]
+            if let data = try? JSONSerialization.data(withJSONObject: req),
+               let str = String(data: data, encoding: .utf8) {
+                client.send(text: str)
+            }
+        }
+
+        // After a timeout, check if we got new notes — if not, we've exhausted the feed
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            if self.profileNotes.count == countBefore {
+                self.hasMoreNotes = false
+            }
+            self.isLoadingOlderNotes = false
         }
     }
 
@@ -1492,52 +1661,6 @@ struct ProfileView: View {
         }
         profileClients.removeAll()
         profileCancellables.removeAll()
-    }
-
-    // MARK: - Silent Payment
-
-    private func deriveSilentPaymentAddress() {
-        do {
-            let spAddr = try SilentPaymentService.deriveAddress(hexPubkey: pubkey)
-            silentPaymentAddress = spAddr
-        } catch {
-            silentPaymentAddress = nil
-        }
-    }
-
-    // MARK: - Bitcoin
-
-    private func deriveBitcoinAddress() {
-        guard let cAddr = pubkey.withCString({ DeriveTaprootAddressC(UnsafeMutablePointer(mutating: $0)) }) else { return }
-        let address = String(cString: cAddr)
-        guard !address.isEmpty else { return }
-        bitcoinAddress = address
-        fetchBitcoinBalance(address: address)
-    }
-
-    private func fetchBitcoinBalance(address: String) {
-        Task {
-            guard let url = URL(string: "https://mempool.btcforplebs.com/api/address/\(address)") else { return }
-            guard let (data, _) = try? await URLSession.shared.data(from: url) else { return }
-
-            struct Stats: Decodable {
-                let funded_txo_sum: Int
-                let spent_txo_sum: Int
-            }
-            struct AddressResponse: Decodable {
-                let chain_stats: Stats
-                let mempool_stats: Stats
-            }
-
-            guard let response = try? JSONDecoder().decode(AddressResponse.self, from: data) else { return }
-            let confirmed = response.chain_stats.funded_txo_sum - response.chain_stats.spent_txo_sum
-            let unconfirmed = response.mempool_stats.funded_txo_sum - response.mempool_stats.spent_txo_sum
-            let total = confirmed + unconfirmed
-
-            await MainActor.run {
-                bitcoinBalance = total
-            }
-        }
     }
 
     private func formatSats(_ sats: Int) -> String {
@@ -1938,27 +2061,29 @@ struct ProfileEditView: View {
             return
         }
 
-        guard let signed = nostrService.signEvent(kind: 0, content: jsonStr, tags: []) else {
-            errorMessage = "Could not sign event. Check that your key is available."
+        Task {
+            guard let signed = await nostrService.signEventAsync(kind: 0, content: jsonStr, tags: []) else {
+                errorMessage = "Could not sign event. Check that your key is available."
+                isSaving = false
+                return
+            }
+
+            nostrService.postEvent(signed)
+
+            var updated = existing
+            updated.name = content["name"]
+            updated.displayName = content["display_name"]
+            updated.about = content["about"]
+            updated.pictureURL = (content["picture"]).flatMap { URL(string: $0) }
+            updated.nip05 = content["nip05"]
+            updated.lud16 = content["lud16"]
+            updated.website = content["website"]
+
+            onSave(updated)
+
             isSaving = false
-            return
+            performDismiss()
         }
-
-        nostrService.postEvent(signed)
-
-        var updated = existing
-        updated.name = content["name"]
-        updated.displayName = content["display_name"]
-        updated.about = content["about"]
-        updated.pictureURL = (content["picture"]).flatMap { URL(string: $0) }
-        updated.nip05 = content["nip05"]
-        updated.lud16 = content["lud16"]
-        updated.website = content["website"]
-
-        onSave(updated)
-
-        isSaving = false
-        performDismiss()
     }
 
     private func performDismiss() {

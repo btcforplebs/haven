@@ -1,5 +1,15 @@
 import Foundation
 
+/// Per-account NIP-46 remote signer configuration.
+struct AccountBunkerConfig: Codable, Equatable {
+    var bunkerURI: String = ""
+    var signerPubkey: String = ""
+    var relayURL: String = ""
+    var secret: String = ""
+    var clientSecretKey: String = ""
+    var clientPubkey: String = ""
+}
+
 struct HavenConfig: Codable, Equatable {
     var ownerNpub: String = ""
     var relayURL: String = ""
@@ -12,7 +22,10 @@ struct HavenConfig: Codable, Equatable {
     var hasCompletedSetup: Bool = false
     var hasSeenWelcome: Bool = false
     var hasAcceptedToS: Bool = false
+    var setupMode: String = "full" // "full" or "browse"
     var disableMediaCache: Bool = false
+    var autoplayVideos: Bool = true
+    var cacheTTLDays: Int = 7
     var allowNetworkAccess: Bool = false // Bind to 0.0.0.0 instead of 127.0.0.1 (for Tailscale, etc.)
     var ownerNcryptsec: String = "" // NIP-49 encrypted private key
     var ownerNsec: String = "" // Deprecated: kept for migration purposes only
@@ -31,9 +44,23 @@ struct HavenConfig: Codable, Equatable {
     // Bitcoin Taproot wallet (derived from Nostr keypair via BIP-341)
     var showBitcoinWallet: Bool = false
 
-    // Push Notifications (optional Mac Mini server)
-    var pushServerURL: String = "" // e.g., http://192.168.1.100:8000 or Tailscale IP
-    var enableRemotePushServer: Bool = false
+    // Cashu Ecash Mint
+    var cashuMintURL: String = ""
+
+    // NIP-46 Remote Signing
+    var signingMode: String = "local" // "local" or "nip46"
+    var nip46BunkerURI: String = "" // Full bunker:// URI for reconnection
+    var nip46SignerPubkey: String = "" // Remote signer's hex pubkey
+    var nip46RelayURL: String = "" // Shared relay URL for NIP-46 communication
+    var nip46Secret: String = "" // Auth secret from bunker URI
+    var nip46ClientSecretKey: String = "" // Client keypair hex secret (for NIP-44 channel encryption)
+    var nip46ClientPubkey: String = "" // Client keypair hex pubkey
+
+    // Push Notifications
+    var pushServerURL: String = ""
+    var enableRemotePushServer: Bool = false // Kept for migration only
+    var enablePushNotifications: Bool = false
+    var notificationPrefsPerAccount: [String: NotificationPreferences] = [:]
     
     // Private Relay
     var privateRelayName: String = "Nostr Vault Private"
@@ -69,7 +96,8 @@ struct HavenConfig: Codable, Equatable {
         "wss://relay.damus.io",
         "wss://relay.primal.net",
         "wss://relay.snort.social",
-        "wss://relay.nos.social"
+        "wss://relay.nos.social",
+        "wss://relay.btcforplebs.com"
     ]
     var importOwnerNotesFetchTimeoutSeconds: Int = 60
     var importTaggedNotesFetchTimeoutSeconds: Int = 120
@@ -84,21 +112,24 @@ struct HavenConfig: Codable, Equatable {
         "wss://relay.damus.io",
         "wss://relay.primal.net",
         "wss://nos.lol",
-        "wss://nostr.wine"
+        "wss://nostr.wine",
+        "wss://relay.btcforplebs.com"
     ]
     
     // Feed Reading
     var feedRelays: [String] = [
         "wss://relay.damus.io",
         "wss://relay.primal.net",
-        "wss://nos.lol"
+        "wss://nos.lol",
+        "wss://relay.btcforplebs.com"
     ]
 
     // NIP-17: DM Relays (kind 10050)
     var dmRelays: [String] = [
         "wss://relay.damus.io",
         "wss://relay.primal.net",
-        "wss://nos.lol"
+        "wss://nos.lol",
+        "wss://relay.btcforplebs.com"
     ]
 
     // Whitelisted Npubs (multi-npub support)
@@ -111,7 +142,14 @@ struct HavenConfig: Codable, Equatable {
     // Per-account encrypted private keys: [npub: ncryptsec]
     // The owner key is stored separately (ownerNcryptsec). This dict is only for whitelisted accounts.
     var accountCredentials: [String: String] = [:]
-    
+
+    // Per-account NIP-46 bunker configs: [npub: AccountBunkerConfig]
+    var accountBunkerConfigs: [String: AccountBunkerConfig] = [:]
+
+    // Per-account signing mode preference: [npub: "local" | "nip46"]
+    // When set, overrides auto-detection. Allows accounts to hold both a local key and a bunker.
+    var accountSigningModes: [String: String] = [:]
+
     // Blacklisted Npubs
     var blacklistedNpubs: [String] = []
     var blacklistedNpubsFile: String = "blacklisted_npubs.json"
@@ -139,8 +177,9 @@ struct HavenConfig: Codable, Equatable {
     
     enum CodingKeys: String, CodingKey {
         case ownerNpub, relayURL, relayPort, dbEngine, blossomPath, logLevel
-        case launchAtLogin, autoStartRelay, hasCompletedSetup, hasSeenWelcome, hasAcceptedToS, disableMediaCache, allowNetworkAccess, ownerNcryptsec, ownerNsec, showReplies, nwcURI, defaultZapAmount, themeColor, autoLoadNewPosts, showReposts, showBitcoinWallet
-        case pushServerURL, enableRemotePushServer
+        case launchAtLogin, autoStartRelay, hasCompletedSetup, hasSeenWelcome, hasAcceptedToS, setupMode, disableMediaCache, autoplayVideos, cacheTTLDays, allowNetworkAccess, ownerNcryptsec, ownerNsec, showReplies, nwcURI, defaultZapAmount, themeColor, autoLoadNewPosts, showReposts, showBitcoinWallet, cashuMintURL
+        case signingMode, nip46BunkerURI, nip46SignerPubkey, nip46RelayURL, nip46Secret, nip46ClientSecretKey, nip46ClientPubkey
+        case pushServerURL, enableRemotePushServer, enablePushNotifications, notificationPrefsPerAccount
         case macRelayURL
         case privateRelayName, privateRelayDescription, privateRelayIcon
         case chatRelayName, chatRelayDescription, chatRelayIcon, chatRelayWotDepth, chatRelayWotRefreshHours, wotRefreshInterval, chatRelayMinFollowers
@@ -156,6 +195,8 @@ struct HavenConfig: Codable, Equatable {
         case blockedNpubsLastSyncTimestamp
         case activeAccountNpub
         case accountCredentials
+        case accountBunkerConfigs
+        case accountSigningModes
         case backupProvider, backupIntervalHours
         case s3AccessKeyId, s3SecretKey, s3Endpoint, s3Region, s3BucketName
     }
@@ -177,7 +218,10 @@ struct HavenConfig: Codable, Equatable {
         hasCompletedSetup = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedSetup) ?? defaults.hasCompletedSetup
         hasSeenWelcome = try container.decodeIfPresent(Bool.self, forKey: .hasSeenWelcome) ?? defaults.hasSeenWelcome
         hasAcceptedToS = try container.decodeIfPresent(Bool.self, forKey: .hasAcceptedToS) ?? defaults.hasAcceptedToS
+        setupMode = try container.decodeIfPresent(String.self, forKey: .setupMode) ?? defaults.setupMode
         disableMediaCache = try container.decodeIfPresent(Bool.self, forKey: .disableMediaCache) ?? defaults.disableMediaCache
+        autoplayVideos = try container.decodeIfPresent(Bool.self, forKey: .autoplayVideos) ?? defaults.autoplayVideos
+        cacheTTLDays = try container.decodeIfPresent(Int.self, forKey: .cacheTTLDays) ?? defaults.cacheTTLDays
         allowNetworkAccess = try container.decodeIfPresent(Bool.self, forKey: .allowNetworkAccess) ?? defaults.allowNetworkAccess
         ownerNcryptsec = try container.decodeIfPresent(String.self, forKey: .ownerNcryptsec) ?? defaults.ownerNcryptsec
         ownerNsec = try container.decodeIfPresent(String.self, forKey: .ownerNsec) ?? defaults.ownerNsec
@@ -189,9 +233,26 @@ struct HavenConfig: Codable, Equatable {
         autoLoadNewPosts = try container.decodeIfPresent(Bool.self, forKey: .autoLoadNewPosts) ?? defaults.autoLoadNewPosts
         showReposts = try container.decodeIfPresent(Bool.self, forKey: .showReposts) ?? defaults.showReposts
         showBitcoinWallet = try container.decodeIfPresent(Bool.self, forKey: .showBitcoinWallet) ?? defaults.showBitcoinWallet
+        cashuMintURL = try container.decodeIfPresent(String.self, forKey: .cashuMintURL) ?? defaults.cashuMintURL
+
+        signingMode = try container.decodeIfPresent(String.self, forKey: .signingMode) ?? defaults.signingMode
+        nip46BunkerURI = try container.decodeIfPresent(String.self, forKey: .nip46BunkerURI) ?? defaults.nip46BunkerURI
+        nip46SignerPubkey = try container.decodeIfPresent(String.self, forKey: .nip46SignerPubkey) ?? defaults.nip46SignerPubkey
+        nip46RelayURL = try container.decodeIfPresent(String.self, forKey: .nip46RelayURL) ?? defaults.nip46RelayURL
+        nip46Secret = try container.decodeIfPresent(String.self, forKey: .nip46Secret) ?? defaults.nip46Secret
+        nip46ClientSecretKey = try container.decodeIfPresent(String.self, forKey: .nip46ClientSecretKey) ?? defaults.nip46ClientSecretKey
+        nip46ClientPubkey = try container.decodeIfPresent(String.self, forKey: .nip46ClientPubkey) ?? defaults.nip46ClientPubkey
 
         pushServerURL = try container.decodeIfPresent(String.self, forKey: .pushServerURL) ?? defaults.pushServerURL
         enableRemotePushServer = try container.decodeIfPresent(Bool.self, forKey: .enableRemotePushServer) ?? defaults.enableRemotePushServer
+
+        // Migrate: if enablePushNotifications was never saved, carry forward enableRemotePushServer
+        if let newValue = try container.decodeIfPresent(Bool.self, forKey: .enablePushNotifications) {
+            enablePushNotifications = newValue
+        } else {
+            enablePushNotifications = enableRemotePushServer
+        }
+        notificationPrefsPerAccount = try container.decodeIfPresent([String: NotificationPreferences].self, forKey: .notificationPrefsPerAccount) ?? defaults.notificationPrefsPerAccount
         
         privateRelayName = try container.decodeIfPresent(String.self, forKey: .privateRelayName) ?? defaults.privateRelayName
         privateRelayDescription = try container.decodeIfPresent(String.self, forKey: .privateRelayDescription) ?? defaults.privateRelayDescription
@@ -241,6 +302,20 @@ struct HavenConfig: Codable, Equatable {
         
         activeAccountNpub = try container.decodeIfPresent(String.self, forKey: .activeAccountNpub) ?? defaults.activeAccountNpub
         accountCredentials = try container.decodeIfPresent([String: String].self, forKey: .accountCredentials) ?? defaults.accountCredentials
+        accountBunkerConfigs = try container.decodeIfPresent([String: AccountBunkerConfig].self, forKey: .accountBunkerConfigs) ?? defaults.accountBunkerConfigs
+        accountSigningModes = try container.decodeIfPresent([String: String].self, forKey: .accountSigningModes) ?? defaults.accountSigningModes
+
+        // Migration: move global NIP-46 config into per-account dict
+        if signingMode == "nip46" && accountBunkerConfigs.isEmpty && !ownerNpub.isEmpty {
+            accountBunkerConfigs[ownerNpub] = AccountBunkerConfig(
+                bunkerURI: nip46BunkerURI,
+                signerPubkey: nip46SignerPubkey,
+                relayURL: nip46RelayURL,
+                secret: nip46Secret,
+                clientSecretKey: nip46ClientSecretKey,
+                clientPubkey: nip46ClientPubkey
+            )
+        }
 
         backupProvider = try container.decodeIfPresent(String.self, forKey: .backupProvider) ?? defaults.backupProvider
         backupIntervalHours = try container.decodeIfPresent(Int.self, forKey: .backupIntervalHours) ?? defaults.backupIntervalHours
@@ -251,7 +326,35 @@ struct HavenConfig: Codable, Equatable {
         s3Region = try container.decodeIfPresent(String.self, forKey: .s3Region) ?? defaults.s3Region
         s3BucketName = try container.decodeIfPresent(String.self, forKey: .s3BucketName) ?? defaults.s3BucketName
     }
-    
+
+    // MARK: - Per-Account Signing Mode
+
+    /// Returns the signing mode for the currently active account.
+    /// Respects explicit user preference in accountSigningModes if set,
+    /// otherwise falls back to auto-detection based on available credentials.
+    func activeSigningMode() -> String {
+        let activeNpub = activeAccountNpub.isEmpty ? ownerNpub : activeAccountNpub
+
+        // Check explicit user preference first
+        if let preferred = accountSigningModes[activeNpub] {
+            // Validate the preference is still usable
+            if preferred == "nip46" {
+                if let cfg = accountBunkerConfigs[activeNpub], !cfg.bunkerURI.isEmpty || !cfg.signerPubkey.isEmpty {
+                    return "nip46"
+                }
+                // Bunker config was removed — fall through to auto-detect
+            } else if preferred == "local" {
+                return "local"
+            }
+        }
+
+        // Auto-detect: if a bunker config exists, use nip46
+        if let cfg = accountBunkerConfigs[activeNpub], !cfg.bunkerURI.isEmpty || !cfg.signerPubkey.isEmpty {
+            return "nip46"
+        }
+        return "local"
+    }
+
     // MARK: - Mac Relay Derived URLs
 
     /// Strips any scheme and trailing slashes from macRelayURL to give the bare host[:port]

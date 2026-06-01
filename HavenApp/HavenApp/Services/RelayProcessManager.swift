@@ -51,7 +51,11 @@ class RelayProcessManager: ObservableObject {
     @Published var cpuUsage: Double = 0
     @Published var activeConnections: Int = 0
     @Published var eventsStored: Int = 0
-    
+    @Published var hasNewRelayActivity: Bool = false
+    private var eventsStoredWhenLastViewed: Int = 0
+    /// Grace period after user posts — suppress activity dot for own events
+    private var activitySuppressedUntil: Date?
+
     private var outputPipe: Pipe?
     private var logBuffer = Data() // Buffer for incomplete log lines
     
@@ -119,6 +123,17 @@ class RelayProcessManager: ObservableObject {
         }
     }
     
+    func markRelayViewed() {
+        eventsStoredWhenLastViewed = eventsStored
+        hasNewRelayActivity = false
+    }
+
+    /// Suppress the relay activity red dot briefly after the user posts their own event.
+    func suppressActivityForOwnPost() {
+        activitySuppressedUntil = Date().addingTimeInterval(3)
+        eventsStoredWhenLastViewed = eventsStored + 1
+    }
+
     func startRelay(config: HavenConfig, isRetry: Bool = false) {
         // Strict guard: Must be idle and NO process should be running
         guard state == .idle && !isRunning else {
@@ -163,26 +178,16 @@ class RelayProcessManager: ObservableObject {
             // 2. Clear Database Locks (Crucial - must happen before start)
             self.performClearDatabaseLocks(at: relayDataDir)
             
-            // 3. Copy templates directory (only if missing or update needed)
+            // 3. Copy templates directory — always refresh so new/updated
+            //    templates (e.g. feed.html) are deployed on app update.
             let destURL = relayDataDir.appendingPathComponent("templates")
             if let templatesPath = Bundle.main.path(forResource: "templates", ofType: "") {
-                let shouldCopy: Bool
-                if !FileManager.default.fileExists(atPath: destURL.path) {
-                    shouldCopy = true
-                } else {
-                    // Check if it's empty or needs refresh (optional, but let's be safe and check if it exists)
-                    let contents = (try? FileManager.default.contentsOfDirectory(atPath: destURL.path)) ?? []
-                    shouldCopy = contents.isEmpty
+                if FileManager.default.fileExists(atPath: destURL.path) {
+                    try? FileManager.default.removeItem(at: destURL)
                 }
-                
-                if shouldCopy {
-                    if FileManager.default.fileExists(atPath: destURL.path) {
-                        try? FileManager.default.removeItem(at: destURL)
-                    }
-                    try? FileManager.default.copyItem(at: URL(fileURLWithPath: templatesPath), to: destURL)
-                    await MainActor.run {
-                        self.logStore.append(LogEntry(timestamp: Date(), level: "INFO", message: "Copied templates to \(destURL.path)"))
-                    }
+                try? FileManager.default.copyItem(at: URL(fileURLWithPath: templatesPath), to: destURL)
+                await MainActor.run {
+                    self.logStore.append(LogEntry(timestamp: Date(), level: "INFO", message: "Copied templates to \(destURL.path)"))
                 }
             } else {
                 await MainActor.run {
@@ -255,7 +260,11 @@ class RelayProcessManager: ObservableObject {
                 free(cValue)
             }
         }
+        #if os(macOS)
+        let bindAddress = "0.0.0.0"
+        #else
         let bindAddress = config.allowNetworkAccess ? "0.0.0.0" : "127.0.0.1"
+        #endif
         setenv("RELAY_BIND_ADDRESS", bindAddress, 1)
         if let cKey = strdup("RELAY_BIND_ADDRESS"), let cValue = strdup(bindAddress) {
             SetHavenEnvC(cKey, cValue)
@@ -552,6 +561,8 @@ class RelayProcessManager: ObservableObject {
         // Reset the log-based event counter so import counts don't
         // carry over and corrupt the post-import stats refresh.
         eventsStored = 0
+        eventsStoredWhenLastViewed = 0
+        hasNewRelayActivity = false
         
         clearDatabaseLocks()
         
@@ -584,11 +595,15 @@ class RelayProcessManager: ObservableObject {
         for (key, value) in configEnv {
             setenv(key, value, 1)
         }
+        #if os(macOS)
+        setenv("RELAY_BIND_ADDRESS", "0.0.0.0", 1)
+        #else
         setenv("RELAY_BIND_ADDRESS", config.allowNetworkAccess ? "0.0.0.0" : "127.0.0.1", 1)
-        
+        #endif
+
         FileManager.default.changeCurrentDirectoryPath(relayDataDir.path)
         captureOutput(in: relayDataDir)
-        
+
         DispatchQueue.main.async {
             self.importProgress = 0.0
             self.importStatusMessage = "Starting import for \(config.ownerNpub.prefix(12))..."
@@ -632,49 +647,72 @@ class RelayProcessManager: ObservableObject {
         }
     }
     
+    /// Persistent file handle for relay.log — opened once, reused for the
+    /// lifetime of the pipe to avoid file-descriptor churn.
+    private var logFileHandle: FileHandle?
+
     /// Redirection mechanism for capturing stdout and stderr from C-Shared bindings
     private func captureOutput(in directory: URL) {
         if outputPipe == nil {
             let pipe = Pipe()
             outputPipe = pipe
-            
+
             // Redirect STDOUT and STDERR to our pipe
             dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
             dup2(pipe.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
-            
+
+            // Open a persistent file handle for the log file
+            let logFileURL = directory.appendingPathComponent("relay.log")
+            if !FileManager.default.fileExists(atPath: logFileURL.path) {
+                FileManager.default.createFile(atPath: logFileURL.path, contents: nil)
+            }
+            logFileHandle = try? FileHandle(forWritingTo: logFileURL)
+            logFileHandle?.seekToEndOfFile()
+
             // Local buffer for the background queue to avoid MainActor isolation
             var localBuffer = Data()
-            
+            // Safety cap: if the buffer grows beyond 512 KB (e.g. the main
+            // thread can't keep up), drop data to prevent unbounded memory
+            // growth and pipe backpressure that can deadlock Go goroutines.
+            let maxBufferSize = 512 * 1024
+
+            // Capture file handle outside the Sendable closure to avoid
+            // referencing @MainActor-isolated property from background queue.
+            let fileHandle = logFileHandle
+
             pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
                 let data = handle.availableData
                 guard !data.isEmpty else { return }
-                
+
                 // Process output on a background queue to keep MainActor free
                 self?.logProcessingQueue.async {
+                    // Write to persistent log file
+                    fileHandle?.write(data)
+
                     localBuffer.append(data)
-                    
-                    // Write to file on background
-                    let logFileURL = directory.appendingPathComponent("relay.log")
-                    if !FileManager.default.fileExists(atPath: logFileURL.path) {
-                        FileManager.default.createFile(atPath: logFileURL.path, contents: nil)
-                    }
-                    if let fileHandle = try? FileHandle(forWritingTo: logFileURL) {
-                        fileHandle.seekToEndOfFile()
-                        fileHandle.write(data)
-                        try? fileHandle.close()
+
+                    // Safety valve: drop oldest data if buffer grows too large
+                    if localBuffer.count > maxBufferSize {
+                        // Find a newline near the middle and discard everything before it
+                        let dropTarget = localBuffer.count - maxBufferSize / 2
+                        if let nl = localBuffer[dropTarget...].firstIndex(of: 0x0A) {
+                            localBuffer = localBuffer.subdata(in: localBuffer.index(after: nl)..<localBuffer.endIndex)
+                        } else {
+                            localBuffer.removeAll()
+                        }
                     }
 
                     // Find the last newline character
                     guard let range = localBuffer.range(of: Data([0x0A]), options: .backwards) else {
                         return
                     }
-                    
+
                     // Extract all complete lines
                     let validData = localBuffer.subdata(in: 0..<range.upperBound)
-                    
+
                     // Keep the remainder in the buffer
                     localBuffer = localBuffer.subdata(in: range.upperBound..<localBuffer.endIndex)
-                    
+
                     if let output = String(data: validData, encoding: .utf8) {
                         self?.processOutputInBackground(output)
                     }
@@ -935,6 +973,10 @@ class RelayProcessManager: ObservableObject {
         // Metrics
         if batch.eventsStoredDelta != 0 {
             eventsStored += batch.eventsStoredDelta
+            let suppressed = activitySuppressedUntil.map { Date() < $0 } ?? false
+            if !suppressed && eventsStored > eventsStoredWhenLastViewed {
+                hasNewRelayActivity = true
+            }
         }
         if batch.connectionsDelta != 0 {
             activeConnections = max(0, activeConnections + batch.connectionsDelta)
@@ -984,15 +1026,17 @@ class RelayProcessManager: ObservableObject {
         // TLS — only enable HTTPS on iOS (macOS uses plain HTTP; Cloudflare handles TLS)
         #if os(iOS)
         let enableTLS = "1"
+        let relayBindAddress = config.allowNetworkAccess ? "0.0.0.0" : "127.0.0.1"
         #else
         let enableTLS = "0"
+        let relayBindAddress = "0.0.0.0"
         #endif
 
         return [
             "OWNER_NPUB": cleanNpub,
             "RELAY_URL": config.relayURL,
             "RELAY_PORT": String(config.relayPort),
-            "RELAY_BIND_ADDRESS": config.allowNetworkAccess ? "0.0.0.0" : "127.0.0.1",
+            "RELAY_BIND_ADDRESS": relayBindAddress,
             "DB_ENGINE": config.dbEngine,
             "LMDB_MAPSIZE": "0",
             "DATABASE_PATH": ConfigService.shared.relayDataDir.appendingPathComponent("data").standardized.path + "/",
@@ -1137,7 +1181,11 @@ class RelayProcessManager: ObservableObject {
         for (key, value) in configEnv {
             setenv(key, value, 1)
         }
+        #if os(macOS)
+        setenv("RELAY_BIND_ADDRESS", "0.0.0.0", 1)
+        #else
         setenv("RELAY_BIND_ADDRESS", config.allowNetworkAccess ? "0.0.0.0" : "127.0.0.1", 1)
+        #endif
 
         FileManager.default.changeCurrentDirectoryPath(relayDataDir.path)
         captureOutput(in: relayDataDir)

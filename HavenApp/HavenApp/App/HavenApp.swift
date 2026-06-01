@@ -2,9 +2,7 @@ import SwiftUI
 
 @main
 struct HavenApp: App {
-    #if os(macOS)
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    #endif
     
     // Use shared instances directly, but observe them if needed for top-level updates.
     // However, ObservableObjects in environment usually suffice.
@@ -157,6 +155,10 @@ struct MenuBarContent: View {
                                 print("Auto-starting relay on launch...")
                                 #endif
                                 relayManager.startRelay(config: configService.config)
+                            }
+                            // Auto-connect NIP-46 remote signer if configured
+                            if configService.config.hasCompletedSetup && configService.config.activeSigningMode() == "nip46" {
+                                NIP46Service.shared.connectFromConfig()
                             }
                         }
                 }

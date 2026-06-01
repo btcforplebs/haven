@@ -14,7 +14,7 @@ services:
       - ./data:/app/data
     environment:
       # APNs Configuration (from .env file)
-      - APNS_KEY_PATH=/app/certs/AuthKey_XXXXXXXXXX.p8
+      - APNS_KEY_PATH=${APNS_KEY_PATH:-/app/certs/AuthKey_H96772T8K5.p8}
       - APNS_KEY_ID=${APNS_KEY_ID}
       - APNS_TEAM_ID=${APNS_TEAM_ID}
       - APNS_TOPIC=${APNS_TOPIC}
@@ -24,6 +24,11 @@ services:
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=7766
       - DATABASE_URL=sqlite+aiosqlite:////app/data/push_server.db
+
+      # Local relay (host machine port 7777, accessed via host.docker.internal)
+      - LOCAL_RELAY_URL=ws://host.docker.internal:7777
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     env_file:
       - .env
     healthcheck:

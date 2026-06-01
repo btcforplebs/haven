@@ -36,121 +36,122 @@ struct DMThreadView: View {
                 if hasNIP04Messages {
                     HStack(spacing: 8) {
                         Image(systemName: "exclamationmark.shield")
-                            .font(.system(size: 12, weight: .semibold))
-                        Text("This conversation contains NIP-04 messages with weaker encryption. New messages use NIP-17.")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Some messages use NIP-04 (legacy encryption). New messages default to NIP-17.")
                             .font(.system(size: 11, weight: .medium))
                         Spacer()
                     }
-                    .foregroundColor(.orange)
-                    .padding(.horizontal, 12)
+                    .foregroundColor(.orange.opacity(0.9))
+                    .padding(.horizontal, 14)
                     .padding(.vertical, 8)
-                    .background(Color.orange.opacity(0.1))
+                    .background(Color.orange.opacity(0.08))
                 }
 
                 // Messages ScrollView
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 12) {
-                            ForEach(messages) { message in
-                                MessageBubbleView(
-                                    message: message,
-                                    profile: counterpartyProfile
-                                )
-                                .id(message.id)
+                GeometryReader { geometry in
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 10) {
+                                ForEach(messages) { message in
+                                    MessageBubbleView(
+                                        message: message,
+                                        profile: counterpartyProfile,
+                                        containerWidth: geometry.size.width
+                                    )
+                                    .id(message.id)
+                                }
+
+                                Spacer()
+                                    .frame(height: 0)
+                                    .id("bottom")
                             }
-
-                            // Spacer to push messages up
-                            Spacer()
-                                .frame(height: 0)
-                                .id("bottom")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 16)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
-                    }
-                    .onAppear {
-                        scrollToBottom(proxy)
-                    }
-                    .onChange(of: messages.count) { _, _ in
-                        scrollToBottom(proxy)
+                        .onAppear {
+                            scrollToBottom(proxy)
+                        }
+                        .onChange(of: messages.count) { _, _ in
+                            scrollToBottom(proxy)
+                        }
                     }
                 }
-
-                Divider()
-
-                // Protocol Toggle
-                HStack(spacing: 8) {
-                    Text("Protocol:")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.secondary)
-
-                    Button(action: { useNIP04 = false }) {
-                        Text("NIP-17")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(useNIP04 ? .secondary : .white)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(useNIP04 ? Color.secondary.opacity(0.1) : Color.havenPurple)
-                            .cornerRadius(6)
-                    }
-                    .buttonStyle(.plain)
-
-                    Button(action: { useNIP04 = true }) {
-                        Text("NIP-04")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(useNIP04 ? .white : .secondary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(useNIP04 ? Color.orange : Color.secondary.opacity(0.1))
-                            .cornerRadius(6)
-                    }
-                    .buttonStyle(.plain)
-
-                    Spacer()
-
-                    Image(systemName: "info.circle")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                        .help(useNIP04 ? "NIP-04: Legacy encryption (weaker security)" : "NIP-17: Modern encryption (recommended)")
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 8)
-                .padding(.bottom, 4)
 
                 // Input Area
-                HStack(spacing: 12) {
-                    TextField("Message...", text: $messageInput, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .lineLimit(1...5)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(Color.secondary.opacity(0.1))
-                        .cornerRadius(20)
+                VStack(spacing: 0) {
+                    Divider()
+                        .opacity(0.5)
 
-                    Button(action: sendMessage) {
-                        if isSending {
-                            ProgressView()
-                                .frame(width: 28, height: 28)
-                        } else {
-                            Image(systemName: messageInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "arrow.up.circle" : "arrow.up.circle.fill")
-                                .font(.system(size: 28, weight: .semibold))
-                                .foregroundColor(
-                                    messageInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                                        ? .secondary
-                                        : .havenPurple
-                                )
+                    // Protocol selector (compact inline)
+                    HStack(spacing: 6) {
+                        Image(systemName: useNIP04 ? "lock.open" : "lock.fill")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundColor(useNIP04 ? .orange.opacity(0.8) : .havenPurple.opacity(0.7))
+
+                        Text(useNIP04 ? "NIP-04 (legacy)" : "NIP-17 (encrypted)")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.secondary.opacity(0.8))
+
+                        Spacer()
+
+                        Button(action: { withAnimation(.easeInOut(duration: 0.2)) { useNIP04.toggle() } }) {
+                            Text("Switch")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.havenPurple)
                         }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
-                    .disabled(messageInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 10)
+                    .padding(.bottom, 6)
+
+                    // Message input
+                    HStack(alignment: .bottom, spacing: 10) {
+                        TextField("Message...", text: $messageInput, axis: .vertical)
+                            .textFieldStyle(.plain)
+                            .lineLimit(1...5)
+                            .font(.system(size: 15))
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(Color(red: 0.14, green: 0.14, blue: 0.18))
+                            .clipShape(RoundedRectangle(cornerRadius: 22))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 22)
+                                    .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                            )
+
+                        Button(action: sendMessage) {
+                            if isSending {
+                                ProgressView()
+                                    .frame(width: 34, height: 34)
+                            } else {
+                                Image(systemName: "arrow.up")
+                                    .font(.system(size: 15, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .frame(width: 34, height: 34)
+                                    .background(
+                                        messageInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                            ? Color.secondary.opacity(0.25)
+                                            : Color.havenPurple
+                                    )
+                                    .clipShape(Circle())
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(messageInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 14)
+                    .padding(.top, 4)
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 16)
                 #if os(macOS)
                 .background(Color(nsColor: .controlBackgroundColor))
                 #else
-                .background(Color(uiColor: .systemBackground))
+                .background(Color(red: 0.08, green: 0.08, blue: 0.1))
                 #endif
             }
+            .background(Color(red: 0.08, green: 0.08, blue: 0.1).ignoresSafeArea())
             .navigationTitle(counterpartyProfile?.bestName ?? "DM")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -197,63 +198,83 @@ struct DMThreadView: View {
 struct MessageBubbleView: View {
     let message: DMMessage
     let profile: FeedProfile?
+    var containerWidth: CGFloat = 360
+
+    private var sentCorners: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            topLeadingRadius: 18, bottomLeadingRadius: 18, bottomTrailingRadius: 6, topTrailingRadius: 18
+        )
+    }
+
+    private var receivedCorners: UnevenRoundedRectangle {
+        UnevenRoundedRectangle(
+            topLeadingRadius: 18, bottomLeadingRadius: 6, bottomTrailingRadius: 18, topTrailingRadius: 18
+        )
+    }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
+        HStack(alignment: .bottom, spacing: 0) {
             if message.isFromMe {
-                Spacer()
+                Spacer(minLength: 60)
             } else {
-                // Counterparty avatar
                 if let profile = profile {
                     AvatarView(url: profile.pictureURL, pubkey: message.senderPubkey)
-                        .frame(width: 24, height: 24)
+                        .frame(width: 28, height: 28)
+                        .clipShape(Circle())
                         .padding(.trailing, 8)
                 } else {
                     Circle()
-                        .fill(Color.secondary.opacity(0.3))
-                        .frame(width: 24, height: 24)
+                        .fill(Color.secondary.opacity(0.2))
+                        .frame(width: 28, height: 28)
                         .padding(.trailing, 8)
                 }
             }
 
-            VStack(alignment: message.isFromMe ? .trailing : .leading, spacing: 4) {
-                // Message content with protocol badge
+            VStack(alignment: message.isFromMe ? .trailing : .leading, spacing: 3) {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(message.content)
-                        .font(.system(size: 15, weight: .regular))
+                        .font(.system(size: 15))
                         .foregroundColor(message.isFromMe ? .white : .primary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
                         .textSelection(.enabled)
 
                     if message.isNIP04 {
-                        HStack(spacing: 4) {
-                            Image(systemName: "exclamationmark.shield")
-                                .font(.system(size: 8, weight: .semibold))
+                        HStack(spacing: 3) {
+                            Image(systemName: "lock.open")
+                                .font(.system(size: 8, weight: .medium))
                             Text("NIP-04")
-                                .font(.system(size: 9, weight: .semibold))
+                                .font(.system(size: 9, weight: .medium))
                         }
-                        .foregroundColor(message.isFromMe ? .white.opacity(0.7) : .orange)
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 6)
+                        .foregroundColor(message.isFromMe ? .white.opacity(0.6) : .orange.opacity(0.8))
+                        .padding(.horizontal, 14)
+                        .padding(.bottom, 8)
                     }
                 }
-                .background(message.isFromMe ? Color.havenPurple : Color.secondary.opacity(0.15))
-                .cornerRadius(16)
+                .background(
+                    Group {
+                        if message.isFromMe {
+                            LinearGradient(
+                                colors: [.havenPurple, .havenPurpleDark],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        } else {
+                            Color(red: 0.16, green: 0.16, blue: 0.20)
+                        }
+                    }
+                )
+                .clipShape(message.isFromMe ? AnyShape(sentCorners) : AnyShape(receivedCorners))
 
-                HStack(spacing: 4) {
-                    Text(message.timestamp.formatted(.relative(presentation: .numeric)))
-                        .font(.system(size: 11, weight: .regular))
-                        .foregroundColor(.secondary)
-                }
-                .padding(.horizontal, 8)
+                Text(message.timestamp.formatted(.relative(presentation: .numeric)))
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary.opacity(0.7))
+                    .padding(.horizontal, 6)
             }
-            .frame(maxWidth: 280, alignment: message.isFromMe ? .trailing : .leading)
+            .frame(maxWidth: containerWidth * 0.75, alignment: message.isFromMe ? .trailing : .leading)
 
-            if message.isFromMe {
-                // Own message - no avatar needed
-            } else {
-                Spacer()
+            if !message.isFromMe {
+                Spacer(minLength: 60)
             }
         }
         .frame(maxWidth: .infinity, alignment: message.isFromMe ? .trailing : .leading)

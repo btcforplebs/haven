@@ -19,10 +19,16 @@ class NostrService: ObservableObject {
     @Published var connectionColor: String = "gray"
     @Published var isFetching: Bool = false
 
+    /// Set by SceneDelegate when it handles foreground reconnection.
+    /// ViewerView checks this to avoid redundant refreshAll() calls.
+    var lastForegroundReconnectTime: Date?
+
     private var seenEventIds = Set<String>()
     private var clients: [String: WebSocketClient] = [:]
     private var activeSubscriptions: [String: String] = [:] // [RelayURL: SubID]
     private var cancellables = Set<AnyCancellable>()
+    private var configCancellable: AnyCancellable? // Stored separately so resetConnections() doesn't destroy it
+    private var statusDowngradeTask: Task<Void, Never>?
     private let processingQueue = DispatchQueue(label: "com.haven.nostr-processing", qos: .userInitiated)
 
     // Relay List Metadata Cache (Kind 10002)
@@ -61,8 +67,21 @@ class NostrService: ObservableObject {
         updateOwnerHex()
         prefetchWhitelistedProfiles()
 
-        // Handle npub changes (e.g. after setup)
+        // React to active account switches — tear down old connections and event state.
+        // Stored in configCancellable (not cancellables) so resetConnections() won't destroy it.
+        configCancellable = ConfigService.shared.$config
+            .map { $0.activeAccountNpub }
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.handleAccountSwitch()
+            }
+
+        // Handle owner npub changes (e.g. after initial setup)
         ConfigService.shared.$config
+            .map { $0.ownerNpub }
+            .removeDuplicates()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 guard let self = self else { return }
@@ -296,8 +315,6 @@ class NostrService: ObservableObject {
         for pubkey in missing {
             profilesInFlight.insert(pubkey)
             profileFetchQueue.insert(pubkey)
-            // Also fetch their relay list for smart broadcasting
-            fetchRelayList(for: pubkey)
         }
 
         if profileFlushCancellable == nil {
@@ -385,11 +402,21 @@ class NostrService: ObservableObject {
     }
 
     func resetConnections() {
+        for (urlString, subId) in activeSubscriptions {
+            if let client = clients[urlString] {
+                let closeMsg = ["CLOSE", subId] as [Any]
+                if let closeData = try? JSONSerialization.data(withJSONObject: closeMsg),
+                   let closeStr = String(data: closeData, encoding: .utf8) {
+                    client.send(text: closeStr)
+                }
+            }
+        }
         for client in clients.values {
             client.disconnect()
         }
         clients.removeAll()
         activeSubscriptions.removeAll()
+        relaysReconnecting.removeAll()
         cancellables.removeAll()
         bufferFlushTimer?.invalidate()
         bufferFlushTimer = nil
@@ -397,6 +424,59 @@ class NostrService: ObservableObject {
         eventBuffer.removeAll()
         bufferLock.unlock()
         setupThrottling()
+    }
+
+    /// Resets all WebSocket state when the active account changes.
+    /// Unlike resetConnections(), this preserves the config observer and
+    /// also clears per-account event/media state (Viewer tab).
+    private func handleAccountSwitch() {
+        // 1. Send CLOSE for all active relay subscriptions, then disconnect
+        for (urlString, subId) in activeSubscriptions {
+            if let client = clients[urlString] {
+                let closeMsg = ["CLOSE", subId] as [Any]
+                if let closeData = try? JSONSerialization.data(withJSONObject: closeMsg),
+                   let closeStr = String(data: closeData, encoding: .utf8) {
+                    client.send(text: closeStr)
+                }
+            }
+        }
+        for client in clients.values {
+            client.disconnect()
+        }
+        clients.removeAll()
+        activeSubscriptions.removeAll()
+        relaysReconnecting.removeAll()
+
+        // 2. Clear Viewer tab event state — these belong to the previous account
+        events.removeAll()
+        noteMedia.removeAll()
+        seenEventIds.removeAll()
+
+        // 3. Flush pending event buffer
+        bufferFlushTimer?.invalidate()
+        bufferFlushTimer = nil
+        bufferLock.lock()
+        eventBuffer.removeAll()
+        bufferLock.unlock()
+
+        // 4. Reset fetch/subscription tracking
+        isFetching = false
+        activeSubscriptionCount = 0
+
+        // 5. Clear reconnect backoff state
+        relayReconnectAttempts.removeAll()
+        relayLastReconnectTime.removeAll()
+
+        // 6. Notify UI of cleared state
+        eventUpdateSubject.send()
+
+        // 7. Update identity and prefetch avatars for the new account
+        updateOwnerHex()
+        prefetchWhitelistedProfiles()
+
+        #if DEBUG
+        print("NostrService: Account switch — reset all connections and event state")
+        #endif
     }
 
     private func setupThrottling() {
@@ -450,16 +530,10 @@ class NostrService: ObservableObject {
                 if let hexKey = try ConfigService.shared.getCredentialHexKey(forNpub: activeNpub) {
                     sk = hexKey
                 } else {
-                    // No credential stored for this account — fall back to owner key
-                    print("NostrService: No credential for active account \(activeNpub.prefix(16))..., falling back to owner")
-                    if !config.ownerNcryptsec.isEmpty {
-                        let pwd = password ?? NIP49Service.getPasswordFromKeychain()
-                        if let pwd = pwd {
-                            sk = try config.getDecryptedHexKey(password: pwd)
-                        }
-                    } else {
-                        sk = config.ownerHexKey
-                    }
+                    // No credential stored — do NOT fall back to owner key, as that
+                    // would silently post from the wrong account.
+                    print("NostrService: No credential for active account \(activeNpub.prefix(16))..., cannot sign")
+                    return nil
                 }
             } catch {
                 print("NostrService: Failed to decrypt whitelisted account key: \(error.localizedDescription)")
@@ -476,7 +550,7 @@ class NostrService: ObservableObject {
         let signingPubkey = signingAsOwner ? ownerHexPubkey : activeHexPubkey
 
         var finalTags = tags
-        if !finalTags.contains(where: { $0.first == "client" }) {
+        if kind == 1 && !finalTags.contains(where: { $0.first == "client" }) {
             #if os(iOS)
             let clientName: String
             if UIDevice.current.userInterfaceIdiom == .pad {
@@ -526,6 +600,71 @@ class NostrService: ObservableObject {
         }
     }
 
+    /// Async variant of signEvent that supports both local key and NIP-46 remote signing.
+    /// When signingMode is "nip46", delegates to NIP46Service. Otherwise wraps the local signEvent().
+    func signEventAsync(kind: Int, content: String, tags: [[String]] = [], password: String? = nil) async -> NostrEvent? {
+        let config = ConfigService.shared.config
+        let mode = config.activeSigningMode()
+        print("NostrService: signEventAsync mode=\(mode) activeNpub=\(config.activeAccountNpub.prefix(20)) ownerNpub=\(config.ownerNpub.prefix(20))")
+
+        if mode == "nip46" {
+            // Determine the signing pubkey from the active account
+            let signingPubkey = activeHexPubkey
+
+            guard !signingPubkey.isEmpty else {
+                print("NostrService: NIP-46 sign failed - no pubkey available")
+                return nil
+            }
+
+            var finalTags = tags
+            if kind == 1 && !finalTags.contains(where: { $0.first == "client" }) {
+                #if os(iOS)
+                let clientName: String
+                if UIDevice.current.userInterfaceIdiom == .pad {
+                    clientName = "Nostr Vault on iPadOS"
+                } else {
+                    clientName = "Nostr Vault on iOS"
+                }
+                #else
+                let clientName = "Nostr Vault on MacOS"
+                #endif
+                finalTags.append(["client", clientName])
+            }
+
+            let eventDict: [String: Any] = [
+                "pubkey": signingPubkey,
+                "created_at": Int64(Date().timeIntervalSince1970),
+                "kind": kind,
+                "content": content,
+                "tags": finalTags
+            ]
+
+            guard let jsonData = try? JSONSerialization.data(withJSONObject: eventDict),
+                  let jsonStr = String(data: jsonData, encoding: .utf8) else {
+                print("NostrService: NIP-46 sign failed - JSON serialization error")
+                return nil
+            }
+
+            do {
+                print("NostrService: NIP-46 signing kind \(kind) event, sending to bunker…")
+                let signedJSON = try await NIP46Service.shared.signEvent(eventJSON: jsonStr)
+                print("NostrService: NIP-46 bunker returned \(signedJSON.prefix(200))")
+                guard let signedData = signedJSON.data(using: .utf8) else {
+                    print("NostrService: NIP-46 sign failed - response not valid UTF-8")
+                    return nil
+                }
+                let event = try JSONDecoder().decode(NostrEvent.self, from: signedData)
+                print("NostrService: NIP-46 signed event id=\(event.id.prefix(8)) sig=\(event.sig.prefix(8))")
+                return event
+            } catch {
+                print("NostrService: NIP-46 sign failed: \(error)")
+                return nil
+            }
+        } else {
+            return signEvent(kind: kind, content: content, tags: tags, password: password)
+        }
+    }
+
     /// Publishes a signed Kind 10000 (Mute List) event to configured relays for the active account
     @MainActor
     func publishMuteList(for accountNpub: String, blockedNpubs: [String]) {
@@ -534,30 +673,32 @@ class NostrService: ObservableObject {
             let clean = npub.trimmingCharacters(in: .whitespacesAndNewlines)
             return Bech32.decode(clean)?.hexString
         }
-        
+
         let tags = hexKeys.map { ["p", $0] }
-        
+
         // Temporarily store the active account so we sign as the target account
         let originalActive = ConfigService.shared.config.activeAccountNpub
-        
+
         // Temporarily set activeAccountNpub to sign with the correct key
         ConfigService.shared.config.activeAccountNpub = (accountNpub == ConfigService.shared.config.ownerNpub) ? "" : accountNpub
-        
-        // Sign event
-        if let event = signEvent(kind: 10000, content: "", tags: tags) {
-            postEvent(event)
-            
-            // Restore active account and save sync timestamp
-            ConfigService.shared.config.activeAccountNpub = originalActive
-            ConfigService.shared.config.blockedNpubsLastSyncTimestamp[accountNpub] = event.created_at
-            ConfigService.shared.save()
-            #if DEBUG
-            print("NostrService: Successfully published Kind 10000 mute list with \(tags.count) tags for \(accountNpub.prefix(8))")
-            #endif
-        } else {
-            // Restore active account on failure
-            ConfigService.shared.config.activeAccountNpub = originalActive
-            print("NostrService: Failed to sign Kind 10000 mute list for \(accountNpub.prefix(8))")
+        ConfigService.shared.refreshActiveAccountHex()
+
+        Task {
+            if let event = await signEventAsync(kind: 10000, content: "", tags: tags) {
+                postEvent(event)
+
+                ConfigService.shared.config.activeAccountNpub = originalActive
+                ConfigService.shared.refreshActiveAccountHex()
+                ConfigService.shared.config.blockedNpubsLastSyncTimestamp[accountNpub] = event.created_at
+                ConfigService.shared.save()
+                #if DEBUG
+                print("NostrService: Successfully published Kind 10000 mute list with \(tags.count) tags for \(accountNpub.prefix(8))")
+                #endif
+            } else {
+                ConfigService.shared.config.activeAccountNpub = originalActive
+                ConfigService.shared.refreshActiveAccountHex()
+                print("NostrService: Failed to sign Kind 10000 mute list for \(accountNpub.prefix(8))")
+            }
         }
     }
 
@@ -576,13 +717,15 @@ class NostrService: ObservableObject {
         // Build ["server", url] tags — ordered by reliability (local relay first via activeBlossomMirrors)
         let tags = mirrors.map { ["server", $0] }
 
-        if let event = signEvent(kind: 10063, content: "", tags: tags) {
-            postEvent(event)
-            #if DEBUG
-            print("NostrService: Published Kind 10063 server list with \(tags.count) servers")
-            #endif
-        } else {
-            print("NostrService: Failed to sign Kind 10063 server list")
+        Task {
+            if let event = await signEventAsync(kind: 10063, content: "", tags: tags) {
+                postEvent(event)
+                #if DEBUG
+                print("NostrService: Published Kind 10063 server list with \(tags.count) servers")
+                #endif
+            } else {
+                print("NostrService: Failed to sign Kind 10063 server list")
+            }
         }
     }
 
@@ -600,18 +743,24 @@ class NostrService: ObservableObject {
         // Build ["r", relay_url] tags for DM relays
         let tags = dmRelays.map { ["r", $0] }
 
-        if let event = signEvent(kind: 10050, content: "", tags: tags) {
-            postEvent(event)
-            #if DEBUG
-            print("NostrService: Published Kind 10050 DM relay list with \(tags.count) relays")
-            #endif
-        } else {
-            print("NostrService: Failed to sign Kind 10050 DM relay list")
+        Task {
+            if let event = await signEventAsync(kind: 10050, content: "", tags: tags) {
+                postEvent(event)
+                #if DEBUG
+                print("NostrService: Published Kind 10050 DM relay list with \(tags.count) relays")
+                #endif
+            } else {
+                print("NostrService: Failed to sign Kind 10050 DM relay list")
+            }
         }
     }
 
     /// Posts an event to the local relay and broadcasts to configured relays
     func postEvent(_ event: NostrEvent) {
+        print("NostrService: postEvent called – id=\(event.id.prefix(8)) kind=\(event.kind) sig=\(event.sig.prefix(8))")
+        // Suppress the relay activity red dot for this self-authored event
+        RelayProcessManager.shared.suppressActivityForOwnPost()
+
         // Update local state immediately for instant feedback
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -788,15 +937,16 @@ class NostrService: ObservableObject {
             tags.append(["reason", reason])
         }
 
-        guard let signed = signEvent(kind: 1984, content: description ?? "Reported for \(reason)", tags: tags) else {
-            print("NostrService: Failed to sign reporting event")
-            return
+        Task {
+            guard let signed = await signEventAsync(kind: 1984, content: description ?? "Reported for \(reason)", tags: tags) else {
+                print("NostrService: Failed to sign reporting event")
+                return
+            }
+            postEvent(signed)
+            #if DEBUG
+            print("NostrService: Posted Kind 1984 report for event \(eventId)")
+            #endif
         }
-
-        postEvent(signed)
-        #if DEBUG
-        print("NostrService: Posted Kind 1984 report for event \(eventId)")
-        #endif
     }
 
     /// Reports a user using Kind 1984
@@ -813,32 +963,36 @@ class NostrService: ObservableObject {
             tags.append(["reason", reason])
         }
 
-        guard let signed = signEvent(kind: 1984, content: description ?? "Reported user for \(reason)", tags: tags) else {
-            print("NostrService: Failed to sign user reporting event")
-            return
+        Task {
+            guard let signed = await signEventAsync(kind: 1984, content: description ?? "Reported user for \(reason)", tags: tags) else {
+                print("NostrService: Failed to sign user reporting event")
+                return
+            }
+            postEvent(signed)
+            #if DEBUG
+            print("NostrService: Posted Kind 1984 report for user \(pubkey)")
+            #endif
         }
-
-        postEvent(signed)
-        #if DEBUG
-        print("NostrService: Posted Kind 1984 report for user \(pubkey)")
-        #endif
     }
 
     /// Publishes a NIP-09 deletion request (kind 5) for the given event ID
     func deleteNote(id: String) {
-        guard let signed = signEvent(kind: 5, content: "", tags: [["e", id]]) else {
-            print("NostrService: Failed to sign deletion event")
-            return
+        Task {
+            guard let signed = await signEventAsync(kind: 5, content: "", tags: [["e", id]]) else {
+                print("NostrService: Failed to sign deletion event")
+                return
+            }
+            postEvent(signed)
+            #if DEBUG
+            print("NostrService: Posted Kind 5 deletion request for event \(id)")
+            #endif
         }
-        postEvent(signed)
-        #if DEBUG
-        print("NostrService: Posted Kind 5 deletion request for event \(id)")
-        #endif
     }
 
     // Per-relay reconnection state to implement exponential backoff
     private var relayReconnectAttempts: [String: Int] = [:]
     private var relayLastReconnectTime: [String: Date] = [:]
+    private var relaysReconnecting = Set<String>() // Guard against concurrent reconnects
     private let maxReconnectAttempts = 10
     private let baseReconnectDelay: TimeInterval = 2.0
     private let maxReconnectDelay: TimeInterval = 30.0  // Cap at 30s instead of 60s to reduce freeze perception
@@ -893,6 +1047,14 @@ class NostrService: ObservableObject {
                 }
             }
 
+            // Prevent concurrent reconnection attempts for the same URL
+            if relaysReconnecting.contains(urlString) {
+                #if DEBUG
+                print("NostrService: Skipping \(urlString) - reconnection already in progress")
+                #endif
+                continue
+            }
+
             // Check if we should delay reconnect (exponential backoff)
             if let lastAttempt = relayLastReconnectTime[urlString],
                let attempts = relayReconnectAttempts[urlString] {
@@ -913,6 +1075,23 @@ class NostrService: ObservableObject {
                 }
             }
 
+            relaysReconnecting.insert(urlString)
+
+            // Close old subscription explicitly before creating a new client
+            if let oldSubId = activeSubscriptions[urlString] {
+                if let oldClient = clients[urlString] {
+                    let closeMsg = ["CLOSE", oldSubId] as [Any]
+                    if let closeData = try? JSONSerialization.data(withJSONObject: closeMsg),
+                       let closeStr = String(data: closeData, encoding: .utf8) {
+                        oldClient.send(text: closeStr)
+                    }
+                }
+                activeSubscriptions.removeValue(forKey: urlString)
+            }
+
+            // Disconnect old client before replacing
+            clients[urlString]?.disconnect()
+
             let client = WebSocketClient()
             clients[urlString] = client
 
@@ -931,8 +1110,11 @@ class NostrService: ObservableObject {
                     if state == .connected {
                         // Reset backoff on successful connection
                         self.relayReconnectAttempts[urlString] = 0
+                        self.relaysReconnecting.remove(urlString)
                         self.sendRequest(to: client!, url: url, until: until, authors: authors)
                     } else if state == .error {
+                        self.relaysReconnecting.remove(urlString)
+
                         // Increment backoff counter
                         let attempts = (self.relayReconnectAttempts[urlString] ?? 0) + 1
                         self.relayReconnectAttempts[urlString] = attempts
@@ -1029,17 +1211,48 @@ class NostrService: ObservableObject {
     private func updateAggregatedStatus() {
         let states = clients.values.map { $0.connectionState }
         if states.contains(.connected) {
+            // Upgrading to green is immediate; cancel any pending downgrade
+            statusDowngradeTask?.cancel()
+            statusDowngradeTask = nil
             connectionStatus = "Connected"
             connectionColor = "green"
-        } else if states.contains(.connecting) {
-            connectionStatus = "Connecting..."
-            connectionColor = "yellow"
-        } else if states.contains(.error) {
-            connectionStatus = "Connection Error"
-            connectionColor = "red"
         } else {
-            connectionStatus = "Disconnected"
-            connectionColor = "gray"
+            // Downgrade from green is debounced to avoid flicker during brief reconnects
+            let wasGreen = connectionColor == "green"
+            let newStatus: String
+            let newColor: String
+            if states.contains(.connecting) {
+                newStatus = "Connecting..."
+                newColor = "yellow"
+            } else if states.contains(.error) {
+                newStatus = "Connection Error"
+                newColor = "red"
+            } else {
+                newStatus = "Disconnected"
+                newColor = "gray"
+            }
+
+            if wasGreen && newColor == "yellow" {
+                // Debounce: wait before showing yellow so brief reconnects don't flicker
+                if statusDowngradeTask == nil {
+                    statusDowngradeTask = Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                        guard !Task.isCancelled else { return }
+                        // Re-check state after delay
+                        let currentStates = self.clients.values.map { $0.connectionState }
+                        if !currentStates.contains(.connected) {
+                            self.connectionStatus = newStatus
+                            self.connectionColor = newColor
+                        }
+                        self.statusDowngradeTask = nil
+                    }
+                }
+            } else {
+                statusDowngradeTask?.cancel()
+                statusDowngradeTask = nil
+                connectionStatus = newStatus
+                connectionColor = newColor
+            }
         }
     }
 
@@ -1086,6 +1299,13 @@ class NostrService: ObservableObject {
         if let eventDict = json[2] as? [String: Any],
            let eventData = try? JSONSerialization.data(withJSONObject: eventDict),
            let event = try? JSONDecoder().decode(NostrEvent.self, from: eventData) {
+
+            // Early dedup for replaceable events (kind 3 contact lists, etc.)
+            // that flood on every re-subscription. Skip before any expensive processing.
+            let replaceableKinds: Set<Int> = [3]
+            if replaceableKinds.contains(event.kind) && seenEventIds.contains(event.id) {
+                return
+            }
 
             if event.kind == 0 {
                 // Handling Kind 0 (Metadata)
@@ -1261,6 +1481,11 @@ class NostrService: ObservableObject {
 
             if seenEventIds.contains(event.id) { return }
             seenEventIds.insert(event.id)
+            // Prevent unbounded memory growth — trim oldest entries when the set gets large
+            if seenEventIds.count > 50_000 {
+                let excess = seenEventIds.count - 40_000
+                seenEventIds = Set(seenEventIds.dropFirst(excess))
+            }
 
             var items: [MediaItem] = []
 
@@ -1402,11 +1627,61 @@ class NostrService: ObservableObject {
         }
     }
 
+    /// Fetches zap receipts (kind 9735) with a larger limit to cover more history.
+    func fetchZapReceipts(from relayURLs: [URL], limit: Int = 1000) {
+        let filter: [String: Any] = ["kinds": [9735], "limit": limit]
+
+        for url in relayURLs {
+            let urlString = url.absoluteString
+            if isLocalRelay(url) && !isLocalRelayReady { continue }
+
+            if let existing = clients[urlString], existing.connectionState == .connected {
+                let subId = "zaps-\(UUID().uuidString.prefix(6))"
+                let req = ["REQ", subId, filter] as [Any]
+                if let data = try? JSONSerialization.data(withJSONObject: req),
+                   let str = String(data: data, encoding: .utf8) {
+                    existing.send(text: str)
+                }
+                continue
+            }
+
+            let client = WebSocketClient()
+            client.isTemporary = true
+            client.messageSubject
+                .receive(on: processingQueue)
+                .sink { [weak self] message in
+                    self?.processMessage(message, from: urlString)
+                }
+                .store(in: &cancellables)
+
+            let safeFilter = UncheckedSendable(value: filter)
+            client.$connectionState
+                .first(where: { $0 == .connected })
+                .receive(on: DispatchQueue.main)
+                .sink { [weak client] _ in
+                    guard let client = client else { return }
+                    let subId = "zaps-\(UUID().uuidString.prefix(6))"
+                    let req = ["REQ", subId, safeFilter.value] as [Any]
+                    if let data = try? JSONSerialization.data(withJSONObject: req),
+                       let str = String(data: data, encoding: .utf8) {
+                        client.send(text: str)
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
+                        client.disconnect()
+                    }
+                }
+                .store(in: &cancellables)
+
+            client.connect(url: url)
+        }
+    }
+
     func fetchCount(from relayURLs: [URL], filter: [String: Any] = [:]) async -> Int? {
         #if DEBUG
         print("NostrService: Starting aggregate fetchCount for \(relayURLs.count) relays")
         #endif
         var totalCount: Int? = nil
+        var responsesReceived = 0
 
         let safeFilter = UncheckedSendable(value: filter)
 
@@ -1577,8 +1852,19 @@ class NostrService: ObservableObject {
             for await count in group {
                 if let count = count {
                      totalCount = (totalCount ?? 0) + count
+                     responsesReceived += 1
                 }
             }
+        }
+
+        // Only return an aggregate count when ALL endpoints responded.
+        // Partial responses cause wild fluctuations (e.g. 3 vs 21,000)
+        // because failed endpoints are silently skipped.
+        guard responsesReceived == relayURLs.count else {
+            #if DEBUG
+            print("NostrService: Only \(responsesReceived)/\(relayURLs.count) endpoints responded — returning nil to avoid partial count")
+            #endif
+            return nil
         }
 
         #if DEBUG

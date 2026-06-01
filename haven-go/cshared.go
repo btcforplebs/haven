@@ -13,14 +13,18 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
+	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/bitvora/haven/pkg/wot"
+	"github.com/barrydeen/haven/pkg/wot"
 	"github.com/mailru/easyjson"
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/nbd-wtf/go-nostr/nip04"
 	"github.com/nbd-wtf/go-nostr/nip44"
+	"github.com/nbd-wtf/go-nostr/nip46"
 	"github.com/spf13/afero"
 )
 
@@ -28,6 +32,17 @@ var (
 	csharedCtx    context.Context
 	csharedCancel context.CancelFunc
 	globalServer  *http.Server
+)
+
+// NIP-46 remote signer state (independent of relay lifecycle)
+var (
+	nip46Ctx    context.Context
+	nip46Cancel context.CancelFunc
+	nip46Pool   *nostr.SimplePool
+	nip46Client *nip46.BunkerClient
+	nip46Mu     sync.RWMutex
+
+	nip46PendingAuthURL atomic.Value // stores string
 )
 
 func isCShared() bool {
@@ -478,6 +493,327 @@ func SweepToAddressC(nsecHex *C.char, destAddr *C.char, feeRateSatsPerVB C.int) 
 	}
 	out, _ := json.Marshal(result)
 	return C.CString(string(out))
+}
+
+// ---------------------------------------------------------------------------
+// NIP-46 Remote Signer Bridge
+// ---------------------------------------------------------------------------
+
+//export NIP46ConnectC
+func NIP46ConnectC(clientSK *C.char, bunkerURL *C.char) *C.char {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("NIP46ConnectC: recovered from panic: %v", r)
+		}
+	}()
+
+	goSK := C.GoString(clientSK)
+	goURL := C.GoString(bunkerURL)
+
+	nip46Mu.Lock()
+	defer nip46Mu.Unlock()
+
+	// Tear down any prior session
+	if nip46Cancel != nil {
+		nip46Cancel()
+	}
+	nip46Client = nil
+
+	nip46Ctx, nip46Cancel = context.WithCancel(context.Background())
+	nip46Pool = nostr.NewSimplePool(nip46Ctx)
+
+	nip46PendingAuthURL.Store("")
+
+	onAuth := func(authURL string) {
+		log.Printf("NIP-46: auth challenge: %s", authURL)
+		nip46PendingAuthURL.Store(authURL)
+	}
+
+	// Parse the bunker URL to extract relay(s), target pubkey, and secret.
+	parsed, err := url.Parse(goURL)
+	if err != nil {
+		slog.Error("NIP46ConnectC: invalid bunker URL", "error", err)
+		nip46Cancel()
+		return nil
+	}
+	targetPubkey := parsed.Host
+	relays := parsed.Query()["relay"]
+	secret := parsed.Query().Get("secret")
+
+	if !nostr.IsValidPublicKey(targetPubkey) {
+		slog.Error("NIP46ConnectC: invalid target pubkey", "pubkey", targetPubkey)
+		nip46Cancel()
+		return nil
+	}
+	if len(relays) == 0 {
+		slog.Error("NIP46ConnectC: no relay in bunker URL")
+		nip46Cancel()
+		return nil
+	}
+
+	// Create the bunker client with the long-lived nip46Ctx so the background
+	// subscription that listens for RPC responses stays alive for the entire
+	// session.  Previously we passed a 30-second timeout context to
+	// ConnectBunker which also fed into NewBunker → pool.SubscribeMany; when
+	// the timeout fired (or defer-cancel ran), the subscription died and all
+	// subsequent RPCs (sign_event, encrypt, etc.) would never receive a reply.
+	bunker := nip46.NewBunker(nip46Ctx, goSK, targetPubkey, relays, nip46Pool, onAuth)
+
+	// The connect RPC itself gets a timeout so we don't block forever when
+	// the signer is offline.
+	connectCtx, connectCancel := context.WithTimeout(nip46Ctx, 30*time.Second)
+	defer connectCancel()
+
+	if _, err := bunker.RPC(connectCtx, "connect", []string{targetPubkey, secret}); err != nil {
+		slog.Error("NIP46ConnectC: connect RPC failed", "error", err)
+		nip46Cancel()
+		nip46Client = nil
+		nip46Pool = nil
+		return nil
+	}
+
+	nip46Client = bunker
+
+	pubkey, err := bunker.GetPublicKey(nip46Ctx)
+	if err != nil {
+		slog.Error("NIP46ConnectC: GetPublicKey failed", "error", err)
+		return nil
+	}
+
+	log.Printf("NIP-46: connected to signer %s", pubkey[:8])
+	return C.CString(pubkey)
+}
+
+//export NIP46DisconnectC
+func NIP46DisconnectC() {
+	nip46Mu.Lock()
+	defer nip46Mu.Unlock()
+
+	if nip46Cancel != nil {
+		nip46Cancel()
+	}
+	nip46Client = nil
+	nip46Pool = nil
+	nip46PendingAuthURL.Store("")
+	log.Println("NIP-46: disconnected")
+}
+
+//export NIP46SignEventC
+func NIP46SignEventC(eventJSON *C.char) *C.char {
+	nip46Mu.RLock()
+	client := nip46Client
+	parentCtx := nip46Ctx
+	nip46Mu.RUnlock()
+
+	if client == nil {
+		slog.Error("NIP46SignEventC: not connected")
+		return nil
+	}
+
+	var event nostr.Event
+	if err := easyjson.Unmarshal([]byte(C.GoString(eventJSON)), &event); err != nil {
+		slog.Error("NIP46SignEventC: unmarshal failed", "error", err)
+		return nil
+	}
+
+	log.Printf("NIP46SignEventC: sending sign_event to bunker kind=%d pubkey=%s", event.Kind, event.PubKey[:8])
+
+	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
+	defer cancel()
+
+	if err := client.SignEvent(ctx, &event); err != nil {
+		slog.Error("NIP46SignEventC: SignEvent failed", "error", err)
+		return nil
+	}
+
+	res, _ := easyjson.Marshal(event)
+	log.Printf("NIP46SignEventC: signed ok – id=%s kind=%d", event.ID[:8], event.Kind)
+	return C.CString(string(res))
+}
+
+//export NIP46GetPublicKeyC
+func NIP46GetPublicKeyC() *C.char {
+	nip46Mu.RLock()
+	client := nip46Client
+	parentCtx := nip46Ctx
+	nip46Mu.RUnlock()
+
+	if client == nil {
+		slog.Error("NIP46GetPublicKeyC: not connected")
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
+	defer cancel()
+
+	pubkey, err := client.GetPublicKey(ctx)
+	if err != nil {
+		slog.Error("NIP46GetPublicKeyC: failed", "error", err)
+		return nil
+	}
+	return C.CString(pubkey)
+}
+
+//export NIP46NIP44EncryptC
+func NIP46NIP44EncryptC(targetPubkey *C.char, plaintext *C.char) *C.char {
+	nip46Mu.RLock()
+	client := nip46Client
+	parentCtx := nip46Ctx
+	nip46Mu.RUnlock()
+
+	if client == nil {
+		slog.Error("NIP46NIP44EncryptC: not connected")
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
+	defer cancel()
+
+	result, err := client.NIP44Encrypt(ctx, C.GoString(targetPubkey), C.GoString(plaintext))
+	if err != nil {
+		slog.Error("NIP46NIP44EncryptC: failed", "error", err)
+		return nil
+	}
+	return C.CString(result)
+}
+
+//export NIP46NIP44DecryptC
+func NIP46NIP44DecryptC(targetPubkey *C.char, ciphertext *C.char) *C.char {
+	nip46Mu.RLock()
+	client := nip46Client
+	parentCtx := nip46Ctx
+	nip46Mu.RUnlock()
+
+	if client == nil {
+		slog.Error("NIP46NIP44DecryptC: not connected")
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
+	defer cancel()
+
+	result, err := client.NIP44Decrypt(ctx, C.GoString(targetPubkey), C.GoString(ciphertext))
+	if err != nil {
+		slog.Error("NIP46NIP44DecryptC: failed", "error", err)
+		return nil
+	}
+	return C.CString(result)
+}
+
+//export NIP46NIP04EncryptC
+func NIP46NIP04EncryptC(targetPubkey *C.char, plaintext *C.char) *C.char {
+	nip46Mu.RLock()
+	client := nip46Client
+	parentCtx := nip46Ctx
+	nip46Mu.RUnlock()
+
+	if client == nil {
+		slog.Error("NIP46NIP04EncryptC: not connected")
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
+	defer cancel()
+
+	result, err := client.NIP04Encrypt(ctx, C.GoString(targetPubkey), C.GoString(plaintext))
+	if err != nil {
+		slog.Error("NIP46NIP04EncryptC: failed", "error", err)
+		return nil
+	}
+	return C.CString(result)
+}
+
+//export NIP46NIP04DecryptC
+func NIP46NIP04DecryptC(targetPubkey *C.char, ciphertext *C.char) *C.char {
+	nip46Mu.RLock()
+	client := nip46Client
+	parentCtx := nip46Ctx
+	nip46Mu.RUnlock()
+
+	if client == nil {
+		slog.Error("NIP46NIP04DecryptC: not connected")
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
+	defer cancel()
+
+	result, err := client.NIP04Decrypt(ctx, C.GoString(targetPubkey), C.GoString(ciphertext))
+	if err != nil {
+		slog.Error("NIP46NIP04DecryptC: failed", "error", err)
+		return nil
+	}
+	return C.CString(result)
+}
+
+//export NIP46PingC
+func NIP46PingC() C.int {
+	nip46Mu.RLock()
+	client := nip46Client
+	parentCtx := nip46Ctx
+	nip46Mu.RUnlock()
+
+	if client == nil {
+		return 1
+	}
+
+	ctx, cancel := context.WithTimeout(parentCtx, 15*time.Second)
+	defer cancel()
+
+	if err := client.Ping(ctx); err != nil {
+		slog.Error("NIP46PingC: failed", "error", err)
+		return 1
+	}
+	return 0
+}
+
+//export NIP46GetPendingAuthURLC
+func NIP46GetPendingAuthURLC() *C.char {
+	val := nip46PendingAuthURL.Load()
+	if val == nil {
+		return nil
+	}
+	url, ok := val.(string)
+	if !ok || url == "" {
+		return nil
+	}
+	// Consume on read
+	nip46PendingAuthURL.Store("")
+	return C.CString(url)
+}
+
+// ---------------------------------------------------------------------------
+// Local DVM: Popular Notes
+// ---------------------------------------------------------------------------
+
+//export ComputePopularNotesC
+func ComputePopularNotesC() *C.char {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("ComputePopularNotesC: recovered from panic: %v", r)
+		}
+	}()
+
+	if pool == nil || csharedCtx == nil {
+		result, _ := json.Marshal(map[string]string{"error": "relay not running"})
+		return C.CString(string(result))
+	}
+
+	ctx, cancel := context.WithTimeout(csharedCtx, 30*time.Second)
+	defer cancel()
+
+	notes, err := computePopularNotes(ctx)
+	if err != nil {
+		result, _ := json.Marshal(map[string]string{"error": err.Error()})
+		return C.CString(string(result))
+	}
+
+	result, err := json.Marshal(notes)
+	if err != nil {
+		result, _ := json.Marshal(map[string]string{"error": err.Error()})
+		return C.CString(string(result))
+	}
+	return C.CString(string(result))
 }
 
 // Dummy main() function required for buildmode=c-archive

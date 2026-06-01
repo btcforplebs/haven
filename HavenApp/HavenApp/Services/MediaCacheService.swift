@@ -20,6 +20,14 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
     private var inFlightDownloads: [String: [CheckedContinuation<Data?, Never>]] = [:]
     private let downloadLock = NSLock()
 
+    // In-memory decoded image cache (NSCache auto-evicts under memory pressure)
+    private let imageCache: NSCache<NSURL, PlatformImage> = {
+        let cache = NSCache<NSURL, PlatformImage>()
+        cache.countLimit = 100
+        cache.totalCostLimit = 60 * 1024 * 1024 // 60 MB
+        return cache
+    }()
+
     // In-memory thumbnail cache (keyed by url hash). Disk cache backs this.
     private var thumbnailMemoryCache: [String: PlatformImage] = [:]
     private let thumbnailCacheLock = NSLock()
@@ -74,6 +82,52 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
         if let stored = UserDefaults.standard.array(forKey: notFoundDefaultsKey) as? [String] {
             notFoundURLs = Set(stored)
         }
+
+        // Respond to memory pressure by purging in-memory caches
+        #if os(iOS)
+        NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.handleMemoryPressure()
+        }
+        #else
+        // macOS: observe process info memory pressure via a background source
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        source.setEventHandler { [weak self] in
+            self?.handleMemoryPressure()
+        }
+        source.resume()
+        #endif
+
+        // Evict expired cache files on launch (read config on main, evict on background)
+        DispatchQueue.main.async { [weak self] in
+            let ttlDays = ConfigService.shared.config.cacheTTLDays
+            DispatchQueue.global(qos: .utility).async {
+                self?.evictExpiredFiles(ttlDays: ttlDays)
+            }
+        }
+    }
+
+    // MARK: - In-Memory Image Cache
+
+    func cachedImage(for url: URL) -> PlatformImage? {
+        return imageCache.object(forKey: url as NSURL)
+    }
+
+    func cacheImage(_ image: PlatformImage, for url: URL) {
+        // Estimate cost as width * height * 4 bytes per pixel
+        let size = image.size
+        let cost = Int(size.width * size.height * 4)
+        imageCache.setObject(image, forKey: url as NSURL, cost: cost)
+    }
+
+    private func handleMemoryPressure() {
+        imageCache.removeAllObjects()
+        thumbnailCacheLock.lock()
+        thumbnailMemoryCache.removeAll()
+        thumbnailCacheLock.unlock()
+        VideoPlayerCache.shared.evictAll()
+        #if DEBUG
+        print("MediaCacheService: Purged in-memory caches due to memory pressure")
+        #endif
     }
 
     // MARK: - 404 Tracking
@@ -657,6 +711,35 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
         }
     }
 
+
+    /// Removes cached files older than the given TTL.
+    /// Called automatically on launch. Skips Blossom data.
+    func evictExpiredFiles(ttlDays: Int) {
+        guard ttlDays > 0 else { return } // 0 = never expire
+        let cutoff = Date().addingTimeInterval(-Double(ttlDays) * 86400)
+        let fm = FileManager.default
+        var evictedCount = 0
+
+        for dir in [cacheDirectory, thumbnailDirectory] {
+            guard let contents = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey]) else { continue }
+            for fileURL in contents {
+                guard let vals = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]),
+                      let modified = vals.contentModificationDate,
+                      modified < cutoff else { continue }
+                try? fm.removeItem(at: fileURL)
+                evictedCount += 1
+            }
+        }
+
+        if evictedCount > 0 {
+            thumbnailCacheLock.lock()
+            thumbnailMemoryCache.removeAll()
+            thumbnailCacheLock.unlock()
+            #if DEBUG
+            print("MediaCacheService: Evicted \(evictedCount) expired files (TTL: \(ttlDays) days)")
+            #endif
+        }
+    }
 
     enum MediaSource: String {
         case blossom = "Local"

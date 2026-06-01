@@ -8,6 +8,7 @@ class StatsService: ObservableObject {
     @Published var storageSize: Int64 = 0
     @Published var blossomSize: Int64 = 0
     @Published var cacheSize: Int64 = 0
+    @Published var thumbnailSize: Int64 = 0
     @Published var loadedEventsCount: Int = UserDefaults.standard.integer(forKey: "haven.stats.eventCount")
     @Published var isUpdatingCount: Bool = false
     
@@ -68,18 +69,21 @@ class StatsService: ObservableObject {
             let relayDir = ConfigService.shared.relayDataDir
             let blossomDir = relayDir.appendingPathComponent("blossom")
             let cacheDir = relayDir.appendingPathComponent("cache")
-            
+            let thumbDir = relayDir.appendingPathComponent("thumbnails")
+
             // Perform heavy I/O in a background task
-            let (storage, blossom, cache) = await Task.detached(priority: .userInitiated) {
+            let (storage, blossom, cache, thumbnails) = await Task.detached(priority: .userInitiated) {
                 let s = self.calculateSize(of: relayDir)
                 let b = self.calculateSize(of: blossomDir)
                 let c = self.calculateSize(of: cacheDir)
-                return (s, b, c)
+                let t = self.calculateSize(of: thumbDir)
+                return (s, b, c, t)
             }.value
-            
+
             self.storageSize = storage
             self.blossomSize = blossom
             self.cacheSize = cache
+            self.thumbnailSize = thumbnails
             
             // Fetch persistent count if URL provided
             if let _ = relayURLString {
@@ -135,15 +139,20 @@ class StatsService: ObservableObject {
                     
                     // Guard: Only update events if we have a valid non-zero count, or if our current count is 0
                     if let confirmedCount = count, (confirmedCount > 0 || self.loadedEventsCount == 0) {
+                        // Use a floor: never let a refresh decrease the displayed count.
+                        // Events are rarely deleted, so a lower count almost always means
+                        // an incomplete or stale response from the relay.
+                        let effectiveCount = max(confirmedCount, self.loadedEventsCount)
                         #if DEBUG
-                        print("StatsService: ✨ Total aggregated events count: \(confirmedCount)")
+                        print("StatsService: ✨ Total aggregated events count: \(confirmedCount)" +
+                              (effectiveCount != confirmedCount ? " (floored to \(effectiveCount))" : ""))
                         #endif
-                        self.baseDbCount = confirmedCount
+                        self.baseDbCount = effectiveCount
                         self.baseRelayNotesStored = RelayProcessManager.shared.eventsStored
                         self.hasEstablishedBaseline = true
-                        
-                        self.loadedEventsCount = confirmedCount
-                        UserDefaults.standard.set(confirmedCount, forKey: "haven.stats.eventCount")
+
+                        self.loadedEventsCount = effectiveCount
+                        UserDefaults.standard.set(effectiveCount, forKey: "haven.stats.eventCount")
                     } else {
                         #if DEBUG
                         print("StatsService: ❌ Fetch failed or returned 0 for events. Keeping old count: \(self.loadedEventsCount)")
@@ -196,27 +205,40 @@ class StatsService: ObservableObject {
         ]
 
         var results: [Int: Int] = [:]
+        var allEndpointsResponded = true
 
         // One connection per URL, pipeline all COUNT requests through it
-        await withTaskGroup(of: [Int: Int].self) { group in
+        await withTaskGroup(of: [Int: Int]?.self) { group in
             for url in relayURLs {
                 group.addTask {
                     return await Self.fetchKindCounts(url: url, kinds: kindsToQuery)
                 }
             }
             for await partial in group {
-                for (kind, count) in partial {
-                    results[kind, default: 0] += count
+                if let partial = partial {
+                    for (kind, count) in partial {
+                        results[kind, default: 0] += count
+                    }
+                } else {
+                    allEndpointsResponded = false
                 }
             }
+        }
+
+        // Discard partial results to avoid showing fluctuating breakdown counts
+        if !allEndpointsResponded {
+            #if DEBUG
+            print("StatsService: Not all endpoints responded for kind breakdown — returning empty")
+            #endif
+            return [:]
         }
 
         return results
     }
 
     /// Opens a single WebSocket to the relay URL and sends one COUNT per kind plus a total.
-    /// Returns kind -> count, with the grand total under key -1.
-    private static func fetchKindCounts(url: URL, kinds: [Int]) async -> [Int: Int] {
+    /// Returns kind -> count, with the grand total under key -1. Returns nil on connection failure.
+    private static func fetchKindCounts(url: URL, kinds: [Int]) async -> [Int: Int]? {
         let client = await MainActor.run { () -> WebSocketClient in
             let c = WebSocketClient()
             c.isTemporary = true
@@ -243,7 +265,7 @@ class StatsService: ObservableObject {
         _ = connectCancellable
         guard didConnect else {
             await MainActor.run { client.disconnect() }
-            return [:]
+            return nil
         }
 
         // Assign a unique sub ID per kind (and -1 for total)
@@ -339,7 +361,95 @@ class StatsService: ObservableObject {
     }
     
     var formattedCacheSize: String {
-        ByteCountFormatter.string(fromByteCount: cacheSize, countStyle: .file)
+        ByteCountFormatter.string(fromByteCount: cacheSize + thumbnailSize, countStyle: .file)
+    }
+
+    var formattedThumbnailSize: String {
+        ByteCountFormatter.string(fromByteCount: thumbnailSize, countStyle: .file)
+    }
+
+    struct CacheBreakdown {
+        var imageCount: Int = 0
+        var imageSize: Int64 = 0
+        var videoCount: Int = 0
+        var videoSize: Int64 = 0
+        var otherCount: Int = 0
+        var otherSize: Int64 = 0
+        var thumbnailCount: Int = 0
+        var thumbnailSize: Int64 = 0
+        var oldestFile: Date?
+        var newestFile: Date?
+    }
+
+    nonisolated func calculateCacheBreakdown(relayDir: URL) -> CacheBreakdown {
+        let cacheDir = relayDir.appendingPathComponent("cache")
+        let thumbDir = relayDir.appendingPathComponent("thumbnails")
+
+        var breakdown = CacheBreakdown()
+        let fm = FileManager.default
+        let resourceKeys: Set<URLResourceKey> = [.totalFileAllocatedSizeKey, .isDirectoryKey, .contentModificationDateKey]
+
+        if let contents = try? fm.contentsOfDirectory(at: cacheDir, includingPropertiesForKeys: Array(resourceKeys)) {
+            for fileURL in contents {
+                guard let vals = try? fileURL.resourceValues(forKeys: resourceKeys) else { continue }
+                if vals.isDirectory == true { continue }
+                let size = Int64(vals.totalFileAllocatedSize ?? 0)
+                if let modified = vals.contentModificationDate {
+                    if breakdown.oldestFile == nil || modified < breakdown.oldestFile! { breakdown.oldestFile = modified }
+                    if breakdown.newestFile == nil || modified > breakdown.newestFile! { breakdown.newestFile = modified }
+                }
+                switch Self.detectFileType(at: fileURL) {
+                case .image:
+                    breakdown.imageCount += 1
+                    breakdown.imageSize += size
+                case .video:
+                    breakdown.videoCount += 1
+                    breakdown.videoSize += size
+                case .other:
+                    breakdown.otherCount += 1
+                    breakdown.otherSize += size
+                }
+            }
+        }
+
+        if let thumbContents = try? fm.contentsOfDirectory(at: thumbDir, includingPropertiesForKeys: [.totalFileAllocatedSizeKey, .contentModificationDateKey]) {
+            for fileURL in thumbContents {
+                guard let vals = try? fileURL.resourceValues(forKeys: [.totalFileAllocatedSizeKey, .contentModificationDateKey]) else { continue }
+                let size = Int64(vals.totalFileAllocatedSize ?? 0)
+                if let modified = vals.contentModificationDate {
+                    if breakdown.oldestFile == nil || modified < breakdown.oldestFile! { breakdown.oldestFile = modified }
+                    if breakdown.newestFile == nil || modified > breakdown.newestFile! { breakdown.newestFile = modified }
+                }
+                breakdown.thumbnailCount += 1
+                breakdown.thumbnailSize += size
+            }
+        }
+
+        return breakdown
+    }
+
+    private enum CachedFileType { case image, video, other }
+
+    nonisolated private static func detectFileType(at url: URL) -> CachedFileType {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return .other }
+        defer { try? handle.close() }
+        guard let header = try? handle.read(upToCount: 12), header.count >= 3 else { return .other }
+
+        // JPEG: FF D8 FF
+        if header[0] == 0xFF && header[1] == 0xD8 && header[2] == 0xFF { return .image }
+        // PNG: 89 50 4E 47
+        if header.count >= 4 && header[0] == 0x89 && header[1] == 0x50 && header[2] == 0x4E && header[3] == 0x47 { return .image }
+        // GIF: 47 49 46 38
+        if header.count >= 4 && header[0] == 0x47 && header[1] == 0x49 && header[2] == 0x46 && header[3] == 0x38 { return .image }
+        // WebP: RIFF....WEBP
+        if header.count >= 12 && header[0] == 0x52 && header[1] == 0x49 && header[2] == 0x46 && header[3] == 0x46
+            && header[8] == 0x57 && header[9] == 0x45 && header[10] == 0x42 && header[11] == 0x50 { return .image }
+        // MP4/MOV: ftyp at offset 4
+        if header.count >= 8 && header[4] == 0x66 && header[5] == 0x74 && header[6] == 0x79 && header[7] == 0x70 { return .video }
+        // WebM/MKV: 1A 45 DF A3
+        if header.count >= 4 && header[0] == 0x1A && header[1] == 0x45 && header[2] == 0xDF && header[3] == 0xA3 { return .video }
+
+        return .other
     }
 
     func fetchBlobList(for hexPubkey: String) async -> [BlobDescriptor] {

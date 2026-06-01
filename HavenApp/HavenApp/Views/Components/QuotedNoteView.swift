@@ -21,11 +21,24 @@ struct QuotedNoteView: View {
                     .foregroundColor(.secondary.opacity(0.7))
             }
             
-            Text(NostrContentFormatter.format(note.content, mediaURLs: note.mediaURLs, hideQuotes: true))
-                .font(.system(size: 13, weight: .regular))
-                .foregroundColor(.secondary)
-                .lineLimit(3)
-                .multilineTextAlignment(.leading)
+            let formattedContent = NostrContentFormatter.format(note.content, mediaURLs: note.mediaURLs, hideQuotes: true)
+            if !formattedContent.characters.isEmpty {
+                Text(formattedContent)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundColor(.secondary)
+                    .lineLimit(3)
+                    .multilineTextAlignment(.leading)
+            }
+            
+            if !note.mediaURLs.isEmpty {
+                FeedMediaView(
+                    url: note.mediaURLs[0],
+                    maxHeight: 180,
+                    portraitMaxHeight: 220,
+                    isThumbnail: false
+                )
+                .allowsHitTesting(false)
+            }
         }
         .padding(10)
         .background(Color.platformTertiaryGroupedBackground)

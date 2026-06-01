@@ -1,15 +1,27 @@
 import Foundation
 import Combine
 
+/// Helper to identify if a host is local or on the local network (LAN/Tailscale/mDNS)
+func isLocalNetworkHost(_ host: String?) -> Bool {
+    guard let host = host?.lowercased() else { return false }
+    if host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0" || host == "::1" || host == "[::1]" {
+        return true
+    }
+    // Match local private network subnets (192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 100.64.0.0/10)
+    if host.hasPrefix("192.168.") || host.hasPrefix("10.") || host.hasPrefix("172.") || host.hasPrefix("100.") {
+        return true
+    }
+    // Match local network domain names
+    if host.hasSuffix(".local") || host.hasSuffix(".ts.net") {
+        return true
+    }
+    return false
+}
+
 /// URLSessionDelegate that trusts self-signed certificates for localhost
 class LocalhostTrustDelegate: NSObject, URLSessionDelegate {
     private func isLocalhost(_ host: String?) -> Bool {
-        guard let host = host else { return false }
-        // Match localhost, 127.0.0.1, ::1, and [::1] (IPv6)
-        return host == "localhost" ||
-               host == "127.0.0.1" ||
-               host == "::1" ||
-               host == "[::1]"
+        return isLocalNetworkHost(host)
     }
 
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
@@ -226,11 +238,9 @@ class WebSocketClient: NSObject, ObservableObject, URLSessionWebSocketDelegate, 
         return false
     }
 
-    // MARK: - URLSessionDelegate (TLS trust for localhost)
-
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         let host = challenge.protectionSpace.host
-        if host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]" {
+        if isLocalNetworkHost(host) {
             if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
                let serverTrust = challenge.protectionSpace.serverTrust {
                 completionHandler(.useCredential, URLCredential(trust: serverTrust))
@@ -443,8 +453,8 @@ class TLSSkipSession: NSObject, URLSessionDelegate {
 
     nonisolated func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         // If the host is local, we allow the self-signed certificate
-        if let host = challenge.protectionSpace.host.lowercased() as String?,
-           host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0" || host == "::1" || host == "[::1]" {
+        let host = challenge.protectionSpace.host
+        if isLocalNetworkHost(host) {
             if let serverTrust = challenge.protectionSpace.serverTrust {
                 completionHandler(.useCredential, URLCredential(trust: serverTrust))
                 return

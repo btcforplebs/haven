@@ -1,7 +1,6 @@
-import asyncio
 import logging
+import os
 from typing import Optional
-from datetime import datetime
 from aioapns import APNs, NotificationRequest, PushType
 from config import (
     APNS_KEY_PATH, APNS_KEY_ID, APNS_TEAM_ID,
@@ -16,6 +15,16 @@ class APNsClient:
 
     async def connect(self):
         """Initialize APNs connection using token-based auth (recommended)"""
+        # Validate configuration before connecting
+        if not APNS_KEY_ID:
+            raise RuntimeError("APNS_KEY_ID is not set. Check your .env file.")
+        if not APNS_TEAM_ID:
+            raise RuntimeError("APNS_TEAM_ID is not set. Check your .env file.")
+        if not os.path.isfile(APNS_KEY_PATH):
+            raise RuntimeError(f"APNs key file not found at: {APNS_KEY_PATH}")
+
+        logger.info(f"🔑 APNs config: key_id={APNS_KEY_ID}, team_id={APNS_TEAM_ID}, topic={APNS_TOPIC}, sandbox={APNS_USE_SANDBOX}")
+
         try:
             self.apns = APNs(
                 key=APNS_KEY_PATH,

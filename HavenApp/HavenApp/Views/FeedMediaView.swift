@@ -61,6 +61,7 @@ struct FeedMediaView: View {
     /// Whether this is displayed as a thumbnail in a grid (use square aspect ratio).
     var isThumbnail: Bool = false
 
+    @ObservedObject private var configService = ConfigService.shared
     @State private var mediaType: FeedMediaType?
     @State private var isDetecting: Bool = false
 
@@ -109,8 +110,8 @@ struct FeedMediaView: View {
 
     private var videoView: some View {
         Group {
-            if isThumbnail {
-                FeedVideoThumbnailView(url: url)
+            if isThumbnail || !configService.config.autoplayVideos {
+                FeedVideoThumbnailView(url: url, showPlayOverlay: !isThumbnail)
                     .aspectRatio(1, contentMode: .fill)
             } else {
                 InlineFeedVideoPlayer(url: url, onTap: onTap)
@@ -236,12 +237,21 @@ private struct FeedPhotoView: View {
 
     private func loadImage() {
         guard image == nil, !isLoading else { return }
+
+        // Fast path: check in-memory decoded image cache (no disk I/O)
+        if let cached = MediaCacheService.shared.cachedImage(for: url) {
+            self.image = cached
+            self.aspectRatio = ratioFor(cached)
+            return
+        }
+
         isLoading = true
 
         Task {
             if let data = await MediaCacheService.shared.fetchData(url: url) {
                 let maxDimension: CGFloat = isThumbnail ? 300 : 800
                 if let downsampled = await ImageDownsampler.downsample(data: data, maxDimension: maxDimension) {
+                    MediaCacheService.shared.cacheImage(downsampled, for: url)
                     await MainActor.run {
                         withAnimation(.easeIn(duration: 0.2)) {
                             self.image = downsampled
@@ -250,6 +260,7 @@ private struct FeedPhotoView: View {
                         self.isLoading = false
                     }
                 } else if let img = PlatformImage(data: data) {
+                    MediaCacheService.shared.cacheImage(img, for: url)
                     await MainActor.run {
                         withAnimation(.easeIn(duration: 0.2)) {
                             self.image = img
@@ -325,6 +336,7 @@ private struct FeedGIFView: View {
 
 private struct FeedVideoThumbnailView: View {
     let url: URL
+    var showPlayOverlay: Bool = false
     @State private var thumbnail: PlatformImage? = nil
 
     var body: some View {
@@ -339,6 +351,13 @@ private struct FeedVideoThumbnailView: View {
             } else {
                 ProgressView()
                     .tint(Color.havenPurple.opacity(0.6))
+            }
+
+            if showPlayOverlay {
+                Image(systemName: "play.circle.fill")
+                    .font(.system(size: 44))
+                    .foregroundColor(.white.opacity(0.85))
+                    .shadow(color: .black.opacity(0.5), radius: 4)
             }
         }
         .onAppear { loadThumbnail() }
@@ -363,7 +382,7 @@ extension View {
     @ViewBuilder
     func onTapGestureIfSome(_ action: (() -> Void)?) -> some View {
         if let action = action {
-            self.onTapGesture { action() }
+            self.highPriorityGesture(TapGesture().onEnded { action() })
         } else {
             self
         }

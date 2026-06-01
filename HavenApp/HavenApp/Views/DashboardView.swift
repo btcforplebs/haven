@@ -6,7 +6,8 @@ struct DashboardView: View {
     @EnvironmentObject var configService: ConfigService
     @EnvironmentObject var nostrService: NostrService
     @EnvironmentObject var statsService: StatsService
-    
+    @ObservedObject private var mirrorService = MirrorService.shared
+
     @State private var isExporting = false
     @State private var isBackingUpBlossom = false
     @State private var isPreparingImport = false
@@ -15,6 +16,10 @@ struct DashboardView: View {
     @State private var statusAnimate = false
     @State private var showingKindBreakdown = false
     @State private var showingBlossomBreakdown = false
+    @State private var showingCacheBreakdown = false
+    @State private var showingStorageBreakdown = false
+    @State private var shareSheetURL: URL?
+    @State private var showingShareSheet = false
     
     var isSidebar: Bool = false
     
@@ -50,6 +55,13 @@ struct DashboardView: View {
                 }
             }
         }
+        #if os(iOS)
+        .sheet(isPresented: $showingShareSheet) {
+            if let url = shareSheetURL {
+                ShareSheet(activityItems: [url])
+            }
+        }
+        #endif
         .onChange(of: relayManager.importCompleted) { _, completed in
             if completed {
                 isPreparingImport = false
@@ -68,6 +80,14 @@ struct DashboardView: View {
             BlossomBreakdownView()
                 .environmentObject(statsService)
                 .environmentObject(configService)
+        }
+        .sheet(isPresented: $showingCacheBreakdown) {
+            MediaCacheBreakdownView()
+                .environmentObject(statsService)
+        }
+        .sheet(isPresented: $showingStorageBreakdown) {
+            StorageBreakdownView()
+                .environmentObject(statsService)
         }
     }
 
@@ -97,12 +117,13 @@ struct DashboardView: View {
                 )
 
                 StatsCard(
-                    title: "Database Size",
+                    title: "Storage Used",
                     value: statsService.formattedStorageSize,
                     icon: "internaldrive.fill",
-                    color: .blue
+                    color: .blue,
+                    action: { showingStorageBreakdown = true }
                 )
-                
+
                 StatsCard(
                     title: "Blossom Storage",
                     value: statsService.formattedBlossomSize,
@@ -110,12 +131,13 @@ struct DashboardView: View {
                     color: .green,
                     action: { showingBlossomBreakdown = true }
                 )
-                
+
                 StatsCard(
                     title: "Media Cache",
                     value: statsService.formattedCacheSize,
                     icon: "photo.stack.fill",
-                    color: .orange
+                    color: .orange,
+                    action: { showingCacheBreakdown = true }
                 )
             }
             .padding(.horizontal)
@@ -179,30 +201,41 @@ struct DashboardView: View {
                     
                     if relayManager.isImporting {
                         importProgressSection
-                    } else {
+                    }
+
+                    if mirrorService.state != .idle {
+                        blossomImportSection
+                    }
+
+                    if !relayManager.isImporting {
                         let actionColumns = [
                             GridItem(.flexible()),
                             GridItem(.flexible())
                         ]
-                        
+
                         LazyVGrid(columns: actionColumns, spacing: 8) {
                             ActionButton(icon: "safari", title: "Browser") {
                                 if let url = URL(string: configService.config.webURL) {
                                     NSWorkspace.shared.open(url)
                                 }
                             }
-                            
+
                             ActionButton(icon: "arrow.down.circle", title: "Import", isLoading: isPreparingImport || relayManager.isImporting) {
                                 isPreparingImport = true
                                 relayManager.importNotes(config: configService.config)
                             }
                             .disabled(isPreparingImport || relayManager.isImporting)
-                            
+
+                            ActionButton(icon: "photo.on.rectangle.angled", title: "Import Blossom", isLoading: mirrorService.state == .mirroring) {
+                                mirrorService.runMirror(configService: configService, nostrService: nostrService)
+                            }
+                            .disabled(mirrorService.state == .mirroring)
+
                             ActionButton(icon: "arrow.up.doc.fill", title: "Export JSONL", isLoading: isExporting) {
                                 exportBackup()
                             }
                             .disabled(isExporting || isBackingUpBlossom)
-                            
+
                             ActionButton(icon: "photo.stack", title: "Export Media", isLoading: isBackingUpBlossom) {
                                 exportBlossom()
                             }
@@ -365,13 +398,13 @@ struct DashboardView: View {
                             .foregroundColor(.secondary)
                             .padding(.horizontal)
                         
-                        let columns = geometry.size.width < 400 ? [GridItem(.flexible())] : [GridItem(.flexible()), GridItem(.flexible())]
+                        let columns = [GridItem(.flexible()), GridItem(.flexible())]
                         
                         LazyVGrid(columns: columns, spacing: 8) {
                             StatsCard(title: "Total Relay Events", value: "\(statsService.loadedEventsCount)", icon: "doc.text.fill", color: Color.havenPurple, isLoading: statsService.isUpdatingCount && statsService.loadedEventsCount == 0, action: { showingKindBreakdown = true })
-                            StatsCard(title: "Storage Used", value: statsService.formattedStorageSize, icon: "internaldrive.fill", color: .blue)
+                            StatsCard(title: "Storage Used", value: statsService.formattedStorageSize, icon: "internaldrive.fill", color: .blue, action: { showingStorageBreakdown = true })
                             StatsCard(title: "Blossom Storage", value: statsService.formattedBlossomSize, icon: "server.rack", color: .green, action: { showingBlossomBreakdown = true })
-                            StatsCard(title: "Media Cache", value: statsService.formattedCacheSize, icon: "photo.stack.fill", color: .orange)
+                            StatsCard(title: "Media Cache", value: statsService.formattedCacheSize, icon: "photo.stack.fill", color: .orange, action: { showingCacheBreakdown = true })
                         }
                         .padding(.horizontal)
                     }
@@ -388,8 +421,12 @@ struct DashboardView: View {
                         if relayManager.isImporting {
                             importProgressSection
                         }
-                        
-                        let actionColumns = geometry.size.width < 450 ? [GridItem(.flexible())] : [GridItem(.flexible()), GridItem(.flexible())]
+
+                        if mirrorService.state != .idle {
+                            blossomImportSection
+                        }
+
+                        let actionColumns = [GridItem(.flexible()), GridItem(.flexible())]
 
                         LazyVGrid(columns: actionColumns, spacing: 10) {
                             #if os(macOS)
@@ -409,6 +446,11 @@ struct DashboardView: View {
                                 relayManager.importNotes(config: configService.config)
                             }
                             .disabled(isPreparingImport || relayManager.isImporting)
+
+                            ActionButton(icon: "photo.on.rectangle.angled", title: "Import Blossom", isLoading: mirrorService.state == .mirroring) {
+                                mirrorService.runMirror(configService: configService, nostrService: nostrService)
+                            }
+                            .disabled(mirrorService.state == .mirroring)
 
                             ActionButton(icon: "arrow.up.doc.fill", title: "Export JSONL", isLoading: isExporting) {
                                 exportBackup()
@@ -430,7 +472,6 @@ struct DashboardView: View {
                         }
                     }
                     .disabled(!relayManager.isRunning && !relayManager.isImporting)
-                    .padding(.horizontal)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
@@ -505,14 +546,9 @@ struct DashboardView: View {
                 }
                 #else
                 // iOS: Share the file
-                let fileURL = URL(fileURLWithPath: tempPath)
-                let activityVC = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
-
-                if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                   let window = scene.windows.first,
-                   let rootVC = window.rootViewController {
-                    rootVC.present(activityVC, animated: true)
-                }
+                shareSheetURL = URL(fileURLWithPath: tempPath)
+                showingShareSheet = true
+                exportStatusMessage = "Ready to share"
                 #endif
             }
         }
@@ -564,14 +600,9 @@ struct DashboardView: View {
                 }
                 #else
                 // iOS: Share the file
-                let fileURL = URL(fileURLWithPath: tempPath)
-                let activityVC = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
-
-                if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                   let window = scene.windows.first,
-                   let rootVC = window.rootViewController {
-                    rootVC.present(activityVC, animated: true)
-                }
+                shareSheetURL = URL(fileURLWithPath: tempPath)
+                showingShareSheet = true
+                exportStatusMessage = "Ready to share"
                 #endif
             }
         }
@@ -642,6 +673,131 @@ struct DashboardView: View {
         .padding(.horizontal)
     }
 
+    private var blossomImportSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Blossom Import")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.secondary)
+
+                    Text(mirrorService.statusText.isEmpty ? "Complete" : mirrorService.statusText)
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer()
+
+                if let prog = mirrorService.progress {
+                    Text("\(prog.completed)/\(prog.total)")
+                        .font(.system(size: 14, weight: .bold, design: .monospaced))
+                        .foregroundColor(.green)
+                }
+            }
+
+            if let prog = mirrorService.progress, prog.total > 0 {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.green.opacity(0.1))
+
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(
+                                LinearGradient(
+                                    gradient: Gradient(colors: [.green, .green.opacity(0.7)]),
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                            )
+                            .frame(width: geo.size.width * (Double(prog.completed) / Double(prog.total)))
+                    }
+                }
+                .frame(height: 8)
+            }
+
+            // Scrollable log view
+            if !mirrorService.logEntries.isEmpty {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 2) {
+                            ForEach(mirrorService.logEntries) { entry in
+                                HStack(alignment: .top, spacing: 6) {
+                                    Text(entry.timestamp, style: .time)
+                                        .font(.system(size: 9, design: .monospaced))
+                                        .foregroundColor(.secondary.opacity(0.6))
+                                        .frame(width: 55, alignment: .leading)
+
+                                    Text(entry.level)
+                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                        .foregroundColor(blossomLogColor(entry.level))
+                                        .frame(width: 35, alignment: .leading)
+
+                                    Text(entry.message)
+                                        .font(.system(size: 10, design: .monospaced))
+                                        .foregroundColor(.white.opacity(0.85))
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                .id(entry.id)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .frame(maxHeight: 160)
+                    .background(Color(red: 0.05, green: 0.05, blue: 0.07))
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.green.opacity(0.12), lineWidth: 0.5)
+                    )
+                    .onChange(of: mirrorService.logEntries.count) { _, _ in
+                        if let lastId = mirrorService.logEntries.last?.id {
+                            withAnimation {
+                                proxy.scrollTo(lastId, anchor: .bottom)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if mirrorService.state == .complete {
+                Button(action: {
+                    mirrorService.state = .idle
+                    mirrorService.logEntries = []
+                }) {
+                    Text("Dismiss")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(Color.green.opacity(0.8))
+                        .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 4)
+            }
+        }
+        .padding()
+        .background(Color.platformSecondaryGroupedBackground)
+        .cornerRadius(12)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.green.opacity(0.2), lineWidth: 1)
+        )
+        .padding(.horizontal)
+    }
+
+    private func blossomLogColor(_ level: String) -> Color {
+        switch level {
+        case "ERROR": return .red
+        case "WARN": return .orange
+        case "DEBUG": return .gray
+        default: return .green
+        }
+    }
+
     private var relayStatusHeader: some View {
         let statusColor = relayManager.isBooting ? Color.yellow : (relayManager.isRunning ? Color.green : Color.red)
         return VStack(spacing: 16) {
@@ -680,15 +836,17 @@ struct DashboardView: View {
 
                 Button(action: {
                     if relayManager.isRunning {
-                        relayManager.stopRelay()
+                        relayManager.stopRelay {
+                            relayManager.startRelay(config: configService.config)
+                        }
                     } else {
                         relayManager.startRelay(config: configService.config)
                     }
                 }) {
                     HStack(spacing: 6) {
-                        Image(systemName: relayManager.isRunning ? "stop.fill" : "play.fill")
+                        Image(systemName: relayManager.isRunning ? "arrow.clockwise" : "play.fill")
                             .font(.system(size: 11, weight: .bold))
-                        Text(relayManager.isRunning ? "Stop Relay" : "Start Relay")
+                        Text(relayManager.isRunning ? "Restart Relay" : "Start Relay")
                             .font(.system(size: 12, weight: .bold))
                     }
                     .foregroundColor(.white)
@@ -697,14 +855,13 @@ struct DashboardView: View {
                     .background(
                         LinearGradient(
                             gradient: Gradient(colors: relayManager.isRunning
-                                ? [Color.red.opacity(0.8), Color.red.opacity(0.6)]
+                                ? [Color.orange.opacity(0.8), Color.orange.opacity(0.6)]
                                 : [Color.havenPurple, Color.havenPurpleDark]),
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
                     )
                     .cornerRadius(8)
-                    .shadow(color: (relayManager.isRunning ? Color.red : Color.havenPurple).opacity(0.3), radius: 6, x: 0, y: 3)
                 }
                 .buttonStyle(.plain)
                 .disabled(relayManager.isBooting)
@@ -1276,7 +1433,219 @@ struct BlossomBreakdownView: View {
     }
 }
 
-private struct BlobTypeRow: View {
+struct MediaCacheBreakdownView: View {
+    @EnvironmentObject var statsService: StatsService
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var breakdown: StatsService.CacheBreakdown?
+    @State private var isLoading = true
+    @State private var showingClearConfirmation = false
+    @State private var isClearing = false
+
+    private var totalSize: Int64 {
+        guard let b = breakdown else { return 0 }
+        return b.imageSize + b.videoSize + b.thumbnailSize + b.otherSize
+    }
+
+    private var totalCount: Int {
+        guard let b = breakdown else { return 0 }
+        return b.imageCount + b.videoCount + b.thumbnailCount + b.otherCount
+    }
+
+    private struct TypeBucket {
+        let label: String
+        let icon: String
+        let color: Color
+        let count: Int
+        let size: Int64
+    }
+
+    private var buckets: [TypeBucket] {
+        guard let b = breakdown else { return [] }
+        return [
+            TypeBucket(label: "Cached Images", icon: "photo.fill", color: .blue, count: b.imageCount, size: b.imageSize),
+            TypeBucket(label: "Cached Videos", icon: "video.fill", color: .orange, count: b.videoCount, size: b.videoSize),
+            TypeBucket(label: "Video Thumbnails", icon: "rectangle.grid.2x2.fill", color: .purple, count: b.thumbnailCount, size: b.thumbnailSize),
+            TypeBucket(label: "Other", icon: "doc.fill", color: .secondary, count: b.otherCount, size: b.otherSize),
+        ].filter { $0.count > 0 }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color(red: 0.08, green: 0.08, blue: 0.1).ignoresSafeArea()
+
+                if isLoading {
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .controlSize(.large)
+                            .tint(Color.havenPurple)
+                        Text("Scanning cache\u{2026}")
+                            .font(.system(size: 13))
+                            .foregroundColor(.secondary)
+                    }
+                } else {
+                    ScrollView {
+                        VStack(spacing: 8) {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("\(totalCount)")
+                                        .font(.system(size: 28, weight: .bold, design: .monospaced))
+                                        .foregroundColor(.white)
+                                    Text("Cached Files")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.secondary)
+                                }
+                                Spacer()
+                                VStack(alignment: .trailing, spacing: 4) {
+                                    Text(ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file))
+                                        .font(.system(size: 28, weight: .bold, design: .monospaced))
+                                        .foregroundColor(.white)
+                                    Text("Total Size")
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            .padding(16)
+                            .background(Color.havenPurple.opacity(0.1))
+                            .cornerRadius(12)
+                            .padding(.horizontal)
+                            .padding(.top, 12)
+
+                            VStack(spacing: 1) {
+                                ForEach(buckets, id: \.label) { bucket in
+                                    BlobTypeRow(
+                                        label: bucket.label,
+                                        icon: bucket.icon,
+                                        color: bucket.color,
+                                        count: bucket.count,
+                                        size: Int(bucket.size),
+                                        total: Int(totalSize)
+                                    )
+                                }
+                            }
+                            .padding(.horizontal)
+
+                            // Cache lifetime info
+                            if let b = breakdown, totalCount > 0 {
+                                let ttlDays = ConfigService.shared.config.cacheTTLDays
+                                VStack(spacing: 6) {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "clock.fill")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.secondary)
+                                        Text("TTL: \(ttlDays > 0 ? "\(ttlDays) day\(ttlDays == 1 ? "" : "s")" : "Never expires")")
+                                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                            .foregroundColor(.secondary)
+                                        Spacer()
+                                    }
+                                    if let oldest = b.oldestFile {
+                                        HStack(spacing: 8) {
+                                            Image(systemName: "calendar")
+                                                .font(.system(size: 12))
+                                                .foregroundColor(.secondary)
+                                            Text("Oldest: \(Self.relativeDate(oldest))")
+                                                .font(.system(size: 12, design: .monospaced))
+                                                .foregroundColor(.secondary)
+                                            Spacer()
+                                            if let newest = b.newestFile {
+                                                Text("Newest: \(Self.relativeDate(newest))")
+                                                    .font(.system(size: 12, design: .monospaced))
+                                                    .foregroundColor(.secondary)
+                                            }
+                                        }
+                                    }
+                                }
+                                .padding(12)
+                                .background(Color(red: 0.12, green: 0.12, blue: 0.12).opacity(0.6))
+                                .cornerRadius(8)
+                                .padding(.horizontal)
+                                .padding(.top, 4)
+                            }
+
+                            Button(action: { showingClearConfirmation = true }) {
+                                HStack {
+                                    if isClearing {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                    } else {
+                                        Image(systemName: "trash")
+                                    }
+                                    Text("Clear Cache")
+                                }
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundColor(.red)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(Color.red.opacity(0.1))
+                                .cornerRadius(10)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10)
+                                        .stroke(Color.red.opacity(0.3), lineWidth: 1)
+                                )
+                            }
+                            .disabled(isClearing || totalCount == 0)
+                            .padding(.horizontal)
+                            .padding(.top, 16)
+                            .padding(.bottom, 24)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Cache Breakdown")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button(action: { Task { await reload() } }) {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .disabled(isLoading)
+                }
+            }
+            .alert("Clear Media Cache?", isPresented: $showingClearConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Clear", role: .destructive) {
+                    isClearing = true
+                    MediaCacheService.shared.clearCache()
+                    statsService.refreshStats()
+                    Task {
+                        await reload()
+                        isClearing = false
+                    }
+                }
+            } message: {
+                Text("This will remove all cached images, videos, and thumbnails. Blossom media will not be affected. Files will be re-downloaded as needed.")
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 520, idealWidth: 560, minHeight: 560, idealHeight: 640)
+        #endif
+        .task { await reload() }
+    }
+
+    private func reload() async {
+        isLoading = true
+        let service = statsService
+        let relayDir = ConfigService.shared.relayDataDir
+        breakdown = await Task.detached(priority: .userInitiated) {
+            return service.calculateCacheBreakdown(relayDir: relayDir)
+        }.value
+        isLoading = false
+    }
+
+    private static func relativeDate(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+struct BlobTypeRow: View {
     let label: String
     let icon: String
     let color: Color
@@ -1309,6 +1678,133 @@ private struct BlobTypeRow: View {
 
             VStack(alignment: .trailing, spacing: 2) {
                 Text(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
+                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                    .foregroundColor(color)
+                Text(String(format: "%.1f%%", sizePercent * 100))
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color(red: 0.12, green: 0.12, blue: 0.12).opacity(0.6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.white.opacity(0.04), lineWidth: 0.5)
+        )
+        .cornerRadius(8)
+    }
+}
+
+struct StorageBreakdownView: View {
+    @EnvironmentObject var statsService: StatsService
+    @Environment(\.dismiss) private var dismiss
+
+    private struct StorageBucket: Identifiable {
+        let id = UUID()
+        let label: String
+        let icon: String
+        let color: Color
+        let size: Int64
+    }
+
+    private var buckets: [StorageBucket] {
+        let dbSize = max(0, statsService.storageSize - statsService.blossomSize - statsService.cacheSize - statsService.thumbnailSize)
+        return [
+            StorageBucket(label: "Database", icon: "cylinder.fill", color: .blue, size: dbSize),
+            StorageBucket(label: "Blossom Media", icon: "server.rack", color: .green, size: statsService.blossomSize),
+            StorageBucket(label: "Media Cache", icon: "photo.stack.fill", color: .orange, size: statsService.cacheSize + statsService.thumbnailSize),
+        ].filter { $0.size > 0 }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color(red: 0.08, green: 0.08, blue: 0.1).ignoresSafeArea()
+
+                ScrollView {
+                    VStack(spacing: 8) {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(ByteCountFormatter.string(fromByteCount: statsService.storageSize, countStyle: .file))
+                                    .font(.system(size: 28, weight: .bold, design: .monospaced))
+                                    .foregroundColor(.white)
+                                Text("Total Storage Used")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                        }
+                        .padding(16)
+                        .background(Color.havenPurple.opacity(0.1))
+                        .cornerRadius(12)
+                        .padding(.horizontal)
+                        .padding(.top, 12)
+
+                        VStack(spacing: 1) {
+                            ForEach(buckets) { bucket in
+                                StorageRow(
+                                    label: bucket.label,
+                                    icon: bucket.icon,
+                                    color: bucket.color,
+                                    size: bucket.size,
+                                    total: statsService.storageSize
+                                )
+                            }
+                        }
+                        .padding(.horizontal)
+                        .padding(.bottom, 24)
+                    }
+                }
+            }
+            .navigationTitle("Storage Breakdown")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") { dismiss() }
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button(action: { statsService.refreshStats() }) {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 520, idealWidth: 560, minHeight: 560, idealHeight: 640)
+        #endif
+    }
+}
+
+private struct StorageRow: View {
+    let label: String
+    let icon: String
+    let color: Color
+    let size: Int64
+    let total: Int64
+
+    private var sizePercent: Double {
+        guard total > 0 else { return 0 }
+        return Double(size) / Double(total)
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(color)
+                .frame(width: 24)
+
+            Text(label)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(.white)
+
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
                     .font(.system(size: 14, weight: .semibold, design: .monospaced))
                     .foregroundColor(color)
                 Text(String(format: "%.1f%%", sizePercent * 100))
@@ -1370,3 +1866,16 @@ private struct KindRow: View {
         .cornerRadius(8)
     }
 }
+
+#if os(iOS)
+struct ShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+#endif

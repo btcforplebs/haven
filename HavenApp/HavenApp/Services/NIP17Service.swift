@@ -45,19 +45,21 @@ enum NIP17Service {
     /// Creates a NIP-17 gift-wrapped event ready to publish
     /// - Parameters:
     ///   - content: The plaintext message content
-    ///   - recipientHexPubkey: Recipient's hex public key
+    ///   - rumorPTags: The p-tags for the rumor (actual conversation participants)
+    ///   - giftWrapRecipient: The pubkey to deliver the gift wrap to (may differ from rumor p-tags for self-copies)
     ///   - senderHexPrivkey: Sender's hex private key
     ///   - senderHexPubkey: Sender's hex public key
     /// - Returns: A fully signed kind 1059 gift-wrap event
     static func createGiftWrap(
         content: String,
-        recipientHexPubkey: String,
+        rumorPTags: [[String]],
+        giftWrapRecipient: String,
         senderHexPrivkey: String,
         senderHexPubkey: String
     ) throws -> NostrEvent {
         // Step 1: Create rumor (kind 14, unsigned)
         let rumorTimestamp = Int64(Date().timeIntervalSince1970)
-        let rumorTags = [["p", recipientHexPubkey]]
+        let rumorTags = rumorPTags
 
         var rumor = DMRumor(
             id: "",  // Will be computed
@@ -82,11 +84,11 @@ enum NIP17Service {
             throw NIP17Error.rumorCreationFailed
         }
 
-        // Step 2: Create seal (kind 13) - encrypt rumor with sender->recipient
+        // Step 2: Create seal (kind 13) - encrypt rumor with sender->gift wrap recipient
         let sealTimestamp = Int64(Date().addingTimeInterval(Double.random(in: -172800...0)).timeIntervalSince1970)
         let encryptedRumor = try NIP44Service.encrypt(
             plaintext: rumorJSON,
-            recipientPubkey: recipientHexPubkey,
+            recipientPubkey: giftWrapRecipient,
             senderPrivkey: senderHexPrivkey
         )
 
@@ -129,7 +131,7 @@ enum NIP17Service {
         let ephemeralSk = String(parts[0])
         let ephemeralPk = String(parts[1])
 
-        // Step 4: Create gift wrap (kind 1059) - encrypt seal with ephemeral->recipient
+        // Step 4: Create gift wrap (kind 1059) - encrypt seal with ephemeral->gift wrap recipient
         let giftWrapTimestamp = Int64(Date().addingTimeInterval(Double.random(in: -172800...0)).timeIntervalSince1970)
 
         // Encrypt seal JSON with ephemeral key
@@ -140,7 +142,7 @@ enum NIP17Service {
 
         let encryptedSeal = try NIP44Service.encrypt(
             plaintext: sealJSONForEncryption,
-            recipientPubkey: recipientHexPubkey,
+            recipientPubkey: giftWrapRecipient,
             senderPrivkey: ephemeralSk
         )
 
@@ -148,7 +150,7 @@ enum NIP17Service {
         let giftWrapEventJSON = try buildGiftWrapEventJSON(
             ephemeralPubkey: ephemeralPk,
             encryptedContent: encryptedSeal,
-            recipientPubkey: recipientHexPubkey,
+            recipientPubkey: giftWrapRecipient,
             timestamp: giftWrapTimestamp
         )
 
@@ -171,17 +173,145 @@ enum NIP17Service {
         return giftWrap
     }
 
+    // MARK: - Async Gift Wrap Creation (NIP-46 compatible)
+
+    /// Async variant of createGiftWrap that supports NIP-46 remote signing.
+    /// When in NIP-46 mode: seal encrypt+sign goes through the signer; gift wrap uses local ephemeral key.
+    /// When in local mode: delegates to the synchronous createGiftWrap.
+    static func createGiftWrapAsync(
+        content: String,
+        rumorPTags: [[String]],
+        giftWrapRecipient: String,
+        senderHexPrivkey: String?,
+        senderHexPubkey: String
+    ) async throws -> NostrEvent {
+        let isNIP46 = await ConfigService.shared.config.activeSigningMode() == "nip46"
+
+        if !isNIP46 {
+            guard let sk = senderHexPrivkey else { throw NIP17Error.eventSigningFailed }
+            return try createGiftWrap(
+                content: content, rumorPTags: rumorPTags, giftWrapRecipient: giftWrapRecipient,
+                senderHexPrivkey: sk, senderHexPubkey: senderHexPubkey
+            )
+        }
+
+        // Step 1: Create rumor (kind 14, unsigned) -- same as sync version
+        let rumorTimestamp = Int64(Date().timeIntervalSince1970)
+        var rumor = DMRumor(id: "", pubkey: senderHexPubkey, created_at: rumorTimestamp, kind: 14, tags: rumorPTags, content: content)
+        rumor.id = try computeEventID(pubkey: rumor.pubkey, createdAt: rumor.created_at, kind: rumor.kind, tags: rumor.tags, content: rumor.content)
+
+        guard let rumorJSON = try encodeToJSON(rumor) else { throw NIP17Error.rumorCreationFailed }
+
+        // Step 2: Encrypt rumor via NIP-46 nip44_encrypt
+        let sealTimestamp = Int64(Date().addingTimeInterval(Double.random(in: -172800...0)).timeIntervalSince1970)
+        let encryptedRumor = try await NIP46Service.shared.nip44Encrypt(thirdPartyPubkey: giftWrapRecipient, plaintext: rumorJSON)
+
+        // Build seal event JSON and sign via NIP-46 sign_event
+        let sealEventJSON = try buildSealEventJSON(senderPubkey: senderHexPubkey, encryptedContent: encryptedRumor, timestamp: sealTimestamp)
+        let signedSealStr = try await NIP46Service.shared.signEvent(eventJSON: sealEventJSON)
+
+        guard let sealEventData = signedSealStr.data(using: .utf8),
+              let sealEvent = try? JSONDecoder().decode(NostrEvent.self, from: sealEventData) else {
+            throw NIP17Error.sealCreationFailed
+        }
+
+        // Step 3: Generate ephemeral keypair -- ALWAYS LOCAL
+        guard let keyPairCStr = GenerateKeyPairC() else { throw NIP17Error.ephemeralKeyFailed }
+        let keyPairStr = String(cString: keyPairCStr)
+        free(keyPairCStr)
+        let parts = keyPairStr.split(separator: ":")
+        guard parts.count == 2 else { throw NIP17Error.ephemeralKeyFailed }
+        let ephemeralSk = String(parts[0])
+        let ephemeralPk = String(parts[1])
+
+        // Step 4: Create gift wrap (kind 1059) -- ALWAYS LOCAL (ephemeral key)
+        let giftWrapTimestamp = Int64(Date().addingTimeInterval(Double.random(in: -172800...0)).timeIntervalSince1970)
+
+        guard let sealData = try? JSONEncoder().encode(sealEvent),
+              let sealJSONForEncryption = String(data: sealData, encoding: .utf8) else {
+            throw NIP17Error.sealCreationFailed
+        }
+
+        let encryptedSeal = try NIP44Service.encrypt(plaintext: sealJSONForEncryption, recipientPubkey: giftWrapRecipient, senderPrivkey: ephemeralSk)
+        let giftWrapEventJSON = try buildGiftWrapEventJSON(ephemeralPubkey: ephemeralPk, encryptedContent: encryptedSeal, recipientPubkey: giftWrapRecipient, timestamp: giftWrapTimestamp)
+
+        guard let giftWrapCStr = SignEventC(
+            UnsafeMutablePointer(mutating: (giftWrapEventJSON as NSString).utf8String),
+            UnsafeMutablePointer(mutating: (ephemeralSk as NSString).utf8String)
+        ) else { throw NIP17Error.eventSigningFailed }
+
+        let giftWrapStr = String(cString: giftWrapCStr)
+        free(giftWrapCStr)
+
+        guard let giftWrapData = giftWrapStr.data(using: .utf8),
+              let giftWrap = try? JSONDecoder().decode(NostrEvent.self, from: giftWrapData) else {
+            throw NIP17Error.giftWrapCreationFailed
+        }
+
+        return giftWrap
+    }
+
+    // MARK: - Async Gift Wrap Unwrapping (NIP-46 compatible)
+
+    /// Async variant of unwrapGiftWrap that supports NIP-46 remote decryption.
+    static func unwrapGiftWrapAsync(
+        _ event: NostrEvent,
+        recipientPrivkey: String?
+    ) async throws -> (senderPubkey: String, content: String, timestamp: Date, rumorTags: [[String]]) {
+        let isNIP46 = await ConfigService.shared.config.activeSigningMode() == "nip46"
+
+        if !isNIP46 {
+            guard let sk = recipientPrivkey else { throw NIP17Error.decryptionFailed }
+            return try unwrapGiftWrap(event, recipientPrivkey: sk)
+        }
+
+        guard event.kind == 1059 else { throw NIP17Error.invalidGiftWrap }
+
+        // Step 1: Decrypt gift wrap via NIP-46 nip44_decrypt
+        let decryptedSealJSON = try await NIP46Service.shared.nip44Decrypt(thirdPartyPubkey: event.pubkey, ciphertext: event.content)
+
+        // Step 2: Parse seal
+        guard let sealData = decryptedSealJSON.data(using: .utf8),
+              let sealEvent = try? JSONDecoder().decode(NostrEvent.self, from: sealData) else {
+            throw NIP17Error.decryptionFailed
+        }
+        guard sealEvent.kind == 13 else { throw NIP17Error.invalidGiftWrap }
+
+        // Step 3: Decrypt seal via NIP-46 nip44_decrypt
+        let decryptedRumorJSON = try await NIP46Service.shared.nip44Decrypt(thirdPartyPubkey: sealEvent.pubkey, ciphertext: sealEvent.content)
+
+        // Step 4: Parse rumor
+        guard let rumorData = decryptedRumorJSON.data(using: .utf8),
+              let rumor = try? JSONDecoder().decode(DMRumor.self, from: rumorData) else {
+            throw NIP17Error.decryptionFailed
+        }
+        guard rumor.kind == 14 else { throw NIP17Error.invalidGiftWrap }
+
+        // Step 5: Verify seal pubkey matches rumor pubkey
+        guard sealEvent.pubkey == rumor.pubkey else {
+            print("NIP-17: Seal pubkey (\(sealEvent.pubkey.prefix(8))) does not match rumor pubkey (\(rumor.pubkey.prefix(8))) — possible impersonation")
+            throw NIP17Error.invalidGiftWrap
+        }
+
+        return (
+            senderPubkey: rumor.pubkey,
+            content: rumor.content,
+            timestamp: Date(timeIntervalSince1970: TimeInterval(rumor.created_at)),
+            rumorTags: rumor.tags
+        )
+    }
+
     // MARK: - Gift Wrap Unwrapping
 
     /// Unwraps a received NIP-17 gift-wrapped event
     /// - Parameters:
     ///   - event: The kind 1059 gift-wrap event
     ///   - recipientPrivkey: Recipient's hex private key (for decryption)
-    /// - Returns: Tuple containing (sender pubkey, plaintext content, timestamp)
+    /// - Returns: Tuple containing (sender pubkey, plaintext content, timestamp, rumor tags)
     static func unwrapGiftWrap(
         _ event: NostrEvent,
         recipientPrivkey: String
-    ) throws -> (senderPubkey: String, content: String, timestamp: Date) {
+    ) throws -> (senderPubkey: String, content: String, timestamp: Date, rumorTags: [[String]]) {
         guard event.kind == 1059 else {
             throw NIP17Error.invalidGiftWrap
         }
@@ -220,10 +350,17 @@ enum NIP17Service {
             throw NIP17Error.invalidGiftWrap
         }
 
+        // Step 5: Verify seal pubkey matches rumor pubkey (prevents sender impersonation)
+        guard sealEvent.pubkey == rumor.pubkey else {
+            print("⚠️ NIP-17: Seal pubkey (\(sealEvent.pubkey.prefix(8))) does not match rumor pubkey (\(rumor.pubkey.prefix(8))) — possible impersonation attempt")
+            throw NIP17Error.invalidGiftWrap
+        }
+
         return (
             senderPubkey: rumor.pubkey,
             content: rumor.content,
-            timestamp: Date(timeIntervalSince1970: TimeInterval(rumor.created_at))
+            timestamp: Date(timeIntervalSince1970: TimeInterval(rumor.created_at)),
+            rumorTags: rumor.tags
         )
     }
 

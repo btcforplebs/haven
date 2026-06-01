@@ -1,6 +1,6 @@
 import Foundation
 
-struct FeedProfile: Codable, Identifiable {
+struct FeedProfile: Codable, Identifiable, Equatable {
     let pubkey: String
     var name: String?
     var displayName: String?

@@ -73,48 +73,48 @@ public final class Secp256k1 {
 
     // Forward all call-sites that used the old `Secp256k1Helper` enum:
 
-    static func publicKey(from priv: Data) throws -> Data {
+    public static func publicKey(from priv: Data) throws -> Data {
         try backend.privateKeyToPublicKey(priv)
     }
-    static func negatePrivKey(_ priv: Data) throws -> Data {
+    public static func negatePrivKey(_ priv: Data) throws -> Data {
         try backend.negatePrivateKey(priv)
     }
-    static func addTweakToPrivKey(_ priv: Data, tweak: Data) throws -> Data {
+    public static func addTweakToPrivKey(_ priv: Data, tweak: Data) throws -> Data {
         try backend.addTweakToPrivateKey(priv, tweak: tweak)
     }
-    static func multiplyPrivKey(_ priv: Data, scalar: Data) throws -> Data {
+    public static func multiplyPrivKey(_ priv: Data, scalar: Data) throws -> Data {
         try backend.multiplyPrivateKey(priv, scalar: scalar)
     }
-    static func sumPrivateKeys(_ keys: [Data]) throws -> Data {
+    public static func sumPrivateKeys(_ keys: [Data]) throws -> Data {
         try backend.sumPrivateKeys(keys)
     }
-    static func addTweakToPubKey(_ pub: Data, tweak: Data) throws -> Data {
+    public static func addTweakToPubKey(_ pub: Data, tweak: Data) throws -> Data {
         try backend.addTweakToPublicKey(pub, tweak: tweak)
     }
-    static func multiplyPubKey(_ pub: Data, scalar: Data) throws -> Data {
+    public static func multiplyPubKey(_ pub: Data, scalar: Data) throws -> Data {
         try backend.multiplyPublicKey(pub, scalar: scalar)
     }
-    static func sumPublicKeys(_ keys: [Data]) throws -> Data {
+    public static func sumPublicKeys(_ keys: [Data]) throws -> Data {
         try backend.combinePublicKeys(keys)
     }
-    static func subtractPubKeys(_ a: Data, _ b: Data) throws -> Data {
+    public static func subtractPubKeys(_ a: Data, _ b: Data) throws -> Data {
         try backend.subtractPublicKeys(a, b)
     }
-    static func hasOddY(_ pub: Data) -> Bool {
+    public static func hasOddY(_ pub: Data) -> Bool {
         backend.hasOddY(pub)
     }
-    static func schnorrSign(message: Data, privateKey: Data) throws -> Data {
+    public static func schnorrSign(message: Data, privateKey: Data) throws -> Data {
         try backend.schnorrSign(message: message, privateKey: privateKey)
     }
     /// ECDH: multiply public key by private key scalar to get shared point.
-    static func ecdhPoint(privateKey: Data, publicKey: Data) throws -> Data {
+    public static func ecdhPoint(privateKey: Data, publicKey: Data) throws -> Data {
         try backend.multiplyPublicKey(publicKey, scalar: privateKey)
     }
     // Pure-Swift helpers that don't need a backend:
-    static func xOnlyKey(_ compressed: Data) -> Data {
+    public static func xOnlyKey(_ compressed: Data) -> Data {
         compressed.count == 33 ? compressed.dropFirst() : compressed
     }
-    static func p2trScriptPubKey(xOnlyKey: Data) -> Data {
+    public static func p2trScriptPubKey(xOnlyKey: Data) -> Data {
         Data([0x51, 0x20]) + xOnlyKey
     }
 }

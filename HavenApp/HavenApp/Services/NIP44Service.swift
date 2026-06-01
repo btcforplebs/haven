@@ -35,6 +35,26 @@ enum NIP44Service {
         return result
     }
 
+    /// Async encrypt that delegates to NIP-46 when in remote signing mode, otherwise uses local keys.
+    static func encryptAsync(plaintext: String, recipientPubkey: String, senderPrivkey: String? = nil) async throws -> String {
+        if await ConfigService.shared.config.activeSigningMode() == "nip46" {
+            return try await NIP46Service.shared.nip44Encrypt(thirdPartyPubkey: recipientPubkey, plaintext: plaintext)
+        } else {
+            guard let sk = senderPrivkey else { throw NIP44Error.invalidKeyFormat }
+            return try encrypt(plaintext: plaintext, recipientPubkey: recipientPubkey, senderPrivkey: sk)
+        }
+    }
+
+    /// Async decrypt that delegates to NIP-46 when in remote signing mode, otherwise uses local keys.
+    static func decryptAsync(ciphertext: String, senderPubkey: String, recipientPrivkey: String? = nil) async throws -> String {
+        if await ConfigService.shared.config.activeSigningMode() == "nip46" {
+            return try await NIP46Service.shared.nip44Decrypt(thirdPartyPubkey: senderPubkey, ciphertext: ciphertext)
+        } else {
+            guard let sk = recipientPrivkey else { throw NIP44Error.invalidKeyFormat }
+            return try decrypt(ciphertext: ciphertext, senderPubkey: senderPubkey, recipientPrivkey: sk)
+        }
+    }
+
     /// Decrypts a NIP-44 payload
     /// - Parameters:
     ///   - ciphertext: The base64-encoded encrypted payload

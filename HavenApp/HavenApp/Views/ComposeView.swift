@@ -30,6 +30,7 @@ struct ComposeView: View {
     var onDismiss: (() -> Void)? = nil
     @EnvironmentObject var nostrService: NostrService
     @EnvironmentObject var configService: ConfigService
+    @EnvironmentObject var relayManager: RelayProcessManager
 
     @State private var content: String = ""
     @State private var selectedItems: [PhotosPickerItem] = []
@@ -40,6 +41,11 @@ struct ComposeView: View {
     @FocusState private var isTextEditorFocused: Bool
     
     @StateObject private var uploadInfoProvider = MediaUploadsIndicatorInfoProvider()
+
+    // Blossom media picker state
+    @State private var showBlossomPicker = false
+    @State private var blossomMedia: [MediaItem] = []
+    @State private var isLoadingBlossomMedia = false
 
     // @mention state
     @State private var mentionQuery: String? = nil          // nil = popup hidden
@@ -83,89 +89,84 @@ struct ComposeView: View {
     }
 
     private var composeContent: some View {
-        ZStack(alignment: .bottom) {
-            VStack(spacing: 0) {
-                #if os(macOS)
-                header
-                #endif
+        VStack(spacing: 0) {
+            #if os(macOS)
+            header
+            #endif
 
-                ScrollView {
-                    VStack(spacing: 16) {
-                        if let parent = replyTo {
-                            replyHeader(parent: parent)
-                        }
+            ScrollView {
+                VStack(spacing: 16) {
+                    if let parent = replyTo {
+                        replyHeader(parent: parent)
+                    }
 
-                        HStack(alignment: .top, spacing: 12) {
-                            AvatarView(
-                                url: nostrService.profiles[configService.activeAccountHexPubkey]?.pictureURL,
-                                pubkey: configService.activeAccountHexPubkey
-                            )
-                            .frame(width: 36, height: 36)
-                            .contextMenu {
-                                if configService.allAccountNpubs.count > 1 {
-                                    ForEach(configService.allAccountNpubs, id: \.self) { npub in
-                                        let isOwner = npub == configService.config.ownerNpub
-                                        let activeAccountNpub = configService.config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
-                                        let isActive = activeAccountNpub.isEmpty ? isOwner : npub == activeAccountNpub
-                                        let hex = Bech32.decode(npub)?.hexString ?? ""
-                                        let name = nostrService.profiles[hex]?.bestName ?? (isOwner ? "Owner" : String(npub.prefix(8)))
-                                        
-                                        Button {
-                                            configService.switchActiveAccount(to: npub)
-                                        } label: {
-                                            if isActive {
-                                                Label(name, systemImage: "checkmark")
-                                            } else {
-                                                Text(name)
-                                            }
+                    HStack(alignment: .top, spacing: 12) {
+                        AvatarView(
+                            url: nostrService.profiles[configService.activeAccountHexPubkey]?.pictureURL,
+                            pubkey: configService.activeAccountHexPubkey
+                        )
+                        .frame(width: 36, height: 36)
+                        .contextMenu {
+                            if configService.allAccountNpubs.count > 1 {
+                                ForEach(configService.allAccountNpubs, id: \.self) { npub in
+                                    let isOwner = npub == configService.config.ownerNpub
+                                    let activeAccountNpub = configService.config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    let isActive = activeAccountNpub.isEmpty ? isOwner : npub == activeAccountNpub
+                                    let hex = Bech32.decode(npub)?.hexString ?? ""
+                                    let name = nostrService.profiles[hex]?.bestName ?? (isOwner ? "Owner" : String(npub.prefix(8)))
+
+                                    Button {
+                                        configService.switchActiveAccount(to: npub)
+                                    } label: {
+                                        if isActive {
+                                            Label(name, systemImage: "checkmark")
+                                        } else {
+                                            Text(name)
                                         }
                                     }
-                                } else {
-                                    Text("No other accounts")
                                 }
+                            } else {
+                                Text("No other accounts")
                             }
-                            
-                            ZStack(alignment: .topLeading) {
-                                if content.isEmpty {
-                                    Text("What's happening?")
-                                        .foregroundColor(.secondary.opacity(0.6))
-                                        .padding(.top, 10)
-                                        .padding(.leading, 4)
-                                }
-                                
-                                TextEditor(text: $content)
-                                    .focused($isTextEditorFocused)
-                                    .font(.system(size: 16))
-                                    .frame(minHeight: 200)
-                                    .scrollContentBackground(.hidden)
-                                    .onChange(of: content) { _, newValue in
-                                        updateMentionQuery(in: newValue)
-                                    }
-                            }
-                        }
-                        
-                        if !attachments.isEmpty {
-                            attachmentGrid
                         }
 
-                        if let quoted = quoteTo {
-                            QuotedNoteView(note: quoted)
-                                .environmentObject(nostrService)
+                        ZStack(alignment: .topLeading) {
+                            if content.isEmpty {
+                                Text("What's happening?")
+                                    .foregroundColor(.secondary.opacity(0.6))
+                                    .padding(.top, 10)
+                                    .padding(.leading, 4)
+                            }
+
+                            TextEditor(text: $content)
+                                .focused($isTextEditorFocused)
+                                .font(.system(size: 16))
+                                .frame(minHeight: 200)
+                                .scrollContentBackground(.hidden)
+                                .onChange(of: content) { _, newValue in
+                                    updateMentionQuery(in: newValue)
+                                }
                         }
                     }
-                    .padding(20)
+
+                    if !attachments.isEmpty {
+                        attachmentGrid
+                    }
+
+                    if let quoted = quoteTo {
+                        QuotedNoteView(note: quoted)
+                            .environmentObject(nostrService)
+                    }
                 }
-                
-                Spacer()
-                
-                footer
+                .padding(20)
             }
 
-            // @mention popup
+            // @mention popup — inline above footer so it stays visible above the keyboard
             if let _ = mentionQuery, !mentionResults.isEmpty {
                 mentionPopup
-                    .padding(.bottom, 60) // sits just above the footer toolbar
             }
+
+            footer
         }
             .background(Color.platformSecondaryGroupedBackground)
             .navigationTitle(replyTo != nil ? "Reply" : quoteTo != nil ? "Quote" : "New Note")
@@ -195,13 +196,32 @@ struct ComposeView: View {
                 }
             }
             .onAppear {
-                if !initialContent.isEmpty { content = initialContent }
+                if !initialContent.isEmpty {
+                    content = initialContent
+                    extractMentionsFromContent(initialContent)
+                }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     isTextEditorFocused = true
                 }
             }
             .onDisappear {
                 cleanupAttachmentTempFiles()
+            }
+            .sheet(isPresented: $showBlossomPicker) {
+                BlossomMediaPickerSheet(
+                    blossomMedia: $blossomMedia,
+                    isLoading: $isLoadingBlossomMedia,
+                    onSelect: { item in
+                        let url = item.shareURL(with: configService).absoluteString
+                        if content.isEmpty || content.hasSuffix("\n") || content.hasSuffix(" ") {
+                            content += url
+                        } else {
+                            content += " " + url
+                        }
+                        showBlossomPicker = false
+                    },
+                    onAppearLoad: { loadBlossomMedia() }
+                )
             }
 
     }
@@ -278,17 +298,91 @@ struct ComposeView: View {
 
     private func filterMentionResults(query: String) {
         let followed = FeedService.shared.followedPubkeys
-        let allProfiles = followed.compactMap { nostrService.profiles[$0] }
+        var candidatePubkeys = Set(followed)
+
+        // Include thread participants when replying so mentions work for
+        // people in the conversation even if you don't follow them.
+        if let parent = replyTo {
+            candidatePubkeys.insert(parent.pubkey)
+            for tag in parent.tags where tag.count >= 2 && tag[0] == "p" {
+                candidatePubkeys.insert(tag[1])
+            }
+        }
+
+        // Exclude self
+        candidatePubkeys.remove(nostrService.activeHexPubkey)
+
+        let allProfiles = candidatePubkeys.compactMap { nostrService.profiles[$0] }
 
         if query.isEmpty {
-            // Show first 5 followed profiles when query is empty (just typed @)
-            mentionResults = Array(allProfiles.prefix(5))
+            // Show first 5 profiles when query is empty (just typed @)
+            // Prioritize thread participants for replies
+            if let parent = replyTo {
+                var threadPubkeys: [String] = [parent.pubkey]
+                for tag in parent.tags where tag.count >= 2 && tag[0] == "p" {
+                    if !threadPubkeys.contains(tag[1]) {
+                        threadPubkeys.append(tag[1])
+                    }
+                }
+                threadPubkeys.removeAll { $0 == nostrService.activeHexPubkey }
+                let threadProfiles = threadPubkeys.compactMap { nostrService.profiles[$0] }
+                let followedProfiles = followed.compactMap { nostrService.profiles[$0] }
+                // Thread participants first, then followed
+                var combined: [FeedProfile] = threadProfiles
+                for p in followedProfiles where !combined.contains(where: { $0.pubkey == p.pubkey }) {
+                    combined.append(p)
+                }
+                mentionResults = Array(combined.prefix(5))
+            } else {
+                mentionResults = Array(allProfiles.prefix(5))
+            }
         } else {
             let lower = query.lowercased()
             mentionResults = allProfiles.filter { profile in
                 (profile.bestName.lowercased().contains(lower)) ||
                 (profile.name?.lowercased().contains(lower) ?? false) ||
                 (profile.nip05?.lowercased().contains(lower) ?? false)
+            }
+        }
+    }
+
+    /// Extracts hex pubkeys from nostr:npub1... and nostr:nprofile1... URIs in the
+    /// given text and populates `taggedPubkeys` so p-tags are generated when posting.
+    private func extractMentionsFromContent(_ text: String) {
+        let npubPattern = try! NSRegularExpression(pattern: "nostr:(npub1[a-z0-9]+)")
+        let nprofilePattern = try! NSRegularExpression(pattern: "nostr:(nprofile1[a-z0-9]+)")
+        let nsString = text as NSString
+        let range = NSRange(location: 0, length: nsString.length)
+
+        for match in npubPattern.matches(in: text, range: range) {
+            let bech32 = nsString.substring(with: match.range(at: 1))
+            if let decoded = Bech32.decode(bech32), !taggedPubkeys.contains(decoded.hexString) {
+                taggedPubkeys.append(decoded.hexString)
+            }
+        }
+
+        for match in nprofilePattern.matches(in: text, range: range) {
+            let bech32 = nsString.substring(with: match.range(at: 1))
+            if let decoded = Bech32.decode(bech32) {
+                // TLV: type 0 = pubkey (32 bytes)
+                var data = decoded.data
+                while data.count >= 2 {
+                    let type = data.removeFirst()
+                    let length = Int(data.removeFirst())
+                    if data.count >= length {
+                        let value = data.prefix(length)
+                        if type == 0 && length == 32 {
+                            let hex = value.map { String(format: "%02x", $0) }.joined()
+                            if !taggedPubkeys.contains(hex) {
+                                taggedPubkeys.append(hex)
+                            }
+                            break
+                        }
+                        data.removeFirst(length)
+                    } else {
+                        break
+                    }
+                }
             }
         }
     }
@@ -363,7 +457,18 @@ struct ComposeView: View {
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
-            
+
+            Button(action: handlePasteFromClipboard) {
+                Image(systemName: "wand.and.stars")
+                    .font(.title3)
+                    .foregroundColor(attachments.count >= 4 ? purple.opacity(0.3) : purple)
+                    .padding(10)
+                    .background(purple.opacity(0.1))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(attachments.count >= 4)
+
             Spacer()
             
             if isUploading, let msg = uploadInfoProvider.uploadMessage {
@@ -380,10 +485,15 @@ struct ComposeView: View {
                 ProgressView().controlSize(.small).padding(.trailing, 8)
             }
             
-            Text("\(content.count)")
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundColor(content.count > 280 ? .red : .secondary)
-                .padding(.trailing, 8)
+            Button(action: { showBlossomPicker = true }) {
+                Image(systemName: "camera.macro")
+                    .font(.title3)
+                    .foregroundColor(purple)
+                    .padding(10)
+                    .background(purple.opacity(0.1))
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
         }
         .padding()
         .background(Color.platformControlBackground)
@@ -617,6 +727,102 @@ struct ComposeView: View {
         }
     }
     
+    private func handlePasteFromClipboard() {
+        guard attachments.count < 4 else { return }
+
+        if PlatformClipboard.hasImage(), let imageData = PlatformClipboard.getImageData() {
+            // Detect actual image format from data magic bytes
+            let detectedType: UTType
+            if imageData.count >= 6 {
+                let gif87 = Data("GIF87a".utf8)
+                let gif89 = Data("GIF89a".utf8)
+                let prefix = imageData.prefix(6)
+                if prefix == gif87 || prefix == gif89 {
+                    detectedType = .gif
+                } else if imageData.prefix(4) == Data([137, 80, 78, 71]) { // PNG magic
+                    detectedType = .png
+                } else {
+                    detectedType = .jpeg
+                }
+            } else {
+                detectedType = .jpeg
+            }
+            attachments.append(Attachment(
+                data: imageData,
+                fileURL: nil,
+                type: detectedType
+            ))
+        } else if let clipboardString = PlatformClipboard.getString() {
+            let trimmed = clipboardString.trimmingCharacters(in: .whitespacesAndNewlines)
+            let knownExts = ["jpg", "jpeg", "png", "gif", "webp", "mp4", "mov", "webm"]
+            if let url = URL(string: trimmed),
+               (url.scheme == "http" || url.scheme == "https") {
+                let ext = url.pathExtension.lowercased()
+                let hasKnownExt = knownExts.contains(ext)
+                // Media URL — download and add as attachment
+                Task {
+                    guard let (data, response) = try? await URLSession.shared.data(from: url) else {
+                        await MainActor.run { error = "Failed to download media from URL" }
+                        return
+                    }
+                    // Determine the media type from extension, or fall back to Content-Type
+                    let httpResponse = response as? HTTPURLResponse
+                    let contentType = httpResponse?.value(forHTTPHeaderField: "Content-Type")?.lowercased() ?? ""
+                    let resolvedExt: String
+                    if hasKnownExt {
+                        resolvedExt = ext
+                    } else if contentType.hasPrefix("image/gif") {
+                        resolvedExt = "gif"
+                    } else if contentType.hasPrefix("image/png") {
+                        resolvedExt = "png"
+                    } else if contentType.hasPrefix("image/jpeg") {
+                        resolvedExt = "jpeg"
+                    } else if contentType.hasPrefix("image/webp") {
+                        resolvedExt = "webp"
+                    } else if contentType.hasPrefix("video/mp4") {
+                        resolvedExt = "mp4"
+                    } else if contentType.hasPrefix("video/webm") {
+                        resolvedExt = "webm"
+                    } else if !hasKnownExt {
+                        // Not a recognized media URL
+                        await MainActor.run { error = "Clipboard does not contain an image or media URL" }
+                        return
+                    } else {
+                        resolvedExt = ext
+                    }
+                    let isVideo = ["mp4", "mov", "webm"].contains(resolvedExt)
+                    await MainActor.run {
+                        if isVideo {
+                            let tempURL = FileManager.default.temporaryDirectory
+                                .appendingPathComponent("haven-paste-\(UUID().uuidString)")
+                                .appendingPathExtension(resolvedExt)
+                            try? data.write(to: tempURL)
+                            let thumbnail = generateVideoThumbnail(url: tempURL)
+                            let derivedType = UTType(filenameExtension: resolvedExt) ?? .mpeg4Movie
+                            attachments.append(Attachment(
+                                data: nil,
+                                fileURL: tempURL,
+                                type: derivedType,
+                                thumbnail: thumbnail
+                            ))
+                        } else {
+                            let derivedType = UTType(filenameExtension: resolvedExt) ?? .jpeg
+                            attachments.append(Attachment(
+                                data: data,
+                                fileURL: nil,
+                                type: derivedType
+                            ))
+                        }
+                    }
+                }
+            } else {
+                error = "Clipboard does not contain an image or media URL"
+            }
+        } else {
+            error = "Clipboard is empty"
+        }
+    }
+
     private func postNote() {
         isPosting = true
         uploadInfoProvider.startUpload(totalCount: attachments.count)
@@ -682,19 +888,63 @@ struct ComposeView: View {
 
             // 2. Build Event
             var tags: [[String]] = []
+            let relayHint = ConfigService.shared.config.nostrURL
+
             if let parent = replyTo {
                 // NIP-10 tags — for reposts (kind 6), reply to the original note, not the repost
+                let effectiveParentId: String
+                let effectiveParentPubkey: String
+                let effectiveParentTags: [[String]]
+
                 if parent.kind == 6, let originalId = parent.repostedEventId {
-                    tags.append(["e", originalId, "", "reply"])
-                    // Resolve the original note's author; fall back to the parent's pubkey
+                    effectiveParentId = originalId
                     if let original = FeedService.shared.notes.first(where: { $0.id == originalId }) {
-                        tags.append(["p", original.pubkey])
+                        effectiveParentPubkey = original.pubkey
+                        effectiveParentTags = original.tags
                     } else {
-                        tags.append(["p", parent.pubkey])
+                        effectiveParentPubkey = parent.pubkey
+                        effectiveParentTags = parent.tags
                     }
                 } else {
-                    tags.append(["e", parent.id, "", "reply"])
-                    tags.append(["p", parent.pubkey])
+                    effectiveParentId = parent.id
+                    effectiveParentPubkey = parent.pubkey
+                    effectiveParentTags = parent.tags
+                }
+
+                // NIP-10: Determine the thread root from the parent's e-tags
+                let parentETags = effectiveParentTags.filter { $0.count >= 2 && $0[0] == "e" }
+                let parentNonMentionETags = parentETags.filter { tag in
+                    guard tag.count >= 4 else { return true }
+                    return tag[3] != "mention"
+                }
+
+                if parentNonMentionETags.isEmpty {
+                    // Parent IS the root note — single e-tag with "root" marker
+                    tags.append(["e", effectiveParentId, relayHint, "root"])
+                } else {
+                    // Parent is itself a reply — find the thread root
+                    let threadRootId: String
+                    if let rootTag = parentNonMentionETags.first(where: { $0.count >= 4 && $0[3] == "root" }) {
+                        // Preferred: explicit "root" marker in parent's tags
+                        threadRootId = rootTag[1]
+                    } else {
+                        // Deprecated positional: first e-tag is the root
+                        threadRootId = parentNonMentionETags[0][1]
+                    }
+                    tags.append(["e", threadRootId, relayHint, "root"])
+                    tags.append(["e", effectiveParentId, relayHint, "reply"])
+                }
+
+                // Always tag the parent author
+                tags.append(["p", effectiveParentPubkey])
+
+                // NIP-10: Accumulate p-tags from parent (thread participants), deduplicated
+                var seenPubkeys = Set<String>([effectiveParentPubkey])
+                for tag in effectiveParentTags where tag.count >= 2 && tag[0] == "p" {
+                    let pk = tag[1]
+                    if seenPubkeys.insert(pk).inserted {
+                        tags.append(["p", pk])
+                    }
                 }
             }
 
@@ -707,17 +957,33 @@ struct ComposeView: View {
                 }
             }
 
-            // Quote post: append nevent reference and q tag
+            // Quote post: append nevent reference and q tag (NIP-18)
             if let quoted = quoteTo {
                 finalContent += "\nnostr:\(quoted.nevent)"
-                tags.append(["q", quoted.id])
-                tags.append(["p", quoted.pubkey])
+                tags.append(["q", quoted.id, relayHint, quoted.pubkey])
+                if !tags.contains(where: { $0.count >= 2 && $0[0] == "p" && $0[1] == quoted.pubkey }) {
+                    tags.append(["p", quoted.pubkey])
+                }
             }
 
             // 3. Sign
-            guard let event = nostrService.signEvent(kind: 1, content: finalContent, tags: tags) else {
-                DispatchQueue.main.async {
-                    error = "Failed to sign event. Do you have your private key set in Settings?"
+            let isReply = replyTo != nil
+            print("ComposeView: signing \(isReply ? "reply" : "post") – mode=\(configService.config.activeSigningMode()) nip46connected=\(NIP46Service.shared.isConnected) tags=\(tags.count)")
+            guard let event = await nostrService.signEventAsync(kind: 1, content: finalContent, tags: tags) else {
+                await MainActor.run {
+                    let signingMode = configService.config.activeSigningMode()
+                    print("ComposeView: sign FAILED – signingMode=\(signingMode) activeNpub=\(configService.config.activeAccountNpub.prefix(20)) isReply=\(isReply)")
+                    if signingMode == "nip46" {
+                        error = "Remote signer failed to sign the event. Check that your bunker is connected."
+                    } else {
+                        let activeNpub = configService.config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let isWhitelisted = !activeNpub.isEmpty && activeNpub != configService.config.ownerNpub
+                        if isWhitelisted {
+                            error = "No private key stored for this account. Add its nsec in Settings to post as this account."
+                        } else {
+                            error = "Failed to sign event. Do you have your private key set in Settings?"
+                        }
+                    }
                     isPosting = false
                 }
                 return
@@ -746,6 +1012,55 @@ struct ComposeView: View {
 
                 isPosting = false
                 performDismiss()
+            }
+        }
+    }
+
+    private func loadBlossomMedia() {
+        guard !isLoadingBlossomMedia else { return }
+        guard relayManager.isRunning && !relayManager.isBooting else {
+            blossomMedia = []
+            return
+        }
+        isLoadingBlossomMedia = true
+        let relayDataDir = configService.relayDataDir
+        let blossomPath = configService.config.blossomPath
+        let ownerHex = nostrService.activeHexPubkey
+        let webURL = configService.config.webURL
+        let rpm = relayManager
+
+        Task {
+            let result = await Task.detached(priority: .background) { () -> [MediaItem] in
+                let blossomDir = relayDataDir.appendingPathComponent(blossomPath)
+                guard FileManager.default.fileExists(atPath: blossomDir.path),
+                      let fileURLs = try? FileManager.default.contentsOfDirectory(at: blossomDir, includingPropertiesForKeys: [.creationDateKey]) else {
+                    return []
+                }
+                return fileURLs.compactMap { fileURL -> MediaItem? in
+                    let filename = fileURL.lastPathComponent
+                    if filename.starts(with: ".") || filename == "LOCK" { return nil }
+                    guard let serveURL = URL(string: "\(webURL)/\(filename)") else { return nil }
+                    let attributes = try? FileManager.default.attributesOfItem(atPath: fileURL.path)
+                    let date = (attributes?[.modificationDate] as? Date) ?? (attributes?[.creationDate] as? Date) ?? Date()
+                    let proof = rpm.detectMimeFromBytes(for: fileURL)
+                    let resolvedMime = rpm.resolveMime(claim: nil, proof: proof)
+                    let mimeType = resolvedMime == "application/octet-stream" ? nil : resolvedMime
+                    let mediaType: MediaItem.MediaType
+                    if let mime = mimeType {
+                        if mime.hasPrefix("video/") { mediaType = .video }
+                        else if mime.hasPrefix("audio/") { mediaType = .audio }
+                        else if mime.hasPrefix("image/") { mediaType = .image }
+                        else { mediaType = .unknown }
+                    } else {
+                        mediaType = .unknown
+                    }
+                    return MediaItem(id: UUID(), url: serveURL, type: mediaType, dateAdded: date, pubkey: ownerHex, tags: nil, mimeType: mimeType)
+                }.sorted { $0.dateAdded > $1.dateAdded }
+            }.value
+
+            await MainActor.run {
+                blossomMedia = result
+                isLoadingBlossomMedia = false
             }
         }
     }
@@ -812,5 +1127,98 @@ class MediaUploadsIndicatorInfoProvider: ObservableObject {
             self.currentProgress = 0.0
             self.uploadMessage = nil
         }
+    }
+}
+
+struct BlossomMediaPickerSheet: View {
+    @Binding var blossomMedia: [MediaItem]
+    @Binding var isLoading: Bool
+    let onSelect: (MediaItem) -> Void
+    let onAppearLoad: () -> Void
+    @Environment(\.dismiss) var dismiss
+
+    #if os(macOS)
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
+    #else
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 3)
+    #endif
+
+    var body: some View {
+        NavigationView {
+            Group {
+                if isLoading && blossomMedia.isEmpty {
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .controlSize(.large)
+                            .tint(Color.havenPurple)
+                        Text("Loading media...")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if blossomMedia.isEmpty {
+                    VStack(spacing: 16) {
+                        Image(systemName: "camera.macro")
+                            .font(.system(size: 48, weight: .thin))
+                            .foregroundColor(Color.havenPurple.opacity(0.6))
+                        Text("No media on Blossom")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        LazyVGrid(columns: columns, spacing: 6) {
+                            ForEach(blossomMedia) { item in
+                                BlossomPickerGridItem(item: item)
+                                    .onTapGesture { onSelect(item) }
+                            }
+                        }
+                        .padding(8)
+                    }
+                }
+            }
+            .background(Color.platformSecondaryGroupedBackground)
+            .navigationTitle("Blossom Media")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+        .onAppear { onAppearLoad() }
+    }
+}
+
+private struct BlossomPickerGridItem: View {
+    let item: MediaItem
+
+    var body: some View {
+        Color.clear
+            .aspectRatio(1.0, contentMode: .fit)
+            .overlay(
+                Group {
+                    if item.type == .video {
+                        VideoThumbnailView(url: item.url, mimeType: item.mimeType)
+                    } else if item.type == .audio {
+                        ZStack {
+                            Color(red: 0.1, green: 0.1, blue: 0.14)
+                            Image(systemName: "waveform")
+                                .font(.system(size: 28))
+                                .foregroundColor(.havenPurple)
+                        }
+                    } else if item.isAnimatedGIF {
+                        AnimatedImage(url: item.url, contentMode: .fill, shouldAnimate: false, targetSize: CGSize(width: 200, height: 200))
+                    } else {
+                        RetryableAsyncImage(url: item.url, contentMode: .fill, targetSize: CGSize(width: 200, height: 200))
+                    }
+                }
+            )
+            .background(Color.black.opacity(0.1))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .contentShape(Rectangle())
     }
 }

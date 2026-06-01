@@ -70,4 +70,61 @@ struct NostrEvent: Codable, Identifiable {
     var isReply: Bool {
         return parentEventId != nil
     }
+
+    // MARK: - URL Extraction
+
+    private static let mediaRegex: NSRegularExpression? = {
+        try? NSRegularExpression(pattern: #"https?://\S+?\.(?:jpg|jpeg|png|gif|webp|avif|tiff|mp4|mov|webm|m4v|heic|hevc|h265)(?:\?\S+)?"#, options: .caseInsensitive)
+    }()
+
+    private static let blossomRegex: NSRegularExpression? = {
+        try? NSRegularExpression(pattern: #"https?://\S+/[a-f0-9]{64}(?=\s|$)"#, options: .caseInsensitive)
+    }()
+
+    private static let httpURLRegex: NSRegularExpression? = {
+        try? NSRegularExpression(pattern: #"https?://[^\s<>\")\]]*[^\s<>\")\].,;:!?'\"]"#, options: .caseInsensitive)
+    }()
+
+    var mediaURLs: [URL] {
+        let ns = content as NSString
+        let range = NSRange(location: 0, length: ns.length)
+        var urls: [URL] = []
+
+        if let regex = Self.mediaRegex {
+            urls += regex.matches(in: content, range: range)
+                .compactMap { URL(string: ns.substring(with: $0.range)) }
+        }
+        if let regex = Self.blossomRegex {
+            urls += regex.matches(in: content, range: range)
+                .compactMap { URL(string: ns.substring(with: $0.range)) }
+        }
+
+        // NIP-92 imeta tags
+        let imetaURLs: [URL] = tags.compactMap { tag in
+            guard tag.first == "imeta", tag.count >= 2 else { return nil }
+            for field in tag.dropFirst() {
+                if field.hasPrefix("url ") {
+                    let urlStr = String(field.dropFirst(4)).trimmingCharacters(in: .whitespaces)
+                    return URL(string: urlStr)
+                }
+            }
+            return nil
+        }
+
+        var seen = Set<String>()
+        return (urls + imetaURLs).filter { seen.insert($0.absoluteString).inserted }
+    }
+
+    var linkURLs: [URL] {
+        guard let regex = Self.httpURLRegex else { return [] }
+        let ns = content as NSString
+        let range = NSRange(location: 0, length: ns.length)
+        let mediaSet = Set(mediaURLs.map { $0.absoluteString })
+
+        var seen = Set<String>()
+        return regex.matches(in: content, range: range)
+            .compactMap { URL(string: ns.substring(with: $0.range)) }
+            .filter { !mediaSet.contains($0.absoluteString) }
+            .filter { seen.insert($0.absoluteString).inserted }
+    }
 }

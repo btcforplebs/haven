@@ -12,10 +12,28 @@ class AppDelegate: NSObject, ObservableObject {
 
     @MainActor
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Ignore SIGPIPE so broken pipe writes (e.g. from the Go relay's
+        // stdout redirection) don't silently kill the process.
+        signal(SIGPIPE, SIG_IGN)
+
         #if os(macOS)
         // Check if setup is complete
         if !ConfigService.shared.config.hasCompletedSetup {
             openWelcomeWindow()
+        } else {
+            // Auto-start relay after the app is fully initialised.
+            // Uses a Task with a brief sleep so the SwiftUI scene and
+            // Go runtime are ready before we call into StartRelayC.
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1))
+                guard ConfigService.shared.config.autoStartRelay else { return }
+                guard RelayProcessManager.shared.state == .idle else { return }
+                RelayProcessManager.shared.startRelay(config: ConfigService.shared.config)
+
+                if ConfigService.shared.config.activeSigningMode() == "nip46" {
+                    NIP46Service.shared.connectFromConfig()
+                }
+            }
         }
         #endif
     }

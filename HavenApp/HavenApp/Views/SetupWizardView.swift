@@ -1,263 +1,419 @@
 import SwiftUI
 
+// MARK: - Design System
+
+private enum WizardColors {
+    static let bgPrimary = Color(red: 0.035, green: 0.035, blue: 0.043)      // #09090B
+    static let bgCard = Color(red: 0.094, green: 0.094, blue: 0.106)          // #18181B
+    static let bgElevated = Color(red: 0.153, green: 0.153, blue: 0.165)      // #27272A
+    static let accentPrimary = Color(red: 0.961, green: 0.620, blue: 0.043)   // #F59E0B
+    static let accentGlow = Color(red: 0.961, green: 0.620, blue: 0.043).opacity(0.3)
+    static let textPrimary = Color(red: 0.980, green: 0.980, blue: 0.980)     // #FAFAFA
+    static let textSecondary = Color(red: 0.631, green: 0.631, blue: 0.667)   // #A1A1AA
+    static let textMuted = Color(red: 0.443, green: 0.443, blue: 0.478)       // #71717A
+    static let borderSubtle = Color(red: 0.153, green: 0.153, blue: 0.165)    // #27272A
+    static let borderActive = Color(red: 0.961, green: 0.620, blue: 0.043).opacity(0.5)
+    static let success = Color(red: 0.133, green: 0.773, blue: 0.369)         // #22C55E
+    static let error = Color(red: 0.937, green: 0.267, blue: 0.267)           // #EF4444
+
+    static let accentGradient = LinearGradient(
+        colors: [Color(red: 0.918, green: 0.345, blue: 0.047), Color(red: 0.961, green: 0.620, blue: 0.043)],
+        startPoint: .leading,
+        endPoint: .trailing
+    )
+}
+
+private enum WizardAnimations {
+    static let springEnter: Animation = .spring(response: 0.6, dampingFraction: 0.8)
+    static let springBounce: Animation = .spring(response: 0.5, dampingFraction: 0.6)
+    static let springGentle: Animation = .spring(response: 0.8, dampingFraction: 0.9)
+    static let fadeIn: Animation = .easeOut(duration: 0.4)
+    static let staggerDelay: Double = 0.08
+}
+
+// MARK: - Ambient Gradient Background
+
+private struct AmbientGradientView: View {
+    @State private var phase: Double = 0
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+            Canvas { context, size in
+                let t = timeline.date.timeIntervalSinceReferenceDate * 0.08
+                let cx = size.width * 0.5 + sin(t) * size.width * 0.1
+                let cy = size.height * 0.4 + cos(t * 0.7) * size.height * 0.08
+                let radius = min(size.width, size.height) * 0.45
+
+                let gradient = Gradient(colors: [
+                    Color(red: 0.961, green: 0.620, blue: 0.043).opacity(0.15),
+                    Color(red: 0.918, green: 0.345, blue: 0.047).opacity(0.08),
+                    Color.clear
+                ])
+                let shading = GraphicsContext.Shading.radialGradient(
+                    gradient,
+                    center: CGPoint(x: cx, y: cy),
+                    startRadius: 0,
+                    endRadius: radius
+                )
+                context.fill(Path(CGRect(origin: .zero, size: size)), with: shading)
+            }
+        }
+        .ignoresSafeArea()
+    }
+}
+
+// MARK: - Shared Components
+
+private struct WizardPrimaryButton: View {
+    let title: String
+    let action: () -> Void
+    var disabled: Bool = false
+
+    @State private var isPressed = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(WizardColors.textPrimary)
+                .frame(maxWidth: isIOSDevice ? .infinity : nil, minHeight: 44)
+                .padding(.horizontal, isIOSDevice ? 0 : 32)
+                .background(WizardColors.accentGradient)
+                .cornerRadius(12)
+                .shadow(color: WizardColors.accentGlow, radius: 8, y: 2)
+        }
+        .buttonStyle(.plain)
+        .scaleEffect(isPressed ? 0.97 : 1.0)
+        .opacity(disabled ? 0.4 : 1.0)
+        .disabled(disabled)
+        .animation(WizardAnimations.springGentle, value: isPressed)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in isPressed = true }
+                .onEnded { _ in isPressed = false }
+        )
+    }
+}
+
+private struct WizardSkipLink: View {
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 14))
+                .foregroundColor(WizardColors.textMuted)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct WizardGlassCard<Content: View>: View {
+    var isSelected: Bool = false
+    let content: () -> Content
+
+    var body: some View {
+        content()
+            .padding(20)
+            .background(WizardColors.bgCard)
+            .cornerRadius(16)
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(isSelected ? WizardColors.borderActive : WizardColors.borderSubtle, lineWidth: isSelected ? 2 : 1)
+            )
+            .shadow(color: isSelected ? WizardColors.accentGlow : .clear, radius: 12)
+    }
+}
+
+private struct WizardInputField: View {
+    let label: String
+    @Binding var text: String
+    var placeholder: String = ""
+    var isSecure: Bool = false
+    var isDisabled: Bool = false
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.system(size: 13))
+                .foregroundColor(WizardColors.textSecondary)
+
+            Group {
+                if isSecure {
+                    SecureField(placeholder, text: $text)
+                } else {
+                    TextField(placeholder, text: $text)
+                }
+            }
+            .textFieldStyle(.plain)
+            .font(.system(size: 15))
+            .foregroundColor(WizardColors.textPrimary)
+            .padding(12)
+            .background(WizardColors.bgCard)
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isFocused ? WizardColors.borderActive : WizardColors.borderSubtle, lineWidth: isFocused ? 2 : 1)
+            )
+            .focused($isFocused)
+            .disabled(isDisabled)
+        }
+    }
+}
+
+private struct StepDots: View {
+    let totalSteps: Int
+    let currentStep: Int
+    @Namespace private var dotNamespace
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ForEach(0..<totalSteps, id: \.self) { index in
+                Circle()
+                    .fill(index <= currentStep ? WizardColors.accentPrimary : WizardColors.borderSubtle)
+                    .frame(width: index == currentStep ? 10 : 6, height: index == currentStep ? 10 : 6)
+                    .shadow(color: index == currentStep ? WizardColors.accentGlow : .clear, radius: 4)
+                    .animation(WizardAnimations.springEnter, value: currentStep)
+            }
+        }
+        .padding(.vertical, 16)
+    }
+}
+
+// MARK: - Main Wizard View
+
 struct SetupWizardView: View {
     @EnvironmentObject var configService: ConfigService
     @EnvironmentObject var relayManager: RelayProcessManager
+    @Environment(\.dismiss) var dismiss
+
+    // Navigation state
     @State private var currentStep = 0
+    @State private var setupPath: SetupPath = .none
+    @State private var direction: TransitionDirection = .forward
+
+    // Identity state
     @State private var npub = ""
     @State private var nsec = ""
     @State private var nsecPassword = ""
+    @State private var signingMode = "local"
+    @State private var bunkerURI = ""
+    @State private var bunkerConnected = false
+
+    // Relay state
     @State private var relayURL = ""
-    @State private var dbEngine = "badger"
-    @State private var hasAcceptedToS = false
+    @State private var macRelayURL = ""
+
+    // Wallet state
+    @State private var nwcURI = ""
+    @State private var cashuMintURL = ""
+
+    // Error state
     @State private var setupError: String?
     @State private var showSetupError = false
+
     let onComplete: () -> Void
-    
+
+    enum SetupPath {
+        case none, full, browse
+    }
+
+    enum TransitionDirection {
+        case forward, backward
+    }
+
+    // Compute visible steps based on path and platform
+    private var totalVisibleSteps: Int {
+        switch setupPath {
+        case .none: return 3 // welcome, path, identity
+        case .browse: return 3 // welcome, path, identity, done (3 dots, last = complete)
+        case .full: return isIOSDevice ? 8 : 7  // welcome, path, identity, relay, import, media, wallet, (notif), done
+        }
+    }
+
+    private var currentDotIndex: Int {
+        // Map actual step numbers to dot indices
+        let fullSteps: [Int] = isIOSDevice ? [0, 1, 2, 3, 4, 5, 6, 7, 8] : [0, 1, 2, 3, 4, 5, 6, 8]
+        let browseSteps: [Int] = [0, 1, 2, 8]
+        let steps = setupPath == .browse ? browseSteps : fullSteps
+        return steps.firstIndex(of: currentStep) ?? 0
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Image(systemName: "server.rack")
-                    .font(.largeTitle)
-                    .foregroundColor(.havenPurple)
-                VStack(alignment: .leading) {
-                    Text("Welcome to Nostr Vault")
-                        .font(.title2.bold())
-                    Text("Let's set up your personal Nostr relay")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-            }
-            .padding()
-            .background(Color.havenPurplePale)
-            
-            // Progress
-            HStack(spacing: 4) {
-                let visibleSteps = isIOSDevice ? [0, 1, 2, 5, 6, 7, 8] : [0, 1, 2, 3, 4, 5, 6, 7, 8]
-                
-                ForEach(visibleSteps, id: \.self) { step in
-                    Capsule()
-                        .fill(step <= currentStep ? Color.havenPurple : Color.gray.opacity(0.3))
-                        .frame(height: 4)
-                        .animation(
-                            .spring(response: 0.4, dampingFraction: 0.7)
-                                .delay(Double(step) * 0.04),
-                            value: currentStep
-                        )
-                }
-            }
-            .padding(.horizontal)
-            .padding(.vertical, 8)
-            
-            // Content
-            ZStack {
-                ScrollView {
-                    Group {
-                        switch currentStep {
-                        case 0:
-                            WelcomeStep()
-                        case 1:
-                            TermsOfServiceStep(hasAccepted: $hasAcceptedToS)
-                        case 2:
-                            IdentityStep(npub: $npub, nsec: $nsec, nsecPassword: $nsecPassword, whitelistedNpubs: $configService.config.whitelistedNpubs)
-                        case 3:
-                            RelayURLStep(relayURL: $relayURL)
-                        case 4:
-                            DatabaseStep(dbEngine: $dbEngine)
-                        case 5:
-                            SetupImportStep(currentStep: $currentStep)
-                        case 6:
-                            SetupRestoreNotesStep(currentStep: $currentStep)
-                        case 7:
-                            SetupRestoreMediaStep(currentStep: $currentStep)
-                        case 8:
-                            SetupSuccessStep()
-                        default:
-                            EmptyView()
-                        }
-                    }
-                    .id(currentStep)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            
-            // Custom Error Overlay
-            if relayManager.showProcessKillAlert {
-                Color.black
-                    .ignoresSafeArea()
+        ZStack {
+            // Full-screen dark background
+            WizardColors.bgPrimary.ignoresSafeArea()
 
-                VStack(spacing: 20) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 48))
-                        .foregroundColor(.orange)
+            // Ambient gradient
+            AmbientGradientView()
 
-                    VStack(spacing: 6) {
-                        Text("Startup Error")
-                            .font(.title2.bold())
-                            .foregroundColor(.white)
-
-                        Text("A previous Nostr Vault process is still running. Run the following command in Terminal to stop it, then relaunch the app.")
-                            .multilineTextAlignment(.center)
-                            .foregroundColor(.white.opacity(0.9))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-
-                    HStack(spacing: 8) {
-                        Text("pkill -9 haven")
-                            .font(.system(size: 14, weight: .medium, design: .monospaced))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .frame(maxWidth: .infinity)
-                            .background(Color.white.opacity(0.1))
-                            .cornerRadius(6)
-
-                        Button(action: {
-                        #if os(macOS)
-                        NSApp.activate(ignoringOtherApps: true)
-                        #endif
-                        PlatformClipboard.copy("pkill -9 haven")
-                        }) {
-                            Image(systemName: "doc.on.doc")
-                                .font(.system(size: 14))
-                                .foregroundColor(.white)
-                                .frame(width: 36, height: 36)
-                                .background(Color.orange)
-                                .cornerRadius(6)
+            VStack(spacing: 0) {
+                // Back button
+                HStack {
+                    if currentStep > 0 {
+                        Button(action: goBack) {
+                            HStack(spacing: 4) {
+                                Image(systemName: "chevron.left")
+                                Text("Back")
+                            }
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(WizardColors.textMuted)
                         }
                         .buttonStyle(.plain)
-                        .help("Copy to clipboard")
+                        .transition(.opacity)
                     }
+                    Spacer()
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 12)
+                .frame(height: 36)
 
-                    Button(action: {
-                        relayManager.showProcessKillAlert = false
-                        relayManager.forceCleanAndRestart()
-                    }) {
-                        Text("Retry")
-                            .font(.headline)
-                            .foregroundColor(.white)
-                            .frame(width: 140, height: 36)
-                            .background(Color.orange)
-                            .cornerRadius(8)
+                // Content area
+                ScrollView {
+                    VStack {
+                        stepContent
+                            .frame(maxWidth: 560)
+                            .padding(.horizontal, 24)
                     }
-                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(30)
-                .frame(width: 400)
-                .background(Color.black)
-                .cornerRadius(16)
-                .transition(.scale.combined(with: .opacity))
-                .zIndex(100)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                // Step dots
+                StepDots(totalSteps: totalVisibleSteps, currentStep: currentDotIndex)
             }
-            
-            Divider()
-            
-            // Navigation
-            HStack {
-                if currentStep > 0 {
-                    Button("Back") {
-                        if isIOSDevice {
-                            if currentStep == 5 {
-                                currentStep -= 3
-                            } else {
-                                currentStep -= 1
-                            }
-                        } else {
-                            currentStep -= 1
-                        }
-                    }
-                }
-                
-                Spacer()
-                
-                if currentStep < 8 {
-                    // Hide buttons when import is complete (we show Continue button in the content area)
-                    if !(currentStep == 5 && relayManager.importCompleted) {
-                        Button(navButtonLabel) {
-                            if currentStep == 5 && relayManager.isImporting {
-                                relayManager.cancelImport()
-                            } else {
-                                if currentStep == 4 {
-                                    saveIntermediateConfig()
-                                }
-                                if currentStep == 1 {
-                                    configService.config.hasAcceptedToS = true
-                                }
-                                if isIOSDevice {
-                                    if currentStep == 2 {
-                                        saveIntermediateConfig()
-                                        currentStep += 3
-                                    } else {
-                                        currentStep += 1
-                                    }
-                                } else {
-                                    currentStep += 1
-                                }
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(currentStep == 5 && relayManager.isImporting ? .red : .havenPurple)
-                        .disabled(!canContinue && !(currentStep == 5 && relayManager.isImporting))
-                    }
-                } else {
-                    Button("Launch Nostr Vault") {
-                        saveAndComplete()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.havenPurple)
-                }
+
+            // Process kill alert overlay
+            if relayManager.showProcessKillAlert {
+                processKillOverlay
             }
-            .padding()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .alert("Setup Error", isPresented: $showSetupError) {
-            Button("OK", role: .cancel) { }
+            Button("OK", role: .cancel) {}
         } message: {
             Text(setupError ?? "An unknown error occurred during setup")
         }
     }
-    
-    @Environment(\.dismiss) var dismiss // Add dismiss environment
-    
-    var navButtonLabel: String {
-        if currentStep == 5 && relayManager.isImporting {
-            return "Cancel Import"
-        } else if currentStep == 5 || currentStep == 6 || currentStep == 7 {
-            return "Skip"
-        } else if currentStep == 1 {
-            return "I Agree"
-        } else {
-            return "Continue"
+
+    @ViewBuilder
+    private var stepContent: some View {
+        switch currentStep {
+        case 0:
+            WelcomeStepView(onContinue: { goForward() })
+        case 1:
+            ChoosePathStep(selectedPath: $setupPath, onContinue: { goForward() })
+        case 2:
+            IdentityStepView(
+                isBrowseMode: setupPath == .browse,
+                npub: $npub,
+                nsec: $nsec,
+                nsecPassword: $nsecPassword,
+                signingMode: $signingMode,
+                bunkerURI: $bunkerURI,
+                bunkerConnected: $bunkerConnected,
+                onContinue: { goForward() }
+            )
+        case 3:
+            RelayConfigStep(
+                relayURL: $relayURL,
+                macRelayURL: $macRelayURL,
+                onContinue: { goForward() },
+                onSkip: { goForward() }
+            )
+        case 4:
+            ImportNotesStep(onContinue: { goForward() }, onSkip: { goForward() })
+        case 5:
+            MirrorMediaStep(onContinue: { goForward() }, onSkip: { goForward() })
+        case 6:
+            WalletSetupStep(
+                nwcURI: $nwcURI,
+                cashuMintURL: $cashuMintURL,
+                onContinue: {
+                    if isIOSDevice {
+                        goForward() // Go to notifications
+                    } else {
+                        currentStep = 8 // Go to complete
+                    }
+                },
+                onSkip: {
+                    if isIOSDevice {
+                        goForward()
+                    } else {
+                        currentStep = 8
+                    }
+                }
+            )
+        case 7:
+            if isIOSDevice {
+                PushNotificationStep(onContinue: { currentStep = 8 }, onSkip: { currentStep = 8 })
+            } else {
+                // macOS browse mode lands here as "complete"
+                CompleteStep(isBrowseMode: setupPath == .browse, onLaunch: { saveAndComplete() })
+            }
+        case 8:
+            CompleteStep(isBrowseMode: setupPath == .browse, onLaunch: { saveAndComplete() })
+        default:
+            EmptyView()
         }
     }
 
-    var canContinue: Bool {
-        switch currentStep {
-        case 1: return hasAcceptedToS
-        case 2:
-            // Validate npub is a valid bech32-encoded public key
-            guard !npub.isEmpty, npub.hasPrefix("npub") else { return false }
-            guard let decoded = Bech32.decode(npub), decoded.hrp == "npub" else { return false }
-            // If nsec is provided, password is required
-            if !nsec.isEmpty && nsecPassword.isEmpty { return false }
-            return true
-        default: return true
+    private func goForward() {
+        direction = .forward
+        withAnimation(WizardAnimations.springEnter) {
+            if currentStep == 2 && setupPath == .browse {
+                // Browse mode: skip relay, import, media, wallet, notifications — go straight to complete
+                currentStep = 8
+            } else if currentStep == 6 && !isIOSDevice {
+                // macOS full setup: skip notifications, go to complete
+                currentStep = 8
+            } else {
+                currentStep += 1
+            }
+        }
+        // Save intermediate config at key points
+        if currentStep >= 3 || (currentStep == 8 && setupPath == .browse) {
+            saveIntermediateConfig()
         }
     }
-    
-    func saveIntermediateConfig() {
+
+    private func goBack() {
+        direction = .backward
+        withAnimation(WizardAnimations.springEnter) {
+            if currentStep == 8 {
+                if setupPath == .browse {
+                    currentStep = 2 // Browse: back to identity
+                } else if isIOSDevice {
+                    currentStep = 7 // iOS full: back to notifications
+                } else {
+                    currentStep = 6 // macOS full: back to wallet
+                }
+            } else if currentStep == 7 && isIOSDevice {
+                currentStep = 6 // iOS full: back to wallet
+            } else {
+                currentStep -= 1
+            }
+        }
+    }
+
+    private func saveIntermediateConfig() {
         configService.config.ownerNpub = npub
         configService.config.relayURL = relayURL
-        configService.config.dbEngine = dbEngine
+        configService.config.dbEngine = "badger"
+        configService.config.signingMode = signingMode
+        configService.config.setupMode = setupPath == .browse ? "browse" : "full"
+        configService.config.macRelayURL = macRelayURL
+        configService.config.nwcURI = nwcURI
+        configService.config.cashuMintURL = cashuMintURL
 
-        // Encrypt nsec with NIP-49 if provided
-        if !nsec.isEmpty && !nsecPassword.isEmpty {
+        if signingMode == "nip46" {
+            configService.config.nip46BunkerURI = bunkerURI
+        } else if !nsec.isEmpty && !nsecPassword.isEmpty {
             do {
                 configService.config.ownerNcryptsec = try NIP49Service.encrypt(nsec: nsec, password: nsecPassword)
-                configService.config.ownerNsec = "" // Clear plaintext
-                // Store password in Keychain for auto-signing
+                configService.config.ownerNsec = ""
                 _ = NIP49Service.storePasswordInKeychain(nsecPassword)
             } catch {
                 setupError = "Failed to encrypt private key: \(error.localizedDescription)"
@@ -267,613 +423,906 @@ struct SetupWizardView: View {
         }
         configService.save()
     }
-    
-    func saveAndComplete() {
 
-        configService.config.ownerNpub = npub
-        configService.config.relayURL = relayURL
-        configService.config.dbEngine = dbEngine
-
-        // Encrypt nsec with NIP-49 if provided
-        if !nsec.isEmpty && !nsecPassword.isEmpty {
-            do {
-                configService.config.ownerNcryptsec = try NIP49Service.encrypt(nsec: nsec, password: nsecPassword)
-                configService.config.ownerNsec = "" // Clear plaintext
-                // Store password in Keychain for auto-signing
-                _ = NIP49Service.storePasswordInKeychain(nsecPassword)
-            } catch {
-                setupError = "Failed to encrypt private key: \(error.localizedDescription)"
-                showSetupError = true
-                return
-            }
-        }
-
+    private func saveAndComplete() {
+        saveIntermediateConfig()
         configService.config.hasCompletedSetup = true
         configService.save()
-        onComplete()
+        configService.refreshActiveAccountHex()
 
-        // Close the setup window
+        if isIOSDevice {
+            PushNotificationService.shared.requestPermissionAndRegister()
+        }
+
+        onComplete()
         dismiss()
     }
-}
 
-// MARK: - Steps
+    private var processKillOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.8).ignoresSafeArea()
 
-struct WelcomeStep: View {
-    @State private var appeared = false
+            VStack(spacing: 20) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 48))
+                    .foregroundColor(WizardColors.accentPrimary)
 
-    var body: some View {
-        VStack(spacing: 20) {
-            VStack(spacing: 12) {
-                FeatureRow(
-                    icon: "lock.shield",
-                    title: "Private Relay",
-                    description: "Store drafts and eCash securely"
-                )
-                .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 16)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.05), value: appeared)
+                VStack(spacing: 6) {
+                    Text("Startup Error")
+                        .font(.title2.bold())
+                        .foregroundColor(WizardColors.textPrimary)
 
-                FeatureRow(
-                    icon: "bubble.left.and.bubble.right",
-                    title: "Chat Relay",
-                    description: "Private DMs with Web of Trust protection"
-                )
-                .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 16)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.12), value: appeared)
+                    Text("A previous Nostr Vault process is still running. Run the following command in Terminal to stop it, then relaunch the app.")
+                        .multilineTextAlignment(.center)
+                        .foregroundColor(WizardColors.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
-                FeatureRow(
-                    icon: "arrow.up.arrow.down",
-                    title: "Inbox/Outbox",
-                    description: "Manage tagged notes and public posts"
-                )
-                .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 16)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.19), value: appeared)
+                HStack(spacing: 8) {
+                    Text("pkill -9 haven")
+                        .font(.system(size: 14, weight: .medium, design: .monospaced))
+                        .foregroundColor(WizardColors.textPrimary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity)
+                        .background(Color.white.opacity(0.1))
+                        .cornerRadius(6)
 
-                FeatureRow(
-                    icon: "photo.stack",
-                    title: "Blossom Media",
-                    description: "Host your images and videos"
-                )
-                .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 16)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.26), value: appeared)
+                    Button(action: {
+                        #if os(macOS)
+                        NSApp.activate(ignoringOtherApps: true)
+                        #endif
+                        PlatformClipboard.copy("pkill -9 haven")
+                    }) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.system(size: 14))
+                            .foregroundColor(WizardColors.textPrimary)
+                            .frame(width: 36, height: 36)
+                            .background(WizardColors.accentPrimary)
+                            .cornerRadius(6)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Button(action: {
+                    relayManager.showProcessKillAlert = false
+                    relayManager.forceCleanAndRestart()
+                }) {
+                    Text("Retry")
+                        .font(.headline)
+                        .foregroundColor(WizardColors.textPrimary)
+                        .frame(width: 140, height: 36)
+                        .background(WizardColors.accentPrimary)
+                        .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
             }
+            .padding(30)
+            .frame(width: 400)
+            .background(WizardColors.bgCard)
+            .cornerRadius(16)
+            .transition(.scale.combined(with: .opacity))
         }
-        .padding()
-        .onAppear { appeared = true }
+        .zIndex(100)
     }
 }
 
-struct TermsOfServiceStep: View {
-    @Binding var hasAccepted: Bool
+// MARK: - Step 0: Welcome
+
+private struct WelcomeStepView: View {
+    let onContinue: () -> Void
     @State private var appeared = false
 
+    private let features: [(icon: String, title: String, line: String)] = [
+        ("externaldrive.connected.to.line.below", "Personal Relay", "Run your own relay on-device. Notes are stored locally and broadcast to the network — you always have a copy."),
+        ("doc.text.image", "Full Nostr Client", "Browse your feed, post notes, reply, repost, and discover content from the network."),
+        ("lock.shield", "Private Messaging", "NIP-17 encrypted DMs that stay on your device. No third-party server reads your conversations."),
+        ("photo.stack", "Blossom Media", "Host images and videos on your machine with Blossom. Mirror media from the network to your local storage."),
+        ("bolt.fill", "Lightning + Ecash", "Send and receive zaps over Lightning with NWC. Store ecash tokens with a built-in Cashu wallet.")
+    ]
+
     var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "doc.text.fill")
-                .font(.system(size: 48))
-                .foregroundColor(.havenPurple)
-                .scaleEffect(appeared ? 1.0 : 0.5)
+        VStack(spacing: 28) {
+            Spacer().frame(height: 20)
+
+            // App icon
+            Image(systemName: "shield.checkered")
+                .font(.system(size: 64, weight: .light))
+                .foregroundStyle(WizardColors.accentGradient)
+                .scaleEffect(appeared ? 1.0 : 0.8)
                 .opacity(appeared ? 1 : 0)
-                .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.05), value: appeared)
+                .animation(WizardAnimations.springEnter, value: appeared)
 
-            Text("Terms of Service")
-                .font(.title2.bold())
+            // Title
+            Text("Nostr Vault")
+                .font(.system(size: isIOSDevice ? 32 : 36, weight: .bold, design: .default))
+                .foregroundColor(WizardColors.textPrimary)
                 .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 12)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.1), value: appeared)
+                .offset(y: appeared ? 0 : 10)
+                .animation(WizardAnimations.springEnter.delay(0.2), value: appeared)
 
-            Text("Please review and accept before continuing")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 12)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.15), value: appeared)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    tosSection(
-                        title: "Strict EULA",
-                        body: "Nostr Vault displays content from the Nostr network, which is decentralized and uncensored. However, Nostr Vault has zero tolerance for objectionable content or abusive users. You are solely responsible for the content you publish, and you agree to use the built-in moderation tools to filter or block any offensive material or abusive accounts."
-                    )
-
-                    tosSection(
-                        title: "Content Moderation",
-                        body: "Nostr Vault provides tools to manage content on your relay, including the ability to block users via the blacklist. You can block any user by right-clicking their content and selecting \"Block User\". Blocked users are prevented from posting to your Chat and Inbox relays."
-                    )
-
-                    tosSection(
-                        title: "Web of Trust",
-                        body: "Nostr Vault uses a Web of Trust system to filter incoming content on your Chat and Inbox relays. Only users within your trust network can interact with these relays."
-                    )
-
-                    tosSection(
-                        title: "Your Responsibility",
-                        body: "As the relay operator, you are responsible for managing access to your relay. Nostr Vault is provided as-is, without warranty. You agree to use Nostr Vault in compliance with applicable laws."
-                    )
-                }
-                .padding()
+            // Subtitle lines
+            VStack(spacing: 6) {
+                Text("A Nostr client with a built-in personal relay.")
+                Text("Your posts go everywhere. Your data stays with you.")
             }
-            .frame(maxWidth: 450, maxHeight: 200)
-            .background(Color.platformControlBackground)
-            .cornerRadius(12)
+            .font(.system(size: isIOSDevice ? 15 : 16))
+            .foregroundColor(WizardColors.textSecondary)
+            .multilineTextAlignment(.center)
             .opacity(appeared ? 1 : 0)
             .offset(y: appeared ? 0 : 10)
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: appeared)
+            .animation(WizardAnimations.springEnter.delay(0.4), value: appeared)
 
-            Toggle(isOn: $hasAccepted) {
-                Text("I have read and agree to the Terms of Service")
-                    .font(.subheadline)
+            // Feature cards
+            VStack(spacing: 10) {
+                ForEach(Array(features.enumerated()), id: \.offset) { index, feature in
+                    featureCard(icon: feature.icon, title: feature.title, line: feature.line)
+                        .opacity(appeared ? 1 : 0)
+                        .offset(y: appeared ? 0 : 16)
+                        .animation(WizardAnimations.springEnter.delay(0.6 + Double(index) * WizardAnimations.staggerDelay), value: appeared)
+                }
             }
-            #if os(macOS)
-            .toggleStyle(.checkbox)
-            #endif
-            .opacity(appeared ? 1 : 0)
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.3), value: appeared)
+
+            // CTA
+            WizardPrimaryButton(title: "Get Started", action: onContinue)
+                .opacity(appeared ? 1 : 0)
+                .offset(y: appeared ? 0 : 10)
+                .animation(WizardAnimations.springEnter.delay(1.0), value: appeared)
+
+            Spacer().frame(height: 8)
         }
-        .padding()
         .onAppear { appeared = true }
     }
 
-    private func tosSection(title: String, body: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.subheadline.bold())
-            Text(body)
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+    private func featureCard(icon: String, title: String, line: String) -> some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 20))
+                .foregroundColor(WizardColors.accentPrimary)
+                .shadow(color: WizardColors.accentGlow, radius: 4)
+                .frame(width: 36)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: isIOSDevice ? 15 : 16, weight: .semibold))
+                    .foregroundColor(WizardColors.textPrimary)
+                Text(line)
+                    .font(.system(size: isIOSDevice ? 13 : 14))
+                    .foregroundColor(WizardColors.textSecondary)
+            }
+
+            Spacer()
         }
+        .padding(14)
+        .background(WizardColors.bgCard)
+        .cornerRadius(12)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(WizardColors.borderSubtle, lineWidth: 1)
+        )
     }
 }
 
-struct IdentityStep: View {
+// MARK: - Step 1: Choose Path
+
+private struct ChoosePathStep: View {
+    @Binding var selectedPath: SetupWizardView.SetupPath
+    let onContinue: () -> Void
+    @State private var appeared = false
+
+    var body: some View {
+        VStack(spacing: 28) {
+            Spacer().frame(height: 40)
+
+            Text("How do you want to use Nostr Vault?")
+                .font(.system(size: isIOSDevice ? 24 : 28, weight: .semibold))
+                .foregroundColor(WizardColors.textPrimary)
+                .multilineTextAlignment(.center)
+                .opacity(appeared ? 1 : 0)
+                .offset(y: appeared ? 0 : 10)
+                .animation(WizardAnimations.springEnter.delay(0.1), value: appeared)
+
+            VStack(spacing: 14) {
+                // Full Setup card
+                Button(action: { withAnimation(WizardAnimations.springEnter) { selectedPath = .full } }) {
+                    WizardGlassCard(isSelected: selectedPath == .full) {
+                        HStack(alignment: .top, spacing: 14) {
+                            Image(systemName: "key.fill")
+                                .font(.system(size: 28))
+                                .foregroundColor(selectedPath == .full ? WizardColors.accentPrimary : WizardColors.textSecondary)
+                                .frame(width: 36)
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text("Full Setup")
+                                        .font(.system(size: 18, weight: .semibold))
+                                        .foregroundColor(WizardColors.textPrimary)
+                                    Spacer()
+                                    if selectedPath == .full {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundColor(WizardColors.accentPrimary)
+                                            .transition(.scale.combined(with: .opacity))
+                                    }
+                                }
+                                Text("Post, DM, and zap. Import your existing notes and media. Requires your private key or a remote signer.")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(WizardColors.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                    .opacity(selectedPath == .browse ? 0.7 : 1.0)
+                }
+                .buttonStyle(.plain)
+                .opacity(appeared ? 1 : 0)
+                .offset(y: appeared ? 0 : 16)
+                .animation(WizardAnimations.springEnter.delay(0.25), value: appeared)
+
+                // Browse Mode card
+                Button(action: { withAnimation(WizardAnimations.springEnter) { selectedPath = .browse } }) {
+                    WizardGlassCard(isSelected: selectedPath == .browse) {
+                        HStack(alignment: .top, spacing: 14) {
+                            Image(systemName: "eye.fill")
+                                .font(.system(size: 28))
+                                .foregroundColor(selectedPath == .browse ? WizardColors.accentPrimary : WizardColors.textSecondary)
+                                .frame(width: 36)
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text("Browse Mode")
+                                        .font(.system(size: 18, weight: .semibold))
+                                        .foregroundColor(WizardColors.textPrimary)
+                                    Spacer()
+                                    if selectedPath == .browse {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundColor(WizardColors.accentPrimary)
+                                            .transition(.scale.combined(with: .opacity))
+                                    }
+                                }
+                                Text("Explore Nostr read-only with just your public key. No posting, no signing. You can upgrade to full setup anytime.")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(WizardColors.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                    .opacity(selectedPath == .full ? 0.7 : 1.0)
+                }
+                .buttonStyle(.plain)
+                .opacity(appeared ? 1 : 0)
+                .offset(y: appeared ? 0 : 16)
+                .animation(WizardAnimations.springEnter.delay(0.35), value: appeared)
+            }
+
+            if selectedPath != .none {
+                WizardPrimaryButton(title: "Continue", action: onContinue)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            Spacer()
+        }
+        .onAppear { appeared = true }
+    }
+}
+
+// MARK: - Step 2: Identity
+
+private struct IdentityStepView: View {
+    let isBrowseMode: Bool
     @Binding var npub: String
     @Binding var nsec: String
     @Binding var nsecPassword: String
-    @Binding var whitelistedNpubs: [String]
+    @Binding var signingMode: String
+    @Binding var bunkerURI: String
+    @Binding var bunkerConnected: Bool
+    let onContinue: () -> Void
+
+    enum SigningMethod { case local, nip46 }
+
     @State private var appeared = false
     @State private var generatedKeys = false
+    @State private var isConnectingBunker = false
+    @State private var bunkerError: String?
+    @State private var selectedMethod: SigningMethod = .local
 
-    /// Whether the current npub text is a valid bech32-encoded npub
     private var isNpubValid: Bool {
         guard !npub.isEmpty, npub.hasPrefix("npub") else { return false }
         guard let decoded = Bech32.decode(npub), decoded.hrp == "npub" else { return false }
         return true
     }
 
+    private var canContinue: Bool {
+        guard isNpubValid else { return false }
+        if isBrowseMode { return true }
+        if selectedMethod == .nip46 { return bunkerConnected }
+        if !nsec.isEmpty && nsecPassword.isEmpty { return false }
+        return true
+    }
+
     var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "person.badge.key")
-                .font(.system(size: 48))
-                .foregroundColor(.havenPurple)
-                .scaleEffect(appeared ? 1.0 : 0.5)
-                .opacity(appeared ? 1 : 0)
-                .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.05), value: appeared)
+        VStack(spacing: 24) {
+            Spacer().frame(height: 20)
 
-            Text("Your Nostr Identity")
-                .font(.title2.bold())
-                .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 12)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.1), value: appeared)
-
-            Text("Enter your public key (npub) to identify yourself as the relay owner")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 12)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.15), value: appeared)
-
-            TextField("npub1...", text: $npub)
-                .textFieldStyle(.roundedBorder)
-                .textContentType(.username)
-                .frame(maxWidth: 350)
+            Text(isBrowseMode ? "Enter Your Public Key" : "Enter Your Keys")
+                .font(.system(size: isIOSDevice ? 24 : 28, weight: .semibold))
+                .foregroundColor(WizardColors.textPrimary)
                 .opacity(appeared ? 1 : 0)
                 .offset(y: appeared ? 0 : 10)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: appeared)
+                .animation(WizardAnimations.springEnter.delay(0.1), value: appeared)
+
+            if isBrowseMode {
+                Text("Your public key lets you follow your feed and see your profile.")
+                    .font(.system(size: 15))
+                    .foregroundColor(WizardColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .opacity(appeared ? 1 : 0)
+                    .animation(WizardAnimations.fadeIn.delay(0.2), value: appeared)
+            }
+
+            // npub field
+            WizardInputField(label: "Public Key (npub)", text: $npub, placeholder: "npub1...", isDisabled: selectedMethod == .nip46 && bunkerConnected)
+                .opacity(appeared ? 1 : 0)
+                .offset(x: appeared ? 0 : 20)
+                .animation(WizardAnimations.springEnter.delay(0.2), value: appeared)
 
             if !npub.isEmpty && !isNpubValid {
-                Label("Enter a valid npub (bech32-encoded public key)", systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundColor(.orange)
-            }
-
-            Button(action: generateNewIdentity) {
-                Label("New to Nostr? Generate Keys", systemImage: "key.fill")
-                    .font(.subheadline)
-            }
-            .buttonStyle(.borderless)
-            .foregroundColor(.havenPurple)
-            .opacity(appeared ? 1 : 0)
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.22), value: appeared)
-
-            if generatedKeys {
                 HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.shield.fill")
-                        .foregroundColor(.orange)
-                    Text("Save your nsec (private key) somewhere safe! You will need it to log in on other Nostr clients. It cannot be recovered.")
+                    Image(systemName: "exclamationmark.triangle")
                         .font(.caption)
-                        .foregroundColor(.orange)
+                    Text("Enter a valid npub (bech32-encoded public key)")
+                        .font(.system(size: 13))
                 }
-                .padding(8)
-                .background(Color.orange.opacity(0.1))
-                .cornerRadius(8)
-                .frame(maxWidth: 350)
+                .foregroundColor(WizardColors.error)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Private Key (Optional)")
-                    .font(.headline)
-                Text("Enter your nsec to compose and sign notes. Your key will be encrypted with NIP-49 using a password you set below.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-
-                SecureField("nsec1...", text: $nsec)
-                    .textFieldStyle(.roundedBorder)
-                    .textContentType(.password)
-            }
-            .frame(maxWidth: 350)
-            .opacity(appeared ? 1 : 0)
-            .offset(y: appeared ? 0 : 10)
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.22), value: appeared)
-
-            if !nsec.isEmpty && !nsec.hasPrefix("nsec") {
-                Label("Must be a valid nsec (starts with 'nsec')", systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundColor(.orange)
-            }
-
-            if !nsec.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Password (Required)")
-                            .font(.headline)
-                        Image(systemName: "lock.fill")
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                    }
-                    Text("Set a password to encrypt your private key using NIP-49. You'll need this password each time Nostr Vault signs a note.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    SecureField("Enter password...", text: $nsecPassword)
-                        .textFieldStyle(.roundedBorder)
-                        .textContentType(.newPassword)
-
-                    if nsecPassword.isEmpty {
-                        Label("Password is required to proceed", systemImage: "exclamationmark.circle.fill")
-                            .font(.caption)
-                            .foregroundColor(.orange)
-                    }
+            if !isBrowseMode {
+                // Signing method selector cards
+                HStack(spacing: 12) {
+                    signingMethodCard(
+                        method: .local,
+                        icon: "key.fill",
+                        title: "Private Key",
+                        subtitle: "Sign with your nsec"
+                    )
+                    signingMethodCard(
+                        method: .nip46,
+                        icon: "link.badge.plus",
+                        title: "Remote Signer",
+                        subtitle: "Connect via bunker://"
+                    )
                 }
-                .frame(maxWidth: 350)
                 .opacity(appeared ? 1 : 0)
                 .offset(y: appeared ? 0 : 10)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.24), value: appeared)
+                .animation(WizardAnimations.springEnter.delay(0.28), value: appeared)
+
+                // Fields for the selected method
+                if selectedMethod == .local {
+                    VStack(spacing: 16) {
+                        WizardInputField(label: "Private Key (nsec)", text: $nsec, placeholder: "nsec1...", isSecure: true)
+
+                        if !nsec.isEmpty && !nsec.hasPrefix("nsec") {
+                            HStack(spacing: 6) {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .font(.caption)
+                                Text("Must be a valid nsec (starts with 'nsec')")
+                                    .font(.system(size: 13))
+                            }
+                            .foregroundColor(WizardColors.error)
+                        }
+
+                        if !nsec.isEmpty {
+                            WizardInputField(label: "Encryption Password", text: $nsecPassword, placeholder: "Enter password...", isSecure: true)
+                                .transition(.move(edge: .top).combined(with: .opacity))
+
+                            Text("Encrypts your key with NIP-49. You'll need this to unlock.")
+                                .font(.system(size: 12))
+                                .foregroundColor(WizardColors.textMuted)
+
+                            if nsecPassword.isEmpty {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "exclamationmark.circle.fill")
+                                        .font(.caption)
+                                    Text("Password is required to proceed")
+                                        .font(.system(size: 13))
+                                }
+                                .foregroundColor(WizardColors.accentPrimary)
+                            }
+                        }
+
+                        Button(action: generateNewIdentity) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "sparkles")
+                                    .foregroundColor(WizardColors.accentPrimary)
+                                Text("New to Nostr? Generate Keys")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(WizardColors.accentPrimary)
+                            }
+                        }
+                        .buttonStyle(.plain)
+
+                        if generatedKeys {
+                            HStack(spacing: 8) {
+                                Image(systemName: "exclamationmark.shield.fill")
+                                    .foregroundColor(WizardColors.accentPrimary)
+                                Text("Save your nsec somewhere safe! You need it to log in on other Nostr clients. It cannot be recovered.")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(WizardColors.accentPrimary)
+                            }
+                            .padding(12)
+                            .background(WizardColors.accentPrimary.opacity(0.1))
+                            .cornerRadius(10)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+                    }
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+                } else {
+                    VStack(spacing: 12) {
+                        WizardInputField(label: "Bunker URI", text: $bunkerURI, placeholder: "bunker://...", isDisabled: bunkerConnected)
+
+                        Text("Paste the bunker:// connection string from your signer app (e.g. nsec.app, Amber)")
+                            .font(.system(size: 12))
+                            .foregroundColor(WizardColors.textMuted)
+
+                        if let error = bunkerError {
+                            HStack(spacing: 6) {
+                                Image(systemName: "exclamationmark.triangle")
+                                    .font(.caption)
+                                Text(error)
+                                    .font(.system(size: 13))
+                            }
+                            .foregroundColor(WizardColors.error)
+                        }
+
+                        if bunkerConnected {
+                            HStack(spacing: 6) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(WizardColors.success)
+                                Text("Connected to remote signer")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(WizardColors.success)
+                            }
+                        }
+
+                        HStack(spacing: 12) {
+                            WizardPrimaryButton(
+                                title: bunkerConnected ? "Disconnect" : "Connect",
+                                action: {
+                                    if bunkerConnected {
+                                        disconnectBunker()
+                                    } else {
+                                        testBunkerConnection()
+                                    }
+                                },
+                                disabled: bunkerURI.isEmpty || isConnectingBunker
+                            )
+
+                            if isConnectingBunker {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .tint(WizardColors.accentPrimary)
+                            }
+                        }
+                    }
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
             }
+
+            WizardPrimaryButton(title: "Continue", action: onContinue, disabled: !canContinue)
+
+            Spacer().frame(height: 8)
         }
-        .padding()
         .onAppear { appeared = true }
     }
 
     private func generateNewIdentity() {
         guard let resultCStr = GenerateKeyPairC() else { return }
         let result = String(cString: resultCStr)
-        // GenerateKeyPairC returns "sk:pk" (hex secret key : hex public key)
         let parts = result.split(separator: ":")
         guard parts.count == 2 else { return }
         let sk = String(parts[0])
         let pk = String(parts[1])
 
-        // Convert hex pubkey to npub
         if let pubData = Bech32.hexToData(pk),
            let generatedNpub = Bech32.encode(hrp: "npub", data: pubData) {
             npub = generatedNpub
         }
 
-        // Convert hex secret key to nsec
         if let secData = Bech32.hexToData(sk),
            let generatedNsec = Bech32.encode(hrp: "nsec", data: secData) {
             nsec = generatedNsec
         }
 
-        generatedKeys = true
+        withAnimation(WizardAnimations.springBounce) {
+            generatedKeys = true
+        }
+    }
+
+    private func signingMethodCard(method: SigningMethod, icon: String, title: String, subtitle: String) -> some View {
+        let isSelected = selectedMethod == method
+        return Button {
+            withAnimation(WizardAnimations.springEnter) {
+                selectedMethod = method
+                signingMode = method == .nip46 ? "nip46" : "local"
+            }
+        } label: {
+            VStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 24))
+                    .foregroundColor(isSelected ? WizardColors.accentPrimary : WizardColors.textSecondary)
+
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(WizardColors.textPrimary)
+
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundColor(WizardColors.textSecondary)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 18)
+            .padding(.horizontal, 12)
+            .background(WizardColors.bgCard)
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(isSelected ? WizardColors.accentPrimary.opacity(0.5) : WizardColors.borderSubtle, lineWidth: isSelected ? 2 : 1)
+            )
+            .shadow(color: isSelected ? WizardColors.accentGlow : .clear, radius: 8)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func testBunkerConnection() {
+        isConnectingBunker = true
+        bunkerError = nil
+        bunkerConnected = false
+
+        Task {
+            do {
+                let info = try NIP46Service.parseBunkerURI(bunkerURI)
+                ConfigService.shared.config.nip46SignerPubkey = info.signerPubkey
+                ConfigService.shared.config.nip46RelayURL = info.relayURL
+                ConfigService.shared.config.nip46Secret = info.secret
+                ConfigService.shared.config.signingMode = "nip46"
+                ConfigService.shared.save()
+
+                try await NIP46Service.shared.connect()
+                let pubkey = try await NIP46Service.shared.getPublicKey()
+
+                if let pubData = Bech32.hexToData(pubkey),
+                   let generatedNpub = Bech32.encode(hrp: "npub", data: pubData) {
+                    npub = generatedNpub
+                }
+
+                bunkerConnected = true
+                isConnectingBunker = false
+            } catch {
+                bunkerError = error.localizedDescription
+                isConnectingBunker = false
+                ConfigService.shared.config.signingMode = "local"
+            }
+        }
+    }
+
+    private func disconnectBunker() {
+        NIP46Service.shared.disconnect()
+        bunkerConnected = false
+        npub = ""
+        ConfigService.shared.config.signingMode = "local"
+        ConfigService.shared.config.nip46SignerPubkey = ""
+        ConfigService.shared.config.nip46RelayURL = ""
+        ConfigService.shared.config.nip46Secret = ""
     }
 }
 
-struct RelayURLStep: View {
+// MARK: - Step 3: Relay Configuration
+
+private struct RelayConfigStep: View {
     @Binding var relayURL: String
+    @Binding var macRelayURL: String
+    let onContinue: () -> Void
+    let onSkip: () -> Void
     @State private var appeared = false
 
     var body: some View {
+        VStack(spacing: 24) {
+            Spacer().frame(height: 20)
+
+            #if os(macOS)
+            macOSRelayContent
+            #else
+            iOSRelayContent
+            #endif
+
+            WizardPrimaryButton(title: "Continue", action: onContinue)
+
+            WizardSkipLink(title: "Skip — configure later") {
+                onSkip()
+            }
+
+            Spacer().frame(height: 8)
+        }
+        .onAppear { appeared = true }
+    }
+
+    // MARK: macOS variant
+    private var macOSRelayContent: some View {
         VStack(spacing: 20) {
-            Image(systemName: "globe")
-                .font(.system(size: 48))
-                .foregroundColor(.havenPurple)
-                .scaleEffect(appeared ? 1.0 : 0.5)
+            Text("Your Personal Relay")
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundColor(WizardColors.textPrimary)
                 .opacity(appeared ? 1 : 0)
-                .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.05), value: appeared)
+                .offset(y: appeared ? 0 : 10)
+                .animation(WizardAnimations.springEnter.delay(0.1), value: appeared)
 
-            Text("Relay URL")
-                .font(.title2.bold())
+            // Network diagram
+            RelayDiagramMac(hasURL: !relayURL.isEmpty)
+                .frame(height: 160)
                 .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 12)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.1), value: appeared)
+                .animation(WizardAnimations.fadeIn.delay(0.3), value: appeared)
 
-            Text("Enter the public URL where your relay will be accessible")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
+            VStack(spacing: 8) {
+                Text("Your Mac runs a personal relay that stores everything locally. Posts always reach the Nostr network.")
+                    .font(.system(size: 15))
+                    .foregroundColor(WizardColors.textSecondary)
+                    .multilineTextAlignment(.center)
+
+                Text("Add a domain to make your relay accessible from other devices.")
+                    .font(.system(size: 15))
+                    .foregroundColor(WizardColors.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
+            .opacity(appeared ? 1 : 0)
+            .animation(WizardAnimations.fadeIn.delay(0.2), value: appeared)
+
+            WizardInputField(label: "Relay Domain (optional)", text: $relayURL, placeholder: "relay.yourdomain.com")
+                .opacity(appeared ? 1 : 0)
+                .offset(y: appeared ? 0 : 10)
+                .animation(WizardAnimations.springEnter.delay(0.4), value: appeared)
+
+            Text("Leave blank for local only. Configurable later in Settings.")
+                .font(.system(size: 12))
+                .foregroundColor(WizardColors.textMuted)
+        }
+    }
+
+    // MARK: iOS variant
+    private var iOSRelayContent: some View {
+        VStack(spacing: 20) {
+            Text("Connect to Your Mac Relay")
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundColor(WizardColors.textPrimary)
                 .multilineTextAlignment(.center)
                 .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 12)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.15), value: appeared)
+                .offset(y: appeared ? 0 : 10)
+                .animation(WizardAnimations.springEnter.delay(0.1), value: appeared)
 
-            TextField("relay.example.com", text: $relayURL)
-                .textFieldStyle(.roundedBorder)
-                .frame(maxWidth: 350)
+            // Network diagram
+            RelayDiagramiOS(hasURL: !macRelayURL.isEmpty)
+                .frame(height: 120)
+                .opacity(appeared ? 1 : 0)
+                .animation(WizardAnimations.fadeIn.delay(0.3), value: appeared)
+
+            VStack(spacing: 8) {
+                Text("Running Nostr Vault on your Mac? Connect your iPhone to keep notes and DMs in sync across devices.")
+                    .font(.system(size: 15))
+                    .foregroundColor(WizardColors.textSecondary)
+                    .multilineTextAlignment(.center)
+
+                Text("This is optional — the app works fully on its own.")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(WizardColors.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
+            .opacity(appeared ? 1 : 0)
+            .animation(WizardAnimations.fadeIn.delay(0.2), value: appeared)
+
+            WizardInputField(label: "Mac Relay URL (optional)", text: $macRelayURL, placeholder: "wss://relay.yourdomain.com")
                 .opacity(appeared ? 1 : 0)
                 .offset(y: appeared ? 0 : 10)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: appeared)
+                .animation(WizardAnimations.springEnter.delay(0.4), value: appeared)
 
-            Text("Leave blank if running locally only")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .opacity(appeared ? 1 : 0)
-                .animation(.easeIn(duration: 0.3).delay(0.25), value: appeared)
+            Text("Find this in Nostr Vault settings on your Mac.")
+                .font(.system(size: 12))
+                .foregroundColor(WizardColors.textMuted)
         }
-        .padding()
-        .onAppear { appeared = true }
     }
 }
 
-struct DatabaseStep: View {
-    @Binding var dbEngine: String
-    @State private var appeared = false
+// MARK: - Relay Diagrams
+
+private struct RelayDiagramMac: View {
+    let hasURL: Bool
+    @State private var particlePhase: Double = 0
 
     var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "externaldrive")
-                .font(.system(size: 48))
-                .foregroundColor(.havenPurple)
-                .scaleEffect(appeared ? 1.0 : 0.5)
-                .opacity(appeared ? 1 : 0)
-                .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.05), value: appeared)
+        TimelineView(.animation(minimumInterval: 1.0 / 20.0)) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
+            Canvas { context, size in
+                let centerX = size.width / 2
+                let centerY = size.height / 2
 
-            Text("Database Engine")
-                .font(.title2.bold())
-                .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 12)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.1), value: appeared)
+                // Mac icon position
+                let macX = centerX - 80
+                let macY = centerY
 
-            Text("Choose how to store your relay data")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 12)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.15), value: appeared)
+                // Relay position
+                let relayX = centerX
+                let relayY = centerY + 40
 
-            VStack(spacing: 12) {
-                DatabaseOption(
-                    selected: $dbEngine,
-                    value: "badger",
-                    title: "BadgerDB",
-                    description: "Pre-allocates ~11GB of disk space for high performance. Recommended for most users."
-                )
-                .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 10)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: appeared)
+                // Network position
+                let netX = centerX + 100
+                let netY = centerY - 10
 
-                DatabaseOption(
-                    selected: $dbEngine,
-                    value: "lmdb",
-                    title: "LMDB",
-                    description: "Uses sparse files (grows as needed). Faster on NVMe drives, but may require tuning."
-                )
-                .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 10)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.27), value: appeared)
+                // Draw connection lines
+                drawLine(context: context, from: CGPoint(x: macX, y: macY), to: CGPoint(x: relayX, y: relayY), color: WizardColors.accentPrimary.opacity(0.4))
+                drawLine(context: context, from: CGPoint(x: relayX, y: relayY), to: CGPoint(x: netX, y: netY), color: WizardColors.accentPrimary.opacity(0.3))
 
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                    Text("This choice is permanent. Switching later requires a full reset.")
-                        .font(.caption)
+                // Draw flowing particle
+                let particleT = fmod(t * 0.3, 1.0)
+                let px = macX + (netX - macX) * particleT
+                let py = macY + (netY - macY) * particleT
+                let particleRect = CGRect(x: px - 3, y: py - 3, width: 6, height: 6)
+                context.fill(Path(ellipseIn: particleRect), with: .color(WizardColors.accentPrimary))
+
+                // Globe connection when URL entered
+                if hasURL {
+                    let globeX = relayX
+                    let globeY = centerY - 40
+                    drawLine(context: context, from: CGPoint(x: relayX, y: relayY), to: CGPoint(x: globeX, y: globeY), color: WizardColors.accentPrimary.opacity(0.3))
                 }
-                .foregroundColor(.orange)
-                .padding(.top, 4)
-                .opacity(appeared ? 1 : 0)
-                .animation(.easeIn(duration: 0.3).delay(0.35), value: appeared)
+
+                // Network dots
+                for i in 0..<6 {
+                    let angle = Double(i) * (.pi * 2.0 / 6.0) + t * 0.05
+                    let dx = netX + cos(angle) * 25
+                    let dy = netY + sin(angle) * 25
+                    let brightness = 0.3 + 0.2 * sin(t * 0.5 + Double(i))
+                    let dotRect = CGRect(x: dx - 3, y: dy - 3, width: 6, height: 6)
+                    context.fill(Path(ellipseIn: dotRect), with: .color(WizardColors.textMuted.opacity(brightness)))
+                }
             }
-            .frame(maxWidth: 350)
+            .overlay {
+                // SF Symbol overlays
+                VStack {
+                    HStack(spacing: 80) {
+                        VStack(spacing: 4) {
+                            Image(systemName: "laptopcomputer")
+                                .font(.system(size: 32))
+                                .foregroundColor(WizardColors.textPrimary)
+                                .shadow(color: WizardColors.accentGlow, radius: 6)
+                            Text("Your Mac")
+                                .font(.system(size: 11))
+                                .foregroundColor(WizardColors.textMuted)
+                        }
+                        .offset(y: -8)
+
+                        VStack(spacing: 4) {
+                            Image(systemName: "network")
+                                .font(.system(size: 24))
+                                .foregroundColor(WizardColors.textMuted)
+                            Text("Nostr Network")
+                                .font(.system(size: 11))
+                                .foregroundColor(WizardColors.textMuted)
+                        }
+                        .offset(y: -20)
+                    }
+
+                    HStack(spacing: 4) {
+                        Image(systemName: "server.rack")
+                            .font(.system(size: 16))
+                            .foregroundColor(WizardColors.accentPrimary)
+                        Text("Relay")
+                            .font(.system(size: 11))
+                            .foregroundColor(WizardColors.accentPrimary)
+                    }
+                    .offset(y: 8)
+
+                    if hasURL {
+                        HStack(spacing: 4) {
+                            Image(systemName: "globe")
+                                .font(.system(size: 14))
+                                .foregroundColor(WizardColors.accentPrimary.opacity(0.7))
+                            Text("Public")
+                                .font(.system(size: 10))
+                                .foregroundColor(WizardColors.textMuted)
+                        }
+                        .offset(y: -50)
+                        .transition(.opacity)
+                    }
+                }
+            }
         }
-        .padding()
-        .onAppear { appeared = true }
+    }
+
+    private func drawLine(context: GraphicsContext, from: CGPoint, to: CGPoint, color: Color) {
+        var path = Path()
+        path.move(to: from)
+        path.addLine(to: to)
+        context.stroke(path, with: .color(color), lineWidth: 1.5)
     }
 }
 
-struct SetupImportStep: View {
-    @Binding var currentStep: Int
+private struct RelayDiagramiOS: View {
+    let hasURL: Bool
+
+    var body: some View {
+        HStack(spacing: 0) {
+            // iPhone
+            VStack(spacing: 4) {
+                Image(systemName: "iphone")
+                    .font(.system(size: 28))
+                    .foregroundColor(WizardColors.textPrimary)
+                Text("iPhone")
+                    .font(.system(size: 11))
+                    .foregroundColor(WizardColors.textMuted)
+            }
+
+            // Connection line
+            VStack(spacing: 2) {
+                Rectangle()
+                    .fill(hasURL ? WizardColors.accentPrimary.opacity(0.5) : WizardColors.textMuted.opacity(0.3))
+                    .frame(height: 2)
+                    .overlay {
+                        if !hasURL {
+                            // Dashed line
+                            Rectangle()
+                                .stroke(style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
+                                .foregroundColor(WizardColors.textMuted.opacity(0.4))
+                        }
+                    }
+                if !hasURL {
+                    Text("?")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(WizardColors.textMuted)
+                }
+            }
+            .frame(width: 60)
+
+            // Mac + Relay
+            VStack(spacing: 4) {
+                Image(systemName: "laptopcomputer")
+                    .font(.system(size: 28))
+                    .foregroundColor(hasURL ? WizardColors.textPrimary : WizardColors.textMuted)
+                    .shadow(color: hasURL ? WizardColors.accentGlow : .clear, radius: 4)
+                HStack(spacing: 2) {
+                    Image(systemName: "server.rack")
+                        .font(.system(size: 10))
+                    Text("Mac Relay")
+                        .font(.system(size: 11))
+                }
+                .foregroundColor(hasURL ? WizardColors.accentPrimary : WizardColors.textMuted)
+            }
+
+            // Connection to network
+            Rectangle()
+                .fill(WizardColors.textMuted.opacity(0.3))
+                .frame(width: 40, height: 2)
+
+            // Network
+            VStack(spacing: 4) {
+                Image(systemName: "network")
+                    .font(.system(size: 24))
+                    .foregroundColor(WizardColors.textMuted)
+                Text("Nostr")
+                    .font(.system(size: 11))
+                    .foregroundColor(WizardColors.textMuted)
+            }
+        }
+        .padding(.vertical, 16)
+    }
+}
+
+// MARK: - Step 4: Import Notes
+
+private struct ImportNotesStep: View {
     @EnvironmentObject var relayManager: RelayProcessManager
     @EnvironmentObject var configService: ConfigService
+    let onContinue: () -> Void
+    let onSkip: () -> Void
 
     @State private var appeared = false
-
-    var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "arrow.down.circle")
-                .font(.system(size: 48))
-                .foregroundColor(.havenPurple)
-                .scaleEffect(appeared ? 1.0 : 0.5)
-                .opacity(appeared ? 1 : 0)
-                .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.05), value: appeared)
-
-            Text("Import from Relays")
-                .font(.title2.bold())
-                .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 12)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.1), value: appeared)
-
-            Text("Pull your notes from external relays")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 12)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.15), value: appeared)
-
-            VStack(spacing: 12) {
-                if relayManager.isImporting || relayManager.importCompleted {
-                    VStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text(relayManager.importCompleted ? "Done!" : "Importing...")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Text("\(Int(relayManager.importProgress * 100))%")
-                                    .font(.caption.monospaced())
-                                    .foregroundColor(.havenPurple)
-                            }
-
-                            GeometryReader { geo in
-                                ZStack(alignment: .leading) {
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .fill(Color.havenPurplePale)
-                                        .frame(height: 6)
-
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .fill(
-                                            LinearGradient(
-                                                gradient: Gradient(colors: [.havenPurple, .havenPurpleLight]),
-                                                startPoint: .leading,
-                                                endPoint: .trailing
-                                            )
-                                        )
-                                        .frame(width: geo.size.width * relayManager.importProgress, height: 6)
-                                }
-                            }
-                            .frame(height: 6)
-                        }
-                        .frame(maxWidth: 280)
-
-                        if !relayManager.importCompleted {
-                            Text(relayManager.importStatusMessage)
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
-                                .lineLimit(2)
-                                .frame(height: 30)
-                        }
-
-                        if relayManager.importCompleted {
-                            Button(action: {
-                                currentStep += 1
-                            }) {
-                                Label("Continue", systemImage: "arrow.right.circle.fill")
-                                    .font(.headline)
-                                    .padding(.vertical, 10)
-                                    .frame(maxWidth: .infinity)
-                                    .background(Color.green)
-                                    .foregroundColor(.white)
-                                    .cornerRadius(8)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding()
-                    .background(Color.platformControlBackground)
-                    .cornerRadius(12)
-
-                } else {
-                    VStack(alignment: .leading, spacing: 12) {
-                        DatePicker("Start Date", selection: Binding(
-                            get: {
-                                let formatter = DateFormatter()
-                                formatter.dateFormat = "yyyy-MM-dd"
-                                return formatter.date(from: configService.config.importStartDate) ?? Date()
-                            },
-                            set: {
-                                let formatter = DateFormatter()
-                                formatter.dateFormat = "yyyy-MM-dd"
-                                configService.config.importStartDate = formatter.string(from: $0)
-                            }
-                        ), displayedComponents: .date)
-                        .font(.subheadline)
-
-                        Divider()
-
-                        Text("Seed Relays")
-                            .font(.subheadline.bold())
-
-                        RelayListEditor(relays: $configService.config.importSeedRelays)
-                            .frame(minHeight: 100, maxHeight: 140)
-                            .background(Color.platformControlBackground)
-                            .cornerRadius(8)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.gray.opacity(0.2), lineWidth: 1)
-                            )
-                            .clipped()
-                    }
-                    .padding(14)
-                    .background(Color.platformControlBackground)
-                    .cornerRadius(8)
-
-                    Button(action: {
-                        configService.save()
-                        let config = configService.config
-                        relayManager.importNotes(config: config)
-                    }) {
-                        Label("Start Import", systemImage: "arrow.down.circle.fill")
-                            .font(.headline)
-                            .padding(.vertical, 12)
-                            .frame(maxWidth: .infinity)
-                            .background(Color.havenPurple)
-                            .foregroundColor(.white)
-                            .cornerRadius(12)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .frame(maxWidth: 450)
-            .opacity(appeared ? 1 : 0)
-            .offset(y: appeared ? 0 : 10)
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: appeared)
-        }
-        .padding()
-        .onAppear { appeared = true }
-        .alert("Port Already in Use", isPresented: $relayManager.isPortConflict) {
-            Button("Retry", role: .none) {
-                relayManager.isPortConflict = false
-                let config = configService.config
-                relayManager.importNotes(config: config)
-            }
-
-            Button("Change Port", role: .none) {
-                relayManager.isPortConflict = false
-                relayManager.cancelImport()
-                currentStep = 3
-            }
-
-            Button("Cancel", role: .cancel) {
-                relayManager.isPortConflict = false
-                relayManager.cancelImport()
-            }
-        } message: {
-            Text("Port \(configService.config.relayPort) is currently in use by another process. You can either stop that process manually or choose a different port for Nostr Vault.")
-        }
-    }
-}
-
-struct SetupRestoreNotesStep: View {
-    @Binding var currentStep: Int
-    @EnvironmentObject var configService: ConfigService
-
-    @State private var appeared = false
+    @State private var activeTab = 0 // 0 = Network, 1 = Backup
     @State private var showingFileImporter = false
     @State private var isRestoring = false
     @State private var restoreCompleted = false
@@ -881,98 +1330,49 @@ struct SetupRestoreNotesStep: View {
     @State private var showRestoreError = false
 
     var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "doc.zipper")
-                .font(.system(size: 48))
-                .foregroundColor(.havenPurple)
-                .scaleEffect(appeared ? 1.0 : 0.5)
-                .opacity(appeared ? 1 : 0)
-                .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.05), value: appeared)
+        VStack(spacing: 24) {
+            Spacer().frame(height: 20)
 
-            Text("Restore Notes")
-                .font(.title2.bold())
+            Text("Bring Your Notes Home")
+                .font(.system(size: isIOSDevice ? 24 : 28, weight: .semibold))
+                .foregroundColor(WizardColors.textPrimary)
                 .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 12)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.1), value: appeared)
+                .offset(y: appeared ? 0 : 10)
+                .animation(WizardAnimations.springEnter.delay(0.1), value: appeared)
 
-            Text("Restore your notes and metadata from a Nostr Vault backup")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
+            Text("Pull your existing posts from the Nostr network into your local relay.")
+                .font(.system(size: 15))
+                .foregroundColor(WizardColors.textSecondary)
                 .multilineTextAlignment(.center)
                 .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 12)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.15), value: appeared)
+                .animation(WizardAnimations.fadeIn.delay(0.2), value: appeared)
 
-            VStack(spacing: 12) {
-                if isRestoring {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text("Restoring...")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding()
-                    .frame(maxWidth: .infinity)
-                    .background(Color.platformControlBackground)
-                    .cornerRadius(12)
-                } else if restoreCompleted {
-                    HStack(spacing: 12) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.green)
-                            .font(.title2)
-                        Text("Notes restored successfully!")
-                            .font(.subheadline.weight(.medium))
-                    }
-                    .padding()
-                    .frame(maxWidth: .infinity)
-                    .background(Color.platformControlBackground)
-                    .cornerRadius(12)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.green.opacity(0.5), lineWidth: 2)
-                    )
+            // Tab bar
+            HStack(spacing: 4) {
+                tabPill("From Network", isActive: activeTab == 0) { activeTab = 0 }
+                tabPill("From Backup", isActive: activeTab == 1) { activeTab = 1 }
+            }
+            .padding(3)
+            .background(WizardColors.bgCard)
+            .cornerRadius(10)
+            .opacity(appeared ? 1 : 0)
+            .animation(WizardAnimations.fadeIn.delay(0.25), value: appeared)
 
-                    Button(action: {
-                        currentStep += 1
-                    }) {
-                        Label("Continue", systemImage: "arrow.right.circle.fill")
-                            .font(.headline)
-                            .padding(.vertical, 10)
-                            .frame(maxWidth: .infinity)
-                            .background(Color.green)
-                            .foregroundColor(.white)
-                            .cornerRadius(8)
-                    }
-                    .buttonStyle(.plain)
+            // Tab content
+            Group {
+                if activeTab == 0 {
+                    networkImportContent
                 } else {
-                    Button(action: {
-                        #if os(macOS)
-                        NSApp.activate(ignoringOtherApps: true)
-                        #endif
-                        showingFileImporter = true
-                    }) {
-                        Label("Choose Backup File", systemImage: "folder")
-                            .font(.headline)
-                            .padding()
-                            .frame(maxWidth: .infinity)
-                            .background(Color.havenPurple)
-                            .foregroundColor(.white)
-                            .cornerRadius(12)
-                    }
-                    .buttonStyle(.plain)
-
-                    Text("Select a Nostr Vault backup (.zip) to restore your notes")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                    backupRestoreContent
                 }
             }
-            .frame(maxWidth: 350)
             .opacity(appeared ? 1 : 0)
-            .offset(y: appeared ? 0 : 10)
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: appeared)
+            .animation(WizardAnimations.fadeIn.delay(0.3), value: appeared)
+
+            WizardSkipLink(title: "Skip — I'll start fresh") { onSkip() }
+
+            Spacer().frame(height: 8)
         }
-        .padding()
         .onAppear { appeared = true }
         .fileImporter(
             isPresented: $showingFileImporter,
@@ -984,27 +1384,192 @@ struct SetupRestoreNotesStep: View {
                 guard let url = urls.first else { return }
                 restoreBackup(from: url)
             case .failure(let error):
-                self.restoreError = error.localizedDescription
-                self.showRestoreError = true
+                restoreError = error.localizedDescription
+                showRestoreError = true
             }
         }
-        .alert("Restore Failed", isPresented: $showRestoreError, actions: {
-            Button("OK", role: .cancel) { }
-        }, message: {
+        .alert("Restore Failed", isPresented: $showRestoreError) {
+            Button("OK", role: .cancel) {}
+        } message: {
             Text(restoreError ?? "Unknown error")
-        })
+        }
+        .alert("Port Already in Use", isPresented: $relayManager.isPortConflict) {
+            Button("Retry") {
+                relayManager.isPortConflict = false
+                relayManager.importNotes(config: configService.config)
+            }
+            Button("Cancel", role: .cancel) {
+                relayManager.isPortConflict = false
+                relayManager.cancelImport()
+            }
+        } message: {
+            Text("Port \(configService.config.relayPort) is currently in use. Stop the other process or change the port in Settings.")
+        }
+    }
+
+    @ViewBuilder
+    private var networkImportContent: some View {
+        VStack(spacing: 14) {
+            if relayManager.isImporting || relayManager.importCompleted {
+                VStack(spacing: 12) {
+                    HStack {
+                        Text(relayManager.importCompleted ? "Done!" : "Importing...")
+                            .font(.system(size: 13))
+                            .foregroundColor(WizardColors.textSecondary)
+                        Spacer()
+                        Text("\(Int(relayManager.importProgress * 100))%")
+                            .font(.system(size: 13, design: .monospaced))
+                            .foregroundColor(WizardColors.accentPrimary)
+                    }
+
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(WizardColors.bgElevated)
+                                .frame(height: 6)
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(WizardColors.accentGradient)
+                                .frame(width: geo.size.width * relayManager.importProgress, height: 6)
+                        }
+                    }
+                    .frame(height: 6)
+
+                    if !relayManager.importCompleted {
+                        Text(relayManager.importStatusMessage)
+                            .font(.system(size: 12))
+                            .foregroundColor(WizardColors.textMuted)
+                            .lineLimit(2)
+                    }
+
+                    if relayManager.importCompleted {
+                        WizardPrimaryButton(title: "Continue", action: onContinue)
+                    } else {
+                        Button(action: { relayManager.cancelImport() }) {
+                            Text("Cancel Import")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(WizardColors.error)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(16)
+                .background(WizardColors.bgCard)
+                .cornerRadius(12)
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(WizardColors.borderSubtle, lineWidth: 1))
+            } else {
+                VStack(alignment: .leading, spacing: 12) {
+                    DatePicker("Start Date", selection: Binding(
+                        get: {
+                            let formatter = DateFormatter()
+                            formatter.dateFormat = "yyyy-MM-dd"
+                            return formatter.date(from: configService.config.importStartDate) ?? Date()
+                        },
+                        set: {
+                            let formatter = DateFormatter()
+                            formatter.dateFormat = "yyyy-MM-dd"
+                            configService.config.importStartDate = formatter.string(from: $0)
+                        }
+                    ), displayedComponents: .date)
+                    .font(.system(size: 14))
+                    .foregroundColor(WizardColors.textPrimary)
+                    .colorScheme(.dark)
+
+                    Divider().background(WizardColors.borderSubtle)
+
+                    Text("Seed Relays")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(WizardColors.textPrimary)
+
+                    RelayListEditor(relays: $configService.config.importSeedRelays)
+                        .frame(minHeight: 80, maxHeight: 120)
+                        .cornerRadius(8)
+                }
+                .padding(16)
+                .background(WizardColors.bgCard)
+                .cornerRadius(12)
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(WizardColors.borderSubtle, lineWidth: 1))
+
+                WizardPrimaryButton(title: "Import Notes") {
+                    configService.save()
+                    relayManager.importNotes(config: configService.config)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var backupRestoreContent: some View {
+        VStack(spacing: 14) {
+            if isRestoring {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(WizardColors.accentPrimary)
+                    Text("Restoring...")
+                        .font(.system(size: 14))
+                        .foregroundColor(WizardColors.textSecondary)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity)
+                .background(WizardColors.bgCard)
+                .cornerRadius(12)
+            } else if restoreCompleted {
+                HStack(spacing: 10) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(WizardColors.success)
+                        .font(.title2)
+                    Text("Notes restored successfully!")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(WizardColors.textPrimary)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity)
+                .background(WizardColors.bgCard)
+                .cornerRadius(12)
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(WizardColors.success.opacity(0.5), lineWidth: 2))
+
+                WizardPrimaryButton(title: "Continue", action: onContinue)
+            } else {
+                Button(action: {
+                    #if os(macOS)
+                    NSApp.activate(ignoringOtherApps: true)
+                    #endif
+                    showingFileImporter = true
+                }) {
+                    HStack {
+                        Image(systemName: "doc.zipper")
+                            .font(.title3)
+                        Text("Choose Backup File")
+                            .font(.system(size: 15, weight: .medium))
+                    }
+                    .foregroundColor(WizardColors.textSecondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(24)
+                    .background(WizardColors.bgCard)
+                    .cornerRadius(12)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [8, 4]))
+                            .foregroundColor(WizardColors.borderSubtle)
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Text("Select a Nostr Vault backup (.zip or .json)")
+                    .font(.system(size: 12))
+                    .foregroundColor(WizardColors.textMuted)
+            }
+        }
     }
 
     private func restoreBackup(from url: URL) {
         isRestoring = true
-
         guard url.startAccessingSecurityScopedResource() else {
-            self.restoreError = "Permission denied to access the file."
-            self.showRestoreError = true
-            self.isRestoring = false
+            restoreError = "Permission denied to access the file."
+            showRestoreError = true
+            isRestoring = false
             return
         }
-
         defer { url.stopAccessingSecurityScopedResource() }
 
         let tempDir = FileManager.default.temporaryDirectory
@@ -1026,196 +1591,93 @@ struct SetupRestoreNotesStep: View {
         }
 
         if let error = coordinationError ?? copyError {
-            self.restoreError = "Failed to copy backup file: \(error.localizedDescription)"
-            self.showRestoreError = true
-            self.isRestoring = false
+            restoreError = "Failed to copy backup file: \(error.localizedDescription)"
+            showRestoreError = true
+            isRestoring = false
             return
         }
 
         configService.save()
-
         RelayProcessManager.shared.runBackupRestore(config: configService.config, inputPath: tempFile.path) { success in
             try? FileManager.default.removeItem(at: tempFile)
-
             Task { @MainActor in
-                self.isRestoring = false
+                isRestoring = false
                 if success {
                     configService.reload()
-                    self.restoreCompleted = true
+                    restoreCompleted = true
                 } else {
-                    self.restoreError = "Failed to restore backup. Check logs for details."
-                    self.showRestoreError = true
+                    restoreError = "Failed to restore backup. Check logs for details."
+                    showRestoreError = true
                 }
             }
         }
     }
 }
 
-struct SetupRestoreMediaStep: View {
-    @Binding var currentStep: Int
+// MARK: - Step 5: Mirror Media
+
+private struct MirrorMediaStep: View {
     @EnvironmentObject var configService: ConfigService
     @EnvironmentObject var nostrService: NostrService
+    let onContinue: () -> Void
+    let onSkip: () -> Void
 
     @State private var appeared = false
-    @State private var importMethod = 0 // 0 = Network Sync, 1 = Local Import
+    @State private var activeTab = 0
     @State private var blossomURL = "https://blossom.primal.net"
     @State private var showingFileImporter = false
-    @State private var isRestoring = false
-    @State private var restoreCompleted = false
-    @State private var restoreError: String?
-    @State private var showRestoreError = false
-
-    // Network sync progress state
+    @State private var isSyncing = false
+    @State private var syncCompleted = false
+    @State private var syncError: String?
+    @State private var showSyncError = false
     @State private var progressMessage = ""
-    @State private var progressPercentage: Double = 0.0
+    @State private var progressValue: Double = 0
+    @State private var syncedCount = 0
+    @State private var totalCount = 0
 
     var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "photo.stack")
-                .font(.system(size: 48))
-                .foregroundColor(.havenPurple)
-                .scaleEffect(appeared ? 1.0 : 0.5)
-                .opacity(appeared ? 1 : 0)
-                .animation(.spring(response: 0.5, dampingFraction: 0.7).delay(0.05), value: appeared)
+        VStack(spacing: 24) {
+            Spacer().frame(height: 20)
 
-            Text("Restore Media")
-                .font(.title2.bold())
+            Text("Mirror Your Media")
+                .font(.system(size: isIOSDevice ? 24 : 28, weight: .semibold))
+                .foregroundColor(WizardColors.textPrimary)
                 .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 12)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.1), value: appeared)
+                .offset(y: appeared ? 0 : 10)
+                .animation(WizardAnimations.springEnter.delay(0.1), value: appeared)
 
-            Text("Bring your existing images and videos into your Nostr Vault relay")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
+            Text("Sync your images and videos from a Blossom server to your local relay.")
+                .font(.system(size: 15))
+                .foregroundColor(WizardColors.textSecondary)
                 .multilineTextAlignment(.center)
                 .opacity(appeared ? 1 : 0)
-                .offset(y: appeared ? 0 : 12)
-                .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.15), value: appeared)
+                .animation(WizardAnimations.fadeIn.delay(0.2), value: appeared)
 
-            VStack(spacing: 16) {
-                if isRestoring {
-                    VStack(spacing: 12) {
-                        if progressPercentage > 0.0 {
-                            ProgressView(value: progressPercentage)
-                                .progressViewStyle(.linear)
-                                .tint(.havenPurple)
-                        } else {
-                            ProgressView()
-                                .controlSize(.small)
-                        }
+            // Tab bar
+            HStack(spacing: 4) {
+                tabPill("From Server", isActive: activeTab == 0) { activeTab = 0 }
+                tabPill("From Backup", isActive: activeTab == 1) { activeTab = 1 }
+            }
+            .padding(3)
+            .background(WizardColors.bgCard)
+            .cornerRadius(10)
+            .opacity(appeared ? 1 : 0)
+            .animation(WizardAnimations.fadeIn.delay(0.25), value: appeared)
 
-                        Text(progressMessage.isEmpty ? "Importing media..." : progressMessage)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding()
-                    .frame(maxWidth: .infinity)
-                    .background(Color.platformControlBackground)
-                    .cornerRadius(12)
-                } else if restoreCompleted {
-                    HStack(spacing: 12) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(.green)
-                            .font(.title2)
-                        Text(progressMessage.isEmpty ? "Media restored successfully!" : progressMessage)
-                            .font(.subheadline.weight(.medium))
-                    }
-                    .padding()
-                    .frame(maxWidth: .infinity)
-                    .background(Color.platformControlBackground)
-                    .cornerRadius(12)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(Color.green.opacity(0.5), lineWidth: 2)
-                    )
-
-                    Button(action: {
-                        currentStep += 1
-                    }) {
-                        Label("Continue", systemImage: "arrow.right.circle.fill")
-                            .font(.headline)
-                            .padding(.vertical, 10)
-                            .frame(maxWidth: .infinity)
-                            .background(Color.green)
-                            .foregroundColor(.white)
-                            .cornerRadius(8)
-                    }
-                    .buttonStyle(.plain)
+            Group {
+                if activeTab == 0 {
+                    serverSyncContent
                 } else {
-                    Picker("Import Method", selection: $importMethod) {
-                        Text("Network Sync").tag(0)
-                        Text("Local Import").tag(1)
-                    }
-                    .pickerStyle(.segmented)
-
-                    if importMethod == 0 {
-                        // Network Sync
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Blossom Server URL")
-                                .font(.headline)
-                            Text("Enter your current Blossom server to fetch and mirror your media files.")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-
-                            TextField("https://...", text: $blossomURL)
-                                .textFieldStyle(.roundedBorder)
-                        }
-
-                        Button(action: {
-                            startNetworkSync()
-                        }) {
-                            Label("Start Network Sync", systemImage: "arrow.triangle.2.circlepath")
-                                .font(.headline)
-                                .padding()
-                                .frame(maxWidth: .infinity)
-                                .background(Color.havenPurple)
-                                .foregroundColor(.white)
-                                .cornerRadius(12)
-                        }
-                        .buttonStyle(.plain)
-                    } else {
-                        // Local Import
-                        Button(action: {
-                            #if os(macOS)
-                            NSApp.activate(ignoringOtherApps: true)
-                            #endif
-                            showingFileImporter = true
-                        }) {
-                            Label("Choose Media Archive", systemImage: "folder")
-                                .font(.headline)
-                                .padding()
-                                .frame(maxWidth: .infinity)
-                                .background(Color.havenPurple)
-                                .foregroundColor(.white)
-                                .cornerRadius(12)
-                        }
-                        .buttonStyle(.plain)
-
-                        Text("Select a Blossom backup (.zip) to restore your media files")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-
-                    // Allow skipping media restore entirely
-                    Button(action: {
-                        currentStep += 1
-                    }) {
-                        Text("Skip Media Restore")
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.top, 8)
+                    backupImportContent
                 }
             }
-            .frame(maxWidth: 450)
             .opacity(appeared ? 1 : 0)
-            .offset(y: appeared ? 0 : 10)
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.2), value: appeared)
+            .animation(WizardAnimations.fadeIn.delay(0.3), value: appeared)
+
+            WizardSkipLink(title: "Skip Media") { onSkip() }
+
+            Spacer().frame(height: 8)
         }
-        .padding()
         .onAppear { appeared = true }
         .fileImporter(
             isPresented: $showingFileImporter,
@@ -1225,33 +1687,155 @@ struct SetupRestoreMediaStep: View {
             switch result {
             case .success(let urls):
                 guard let url = urls.first else { return }
-                restoreMedia(from: url)
+                importMedia(from: url)
             case .failure(let error):
-                self.restoreError = error.localizedDescription
-                self.showRestoreError = true
+                syncError = error.localizedDescription
+                showSyncError = true
             }
         }
-        .alert("Import Failed", isPresented: $showRestoreError, actions: {
-            Button("OK", role: .cancel) { }
-        }, message: {
-            Text(restoreError ?? "Unknown error")
-        })
+        .alert("Import Failed", isPresented: $showSyncError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(syncError ?? "Unknown error")
+        }
+    }
+
+    @ViewBuilder
+    private var serverSyncContent: some View {
+        VStack(spacing: 14) {
+            if isSyncing {
+                VStack(spacing: 16) {
+                    // Circular progress
+                    ZStack {
+                        Circle()
+                            .stroke(WizardColors.bgElevated, lineWidth: 6)
+                            .frame(width: 80, height: 80)
+                        Circle()
+                            .trim(from: 0, to: progressValue)
+                            .stroke(WizardColors.accentGradient, style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                            .frame(width: 80, height: 80)
+                            .rotationEffect(.degrees(-90))
+                            .animation(WizardAnimations.springGentle, value: progressValue)
+
+                        Text("\(syncedCount) / \(totalCount)")
+                            .font(.system(size: 13, weight: .medium, design: .monospaced))
+                            .foregroundColor(WizardColors.textPrimary)
+                    }
+
+                    Text(progressMessage.isEmpty ? "Syncing..." : progressMessage)
+                        .font(.system(size: 13))
+                        .foregroundColor(WizardColors.textSecondary)
+                }
+                .padding(20)
+                .frame(maxWidth: .infinity)
+                .background(WizardColors.bgCard)
+                .cornerRadius(12)
+            } else if syncCompleted {
+                HStack(spacing: 10) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(WizardColors.success)
+                        .font(.title2)
+                    Text(progressMessage.isEmpty ? "Media synced!" : progressMessage)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(WizardColors.textPrimary)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity)
+                .background(WizardColors.bgCard)
+                .cornerRadius(12)
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(WizardColors.success.opacity(0.5), lineWidth: 2))
+
+                WizardPrimaryButton(title: "Continue", action: onContinue)
+            } else {
+                WizardInputField(label: "Blossom Server URL", text: $blossomURL, placeholder: "https://blossom.primal.net")
+
+                WizardPrimaryButton(title: "Sync Media") {
+                    startNetworkSync()
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var backupImportContent: some View {
+        VStack(spacing: 14) {
+            if isSyncing {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(WizardColors.accentPrimary)
+                    Text("Importing media...")
+                        .font(.system(size: 14))
+                        .foregroundColor(WizardColors.textSecondary)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity)
+                .background(WizardColors.bgCard)
+                .cornerRadius(12)
+            } else if syncCompleted {
+                HStack(spacing: 10) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(WizardColors.success)
+                        .font(.title2)
+                    Text("Media imported!")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(WizardColors.textPrimary)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity)
+                .background(WizardColors.bgCard)
+                .cornerRadius(12)
+                .overlay(RoundedRectangle(cornerRadius: 12).stroke(WizardColors.success.opacity(0.5), lineWidth: 2))
+
+                WizardPrimaryButton(title: "Continue", action: onContinue)
+            } else {
+                Button(action: {
+                    #if os(macOS)
+                    NSApp.activate(ignoringOtherApps: true)
+                    #endif
+                    showingFileImporter = true
+                }) {
+                    HStack {
+                        Image(systemName: "doc.zipper")
+                            .font(.title3)
+                        Text("Choose Media Archive")
+                            .font(.system(size: 15, weight: .medium))
+                    }
+                    .foregroundColor(WizardColors.textSecondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(24)
+                    .background(WizardColors.bgCard)
+                    .cornerRadius(12)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [8, 4]))
+                            .foregroundColor(WizardColors.borderSubtle)
+                    )
+                }
+                .buttonStyle(.plain)
+
+                Text("Select a Blossom backup (.zip)")
+                    .font(.system(size: 12))
+                    .foregroundColor(WizardColors.textMuted)
+            }
+        }
     }
 
     private func startNetworkSync() {
-        isRestoring = true
-        progressMessage = "Initializing connection..."
-        progressPercentage = 0.0
+        isSyncing = true
+        progressMessage = "Connecting..."
+        progressValue = 0
+        syncedCount = 0
+        totalCount = 0
 
         let trimmedURL = blossomURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedURL.isEmpty, let _ = URL(string: trimmedURL) else {
-            self.restoreError = "Invalid Blossom server URL."
-            self.showRestoreError = true
-            self.isRestoring = false
+            syncError = "Invalid Blossom server URL."
+            showSyncError = true
+            isSyncing = false
             return
         }
 
-        // Save the blossom mirror in config so BlossomService can read it
         if !configService.config.blossomMirrors.contains(trimmedURL) {
             configService.config.blossomMirrors.append(trimmedURL)
             configService.save()
@@ -1260,29 +1844,27 @@ struct SetupRestoreMediaStep: View {
 
         Task {
             let blossomService = BlossomService(configService: configService, nostrService: nostrService)
-
-            // Trigger sync
             let mirroredCount = await blossomService.mirrorAllFromExternal { completed, total in
-                self.progressPercentage = total > 0 ? Double(completed) / Double(total) : 0.0
-                self.progressMessage = "Mirrored \(completed) of \(total) files..."
+                syncedCount = completed
+                totalCount = total
+                progressValue = total > 0 ? Double(completed) / Double(total) : 0
+                progressMessage = "Mirrored \(completed) of \(total) files..."
             }
 
-            self.isRestoring = false
-            self.restoreCompleted = true
-            self.progressMessage = "Sync completed! Mirrored \(mirroredCount) files."
+            isSyncing = false
+            syncCompleted = true
+            progressMessage = "Synced \(mirroredCount) files."
         }
     }
 
-    private func restoreMedia(from url: URL) {
-        isRestoring = true
-
+    private func importMedia(from url: URL) {
+        isSyncing = true
         guard url.startAccessingSecurityScopedResource() else {
-            self.restoreError = "Permission denied to access the file."
-            self.showRestoreError = true
-            self.isRestoring = false
+            syncError = "Permission denied to access the file."
+            showSyncError = true
+            isSyncing = false
             return
         }
-
         defer { url.stopAccessingSecurityScopedResource() }
 
         let tempDir = FileManager.default.temporaryDirectory
@@ -1294,102 +1876,410 @@ struct SetupRestoreMediaStep: View {
             }
             try FileManager.default.copyItem(at: url, to: tempFile)
         } catch {
-            self.restoreError = "Failed to copy media archive: \(error.localizedDescription)"
-            self.showRestoreError = true
-            self.isRestoring = false
+            syncError = "Failed to copy media archive: \(error.localizedDescription)"
+            showSyncError = true
+            isSyncing = false
             return
         }
 
         RelayProcessManager.shared.runBlossomImportStrippingExtensions(config: configService.config, inputPath: tempFile.path) { success in
             try? FileManager.default.removeItem(at: tempFile)
-
             Task { @MainActor in
-                self.isRestoring = false
+                isSyncing = false
                 if success {
-                    self.restoreCompleted = true
+                    syncCompleted = true
                 } else {
-                    self.restoreError = "Failed to import media. Check logs for details."
-                    self.showRestoreError = true
+                    syncError = "Failed to import media. Check logs for details."
+                    showSyncError = true
                 }
             }
         }
     }
 }
 
-struct SetupSuccessStep: View {
-    @State private var showContent = false
+// MARK: - Step 6: Wallet Setup
+
+private struct WalletSetupStep: View {
+    @Binding var nwcURI: String
+    @Binding var cashuMintURL: String
+    let onContinue: () -> Void
+    let onSkip: () -> Void
+
+    @State private var appeared = false
+    @State private var lightningExpanded = false
+    @State private var cashuExpanded = false
+    @State private var nwcStatus: ConnectionStatus = .idle
+
+    enum ConnectionStatus {
+        case idle, testing, connected, failed
+    }
 
     var body: some View {
         VStack(spacing: 24) {
-            Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 80))
-                .foregroundStyle(
-                    LinearGradient(
-                        colors: [.green, .green.opacity(0.7)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-                .scaleEffect(showContent ? 1.0 : 0.3)
-                .opacity(showContent ? 1.0 : 0.0)
-                .animation(.spring(response: 0.6, dampingFraction: 0.5).delay(0.1), value: showContent)
+            Spacer().frame(height: 20)
 
-            VStack(spacing: 12) {
-                Text("You're All Set!")
-                    .font(.system(.title, design: .rounded).bold())
-                    .opacity(showContent ? 1.0 : 0.0)
-                    .offset(y: showContent ? 0 : 20)
-                    .animation(.spring(response: 0.6, dampingFraction: 0.7).delay(0.3), value: showContent)
+            Text("Lightning + Ecash")
+                .font(.system(size: isIOSDevice ? 24 : 28, weight: .semibold))
+                .foregroundColor(WizardColors.textPrimary)
+                .opacity(appeared ? 1 : 0)
+                .offset(y: appeared ? 0 : 10)
+                .animation(WizardAnimations.springEnter.delay(0.1), value: appeared)
 
-                Text("Your Nostr Vault relay is configured and ready to go.")
-                    .font(.title3)
-                    .foregroundColor(.secondary)
-                    .opacity(showContent ? 1.0 : 0.0)
-                    .offset(y: showContent ? 0 : 15)
-                    .animation(.spring(response: 0.6, dampingFraction: 0.7).delay(0.4), value: showContent)
+            Text("Connect a wallet to send zaps, or set up ecash. Both optional — configurable later in Settings.")
+                .font(.system(size: 15))
+                .foregroundColor(WizardColors.textSecondary)
+                .multilineTextAlignment(.center)
+                .opacity(appeared ? 1 : 0)
+                .animation(WizardAnimations.fadeIn.delay(0.2), value: appeared)
+
+            // Lightning (NWC) section
+            VStack(spacing: 0) {
+                Button(action: { withAnimation(WizardAnimations.springEnter) { lightningExpanded.toggle() } }) {
+                    HStack {
+                        Image(systemName: "bolt.fill")
+                            .font(.system(size: 18))
+                            .foregroundColor(WizardColors.accentPrimary)
+                        Text("Lightning (NWC)")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(WizardColors.textPrimary)
+                        Spacer()
+                        Image(systemName: lightningExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 12))
+                            .foregroundColor(WizardColors.textMuted)
+                    }
+                    .padding(16)
+                }
+                .buttonStyle(.plain)
+
+                if lightningExpanded {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Divider().background(WizardColors.borderSubtle)
+
+                        WizardInputField(label: "Nostr Wallet Connect URI", text: $nwcURI, placeholder: "nostr+walletconnect://...")
+
+                        Text("Works with Alby, Zeus, Mutiny, and other NWC wallets")
+                            .font(.system(size: 12))
+                            .foregroundColor(WizardColors.textMuted)
+
+                        // Connection status
+                        if nwcStatus == .testing {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.mini).tint(WizardColors.accentPrimary)
+                                Text("Connecting...")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(WizardColors.textSecondary)
+                            }
+                        } else if nwcStatus == .connected {
+                            HStack(spacing: 6) {
+                                Circle().fill(WizardColors.success).frame(width: 8, height: 8)
+                                Text("Connected")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(WizardColors.success)
+                            }
+                        } else if nwcStatus == .failed {
+                            HStack(spacing: 6) {
+                                Circle().fill(WizardColors.error).frame(width: 8, height: 8)
+                                Text("Failed to connect")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(WizardColors.error)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .background(WizardColors.bgCard)
+            .cornerRadius(12)
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(WizardColors.borderSubtle, lineWidth: 1))
+            .opacity(appeared ? 1 : 0)
+            .animation(WizardAnimations.springEnter.delay(0.3), value: appeared)
+
+            // Cashu Ecash section
+            VStack(spacing: 0) {
+                Button(action: { withAnimation(WizardAnimations.springEnter) { cashuExpanded.toggle() } }) {
+                    HStack {
+                        Image(systemName: "centsign.circle.fill")
+                            .font(.system(size: 18))
+                            .foregroundColor(WizardColors.accentPrimary)
+                        Text("Cashu Ecash")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(WizardColors.textPrimary)
+                        Spacer()
+                        Image(systemName: cashuExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 12))
+                            .foregroundColor(WizardColors.textMuted)
+                    }
+                    .padding(16)
+                }
+                .buttonStyle(.plain)
+
+                if cashuExpanded {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Divider().background(WizardColors.borderSubtle)
+
+                        WizardInputField(label: "Cashu Mint URL", text: $cashuMintURL, placeholder: "https://mint.example.com")
+
+                        Text("Tokens stored encrypted on your private relay")
+                            .font(.system(size: 12))
+                            .foregroundColor(WizardColors.textMuted)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .background(WizardColors.bgCard)
+            .cornerRadius(12)
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(WizardColors.borderSubtle, lineWidth: 1))
+            .opacity(appeared ? 1 : 0)
+            .animation(WizardAnimations.springEnter.delay(0.38), value: appeared)
+
+            WizardPrimaryButton(title: "Continue", action: onContinue)
+
+            WizardSkipLink(title: "Skip — set up later") { onSkip() }
+
+            Spacer().frame(height: 8)
+        }
+        .onAppear { appeared = true }
+    }
+}
+
+// MARK: - Step 6b: Push Notifications (iOS only)
+
+private struct PushNotificationStep: View {
+    let onContinue: () -> Void
+    let onSkip: () -> Void
+    @State private var appeared = false
+    @State private var dmEnabled = true
+    @State private var zapEnabled = true
+    @State private var mentionEnabled = true
+
+    var body: some View {
+        VStack(spacing: 28) {
+            Spacer().frame(height: 40)
+
+            Image(systemName: "bell.badge.fill")
+                .font(.system(size: 56))
+                .foregroundColor(WizardColors.accentPrimary)
+                .scaleEffect(appeared ? 1.0 : 0.3)
+                .offset(y: appeared ? 0 : -20)
+                .animation(WizardAnimations.springBounce.delay(0.1), value: appeared)
+
+            Text("Stay in the Loop")
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundColor(WizardColors.textPrimary)
+                .opacity(appeared ? 1 : 0)
+                .animation(WizardAnimations.fadeIn.delay(0.3), value: appeared)
+
+            Text("Get notified about DMs, zaps, and mentions.")
+                .font(.system(size: 15))
+                .foregroundColor(WizardColors.textSecondary)
+                .opacity(appeared ? 1 : 0)
+                .animation(WizardAnimations.fadeIn.delay(0.4), value: appeared)
+
+            // Toggle cards
+            VStack(spacing: 0) {
+                notificationToggle(icon: "bubble.left.fill", label: "Direct Messages", isOn: $dmEnabled)
+                Divider().background(WizardColors.borderSubtle).padding(.horizontal, 16)
+                notificationToggle(icon: "bolt.fill", label: "Zaps", isOn: $zapEnabled)
+                Divider().background(WizardColors.borderSubtle).padding(.horizontal, 16)
+                notificationToggle(icon: "at", label: "Mentions", isOn: $mentionEnabled)
+            }
+            .background(WizardColors.bgCard)
+            .cornerRadius(12)
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(WizardColors.borderSubtle, lineWidth: 1))
+            .opacity(appeared ? 1 : 0)
+            .animation(WizardAnimations.springEnter.delay(0.5), value: appeared)
+
+            WizardPrimaryButton(title: "Enable Notifications", action: onContinue)
+
+            WizardSkipLink(title: "Not now") { onSkip() }
+
+            Spacer()
+        }
+        .onAppear { appeared = true }
+    }
+
+    private func notificationToggle(icon: String, label: String, isOn: Binding<Bool>) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 16))
+                .foregroundColor(WizardColors.accentPrimary)
+                .frame(width: 24)
+            Text(label)
+                .font(.system(size: 15))
+                .foregroundColor(WizardColors.textPrimary)
+            Spacer()
+            Toggle("", isOn: isOn)
+                .tint(WizardColors.accentPrimary)
+                .labelsHidden()
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+}
+
+// MARK: - Step 7: Complete
+
+private struct CompleteStep: View {
+    let isBrowseMode: Bool
+    let onLaunch: () -> Void
+    @State private var showContent = false
+    @State private var ringScale: CGFloat = 0
+    @State private var ringOpacity: Double = 1
+    @State private var ring2Scale: CGFloat = 0
+    @State private var ring2Opacity: Double = 1
+    @State private var ring3Scale: CGFloat = 0
+    @State private var ring3Opacity: Double = 1
+    @State private var buttonPulse: Bool = false
+
+    var body: some View {
+        VStack(spacing: 28) {
+            Spacer().frame(height: 40)
+
+            // Celebration animation
+            ZStack {
+                // Expanding rings
+                Circle()
+                    .stroke(WizardColors.accentPrimary, lineWidth: 2)
+                    .scaleEffect(ringScale)
+                    .opacity(ringOpacity)
+                    .frame(width: 120, height: 120)
+
+                Circle()
+                    .stroke(WizardColors.accentPrimary.opacity(0.6), lineWidth: 1.5)
+                    .scaleEffect(ring2Scale)
+                    .opacity(ring2Opacity)
+                    .frame(width: 120, height: 120)
+
+                Circle()
+                    .stroke(WizardColors.accentPrimary.opacity(0.3), lineWidth: 1)
+                    .scaleEffect(ring3Scale)
+                    .opacity(ring3Opacity)
+                    .frame(width: 120, height: 120)
+
+                // Checkmark seal
+                Image(systemName: "checkmark.seal.fill")
+                    .font(.system(size: 72))
+                    .foregroundStyle(WizardColors.accentGradient)
+                    .scaleEffect(showContent ? 1.0 : 0)
+                    .animation(WizardAnimations.springBounce.delay(0.5), value: showContent)
             }
 
-            VStack(alignment: .leading, spacing: 16) {
-                SuccessBullet(icon: "bolt.fill", text: "Your relay is now your source of truth.")
-                SuccessBullet(icon: "checkmark.shield.fill", text: "End-to-end encrypted DMs are enabled.")
-                SuccessBullet(icon: "photo.fill", text: "Blossom media hosting is active.")
+            // Title
+            Text(isBrowseMode ? "Ready to Browse" : "You're All Set")
+                .font(.system(size: isIOSDevice ? 28 : 32, weight: .bold))
+                .foregroundColor(WizardColors.textPrimary)
+                .opacity(showContent ? 1 : 0)
+                .offset(y: showContent ? 0 : 15)
+                .animation(WizardAnimations.springEnter.delay(0.8), value: showContent)
+
+            // Summary bullets
+            VStack(alignment: .leading, spacing: 14) {
+                if isBrowseMode {
+                    completeBullet(icon: "checkmark.circle.fill", text: "Connected to the Nostr network", color: WizardColors.success, delay: 1.0)
+                    completeBullet(icon: "info.circle.fill", text: "Re-run setup to unlock posting, DMs, and zaps", color: WizardColors.accentPrimary, delay: 1.1)
+                } else {
+                    completeBullet(icon: "checkmark.circle.fill", text: "Your relay is running locally", color: WizardColors.success, delay: 1.0)
+                    completeBullet(icon: "checkmark.circle.fill", text: "Encrypted DMs enabled", color: WizardColors.success, delay: 1.1)
+                    completeBullet(icon: "checkmark.circle.fill", text: "Blossom media hosting active", color: WizardColors.success, delay: 1.2)
+                    completeBullet(icon: "checkmark.circle.fill", text: "Posts broadcast to the Nostr network", color: WizardColors.success, delay: 1.3)
+                }
             }
-            .padding(.top)
-            .opacity(showContent ? 1.0 : 0.0)
-            .offset(y: showContent ? 0 : 10)
-            .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.6), value: showContent)
 
             Spacer()
 
-            // Subtle in-window hint (the real arrow floats outside)
+            #if os(macOS)
             Text("Look for the relay icon in your menu bar!")
-                .font(.system(.subheadline, design: .rounded))
-                .foregroundColor(.havenPurple.opacity(0.8))
-                .opacity(showContent ? 1.0 : 0.0)
-                .animation(.easeIn(duration: 0.5).delay(1.2), value: showContent)
-                .padding(.bottom, 20)
+                .font(.system(size: 14))
+                .foregroundColor(WizardColors.accentPrimary.opacity(0.8))
+                .opacity(showContent ? 1 : 0)
+                .animation(WizardAnimations.fadeIn.delay(1.5), value: showContent)
+            #endif
+
+            // Launch button with pulse
+            WizardPrimaryButton(title: "Launch Nostr Vault", action: onLaunch)
+                .shadow(color: buttonPulse ? WizardColors.accentGlow : .clear, radius: buttonPulse ? 16 : 8)
+                .opacity(showContent ? 1 : 0)
+                .offset(y: showContent ? 0 : 10)
+                .animation(WizardAnimations.springEnter.delay(1.6), value: showContent)
+
+            Spacer().frame(height: 16)
         }
-        .padding()
         .onAppear {
             showContent = true
+
+            // Ring 1
+            withAnimation(.easeOut(duration: 0.8).delay(0.2)) {
+                ringScale = 2.0
+                ringOpacity = 0
+            }
+            // Ring 2
+            withAnimation(.easeOut(duration: 0.8).delay(0.35)) {
+                ring2Scale = 2.0
+                ring2Opacity = 0
+            }
+            // Ring 3
+            withAnimation(.easeOut(duration: 0.8).delay(0.5)) {
+                ring3Scale = 2.0
+                ring3Opacity = 0
+            }
+
+            // Button pulse loop
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
+                    buttonPulse = true
+                }
+            }
+
             #if os(macOS)
-            // Show the floating arrow outside the window after content settles
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 FloatingArrowController.shared.show()
             }
             #endif
         }
     }
+
+    private func completeBullet(icon: String, text: String, color: Color, delay: Double) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon)
+                .foregroundColor(color)
+                .font(.system(size: 18))
+            Text(text)
+                .font(.system(size: 15))
+                .foregroundColor(WizardColors.textPrimary)
+        }
+        .opacity(showContent ? 1 : 0)
+        .offset(x: showContent ? 0 : -20)
+        .animation(WizardAnimations.springEnter.delay(delay), value: showContent)
+    }
 }
 
-// MARK: - Components
+// MARK: - Shared Tab Pill
+
+private func tabPill(_ title: String, isActive: Bool, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+        Text(title)
+            .font(.system(size: 14, weight: .medium))
+            .foregroundColor(isActive ? WizardColors.textPrimary : WizardColors.textMuted)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(isActive ? WizardColors.accentPrimary : Color.clear)
+            .cornerRadius(8)
+    }
+    .buttonStyle(.plain)
+}
+
+// MARK: - Legacy Components (kept for compatibility)
 
 struct FeatureRow: View {
     let icon: String
     let title: String
     let description: String
     @State private var isHovered = false
-    
+
     var body: some View {
         HStack(spacing: 16) {
             Image(systemName: icon)
@@ -1398,7 +2288,7 @@ struct FeatureRow: View {
                 .frame(width: 40)
                 .scaleEffect(isHovered ? 1.1 : 1.0)
                 .animation(.spring(response: 0.3, dampingFraction: 0.6), value: isHovered)
-            
+
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.system(.headline, design: .rounded))
@@ -1406,7 +2296,7 @@ struct FeatureRow: View {
                     .font(.caption)
                     .foregroundColor(isHovered ? .primary : .secondary)
             }
-            
+
             Spacer()
         }
         .padding()
@@ -1423,7 +2313,7 @@ struct FeatureRow: View {
 struct SuccessBullet: View {
     let icon: String
     let text: String
-    
+
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
@@ -1440,7 +2330,7 @@ struct DatabaseOption: View {
     let title: String
     let description: String
     @State private var isHovered = false
-    
+
     var body: some View {
         Button(action: { selected = value }) {
             HStack {

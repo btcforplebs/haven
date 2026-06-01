@@ -106,6 +106,10 @@ struct PlatformClipboard {
         }
         return nil
         #elseif canImport(UIKit)
+        // Try to get raw data in original format to preserve GIFs
+        if let data = UIPasteboard.general.data(forPasteboardType: "com.compuserve.gif") { return data }
+        if let data = UIPasteboard.general.data(forPasteboardType: "public.png") { return data }
+        // Fallback: convert UIImage (loses GIF animation)
         return UIPasteboard.general.image?.jpegData(compressionQuality: 0.85)
         #endif
     }
@@ -249,6 +253,22 @@ extension View {
         #else
         self
         #endif
+    }
+
+    /// Consistent bottom padding so scroll content clears the floating tab bar on iOS.
+    @ViewBuilder
+    func tabBarBottomPadding() -> some View {
+        self
+    }
+
+    /// Conditionally apply a modifier only when a condition is true.
+    @ViewBuilder
+    func `if`<Content: View>(_ condition: Bool, transform: (Self) -> Content) -> some View {
+        if condition {
+            transform(self)
+        } else {
+            self
+        }
     }
 }
 

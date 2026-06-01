@@ -20,18 +20,54 @@
 
 ## ✨ Features
 
+### Core
 - **Native SwiftUI** — Fast, responsive, and designed for macOS and iOS.
 - **Trusted Core** — Runs the exact same battle-tested Go code as the CLI relay, ensuring 100% compatibility.
-- **Mac-to-iOS Sync** — Use your Mac as your always-on home base. Nostr Vault for iOS securely syncs missed notes directly from your Mac relay.
-- **Nostr Zaps & NWC** — Integrated Lightning wallet support via Nostr Wallet Connect (NWC). Send and receive zaps instantly with real-time balance tracking.
 - **Private Relay** — Run your own private Nostr relay effortlessly from your desktop or phone.
-- **Smart Broadcasting** — Nostr Vault automatically discovers your recipient's preferred relays and broadcasts directly to their inbox.
-- **Advanced Access Control** — Multi-pubkey whitelisting and blacklisting support for refined relay privacy.
-- **Media Viewer** — Browse images, videos, GIFs, and audio files with source filtering (Blossom vs Cache).
-- **Blossom Media Server** — Integrated BUD-02 media hosting with automatic mirroring and smart MIME detection.
-- **JSONL Backup/Restore** — Comprehensive backup system using a portable JSONL format with cloud backup support.
-- **Web of Trust (WoT)** — Built-in WoT with configurable depth and periodic refresh mechanisms.
-- **Privacy First** — Secured by system-level Keychain. Encrypt your private key with NIP-49 (using ncryptsec).
+- **Mac-to-iOS Sync** — Use your Mac as your always-on home base. Nostr Vault for iOS securely syncs missed notes directly from your Mac relay.
+- **Multi-Account Support** — Switch between multiple Nostr accounts with clean subscription teardown, per-account data isolation, and instant feed restoration from disk snapshots.
+- **Privacy First** — Secured by system-level Keychain. Encrypt your private key with NIP-49 (ncryptsec). NIP-46 remote signing via `bunker://` URIs for hardware-separated key management.
+
+### Messaging
+- **NIP-17 Private DMs** — End-to-end encrypted messaging with the NIP-17 gift wrap protocol (NIP-44 ChaCha20 + HMAC-SHA256). Three-layer privacy: rumor, seal, gift wrap with ephemeral keypairs and randomized timestamps.
+- **NIP-04 Legacy Support** — Backward-compatible NIP-04 DMs with per-conversation protocol toggle and visual warnings.
+- **DM Inbox & Threads** — Full conversation list with unread indicators, gradient chat bubbles, mark-all-as-read, and real-time message arrival.
+
+### Payments
+- **Lightning Wallet (NWC)** — Send and receive zaps via Nostr Wallet Connect with real-time balance, invoice generation with QR codes, and custom zap amounts/messages.
+- **Cashu Ecash Wallet** — Full NUT protocol ecash wallet with Blind Diffie-Hellman key exchange. Deposit/withdraw via Lightning (NUT-04/05), send/receive cashuA tokens (NUT-00/03), and relay-backed storage via NIP-60 with NIP-44 self-encryption for cross-device recovery.
+- **On-Chain Bitcoin** — Taproot (BIP-341) address derivation, UTXO sweeping with Schnorr signatures, and selectable fee rates via Mempool API.
+
+### Feed & Content
+- **Smart Broadcasting** — Automatically discovers recipient preferred relays (kind 10002/10050) and broadcasts to their inbox.
+- **Feed Dashboard** — Centralized control panel with connection status, 4-card stats grid, feed mode selector (Following/Discovery/Global/Media), content filter toggles, relay health, and quick actions.
+- **Link Preview Cards** — Rich inline URL previews with OpenGraph metadata fetching, memory/disk caching, and request coalescing.
+- **Infinite Scroll** — Automatic pagination in both the main feed and profile note feeds with timestamp cursor-based relay queries.
+- **120fps Feed Performance** — Data-driven FeedNoteRow with pre-resolved Equatable structs, cached filtered notes, compiled regex patterns, and NSCache-backed attributed string formatting.
+- **Feed Page (Web)** — Go-powered HTML feed page for web access to your relay content.
+
+### Media
+- **Blossom Media Server** — Integrated BUD-02 media hosting with automatic mirroring, BUD-06 preflight checks, and smart MIME detection via magic bytes.
+- **Media Viewer** — Browse images, videos, GIFs, and audio with source filtering, glassmorphic playback controls, hardware keyboard shortcuts, and shared video player pool.
+- **Media Grid Tab** — Instagram-style 3-column grid with tap-to-open carousel, long-press note details, and video thumbnail caching.
+- **Paste & Upload** — Paste images or URLs directly into the media viewer or compose flow for instant Blossom upload.
+
+### Social
+- **Following List Backup & Recovery** — Automatic contact list snapshots (up to 50 per account) with relay recovery scanning, chronological display, delta badges, per-user re-follow, and full list restore.
+- **Bidirectional Mute List Sync** — Kind 10000 mute list events fetched and published to relays with per-account block lists.
+- **@mention Tagging** — Live-filtered follower popup in compose with automatic npub token insertion and p-tag routing.
+- **NIP-10/18/25 Compliance** — Proper reply threading with root/reply e-tag markers, quote post tags with relay hints, and reaction events with kind tags.
+
+### Notifications
+- **Push Notifications (APNs)** — Native iOS push for DMs, mentions, zaps, and reactions with deep linking. Per-account granular toggles by event type.
+- **iOS Notification Service Extension** — Background push processing for reliable delivery when the app is not active.
+- **Zap Notification Banner** — Animated floating status pills with real-time feedback (Zapping, Zapped, Failed).
+
+### Infrastructure
+- **Advanced Access Control** — Multi-pubkey whitelisting, blacklisting, and per-account block lists synced to the Go relay.
+- **Web of Trust (WoT)** — Built-in WoT with configurable depth, minimum followers, refresh intervals, and 72-hour cache TTL.
+- **JSONL Backup/Restore** — Portable JSONL export/import with cloud backup support.
+- **Push Server** — Self-hosted APNs forwarding with multi-account registration, self-notification filtering, badge reset, and health monitoring.
 
 ## ⚙️ Divergence from Upstream
 

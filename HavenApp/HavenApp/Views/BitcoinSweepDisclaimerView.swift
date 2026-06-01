@@ -7,6 +7,7 @@ struct BitcoinSweepDisclaimerView: View {
     @State private var showSweepFlow = false
     @State private var balance: Int = 0
     @State private var isLoadingBalance = true
+    @State private var currentStep: Int = 0
 
     var body: some View {
         ZStack {
@@ -18,11 +19,30 @@ struct BitcoinSweepDisclaimerView: View {
                 BitcoinSweepView(balanceSats: balance, onDismiss: onDismiss)
                     .transition(.move(edge: .trailing))
             } else {
-                disclaimerContent
-                    .transition(.move(edge: .leading))
+                switch currentStep {
+                case 0:
+                    warningPage1
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .trailing),
+                            removal: .move(edge: .leading)
+                        ))
+                case 1:
+                    warningPage2
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .trailing),
+                            removal: .move(edge: .leading)
+                        ))
+                default:
+                    disclaimerContent
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .trailing),
+                            removal: .move(edge: .leading)
+                        ))
+                }
             }
         }
         .animation(.easeInOut(duration: 0.3), value: showSweepFlow)
+        .animation(.easeInOut(duration: 0.3), value: currentStep)
         #if os(macOS)
         .frame(minWidth: 500, idealWidth: 550, minHeight: 450, idealHeight: 550)
         #endif
@@ -30,6 +50,130 @@ struct BitcoinSweepDisclaimerView: View {
             loadBalance()
         }
     }
+
+    // MARK: - Warning Page 1 (medium text)
+
+    private var warningPage1: some View {
+        VStack(spacing: 0) {
+            Spacer()
+
+            VStack(spacing: 24) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 48))
+                    .foregroundColor(.red)
+
+                VStack(spacing: 16) {
+                    Text("Do not send to a hardware wallet.")
+                        .font(.system(size: 22, weight: .heavy))
+                        .foregroundColor(.white)
+                        .multilineTextAlignment(.center)
+
+                    Text("Do not send to an exchange.")
+                        .font(.system(size: 22, weight: .heavy))
+                        .foregroundColor(.white)
+                        .multilineTextAlignment(.center)
+                }
+
+                Text("Sweeping to a hardware wallet or exchange creates a permanent on-chain link between your Bitcoin and your Nostr identity. This cannot be undone.")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(3)
+                    .padding(.horizontal, 20)
+            }
+            .padding(.horizontal, 32)
+
+            Spacer()
+
+            VStack(spacing: 12) {
+                Button(action: { performDismiss() }) {
+                    Text("Cancel")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color.secondary.opacity(0.3))
+                        .cornerRadius(12)
+                }
+                .buttonStyle(.plain)
+
+                Button(action: { currentStep = 1 }) {
+                    Text("I understand, continue")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color.orange)
+                        .cornerRadius(12)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(20)
+        }
+    }
+
+    // MARK: - Warning Page 2 (large text)
+
+    private var warningPage2: some View {
+        VStack(spacing: 0) {
+            Spacer()
+
+            VStack(spacing: 28) {
+                Image(systemName: "xmark.shield.fill")
+                    .font(.system(size: 64))
+                    .foregroundColor(.red)
+
+                VStack(spacing: 20) {
+                    Text("NOT a hardware wallet.")
+                        .font(.system(size: 32, weight: .black))
+                        .foregroundColor(.red)
+                        .multilineTextAlignment(.center)
+
+                    Text("NOT an exchange.")
+                        .font(.system(size: 32, weight: .black))
+                        .foregroundColor(.red)
+                        .multilineTextAlignment(.center)
+                }
+
+                Text("If you sweep to a Ledger, Trezor, Coldcard, Coinbase, Kraken, or ANY custodial service, your Nostr npub is permanently tied to that wallet on the public blockchain. There is no way to reverse this.")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(4)
+                    .padding(.horizontal, 16)
+            }
+            .padding(.horizontal, 24)
+
+            Spacer()
+
+            VStack(spacing: 12) {
+                Button(action: { currentStep = 0 }) {
+                    Text("Go Back")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color.secondary.opacity(0.3))
+                        .cornerRadius(12)
+                }
+                .buttonStyle(.plain)
+
+                Button(action: { currentStep = 2 }) {
+                    Text("I will NOT send to a hardware wallet or exchange")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Color.orange)
+                        .cornerRadius(12)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(20)
+        }
+    }
+
+    // MARK: - Existing Disclaimer (step 2)
 
     private var disclaimerContent: some View {
         NavigationStack {
@@ -117,8 +261,8 @@ struct BitcoinSweepDisclaimerView: View {
                 // Action Buttons
                 VStack(spacing: 12) {
                     // Cancel Button
-                    Button(action: { performDismiss() }) {
-                        Text("Cancel")
+                    Button(action: { currentStep = 1 }) {
+                        Text("Go Back")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundColor(.white)
                             .frame(maxWidth: .infinity)

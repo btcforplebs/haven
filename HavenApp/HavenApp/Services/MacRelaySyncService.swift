@@ -321,7 +321,7 @@ class MacRelaySyncService: ObservableObject {
 
     
     // MARK: - Finish & Inject into Local Relay
-    
+
     private func finishSync() {
         let totalCount = pendingEvents.values.reduce(0) { $0 + $1.count }
         guard totalCount > 0 else {
@@ -359,61 +359,7 @@ class MacRelaySyncService: ObservableObject {
         print("MacRelaySyncService: Routing \(outboxEvents.count) to outbox, \(inboxEvents.count) to inbox, \(privateEvents.count) to private, \(chatEvents.count) to chat")
         #endif
 
-        let group = DispatchGroup()
         var maxTimestamp: Int64 = self.lastSyncTimestamp
-
-        // Helper: send a batch of events to a specific relay endpoint
-        func injectEvents(_ events: [[String: Any]], to url: URL, label: String) {
-            guard !events.isEmpty else { return }
-            group.enter()
-
-            let client = WebSocketClient()
-            client.isTemporary = true
-            // Guard against multiple group.leave() calls from repeated state emissions
-            var didLeave = false
-
-            client.$connectionState
-                .receive(on: processingQueue)
-                .sink { state in
-                    guard !didLeave else { return }
-                    if state == .connected {
-                        let batchSize = 100
-                        for i in stride(from: 0, to: events.count, by: batchSize) {
-                            let end = min(i + batchSize, events.count)
-                            for eventDict in events[i..<end] {
-                                let msg: [Any] = ["EVENT", eventDict]
-                                if let data = try? JSONSerialization.data(withJSONObject: msg),
-                                   let str = String(data: data, encoding: .utf8) {
-                                    client.send(text: str)
-                                }
-                            }
-                            if i + batchSize < events.count {
-                                Thread.sleep(forTimeInterval: 0.1)
-                            }
-                        }
-
-                        let delay = max(2.0, Double(events.count) / 500.0)
-                        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                            guard !didLeave else { return }
-                            didLeave = true
-                            client.disconnect()
-                            #if DEBUG
-                            print("MacRelaySyncService: \(label) injection done (\(events.count) events)")
-                            #endif
-                            group.leave()
-                        }
-                    } else if state == .error {
-                        didLeave = true
-                        #if DEBUG
-                        print("MacRelaySyncService: \(label) connection error")
-                        #endif
-                        group.leave()
-                    }
-                }
-                .store(in: &self.cancellables)
-
-            client.connect(url: url)
-        }
 
         // Track max timestamp across all events
         for (_, events) in pendingEvents {
@@ -426,18 +372,34 @@ class MacRelaySyncService: ObservableObject {
             }
         }
 
-        injectEvents(outboxEvents, to: outboxURL, label: "outbox")
-        injectEvents(inboxEvents, to: inboxURL, label: "inbox")
-        injectEvents(privateEvents, to: privateURL, label: "private")
-        injectEvents(chatEvents, to: chatURL, label: "chat")
+        // Inject endpoints sequentially to avoid overwhelming the local relay
+        let endpoints: [(events: [[String: Any]], url: URL, label: String)] = [
+            (outboxEvents, outboxURL, "outbox"),
+            (inboxEvents, inboxURL, "inbox"),
+            (privateEvents, privateURL, "private"),
+            (chatEvents, chatURL, "chat")
+        ]
 
-        group.notify(queue: .main) { [weak self] in
-            guard let self = self else { return }
+        Task {
+            defer {
+                // Safety: guarantee isSyncing resets even if something fails
+                if isSyncing {
+                    isSyncing = false
+                    syncStatus = "Sync interrupted"
+                }
+            }
+
+            for endpoint in endpoints {
+                guard !endpoint.events.isEmpty else { continue }
+                syncStatus = "Saving \(endpoint.label) (\(endpoint.events.count) events)..."
+                await injectEvents(endpoint.events, to: endpoint.url, label: endpoint.label)
+            }
+
             let nowTimestamp = Int64(Date().timeIntervalSince1970)
-            self.lastSyncTimestamp = min(maxTimestamp, nowTimestamp)
-            self.isSyncing = false
-            self.lastSyncDate = Date()
-            self.syncStatus = "Synced \(totalCount) notes"
+            lastSyncTimestamp = min(maxTimestamp, nowTimestamp)
+            isSyncing = false
+            lastSyncDate = Date()
+            syncStatus = "Synced \(totalCount) notes"
 
             #if DEBUG
             print("MacRelaySyncService: Sync complete — \(totalCount) events injected, maxTimestamp=\(maxTimestamp)")
@@ -445,6 +407,72 @@ class MacRelaySyncService: ObservableObject {
 
             NotificationCenter.default.post(name: .macRelaySyncComplete, object: nil)
         }
+    }
+
+    /// Injects events into a single local relay endpoint with throttled batches.
+    private func injectEvents(_ events: [[String: Any]], to url: URL, label: String) async {
+        let client = WebSocketClient()
+        client.isTemporary = true
+
+        // Wait for connection
+        let connected = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in
+            var resumed = false
+            client.$connectionState
+                .receive(on: DispatchQueue.main)
+                .sink { state in
+                    guard !resumed else { return }
+                    if state == .connected {
+                        resumed = true
+                        continuation.resume(returning: true)
+                    } else if state == .error {
+                        resumed = true
+                        continuation.resume(returning: false)
+                    }
+                }
+                .store(in: &self.cancellables)
+
+            client.connect(url: url)
+
+            // Timeout after 10 seconds
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+                guard !resumed else { return }
+                resumed = true
+                continuation.resume(returning: false)
+            }
+        }
+
+        guard connected else {
+            #if DEBUG
+            print("MacRelaySyncService: \(label) connection failed, skipping")
+            #endif
+            client.disconnect()
+            return
+        }
+
+        // Send events in batches of 20 with a pause between each batch
+        let batchSize = 20
+        for i in stride(from: 0, to: events.count, by: batchSize) {
+            let end = min(i + batchSize, events.count)
+            for eventDict in events[i..<end] {
+                let msg: [Any] = ["EVENT", eventDict]
+                if let data = try? JSONSerialization.data(withJSONObject: msg),
+                   let str = String(data: data, encoding: .utf8) {
+                    client.send(text: str)
+                }
+            }
+            // Throttle between batches to let the relay process writes
+            if end < events.count {
+                try? await Task.sleep(nanoseconds: 150_000_000)
+            }
+        }
+
+        // Give the relay a moment to finish processing the last batch
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        client.disconnect()
+
+        #if DEBUG
+        print("MacRelaySyncService: \(label) injection done (\(events.count) events)")
+        #endif
     }
 }
 

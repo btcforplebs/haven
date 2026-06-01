@@ -86,7 +86,7 @@ class BlossomService: @unchecked Sendable {
     /// Use this for "save to my relay" actions (viewer mirror button) rather than compose uploads
     /// where you need an accessible external URL to embed in a note.
     /// - Returns: true if the local relay accepted the upload, false otherwise.
-    func saveToLocalRelay(data: Data, sha256: String, contentType: String = "application/octet-stream") async -> Bool {
+    func saveToLocalRelay(data: Data, sha256: String, contentType: String = "application/octet-stream", mirrorToExternal: Bool = true) async -> Bool {
         let port = await MainActor.run { configService.config.relayPort }
         #if os(macOS)
         let localURLStr = "http://127.0.0.1:\(port)"
@@ -101,37 +101,40 @@ class BlossomService: @unchecked Sendable {
         }
         logger.info("saveToLocalRelay: local upload succeeded (\(data.count) bytes)")
 
-        // Fire-and-forget: push to external mirrors without blocking the result.
-        let mirrors = await MainActor.run { configService.config.activeBlossomMirrors }
+        // Push to external mirrors — awaited to ensure uploads complete before returning.
+        // Previously fire-and-forget, which caused mirrors to silently fail on iOS
+        // when the app was backgrounded or the view was dismissed.
+        // Skipped during bulk sync (mirrorToExternal: false) to avoid N×M uploads.
+        let mirrors = mirrorToExternal ? await MainActor.run { configService.config.activeBlossomMirrors } : []
         if !mirrors.isEmpty {
-            Task {
-                await withTaskGroup(of: Void.self) { group in
-                    for mirror in mirrors {
-                        group.addTask {
-                            let parsed = URL(string: mirror)
-                            let useLocal = parsed.map { self.isLocalhost($0) } ?? false
+            logger.info("saveToLocalRelay: mirroring to \(mirrors.count) external server(s)")
+            await withTaskGroup(of: Void.self) { group in
+                for mirror in mirrors {
+                    group.addTask {
+                        let parsed = URL(string: mirror)
+                        let useLocal = parsed.map { self.isLocalhost($0) } ?? false
 
-                            // BUD-06: Preflight check — skip mirror if server rejects
-                            let accepted = await self.preflightCheck(
-                                url: mirror, sha256: sha256,
-                                contentLength: data.count, contentType: contentType,
-                                useLocalhostSession: useLocal
-                            )
-                            guard accepted else {
-                                self.logger.info("saveToLocalRelay: skipping \(mirror) — BUD-06 preflight rejected")
-                                return
-                            }
+                        // BUD-06: Preflight check — skip mirror if server rejects
+                        let accepted = await self.preflightCheck(
+                            url: mirror, sha256: sha256,
+                            contentLength: data.count, contentType: contentType,
+                            useLocalhostSession: useLocal
+                        )
+                        guard accepted else {
+                            self.logger.info("saveToLocalRelay: skipping \(mirror) — BUD-06 preflight rejected")
+                            return
+                        }
 
-                            let result = await self.uploadToServer(source: .data(data), url: mirror, sha256: sha256, contentType: contentType, useLocalhostSession: useLocal)
-                            if result != nil {
-                                self.logger.info("saveToLocalRelay: also mirrored to \(mirror)")
-                            } else {
-                                self.logger.warning("saveToLocalRelay: mirror to \(mirror) failed (non-blocking)")
-                            }
+                        let result = await self.uploadToServer(source: .data(data), url: mirror, sha256: sha256, contentType: contentType, useLocalhostSession: useLocal)
+                        if result != nil {
+                            self.logger.info("saveToLocalRelay: mirrored to \(mirror)")
+                        } else {
+                            self.logger.warning("saveToLocalRelay: mirror to \(mirror) failed")
                         }
                     }
                 }
             }
+            logger.info("saveToLocalRelay: external mirror uploads finished")
         }
 
         return true
@@ -258,12 +261,8 @@ class BlossomService: @unchecked Sendable {
 
             let authContent = "Upload blob \(sha256.prefix(8))..."  // Human-readable content
 
-            // Create auth event on main actor (kind 24242 per Blossom BUD-02 spec)
-            let authEvent = await MainActor.run {
-                nostrService.signEvent(kind: 24242, content: authContent, tags: authTags)
-            }
-
-            guard let authEvent = authEvent else {
+            // Create auth event (kind 24242 per Blossom BUD-02 spec)
+            guard let authEvent = await nostrService.signEventAsync(kind: 24242, content: authContent, tags: authTags) else {
                 logger.error("Failed to create Blossom auth event for \(url)")
                 return nil
             }
@@ -370,9 +369,7 @@ class BlossomService: @unchecked Sendable {
         ]
         let authContent = "Preflight \(sha256.prefix(8))..."
 
-        guard let authEvent = await MainActor.run(body: {
-            nostrService.signEvent(kind: 24242, content: authContent, tags: authTags)
-        }) else {
+        guard let authEvent = await nostrService.signEventAsync(kind: 24242, content: authContent, tags: authTags) else {
             logger.warning("BUD-06: Failed to sign preflight auth for \(url)")
             return true // Fail-open
         }
@@ -414,7 +411,7 @@ class BlossomService: @unchecked Sendable {
     /// - Returns: true if the blob was successfully downloaded and stored locally
     func downloadFromURL(url: URL) async -> Bool {
         var request = URLRequest(url: url)
-        request.timeoutInterval = 30
+        request.timeoutInterval = 120  // 2 minutes — 30s was too short for video files
 
         do {
             let (data, response) = try await remoteSession.data(for: request)
@@ -427,34 +424,15 @@ class BlossomService: @unchecked Sendable {
             // Compute SHA256 from downloaded data
             let hash = SHA256.hash(data: data)
             let sha256 = hash.compactMap { String(format: "%02x", $0) }.joined()
+            let contentType = httpResponse.mimeType ?? "application/octet-stream"
 
-            // Save directly to the local file system (no HTTP upload needed!)
-            let relayDataDir = await MainActor.run { configService.relayDataDir }
-            let blossomDir = relayDataDir.appendingPathComponent(await MainActor.run { configService.config.blossomPath })
-            
-            try? FileManager.default.createDirectory(at: blossomDir, withIntermediateDirectories: true)
-            
-            let fileURL = blossomDir.appendingPathComponent(sha256)
-            try data.write(to: fileURL)
-            
-            logger.info("Successfully downloaded \(sha256.prefix(8)) from \(url.host ?? "remote") directly to local file system")
-            
-            // Mirror to external servers concurrently
-            let mirrors = await MainActor.run { configService.config.activeBlossomMirrors }
-            if !mirrors.isEmpty {
-                logger.info("Mirroring downloaded blob \(sha256.prefix(8)) to \(mirrors.count) external mirrors")
-                await withTaskGroup(of: Void.self) { group in
-                    for mirrorURL in mirrors {
-                        group.addTask {
-                            let parsed = URL(string: mirrorURL)
-                            let useLocalSession = parsed.map { self.isLocalhost($0) } ?? false
-                            _ = await self.uploadToServer(source: .data(data), url: mirrorURL, sha256: sha256, contentType: httpResponse.mimeType ?? "application/octet-stream", useLocalhostSession: useLocalSession)
-                        }
-                    }
-                }
+            // Upload to local relay via BUD-02 spec (HTTP PUT with kind 24242 auth).
+            // Skip external mirroring — the blob is being pulled FROM an external source.
+            let success = await saveToLocalRelay(data: data, sha256: sha256, contentType: contentType, mirrorToExternal: false)
+            if success {
+                logger.info("Successfully mirrored \(sha256.prefix(8)) from \(url.host ?? "remote") via local relay upload")
             }
-            
-            return true
+            return success
         } catch {
             logger.warning("Download from \(url.absoluteString) error: \(error.localizedDescription)")
             return false
@@ -505,17 +483,18 @@ class BlossomService: @unchecked Sendable {
                     continue
                 }
 
-                // Save directly to the local file system (no HTTP upload needed!)
-                let relayDataDir = await MainActor.run { configService.relayDataDir }
-                let blossomDir = relayDataDir.appendingPathComponent(await MainActor.run { configService.config.blossomPath })
-                
-                try? FileManager.default.createDirectory(at: blossomDir, withIntermediateDirectories: true)
-                
-                let fileURL = blossomDir.appendingPathComponent(sha256)
-                try data.write(to: fileURL)
+                let contentType = httpResponse.mimeType ?? "application/octet-stream"
 
-                logger.info("Successfully mirrored \(sha256.prefix(8)) from \(mirror) directly to local file system")
-                return true
+                // Upload to local relay via BUD-02 spec (HTTP PUT with kind 24242 auth).
+                // Skip external mirroring — the blob came FROM a configured mirror.
+                let success = await saveToLocalRelay(data: data, sha256: sha256, contentType: contentType, mirrorToExternal: false)
+                if success {
+                    logger.info("Successfully mirrored \(sha256.prefix(8)) from \(mirror) via local relay upload")
+                    return true
+                } else {
+                    logger.warning("Local relay rejected upload of \(sha256.prefix(8)) from \(mirror)")
+                    continue
+                }
             } catch {
                 logger.warning("Download from \(mirror)/\(sha256.prefix(8)) error: \(error.localizedDescription)")
                 continue
@@ -529,7 +508,7 @@ class BlossomService: @unchecked Sendable {
     /// Mirror all owner media from external Blossom servers to local storage
     /// - Parameter progress: Callback with (completed, total) counts
     /// - Returns: Number of newly mirrored blobs
-    func mirrorAllFromExternal(progress: ((Int, Int) -> Void)? = nil) async -> Int {
+    func mirrorAllFromExternal(progress: ((Int, Int) -> Void)? = nil, logMessage: ((String, String) -> Void)? = nil) async -> Int {
         let mirrors = await MainActor.run { configService.config.activeBlossomMirrors }
         let relayDataDir = await MainActor.run { configService.relayDataDir }
         let blossomPath = await MainActor.run { configService.config.blossomPath }
@@ -550,6 +529,7 @@ class BlossomService: @unchecked Sendable {
         } else {
             localHashes = []
         }
+        logMessage?("Local storage has \(localHashes.count) existing blob(s)", "INFO")
 
         // Discover blobs from mirrors using BUD-02 /list endpoint with cursor pagination
         // Queries each pubkey (owner + whitelisted) on each mirror
@@ -562,6 +542,8 @@ class BlossomService: @unchecked Sendable {
                 components?.scheme = "https"
                 if let secureURL = components?.url { mirrorURL = secureURL }
             }
+
+            logMessage?("Querying \(mirror) for blob list...", "INFO")
 
             for pubkey in allPubkeys {
                 let baseListURL = mirrorURL.appendingPathComponent("list").appendingPathComponent(pubkey)
@@ -607,6 +589,7 @@ class BlossomService: @unchecked Sendable {
                         cursor = lastHash
                     } catch {
                         logger.warning("Failed to list blobs from \(mirror) for \(pubkey.prefix(8)): \(error.localizedDescription)")
+                        logMessage?("Failed to list blobs from \(mirror): \(error.localizedDescription)", "ERROR")
                         break
                     }
                 }
@@ -614,6 +597,7 @@ class BlossomService: @unchecked Sendable {
                 if totalForPubkey > 0 {
                     let label = pubkey == ownerPubkey ? "owner" : "whitelisted \(pubkey.prefix(8))"
                     logger.info("Found \(totalForPubkey) blobs on \(mirror) for \(label)")
+                    logMessage?("Found \(totalForPubkey) blob(s) on \(mirror) for \(label)", "INFO")
                 }
             }
         }
@@ -622,10 +606,12 @@ class BlossomService: @unchecked Sendable {
         let missingHashes = remoteBlobHashes.subtracting(localHashes)
         guard !missingHashes.isEmpty else {
             logger.info("All remote blobs already mirrored locally")
+            logMessage?("All \(remoteBlobHashes.count) remote blob(s) already exist locally", "INFO")
             return 0
         }
 
         logger.info("Found \(missingHashes.count) blobs to mirror from external servers")
+        logMessage?("\(missingHashes.count) blob(s) missing locally — downloading from mirrors...", "INFO")
         let sortedHashes = Array(missingHashes).sorted()
         var mirrored = 0
         var completedCount = 0
@@ -637,9 +623,16 @@ class BlossomService: @unchecked Sendable {
                 if queued >= 4 {
                     if let success = await group.next() {
                         completedCount += 1
-                        if success { mirrored += 1 }
+                        if success {
+                            mirrored += 1
+                            logMessage?("Downloaded \(hash.prefix(12))... (\(completedCount)/\(total))", "INFO")
+                        } else {
+                            logMessage?("Failed to download \(hash.prefix(12))... (\(completedCount)/\(total))", "WARN")
+                        }
                         progress?(completedCount, total)
                     }
+                    // Throttle to avoid overwhelming the relay
+                    try? await Task.sleep(nanoseconds: 150_000_000)
                 }
                 group.addTask {
                     await self.downloadFromMirrors(sha256: hash)
@@ -648,13 +641,19 @@ class BlossomService: @unchecked Sendable {
             }
             for await success in group {
                 completedCount += 1
-                if success { mirrored += 1 }
+                if success {
+                    mirrored += 1
+                    logMessage?("Downloaded \(sortedHashes[min(completedCount - 1, sortedHashes.count - 1)].prefix(12))... (\(completedCount)/\(total))", "INFO")
+                } else {
+                    logMessage?("Failed to download blob (\(completedCount)/\(total))", "WARN")
+                }
                 progress?(completedCount, total)
             }
         }
 
         progress?(total, total)
         logger.info("Mirrored \(mirrored)/\(total) blobs from external servers")
+        logMessage?("Server mirror phase: \(mirrored)/\(total) blob(s) downloaded successfully", "INFO")
         return mirrored
     }
 
@@ -664,7 +663,7 @@ class BlossomService: @unchecked Sendable {
     /// - Parameter noteMedia: The array of MediaItem from nostrService.noteMedia
     /// - Parameter progress: Callback with (completed, total) counts
     /// - Returns: Number of newly mirrored blobs
-    func mirrorFromNoteMedia(_ noteMedia: [MediaItem], progress: ((Int, Int) -> Void)? = nil) async -> Int {
+    func mirrorFromNoteMedia(_ noteMedia: [MediaItem], progress: ((Int, Int) -> Void)? = nil, logMessage: ((String, String) -> Void)? = nil) async -> Int {
         let relayDataDir = await MainActor.run { configService.relayDataDir }
         let blossomPath = await MainActor.run { configService.config.blossomPath }
         let ownerPubkey = await MainActor.run { nostrService.ownerHexPubkey }
@@ -700,10 +699,12 @@ class BlossomService: @unchecked Sendable {
 
         guard !urlsToMirror.isEmpty else {
             logger.info("No missing media found in note events")
+            logMessage?("All note media already exists locally", "INFO")
             return 0
         }
 
         logger.info("Found \(urlsToMirror.count) media items from notes to mirror locally")
+        logMessage?("\(urlsToMirror.count) media item(s) missing locally — downloading...", "INFO")
         var mirrored = 0
         var completedCount = 0
         let total = urlsToMirror.count
@@ -715,9 +716,16 @@ class BlossomService: @unchecked Sendable {
                 if queued >= 4 {
                     if let success = await group.next() {
                         completedCount += 1
-                        if success { mirrored += 1 }
+                        if success {
+                            mirrored += 1
+                            logMessage?("Mirrored \(url.lastPathComponent.prefix(20))... from \(url.host ?? "remote") (\(completedCount)/\(total))", "INFO")
+                        } else {
+                            logMessage?("Failed \(url.lastPathComponent.prefix(20))... from \(url.host ?? "remote") (\(completedCount)/\(total))", "WARN")
+                        }
                         progress?(completedCount, total)
                     }
+                    // Throttle to avoid overwhelming the relay
+                    try? await Task.sleep(nanoseconds: 150_000_000)
                 }
                 group.addTask {
                     await self.downloadFromURL(url: url)
@@ -726,13 +734,19 @@ class BlossomService: @unchecked Sendable {
             }
             for await success in group {
                 completedCount += 1
-                if success { mirrored += 1 }
+                if success {
+                    mirrored += 1
+                    logMessage?("Mirrored media (\(completedCount)/\(total))", "INFO")
+                } else {
+                    logMessage?("Failed to mirror media (\(completedCount)/\(total))", "WARN")
+                }
                 progress?(completedCount, total)
             }
         }
 
         progress?(total, total)
         logger.info("Mirrored \(mirrored)/\(total) media from note events")
+        logMessage?("Note media phase: \(mirrored)/\(total) item(s) downloaded successfully", "INFO")
         return mirrored
     }
 
@@ -785,11 +799,7 @@ class BlossomService: @unchecked Sendable {
 
             let authContent = "Delete blob \(sha256.prefix(8))..."
 
-            let authEvent = await MainActor.run {
-                nostrService.signEvent(kind: 24242, content: authContent, tags: authTags)
-            }
-
-            guard let authEvent = authEvent else {
+            guard let authEvent = await nostrService.signEventAsync(kind: 24242, content: authContent, tags: authTags) else {
                 logger.error("Failed to create Blossom auth event for deletion from \(mirror)")
                 continue
             }

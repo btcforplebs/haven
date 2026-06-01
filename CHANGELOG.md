@@ -5,6 +5,145 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1 macOS / 1.1.1 iOS] - 2026-06-01
+
+> [!IMPORTANT]
+> **Major Feature Release**: This version introduces **NIP-46 Remote Signing** (bunker URI support), a complete **Cashu Ecash Wallet** with NIP-60 relay-backed storage, **Link Preview Cards** for rich URL display in notes, **per-account Push Notification preferences**, and a new **Go-powered Feed Page** for web access to relay content.
+
+### Added
+- **NIP-46 Remote Signing (Bunker URI)**: Full support for connecting to remote Nostr signers via `bunker://` URIs. New `NIP46Service` handles WebSocket connections to remote signers with NIP-44 encrypted channels, auth challenge handling, reconnection with exponential backoff, and per-account bunker configuration storage in `HavenConfig`.
+- **Cashu Ecash Wallet (NUT Protocol)**: Complete ecash wallet implementing Blind Diffie-Hellman key exchange via the existing secp256k1 backend. Supports depositing (Lightning to ecash via NUT-04 mint quotes), withdrawing (ecash to Lightning via NUT-05 melt), sending/receiving `cashuA` tokens (NUT-00/NUT-03 swap), and proof state checking (NUT-07). Wallet state stored on Nostr relays via NIP-60 (kind 37375 wallet events, kind 7375 unspent proof events, kind 7376 history events) with NIP-44 self-encryption. User-configurable mint URL in Settings. UI features a 4-card layout: balance card, mint info, Lightning Bridge card with segmented Fund/Cash Out picker, and Ecash Tokens card with segmented Send/Receive picker.
+- **Ecash Wallet Recovery**: NIP-60 wallet events published to the Haven private relay endpoint (`/private`) for encrypted cross-device sync. On app reinstall or new device setup, tokens are automatically restored from the private relay. Manual "Restore from Relays" button available for on-demand recovery.
+- **Link Preview Cards**: New `LinkPreviewService` fetches and caches OpenGraph metadata from URLs in notes, with memory and disk caching plus request coalescing. `LinkPreviewCard` component renders rich link previews (title, description, image) inline within feed notes.
+- **Following List Backup & Recovery**: `FollowingBackupService` with automatic contact list snapshots (up to 50 per account). **Relay Recovery** scans for historical Kind 3 events with chronological display and delta badges (green/red) showing follow count changes. Per-user "Re-follow" buttons and full "Restore This List" action. Snapshots stored per-account in Application Support, persisting across reinstalls.
+- **Per-Account Push Notification Preferences**: New `PushNotificationSettingsView` with granular toggles per event type (mentions, replies, DMs, zaps, reactions, reposts) and per-account configuration. Automatic re-registration when account list changes, with migration from legacy global notification prefs.
+- **iOS Notification Service Extension**: `NotificationServiceExtension` target for background push processing, enabling rich notification content and reliable delivery when the app is not active.
+- **Feed Page (Web)**: New Go-powered feed page (`feed_page.go` + `templates/feed.html`) serving recent relay notes as a rendered HTML page for web access to relay content.
+- **Blossom Media Cache Service**: New `BlossomMediaCache` service for dedicated media item caching, separate from the general media cache.
+- **Media Tab View**: Dedicated `MediaTabView` component for media-only feed display modes.
+- **Custom Zap Sheet**: New `CustomZapSheet` component for customizable zap amounts and messages.
+- **iOS Landscape Orientation**: Landscape orientation support for media viewers via `AppDelegate.allowLandscape` flag and per-window orientation masking.
+- **Compose: Blossom Media Picker**: Add media from Blossom storage directly in the compose flow.
+- **iOS Entitlements**: Added `HavenApp-iOS.entitlements` for push notification and background processing capabilities.
+
+### Changed
+- **Account Switching Architecture**: New `handleAccountSwitch()` method in `NostrService` performs clean teardown — sends CLOSE messages for active subscriptions, clears Viewer tab event state, resets fetch/subscription tracking, and clears reconnect backoff state. Prevents cross-account data leakage.
+- **Feed Performance: Data-Driven FeedNoteRow**: `FeedNoteRow` no longer subscribes to any `ObservableObject`. Removed service subscriptions and replaced them with a pre-resolved `FeedNoteRowData` Equatable struct and a `FeedActions` environment key carrying mutation closures, enabling SwiftUI to skip re-rendering rows whose data hasn't changed.
+- **Blossom Mirror Reliability**: External mirror uploads are now awaited (previously fire-and-forget) to prevent silent failures when iOS backgrounds the app mid-upload. Added `mirrorToExternal` parameter to `saveToLocalRelay()` (default `true`) to skip redundant external mirror uploads during bulk sync.
+- **Push Server Multi-Account Registration**: Device registration now keys on the composite `(device_token, user_hex_pubkey)` pair instead of `device_token` alone, allowing a single device to register multiple Nostr accounts for independent push notifications.
+- **Push Server nostr-sdk Migration**: Updated `NostrMonitor` to use the current nostr-sdk Python API (`fetch_events`, `RelayUrl.parse`, `Timestamp.from_secs`, `tags().to_vec()`) replacing deprecated `get_events_of` and `EventSource` methods.
+- **Push Server Self-Notification Filter**: The push server now discards the event author from the affected-users set before sending notifications, preventing users from receiving push alerts for their own events.
+- **Push Server Badge Reset**: Added endpoint for resetting notification badge counts.
+- **Push Server Health Monitoring**: Added uptime tracking and enhanced logging with account hex prefix identification.
+- **HavenConfig Model Extensions**: Added `autoplayVideos` (Bool, default true), `cacheTTLDays` (Int, default 7), Cashu mint URL configuration, NIP-46 signing mode and remote signer fields, and per-account notification preferences dictionary.
+- **NostrService Config Observer**: Separated config observer (`configCancellable`) from general cancellables to preserve across account resets. Added `lastForegroundReconnectTime` tracking to prevent redundant refreshes.
+- **Account Credential Fallback**: Removed automatic fallback to owner key for whitelisted accounts, ensuring proper credential isolation between accounts.
+- **iOS AppDelegate**: Added `PendingNotificationAction` queuing system for deep linking before relay is ready, with `dispatchAction()` for replaying queued notifications after setup.
+- **Dashboard: Storage Breakdown**: Added "Storage Used" and "Media Cache" breakdown actions with proper iOS Share Sheet integration (SwiftUI wrapper instead of direct `UIActivityViewController`).
+- **Compose: Account Switcher**: Account switching available via avatar context menu in the compose view.
+
+### Changed
+- **Viewer Toolbar Consolidation (iOS)**: Merged the search button and content filter buttons into a single trailing toolbar item with a divider separator, reducing toolbar clutter.
+- **README Features Documentation**: Expanded the README features section with categorized subsections (Core, Messaging, Payments, Feed & Content, Media, Social, Notifications, Infrastructure) covering all current capabilities.
+
+### Fixed
+- **Custom Zap Sheet Not Appearing**: Fixed long-press on the zap icon not opening the CustomZapSheet due to a SwiftUI gesture conflict — `Button` was intercepting the touch before `onLongPressGesture` could fire. Replaced `Button` with explicit `onTapGesture`/`onLongPressGesture` handlers in FeedView and ProfileView.
+- **MirrorService iOS Build**: Added conditional `UIKit` import so MirrorService compiles on iOS where `UIApplication` is required for background task registration.
+- **iOS Backup File Importer**: Consolidated duplicate `.fileImporter` modifiers into a single modifier with a state-driven import type, fixing potential SwiftUI presentation conflicts.
+- **Feed Filter Immediate Recompute**: Toggling reposts or replies in the toolbar now immediately calls `recomputeFilteredNotes()` for instant visual feedback.
+
+### Removed
+- **DM_PLAN.md**: Removed planning document (no longer needed).
+
+## [2.5.1 macOS / 1.1.1 iOS] - 2026-05-29
+
+### Removed
+- **On-Chain Zap Display**: Removed on-chain zap badges from feed items and note detail views, along with all `onchainZapEventIds` tracking and persistence in FeedService.
+- **On-Chain Wallet Tab**: Removed the On-Chain tab from the Wallet view. The wallet now opens directly to Lightning with no tab picker.
+- **Silent Payment Address Display**: Removed Silent Payment (`sp1...`) address derivation and display from profile views.
+- **Silent Payment Scan Service**: Removed `SPScanService`, `SPStoredUTXO` model, and `SilentPaymentService` — no longer scanning for or tracking SP notifications via NIP-17 gift wraps.
+- **On-Chain Profile Section**: Removed Bitcoin (Taproot) address display, balance fetching, on-chain stat cell, and the experimental/privacy warning banner from profile views.
+- **On-Chain Toolbar Buttons**: Removed the Bitcoin on-chain wallet button from profile toolbars (iOS and macOS).
+- **SilentPaymentsKit Usage**: Removed all `import SilentPaymentsKit` from app code (DMService, CashuService). The framework remains in the repo but is no longer referenced by the app.
+
+> **Note:** Bitcoin sweep functionality remains available in Settings > Advanced.
+
+## [2.5.1 macOS / 1.1.1 iOS] - 2026-05-28
+
+### Added
+- **Following List Backup & Recovery**: New "Following Backup" settings section with two recovery mechanisms. **Relay Recovery** scans local and external relays for all historical Kind 3 contact list events, displaying them chronologically with follow counts and delta badges (green/red) showing how each differs from the current list. Tapping a recovered event shows a diff with "No Longer Following" and "Added Since" sections, with per-user "Re-follow" buttons and a full "Restore This List" action that republishes the contact list to relays. **Automatic Snapshots** capture the contact list locally whenever it changes, retaining up to 50 per account, with the same diff and restore UI. Snapshots are stored per-account in Application Support and persist across app reinstalls.
+
+### Changed
+- **Account Switch Performance: Seed Contact Lists**: Cold-loading a new account now seeds the follow set from `FollowingBackupService`'s persisted disk snapshots and routes through the warm `topUpFromRelays()` path instead of the sequential `refresh()` chain, eliminating up to 50 seconds of spinner on first visit to an account.
+- **Account Switch Performance: Disk Feed Snapshots**: Feed state (up to 200 notes, follow set, engagement stats) is now persisted to disk per-account via a new `DiskFeedSnapshot` struct, so switching accounts after app restart restores the cached feed instantly instead of cold-loading from relays. Snapshots expire after 7 days.
+- **Account Switch Performance: Incremental View Updates**: Removed the `.id(activeAccountHexPubkey)` modifier from `FeedView` that was forcing a full teardown and rebuild of 50+ view nodes on every account switch. SwiftUI now diffs the feed list incrementally via `@Published` state changes. Scroll-to-top is handled by an explicit `.onChange` handler.
+- **Feed Performance: Adaptive Flush Interval**: `BackgroundAccumulator` now uses a 0.2s flush interval during initial feed load (for faster content display) and 0.5s at steady-state (to reduce main-thread pressure).
+- **Feed Performance: Smarter Engagement Dedup**: The `seenEngagementIds` set now evicts roughly half its entries when the 20K cap is hit, instead of clearing entirely, reducing the window where duplicate engagement events slip through.
+- **Blossom Mirroring BUD-02 Compliance**: Unified all media import/mirror paths to use the spec-compliant BUD-02 `PUT /upload` endpoint with signed kind 24242 auth events. `downloadFromURL` and `downloadFromMirrors` previously wrote blobs directly to the filesystem, bypassing the local relay's upload API. Both now route through `saveToLocalRelay`, which performs a proper HTTP PUT with Nostr auth to the local relay. Added `mirrorToExternal` parameter to `saveToLocalRelay` (default `true`) to skip redundant external mirror uploads during bulk sync operations.
+
+### Fixed
+- **iOS Go Library Build Failure**: Fixed `cshared.go` import path for the `wot` package (`github.com/bitvora/haven` → `github.com/barrydeen/haven`) to match the local `go.mod` module declaration, resolving the "no required module provides package" error that prevented iOS builds.
+- **iOS Feed Toolbar Circle Backgrounds**: Added `.buttonStyle(.plain)` to all iOS feed toolbar buttons (connection dot, media mode toggles, autoload/reposts/replies toggles) to prevent iOS from applying automatic circular button backgrounds that clashed with the app's theme color.
+
+## [2.5.1 macOS / 1.1.1 iOS] - 2026-05-27
+
+> [!IMPORTANT]
+> **Cashu Ecash & DM Polish Release**: This version introduces a full **Cashu ecash wallet** with NIP-60 relay-backed storage, a thorough **DM UI overhaul** with gradient bubbles and unread indicators, a **120fps feed performance overhaul** that eliminates cascading SwiftUI re-renders for buttery-smooth ProMotion scrolling, and a new **Feed Dashboard** providing a centralized control panel for feed management.
+
+### Added
+- **Feed Dashboard**: Replaced the green connection dot's Relay Status sheet with a full Feed Dashboard. Matches the relay dashboard's dark console aesthetic with a pulsing connection indicator, 4-card statistics grid (feed notes, following count, pending posts, hidden/filtered count), tappable feed mode selector cards (Following/Discovery/Global/Media), content filter toggles (show reposts, show replies, auto-load new posts), noise filtering summary (blocked/blacklisted user counts, active spam filter), feed relay health list with per-relay connection status, and quick action buttons (refresh, force reload, load pending). Preserves Mac Relay Sync and Media Mirroring controls from the previous sheet.
+- **Cashu Ecash Wallet**: Full Cashu (NUT protocol) ecash wallet accessible via a brown banknote icon on the profile toolbar. Implements Blind Diffie-Hellman key exchange using the existing secp256k1 backend from SilentPaymentsKit. Supports depositing (Lightning to ecash via NUT-04 mint quotes), withdrawing (ecash to Lightning via NUT-05 melt), sending/receiving cashuA tokens (NUT-00/NUT-03 swap), and proof state checking (NUT-07). Wallet state is stored on Nostr relays via NIP-60 (kind 37375 wallet events, kind 7375 unspent proof events, kind 7376 history events) with NIP-44 self-encryption for cross-device sync and backup. User-configurable mint URL in Settings. The wallet UI features a 4-card layout: balance card, mint info, a Lightning Bridge card with segmented Fund/Cash Out picker for seamless Lightning ↔ Ecash conversion, and an Ecash Tokens card with segmented Send/Receive picker for peer-to-peer token transfers.
+- **Ecash Wallet Recovery**: NIP-60 wallet events are now published to the Haven private relay endpoint (`/private`) instead of the outbox relay, ensuring encrypted proof data persists on infrastructure you control. On app reinstall or new device setup, tokens are automatically restored from the private relay. A manual "Restore from Relays" button is available in the ecash balance card for on-demand recovery.
+- **Search: npub Direct Lookup**: Typing or pasting an `npub1...` address in the search bar now instantly resolves it to a profile without a relay round-trip, using local Bech32 decoding. Also works in the DM Message Composer for sending DMs directly to an npub.
+- **DM Inbox: Mark All as Read**: New checkmark button in the DM inbox toolbar (both iOS and macOS) to mark all conversations as read in one tap.
+- **DM Inbox: Unread Indicators**: Conversation rows now show a purple dot badge on the avatar when unread messages are present, with bolder name text for unread conversations.
+- **Profile: DM Unread Badge**: The DM/messages button on the profile toolbar now shows a red dot indicator when there are unread conversations.
+- **Bitcoin Sweep Privacy Disclaimers**: Added two additional warning pages before the sweep flow with large-text warnings about not sending to hardware wallets or exchanges, explaining that on-chain links between Bitcoin and Nostr identity are permanent and irreversible.
+- **Profile: Bitcoin Address Privacy Warning**: Added an "EXPERIMENTAL" badge and privacy warning above the Bitcoin address display, advising users to use Silent Payments for better privacy to avoid publicly linking Bitcoin activity to their Nostr identity.
+- **iOS Export Share Sheet**: Dashboard JSONL and Blossom exports on iOS now use a proper SwiftUI `ShareSheet` wrapper instead of directly presenting UIActivityViewController, fixing potential presentation conflicts.
+- **Push Notification Settings**: New dedicated settings view for configuring push notification preferences per event type (mentions, DMs, zaps, reactions) with per-account granularity.
+- **iOS Notification Service Extension**: Added `NotificationServiceExtension` target for processing push notifications in the background, enabling rich notification content and reliable delivery when the app is not active.
+
+### Changed
+- **Feed Performance: Data-Driven FeedNoteRow**: `FeedNoteRow` no longer subscribes to any `ObservableObject`. Removed all four service subscriptions (`FeedService`, `NostrService`, `ConfigService`, `PendingPostManager`) and replaced them with a pre-resolved `FeedNoteRowData` Equatable struct and a `FeedActions` environment key carrying mutation closures. SwiftUI can now skip re-rendering rows whose data hasn't changed, eliminating the single biggest bottleneck for 120fps scrolling.
+- **Feed Performance: Cached Filtered Notes**: Moved the per-frame O(n) inline filter from FeedView's body into a cached `filteredNotes` property on `FeedService`, recomputed only when notes, feed mode, or display config (showReposts/showReplies/blocked) actually change.
+- **Feed Performance: NostrContentFormatter Caching**: Regex patterns (`npub`, `nprofile`, `note`, `nevent`) are now compiled once as static constants instead of per-call. Formatted `AttributedString` results are cached via `NSCache` so repeated renders of the same content are O(1).
+- **Feed Performance: Equatable Models**: Added `Equatable` conformance to `FeedProfile` and `NoteStats`, enabling SwiftUI to skip unnecessary diffing and re-renders.
+- **Feed: Infinite Scroll**: Replaced the manual "Show earlier" button with an automatic infinite scroll sentinel that triggers `loadMore()` when the user scrolls near the bottom.
+- **Profile Feed: Infinite Scroll**: Profile note feeds now paginate automatically. Scrolling to the bottom sends a new relay subscription with an `until` timestamp cursor to fetch older notes.
+- **Feed Actions DRY Factory**: All FeedNoteRow call sites (FeedView, NoteDetailView, ProfileView, MenuBarView) now use `FeedActions.make(feedService:nostrService:)` instead of duplicating ~70 lines of closure construction.
+- **NIP-17 Gift Wrap Architecture**: Separated rumor p-tags (actual conversation participants) from the gift wrap recipient. `createGiftWrap` now takes explicit `rumorPTags` and `giftWrapRecipient` parameters, enabling self-copy gift wraps to correctly preserve conversation partner identity in the rumor layer. `unwrapGiftWrap` now returns rumor tags alongside content for proper counterparty resolution.
+- **NIP-17 Sender Verification**: Added seal-to-rumor pubkey verification during gift wrap unwrapping — if the seal's pubkey doesn't match the rumor's pubkey, the message is rejected as a potential impersonation attempt.
+- **DM Counterparty Resolution**: Self-copy messages now determine the conversation partner from the rumor's p-tags (finding the first pubkey that isn't the user's own) instead of relying on the gift wrap's outer p-tag, which always points to self for copies.
+- **DM Inbox Empty State**: Redesigned with concentric purple gradient circles, dual-tone icon, and improved copy directing users to the compose button.
+- **DM Thread UI Overhaul**: Message bubbles now use gradient backgrounds (purple gradient for sent, dark gray for received) with asymmetric corner radii (small radius on the sender's side). Input area redesigned with a pill-shaped text field, circular purple send button, and a compact inline protocol selector replacing the previous toggle buttons. Message width is now responsive (75% of container) instead of fixed at 280pt.
+- **Message Composer UI Refresh**: Send action changed from an icon-only button to a "Send" capsule with paperplane icon. Cleaner text editor layout, improved image preview with floating X dismiss, and proper hit-testing on placeholder text.
+- **Blossom Mirror Reliability**: External mirror uploads are now awaited (previously fire-and-forget) to prevent silent failures when iOS backgrounds the app mid-upload. Both `MirrorService` and `FeedMediaViewer` now request background execution time via `beginBackgroundTask` on iOS.
+- **Blossom Download Timeout**: Increased from 30 seconds to 120 seconds to handle large video files that were timing out.
+- **DM Conversation Row**: Increased message preview length from 50 to 60 characters. Improved avatar sizing (48pt to 52pt) and spacing.
+- **DM NIP-04 Warning Banner**: Softer styling with reduced opacity and more concise copy.
+- **NIP-10 Reply Threading**: Replies now construct proper root/reply e-tag markers with relay hints. When replying to a threaded conversation, the root event is identified from the parent's e-tags and tagged separately from the direct reply parent. Thread participant p-tags are accumulated and deduplicated.
+- **NIP-25 Reaction Compliance**: Reaction events (kind 7) now include relay hints in e-tags and a `k` tag containing the reacted event's kind, per NIP-25 spec.
+- **NIP-18 Quote Post Tags**: Quote `q` tags now include the relay hint and author pubkey as third and fourth entries per NIP-18.
+- **Client Tag Scoping**: The client identification tag is now only appended to kind 1 text notes, no longer leaking into DMs, reactions, reposts, and other event kinds.
+- **Repost Relay Hint Fallback**: NIP-18 repost e-tags now fall back to the local relay URL instead of an empty string when no feed or blastr relays are configured.
+- **Cashu Wallet UI**: Redesigned from 6 separate cards to a compact 4-card layout with segmented pickers. "Lightning Bridge" card combines deposit/withdraw flows; "Ecash Tokens" card combines send/receive. Brown `banknote.fill` SF Symbol replaces the previous icon for a consistent toolbar appearance alongside Lightning and Bitcoin.
+- **Profile Toolbar Wallet Icons**: Wallet quick-access buttons (Bitcoin, Lightning, Ecash) now use consistent 18pt sizing with increased spacing to prevent crowding on smaller screens.
+- **NoteDetailView Action Bar**: Rewritten from VStack layout with `.subheadline` sizing to HStack capsule pills matching FeedNoteRow (14pt icon, 11pt monospaced count, 32pt height, capsule background). Share and broadcast buttons also received pill styling for visual consistency.
+- **Toolbar Icon Size Unification**: Standardized icon sizes across all header toolbars — macOS feed header at 15pt `.semibold`, iOS nav bar toolbar at 16pt `.semibold`, MenuBar narrow header at 16pt `.medium`, note action bar pills at 14pt `.medium`.
+- **ViewerView Connection Status**: Replaced the colored circle dot with an `antenna.radiowaves.left.and.right` icon matching the MenuBar relay status style, using the same status color scheme.
+- **SilentPaymentsKit Public API**: Made all static methods on `Secp256k1` class public (previously package-internal) so the Cashu wallet can access the BDHKE cryptographic primitives.
+- **Ecash NIP-60 Relay Routing**: NIP-60 wallet events (kinds 37375, 7375, 7376) are now published directly to the Haven private relay endpoint (`/private`) instead of the outbox relay root path, which is intended for public social notes. Recovery queries the private endpoint first, then falls back to blastr relays.
+- **Ecash Info Sheet**: Rewritten to describe the three-layer payment stack (Lightning, Ecash, On-Chain), the relay-backed storage model using the Haven private endpoint, and practical recovery instructions. Beta banner updated to describe the relay-backed architecture.
+- **Push Server Multi-Account Registration**: Device registration now keys on the composite `(device_token, user_hex_pubkey)` pair instead of `device_token` alone, allowing a single device to register multiple Nostr accounts for independent push notifications.
+- **Push Server nostr-sdk Migration**: Updated `NostrMonitor` to use the current nostr-sdk Python API (`fetch_events`, `RelayUrl.parse`, `Timestamp.from_secs`, `tags().to_vec()`) replacing deprecated `get_events_of` and `EventSource` methods.
+- **Push Server Self-Notification Filter**: The push server now discards the event author from the affected-users set before sending notifications, preventing users from receiving push alerts for their own events.
+
+### Fixed
+- **MirrorService iOS Build**: Added conditional `UIKit` import so MirrorService compiles on iOS where `UIApplication` is required for background task registration.
+- **iOS Backup File Importer**: Consolidated duplicate `.fileImporter` modifiers (one for JSONL, one for Blossom) into a single modifier with a state-driven import type, fixing potential SwiftUI presentation conflicts when both were attached simultaneously.
+- **Feed Filter Immediate Recompute**: Toggling reposts or replies in the toolbar now immediately calls `recomputeFilteredNotes()` for instant visual feedback, instead of waiting for the next SwiftUI render cycle to pick up the config change.
+
 ## [2.5.1 macOS / 1.1.1 iOS] - 2026-05-25
 
 > [!IMPORTANT]

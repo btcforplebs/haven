@@ -1,6 +1,5 @@
 import Foundation
 import Combine
-import SilentPaymentsKit
 
 // MARK: - Models
 
@@ -63,24 +62,35 @@ class DMService: ObservableObject {
     @Published var conversations: [DMConversation] = []
     @Published var isLoading: Bool = false
 
+    var totalUnreadCount: Int {
+        conversations.reduce(0) { $0 + $1.unreadCount }
+    }
+
     private var inboxClient: WebSocketClient?       // /chat (NIP-17 gift wraps)
     private var nip04Client: WebSocketClient?        // /inbox (NIP-04 legacy DMs)
+    private var externalClients: [WebSocketClient] = [] // temporary external relay clients
     private var cancellables = Set<AnyCancellable>()
     private var seenGiftWrapIds = Set<String>()
     private var dmUpdateSubject = PassthroughSubject<Void, Never>()
     private let processingQueue = DispatchQueue(label: "com.haven.dm-processing", qos: .userInitiated)
     private var pendingAuthChallenge: String?
     private var isAuthenticated = false
+    private var loadedAccountPubkey: String = ""
+    private var switchGeneration: UInt64 = 0 // incremented on each account switch to invalidate stale callbacks
 
     private init() {
+        loadedAccountPubkey = NostrService.shared.activeHexPubkey
         setupThrottling()
         loadConversations()
 
-        // React to config changes (account switching)
+        // React to account switches only (not every config save)
         ConfigService.shared.$config
+            .map { $0.activeAccountNpub }
+            .removeDuplicates()
+            .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.reconnectInbox()
+                self?.handleAccountSwitch()
             }
             .store(in: &cancellables)
 
@@ -184,7 +194,8 @@ class DMService: ObservableObject {
     }
 
     private func sendNIP04Subscription(to client: WebSocketClient) {
-        let ownPubkey = NostrService.shared.activeHexPubkey
+        let ownPubkey = loadedAccountPubkey
+        guard !ownPubkey.isEmpty else { return }
 
         // Subscribe for kind 4 events where we're tagged OR we're the author
         let filterTagged: [String: Any] = [
@@ -216,6 +227,32 @@ class DMService: ObservableObject {
         return URL(string: "wss://127.0.0.1:\(port)/inbox")
     }
 
+    private func getActivePrivateKey() throws -> String {
+        let config = ConfigService.shared.config
+        let activeNpub = config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
+        let signingAsOwner = activeNpub.isEmpty || activeNpub == config.ownerNpub
+
+        if signingAsOwner {
+            if !config.ownerNcryptsec.isEmpty {
+                guard let password = NIP49Service.getPasswordFromKeychain() else {
+                    throw NSError(domain: "DMService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Password required for encrypted key"])
+                }
+                return try config.getDecryptedHexKey(password: password)
+            } else {
+                guard let key = config.ownerHexKey, !key.isEmpty else {
+                    throw NSError(domain: "DMService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Sender private key not available"])
+                }
+                return key
+            }
+        } else {
+            if let hexKey = try ConfigService.shared.getCredentialHexKey(forNpub: activeNpub) {
+                return hexKey
+            } else {
+                throw NSError(domain: "DMService", code: -1, userInfo: [NSLocalizedDescriptionKey: "No private key credential stored for active account \(activeNpub.prefix(8))"])
+            }
+        }
+    }
+
     func sendDM(content: String, to recipientHexPubkey: String, useNIP04: Bool = false) async throws {
         if useNIP04 {
             try await sendNIP04DM(content: content, to: recipientHexPubkey)
@@ -226,27 +263,21 @@ class DMService: ObservableObject {
 
     /// Send a NIP-17 encrypted DM (default, recommended)
     private func sendNIP17DM(content: String, to recipientHexPubkey: String) async throws {
-        let config = ConfigService.shared.config
-        let ownHexPubkey = NostrService.shared.activeHexPubkey
-
-        // Get sender's private key
-        let senderPrivkey: String
-        if !config.ownerNcryptsec.isEmpty {
-            guard let password = NIP49Service.getPasswordFromKeychain() else {
-                throw NSError(domain: "DMService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Password required for encrypted key"])
-            }
-            senderPrivkey = try config.getDecryptedHexKey(password: password)
-        } else {
-            guard let key = config.ownerHexKey, !key.isEmpty else {
-                throw NSError(domain: "DMService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Sender private key not available"])
-            }
-            senderPrivkey = key
+        let ownHexPubkey = loadedAccountPubkey
+        guard !ownHexPubkey.isEmpty else {
+            throw NSError(domain: "DMService", code: -1, userInfo: [NSLocalizedDescriptionKey: "No active account loaded"])
         }
+        let isNIP46 = ConfigService.shared.config.activeSigningMode() == "nip46"
 
-        // Create gift wrap
-        let giftWrap = try NIP17Service.createGiftWrap(
+        // Get sender's private key (nil for NIP-46 mode)
+        let senderPrivkey: String? = isNIP46 ? nil : try getActivePrivateKey()
+
+        // Create gift wrap for recipient
+        let rumorPTags = [["p", recipientHexPubkey]]
+        let giftWrap = try await NIP17Service.createGiftWrapAsync(
             content: content,
-            recipientHexPubkey: recipientHexPubkey,
+            rumorPTags: rumorPTags,
+            giftWrapRecipient: recipientHexPubkey,
             senderHexPrivkey: senderPrivkey,
             senderHexPubkey: ownHexPubkey
         )
@@ -260,10 +291,12 @@ class DMService: ObservableObject {
             await publishToRelay(giftWrap, url: relayURL)
         }
 
-        // Create a copy for self (wrap with own pubkey)
-        let selfGiftWrap = try NIP17Service.createGiftWrap(
+        // Create a copy for self — rumor p-tags still point to the actual recipient
+        // so we can identify the conversation partner when unwrapping later
+        let selfGiftWrap = try await NIP17Service.createGiftWrapAsync(
             content: content,
-            recipientHexPubkey: ownHexPubkey,
+            rumorPTags: rumorPTags,
+            giftWrapRecipient: ownHexPubkey,
             senderHexPrivkey: senderPrivkey,
             senderHexPubkey: ownHexPubkey
         )
@@ -295,33 +328,24 @@ class DMService: ObservableObject {
 
     /// Send a NIP-04 legacy DM (for compatibility with older clients)
     private func sendNIP04DM(content: String, to recipientHexPubkey: String) async throws {
-        let config = ConfigService.shared.config
-        let ownHexPubkey = NostrService.shared.activeHexPubkey
-
-        // Get sender's private key
-        let senderPrivkey: String
-        if !config.ownerNcryptsec.isEmpty {
-            guard let password = NIP49Service.getPasswordFromKeychain() else {
-                throw NSError(domain: "DMService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Password required for encrypted key"])
-            }
-            senderPrivkey = try config.getDecryptedHexKey(password: password)
-        } else {
-            guard let key = config.ownerHexKey, !key.isEmpty else {
-                throw NSError(domain: "DMService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Sender private key not available"])
-            }
-            senderPrivkey = key
+        let ownHexPubkey = loadedAccountPubkey
+        guard !ownHexPubkey.isEmpty else {
+            throw NSError(domain: "DMService", code: -1, userInfo: [NSLocalizedDescriptionKey: "No active account loaded"])
         }
+        let isNIP46 = ConfigService.shared.config.activeSigningMode() == "nip46"
 
         // Encrypt content using NIP-04
-        let encryptedContent = try NIP04Service.encrypt(
-            plaintext: content,
-            remotePubkey: recipientHexPubkey,
-            localPrivkey: senderPrivkey
-        )
+        let encryptedContent: String
+        if isNIP46 {
+            encryptedContent = try await NIP04Service.encryptAsync(plaintext: content, remotePubkey: recipientHexPubkey)
+        } else {
+            let senderPrivkey = try getActivePrivateKey()
+            encryptedContent = try NIP04Service.encrypt(plaintext: content, remotePubkey: recipientHexPubkey, localPrivkey: senderPrivkey)
+        }
 
         // Create kind 4 event
         let tags: [[String]] = [["p", recipientHexPubkey]]
-        guard let event = NostrService.shared.signEvent(kind: 4, content: encryptedContent, tags: tags) else {
+        guard let event = await NostrService.shared.signEventAsync(kind: 4, content: encryptedContent, tags: tags) else {
             throw NSError(domain: "DMService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to sign NIP-04 event"])
         }
 
@@ -367,6 +391,13 @@ class DMService: ObservableObject {
         saveConversations()
     }
 
+    func markAllAsRead() {
+        for idx in conversations.indices {
+            conversations[idx].unreadCount = 0
+        }
+        saveConversations()
+    }
+
     func refresh() {
         // Reconnect to the local chat relay
         reconnectInbox()
@@ -377,8 +408,10 @@ class DMService: ObservableObject {
     /// Fetch DMs from the user's known external relays (seed relays / blastr relays)
     /// to catch any gift wraps not yet imported by the Go relay.
     func fetchFromExternalRelays() {
-        let ownPubkey = NostrService.shared.activeHexPubkey
+        let ownPubkey = loadedAccountPubkey
         guard !ownPubkey.isEmpty else { return }
+
+        let generation = self.switchGeneration
 
         var relays = ConfigService.shared.config.blastrRelays
         if relays.isEmpty {
@@ -392,18 +425,28 @@ class DMService: ObservableObject {
 
             let client = WebSocketClient()
             client.isTemporary = true
+            externalClients.append(client)
 
             client.messageSubject
                 .receive(on: processingQueue)
                 .sink { [weak self] message in
-                    self?.processExternalMessage(message)
+                    guard let self = self else { return }
+                    // Discard if account switched since this fetch started
+                    DispatchQueue.main.async {
+                        guard self.switchGeneration == generation else { return }
+                        self.processExternalMessage(message, forAccount: ownPubkey)
+                    }
                 }
                 .store(in: &cancellables)
 
             client.$connectionState
                 .receive(on: DispatchQueue.main)
-                .sink { [weak client] state in
-                    guard let client = client else { return }
+                .sink { [weak self, weak client] state in
+                    guard let self = self, let client = client else { return }
+                    guard self.switchGeneration == generation else {
+                        client.disconnect()
+                        return
+                    }
                     if state == .connected {
                         // NIP-17 gift wraps
                         let nip17Filter: [String: Any] = [
@@ -442,8 +485,9 @@ class DMService: ObservableObject {
                         }
 
                         // Disconnect after timeout
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 8) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
                             client.disconnect()
+                            self?.externalClients.removeAll { $0 === client }
                         }
                     }
                 }
@@ -454,7 +498,10 @@ class DMService: ObservableObject {
     }
 
     /// Handles messages from external relay fetch (both NIP-17 and NIP-04)
-    private func processExternalMessage(_ message: String) {
+    private func processExternalMessage(_ message: String, forAccount accountPubkey: String) {
+        // Verify this message is still for the currently loaded account
+        guard accountPubkey == loadedAccountPubkey else { return }
+
         guard let data = message.data(using: .utf8) else { return }
 
         do {
@@ -468,12 +515,10 @@ class DMService: ObservableObject {
                let eventData = json[safe: 2] as? [String: Any],
                let eventJSON = try? JSONSerialization.data(withJSONObject: eventData),
                let event = try? JSONDecoder().decode(NostrEvent.self, from: eventJSON) {
-                DispatchQueue.main.async {
-                    if event.kind == 1059 {
-                        self.handleIncomingGiftWrap(event)
-                    } else if event.kind == 4 {
-                        self.handleIncomingNIP04(event)
-                    }
+                if event.kind == 1059 {
+                    self.handleIncomingGiftWrap(event)
+                } else if event.kind == 4 {
+                    self.handleIncomingNIP04(event)
                 }
             }
         } catch {
@@ -484,7 +529,8 @@ class DMService: ObservableObject {
     // MARK: - Private Methods
 
     private func sendInboxSubscription(to client: WebSocketClient) {
-        let ownPubkey = NostrService.shared.activeHexPubkey
+        let ownPubkey = loadedAccountPubkey
+        guard !ownPubkey.isEmpty else { return }
         let filter: [String: Any] = [
             "kinds": [1059],
             "#p": [ownPubkey]
@@ -573,18 +619,20 @@ class DMService: ObservableObject {
             ["challenge", challenge]
         ]
 
-        guard let authEvent = NostrService.shared.signEvent(kind: 22242, content: "", tags: tags) else {
-            print("❌ Failed to sign NIP-42 AUTH event")
-            return
-        }
+        Task {
+            guard let authEvent = await NostrService.shared.signEventAsync(kind: 22242, content: "", tags: tags) else {
+                print("Failed to sign NIP-42 AUTH event")
+                return
+            }
 
-        // Send ["AUTH", <signed_event>]
-        let eventDict = eventToDict(authEvent)
-        let msg = ["AUTH", eventDict] as [Any]
-        if let data = try? JSONSerialization.data(withJSONObject: msg),
-           let str = String(data: data, encoding: .utf8) {
-            print("🔐 Sending AUTH response...")
-            client.send(text: str)
+            // Send ["AUTH", <signed_event>]
+            let eventDict = eventToDict(authEvent)
+            let msg = ["AUTH", eventDict] as [Any]
+            if let data = try? JSONSerialization.data(withJSONObject: msg),
+               let str = String(data: data, encoding: .utf8) {
+                print("Sending AUTH response...")
+                client.send(text: str)
+            }
         }
     }
 
@@ -623,25 +671,17 @@ class DMService: ObservableObject {
 
         seenGiftWrapIds.insert(event.id)
 
+        let generation = self.switchGeneration
+
+        Task {
         do {
-            let config = ConfigService.shared.config
-            let ownPrivkey: String
+            // Verify account hasn't switched since we started processing
+            guard self.switchGeneration == generation else { return }
 
-            if !config.ownerNcryptsec.isEmpty {
-                guard let password = NIP49Service.getPasswordFromKeychain() else {
-                    print("❌ Password required for encrypted key")
-                    return
-                }
-                ownPrivkey = try config.getDecryptedHexKey(password: password)
-            } else {
-                guard let key = config.ownerHexKey, !key.isEmpty else {
-                    print("❌ Private key not available for NIP-04 decryption")
-                    return
-                }
-                ownPrivkey = key
-            }
+            let isNIP46 = ConfigService.shared.config.activeSigningMode() == "nip46"
+            let ownPrivkey: String = isNIP46 ? "" : try getActivePrivateKey()
 
-            let ownPubkey = NostrService.shared.activeHexPubkey
+            let ownPubkey = self.loadedAccountPubkey
             let isFromMe = event.pubkey == ownPubkey
 
             // Determine counterparty
@@ -657,11 +697,15 @@ class DMService: ObservableObject {
             guard !counterpartyPubkey.isEmpty else { return }
 
             // Decrypt using NIP-04
-            let plaintext = try NIP04Service.decrypt(
-                ciphertext: event.content,
-                remotePubkey: counterpartyPubkey,
-                localPrivkey: ownPrivkey
-            )
+            let plaintext: String
+            if ConfigService.shared.config.activeSigningMode() == "nip46" {
+                plaintext = try await NIP04Service.decryptAsync(ciphertext: event.content, remotePubkey: counterpartyPubkey)
+            } else {
+                plaintext = try NIP04Service.decrypt(ciphertext: event.content, remotePubkey: counterpartyPubkey, localPrivkey: ownPrivkey)
+            }
+
+            // Verify account hasn't switched during async decryption
+            guard self.switchGeneration == generation else { return }
 
             let message = DMMessage(
                 id: event.id,
@@ -692,8 +736,9 @@ class DMService: ObservableObject {
             dmUpdateSubject.send()
             saveConversations()
         } catch {
-            print("❌ Failed to decrypt NIP-04 DM: \(error)")
+            print("Failed to decrypt NIP-04 DM: \(error)")
         }
+        } // end Task
     }
 
     // MARK: - NIP-17 Processing
@@ -704,44 +749,35 @@ class DMService: ObservableObject {
 
         seenGiftWrapIds.insert(event.id)
 
+        let generation = self.switchGeneration
+
+        Task {
         do {
-            let config = ConfigService.shared.config
-            let recipientPrivkey: String
+            // Verify account hasn't switched since we started processing
+            guard self.switchGeneration == generation else { return }
 
-            if !config.ownerNcryptsec.isEmpty {
-                guard let password = NIP49Service.getPasswordFromKeychain() else {
-                    print("❌ Password required for encrypted key")
-                    return
-                }
-                recipientPrivkey = try config.getDecryptedHexKey(password: password)
-            } else {
-                guard let key = config.ownerHexKey, !key.isEmpty else {
-                    print("❌ Recipient private key not available")
-                    return
-                }
-                recipientPrivkey = key
-            }
+            let isNIP46 = ConfigService.shared.config.activeSigningMode() == "nip46"
+            let recipientPrivkey: String? = isNIP46 ? nil : try getActivePrivateKey()
 
-            let (senderPubkey, content, timestamp) = try NIP17Service.unwrapGiftWrap(event, recipientPrivkey: recipientPrivkey)
+            let (senderPubkey, content, timestamp, rumorTags) = try await NIP17Service.unwrapGiftWrapAsync(event, recipientPrivkey: recipientPrivkey)
 
-            // Check if this is a Silent Payment notification (JSON with txid + tweak)
-            if let contentData = content.data(using: .utf8),
-               let spNotif = try? JSONDecoder().decode(SilentPaymentNotification.self, from: contentData),
-               !spNotif.txid.isEmpty, !spNotif.tweak.isEmpty, spNotif.txid.count == 64 {
-                Task { @MainActor in
-                    SPScanService.shared.handleNotification(spNotif, from: senderPubkey, at: timestamp, eventId: event.id)
-                }
-                return
-            }
+            // Re-check after async decryption
+            guard self.switchGeneration == generation else { return }
 
-            let ownPubkey = NostrService.shared.activeHexPubkey
+            let ownPubkey = self.loadedAccountPubkey
             let isFromMe = senderPubkey == ownPubkey
 
-            // Determine counterparty (the other person in the conversation)
-            let counterpartyPubkey = if isFromMe {
-                event.tags.first(where: { $0.count >= 2 && $0[0] == "p" })?[1] ?? senderPubkey
+            // Determine counterparty from the rumor's p-tags (the actual conversation participants)
+            let rumorPTagPubkeys = rumorTags
+                .filter { $0.count >= 2 && $0[0] == "p" }
+                .map { $0[1] }
+
+            let counterpartyPubkey: String
+            if isFromMe {
+                // Self-copy: counterparty is the first p-tagged pubkey that isn't us
+                counterpartyPubkey = rumorPTagPubkeys.first(where: { $0 != ownPubkey }) ?? rumorPTagPubkeys.first ?? senderPubkey
             } else {
-                senderPubkey
+                counterpartyPubkey = senderPubkey
             }
 
             let message = DMMessage(
@@ -752,10 +788,9 @@ class DMService: ObservableObject {
                 isFromMe: isFromMe
             )
 
-            print("📨 Received DM from \(senderPubkey.prefix(8)): \(content.prefix(50))")
+            print("Received DM from \(senderPubkey.prefix(8)): \(content.prefix(50))")
 
             if let idx = conversations.firstIndex(where: { $0.id == counterpartyPubkey }) {
-                // Skip if this message ID already exists in the conversation
                 guard !conversations[idx].messages.contains(where: { $0.id == event.id }) else { return }
                 conversations[idx].messages.append(message)
                 conversations[idx].messages.sort { $0.timestamp < $1.timestamp }
@@ -775,8 +810,42 @@ class DMService: ObservableObject {
             dmUpdateSubject.send()
             saveConversations()
         } catch {
-            print("❌ Failed to unwrap gift wrap: \(error)")
+            print("Failed to unwrap gift wrap: \(error)")
         }
+        } // end Task
+    }
+
+    private func handleAccountSwitch() {
+        let newPubkey = NostrService.shared.activeHexPubkey
+        guard newPubkey != loadedAccountPubkey else {
+            // Same account, just reconnect (e.g. relay port changed)
+            reconnectInbox()
+            return
+        }
+
+        // Increment generation to invalidate all in-flight async callbacks
+        switchGeneration &+= 1
+
+        // Disconnect any in-flight external relay clients immediately
+        for client in externalClients {
+            client.disconnect()
+        }
+        externalClients.removeAll()
+
+        // Save current account's conversations
+        saveConversations()
+
+        // Switch to new account
+        loadedAccountPubkey = newPubkey
+        conversations = []
+        seenGiftWrapIds.removeAll()
+        isAuthenticated = false
+        pendingAuthChallenge = nil
+
+        // Load new account's conversations
+        loadConversations()
+
+        reconnectInbox()
     }
 
     private func reconnectInbox() {
@@ -917,6 +986,17 @@ class DMService: ObservableObject {
 
     private func loadConversations() {
         let fileURL = cacheFileURL()
+
+        // Legacy migration: the old shared cache contained messages from ALL accounts.
+        // Instead of moving the entire file (which mixes accounts), delete it and let
+        // each account re-fetch its own messages from relays on next connect.
+        if !FileManager.default.fileExists(atPath: fileURL.path) {
+            let legacy = legacyCacheFileURL()
+            if FileManager.default.fileExists(atPath: legacy.path) {
+                try? FileManager.default.removeItem(at: legacy)
+            }
+        }
+
         guard let data = try? Data(contentsOf: fileURL) else { return }
         conversations = (try? JSONDecoder().decode([DMConversation].self, from: data)) ?? []
 
@@ -934,10 +1014,18 @@ class DMService: ObservableObject {
         try? data.write(to: fileURL)
     }
 
-    private func cacheFileURL() -> URL {
+    private func cacheFileURL(forPubkey pubkey: String? = nil) -> URL {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
         try? FileManager.default.createDirectory(at: havenDir, withIntermediateDirectories: true)
+        let key = pubkey ?? loadedAccountPubkey
+        let suffix = key.isEmpty ? "owner" : String(key.prefix(16))
+        return havenDir.appendingPathComponent("dm_cache_\(suffix).json")
+    }
+
+    private func legacyCacheFileURL() -> URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
         return havenDir.appendingPathComponent("dm_cache.json")
     }
 }

@@ -216,7 +216,11 @@ func initRelays(ctx context.Context) error {
 	mux := privateRelay.Router()
 
 	mux.HandleFunc("GET /private", func(w http.ResponseWriter, r *http.Request) {
-		tmpl := template.Must(template.ParseFiles("templates/index.html"))
+		tmpl, err := template.ParseFiles("templates/index.html")
+		if err != nil {
+			renderFallbackPage(w, config.PrivateRelayName, config.PrivateRelayDescription, "wss://"+config.RelayURL+"/private")
+			return
+		}
 		data := struct {
 			RelayName        string
 			RelayPubkey      string
@@ -228,8 +232,7 @@ func initRelays(ctx context.Context) error {
 			RelayDescription: config.PrivateRelayDescription,
 			RelayURL:         "wss://" + config.RelayURL + "/private",
 		}
-		err := tmpl.Execute(w, data)
-		if err != nil {
+		if err := tmpl.Execute(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	})
@@ -284,7 +287,11 @@ func initRelays(ctx context.Context) error {
 	mux = chatRelay.Router()
 
 	mux.HandleFunc("GET /chat", func(w http.ResponseWriter, r *http.Request) {
-		tmpl := template.Must(template.ParseFiles("templates/index.html"))
+		tmpl, err := template.ParseFiles("templates/index.html")
+		if err != nil {
+			renderFallbackPage(w, config.ChatRelayName, config.ChatRelayDescription, "wss://"+config.RelayURL+"/chat")
+			return
+		}
 		data := struct {
 			RelayName        string
 			RelayPubkey      string
@@ -296,7 +303,7 @@ func initRelays(ctx context.Context) error {
 			RelayDescription: config.ChatRelayDescription,
 			RelayURL:         "wss://" + config.RelayURL + "/chat",
 		}
-		err := tmpl.Execute(w, data)
+		err = tmpl.Execute(w, data)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -349,20 +356,24 @@ func initRelays(ctx context.Context) error {
 
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		tmpl := template.Must(template.ParseFiles("templates/index.html"))
-		data := struct {
-			RelayName        string
-			RelayPubkey      string
-			RelayDescription string
-			RelayURL         string
-		}{
+
+		tmpl, err := template.ParseFiles("templates/feed.html")
+		if err != nil {
+			renderFallbackPage(w, config.OutboxRelayName, config.OutboxRelayDescription, "wss://"+config.RelayURL)
+			return
+		}
+
+		notes := fetchRecentNotes(r.Context(), 20)
+
+		data := FeedPageData{
 			RelayName:        config.OutboxRelayName,
 			RelayPubkey:      nPubToPubkey(config.OutboxRelayNpub),
 			RelayDescription: config.OutboxRelayDescription,
-			RelayURL:         "wss://" + config.RelayURL + "/outbox",
+			RelayURL:         "wss://" + config.RelayURL,
+			Notes:            notes,
 		}
-		err := tmpl.Execute(w, data)
-		if err != nil {
+
+		if err := tmpl.Execute(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	})
@@ -442,7 +453,11 @@ func initRelays(ctx context.Context) error {
 	mux = inboxRelay.Router()
 
 	mux.HandleFunc("GET /inbox", func(w http.ResponseWriter, r *http.Request) {
-		tmpl := template.Must(template.ParseFiles("templates/index.html"))
+		tmpl, err := template.ParseFiles("templates/index.html")
+		if err != nil {
+			renderFallbackPage(w, config.InboxRelayName, config.InboxRelayDescription, "wss://"+config.RelayURL+"/inbox")
+			return
+		}
 		data := struct {
 			RelayName        string
 			RelayPubkey      string
@@ -454,8 +469,7 @@ func initRelays(ctx context.Context) error {
 			RelayDescription: config.InboxRelayDescription,
 			RelayURL:         "wss://" + config.RelayURL + "/inbox",
 		}
-		err := tmpl.Execute(w, data)
-		if err != nil {
+		if err := tmpl.Execute(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	})
@@ -497,5 +511,81 @@ func getLogLevelFromConfig() slog.Level {
 		return slog.LevelError
 	default:
 		return slog.LevelInfo // Default level
+	}
+}
+
+// Branded fallback page rendered when template files are missing from disk.
+// Self-contained HTML with inline styles — no external CDN dependencies.
+const fallbackPageHTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{.RelayName}}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;min-height:100vh;display:flex;flex-direction:column;background:#111114;color:#e5e7eb}
+.hero{flex:1;display:flex;align-items:center;justify-content:center;padding:2rem}
+.card{text-align:center;max-width:560px;width:100%}
+.shield{width:80px;height:80px;margin:0 auto 1.5rem;border-radius:20px;background:linear-gradient(135deg,#7c3aed,#a855f7);display:flex;align-items:center;justify-content:center;box-shadow:0 0 40px rgba(139,92,246,.3)}
+.shield svg{width:40px;height:40px;fill:none;stroke:#fff;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.brand{font-size:.75rem;letter-spacing:.15em;text-transform:uppercase;color:#a78bfa;margin-bottom:.75rem;font-weight:600}
+h1{font-size:2.25rem;font-weight:700;color:#c4b5fd;line-height:1.2;margin-bottom:.5rem}
+.desc{font-size:1.1rem;color:#9ca3af;margin-bottom:1.5rem;line-height:1.6}
+.ws-url{display:inline-block;font-family:"SF Mono",SFMono-Regular,Consolas,monospace;font-size:.85rem;color:#a78bfa;background:#1e1b2e;padding:.5rem 1.25rem;border-radius:999px;border:1px solid #312e81;margin-bottom:2rem;word-break:break-all}
+.buttons{display:flex;flex-wrap:wrap;gap:.75rem;justify-content:center}
+.btn{display:inline-block;font-size:.875rem;font-weight:600;padding:.65rem 1.5rem;border-radius:999px;text-decoration:none;transition:background .2s,transform .15s}
+.btn:hover{transform:translateY(-1px)}
+.btn-ios{background:#2563eb;color:#fff}
+.btn-ios:hover{background:#1d4ed8}
+.btn-mac{background:#7c3aed;color:#fff}
+.btn-mac:hover{background:#6d28d9}
+.features{display:flex;flex-wrap:wrap;gap:1rem;justify-content:center;margin-top:2.5rem}
+.feat{background:#1a1a2e;border:1px solid #2d2b55;border-radius:12px;padding:.85rem 1.1rem;font-size:.8rem;color:#a78bfa;display:flex;align-items:center;gap:.5rem}
+.feat svg{width:16px;height:16px;fill:none;stroke:#7c3aed;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+footer{text-align:center;padding:1.25rem;border-top:1px solid #1f1f2e;font-size:.8rem;color:#6b7280}
+footer a{color:#7c3aed;text-decoration:none}
+footer a:hover{text-decoration:underline}
+</style>
+</head>
+<body>
+<div class="hero"><div class="card">
+<div class="shield"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>
+<div class="brand">Nostr Vault</div>
+<h1>{{.RelayName}}</h1>
+<p class="desc">{{.RelayDescription}}</p>
+<div class="ws-url">{{.RelayURL}}</div>
+<div class="buttons">
+<a href="https://testflight.apple.com/join/kN3zE1H1" class="btn btn-ios">iOS TestFlight</a>
+<a href="https://github.com/btcforplebs/haven-mac/releases" class="btn btn-mac">Get Haven for Mac</a>
+</div>
+<div class="features">
+<div class="feat"><svg viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>Private Relay</div>
+<div class="feat"><svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chat Relay</div>
+<div class="feat"><svg viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>Inbox Relay</div>
+<div class="feat"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>Blossom Drive</div>
+</div>
+</div></div>
+<footer>Powered by <a href="https://github.com/bitvora/haven" target="_blank">Haven Relay</a> &middot; Built with <a href="https://khatru.nostr.technology/" target="_blank">Khatru</a></footer>
+</body>
+</html>`
+
+var fallbackTemplate = template.Must(template.New("fallback").Parse(fallbackPageHTML))
+
+func renderFallbackPage(w http.ResponseWriter, relayName, relayDescription, relayURL string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	data := struct {
+		RelayName        string
+		RelayDescription string
+		RelayURL         string
+	}{
+		RelayName:        relayName,
+		RelayDescription: relayDescription,
+		RelayURL:         relayURL,
+	}
+	if err := fallbackTemplate.Execute(w, data); err != nil {
+		// Last resort: plain text
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprintf(w, "%s — %s\n%s\n", relayName, relayDescription, relayURL)
 	}
 }

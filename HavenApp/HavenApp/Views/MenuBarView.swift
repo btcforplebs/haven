@@ -21,9 +21,7 @@ struct MenuBarView: View {
     @State private var showingOwnProfile = false
     @State private var showingAccountSwitcher = false
     
-    private var activeHex: String {
-        configService.activeAccountHexPubkey
-    }
+    @State private var activeHex: String = ConfigService.shared.activeAccountHexPubkey
     
     private var isOwner: Bool {
         configService.config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -36,6 +34,7 @@ struct MenuBarView: View {
     enum Tab {
         case feed
         case search
+        case media
         case profile
         case relay
         case settings
@@ -89,6 +88,7 @@ struct MenuBarView: View {
                                         url: nostrService.profiles[activeHex]?.pictureURL,
                                         pubkey: activeHex
                                     )
+                                    .id(activeHex)
                                     .frame(width: 32, height: 32)
                                     .overlay(
                                         Circle()
@@ -97,7 +97,7 @@ struct MenuBarView: View {
                                                 lineWidth: isOwner ? 1.5 : 2
                                             )
                                     )
-                                    
+
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(nostrService.profiles[activeHex]?.bestName ?? (isOwner ? "Owner" : "User"))
                                             .font(.system(size: 13, weight: .semibold))
@@ -160,55 +160,92 @@ struct MenuBarView: View {
                                 SidebarTabButton(icon: "magnifyingglass", title: "Search", isSelected: selectedTab == .search) {
                                     selectedTab = .search
                                 }
-                                
-                                SidebarTabButton(icon: "person.crop.circle", title: "My Profile", isSelected: selectedTab == .profile) {
-                                    selectedTab = .profile
+
+                                // Profile tab with live account avatar
+                                Button(action: { selectedTab = .profile }) {
+                                    HStack(spacing: 12) {
+                                        AvatarView(url: nostrService.profiles[activeHex]?.pictureURL, pubkey: activeHex, size: 20)
+                                            .id(activeHex)
+                                            .overlay(
+                                                Circle()
+                                                    .stroke(selectedTab == .profile ? Color.white.opacity(0.6) : Color.clear, lineWidth: 1.5)
+                                            )
+                                            .frame(width: 20, height: 20)
+
+                                        Text("My Profile")
+                                            .font(.system(size: 13, weight: selectedTab == .profile ? .semibold : .medium))
+                                            .foregroundColor(selectedTab == .profile ? .white : .secondary)
+
+                                        Spacer()
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(selectedTab == .profile ? Color.havenPurple : Color.clear)
+                                    )
+                                    .contentShape(Rectangle())
                                 }
-                                
+                                .buttonStyle(.plain)
+
                                 SidebarTabButton(icon: "doc.text.image", title: "Relay", isSelected: selectedTab == .relay) {
                                     selectedTab = .relay
                                 }
-                                
-                                SidebarTabButton(icon: "gearshape.fill", title: "Settings", isSelected: selectedTab == .settings) {
-                                    selectedTab = .settings
+
+                                SidebarTabButton(icon: "photo.on.rectangle", title: "Media", isSelected: selectedTab == .media) {
+                                    selectedTab = .media
                                 }
                             }
                             .padding(.horizontal, 8)
                             
                             Spacer()
                             
-                            // Quick start/stop relay action inside sidebar footer
+                            // Quick restart/start relay action inside sidebar footer
                             VStack(spacing: 8) {
                                 Button(action: {
                                     if relayManager.isRunning {
-                                        relayManager.stopRelay()
+                                        relayManager.stopRelay {
+                                            relayManager.startRelay(config: configService.config)
+                                        }
                                     } else {
                                         relayManager.startRelay(config: configService.config)
                                     }
                                 }) {
                                     HStack {
-                                        Image(systemName: relayManager.isRunning ? "stop.circle.fill" : "play.circle.fill")
-                                            .foregroundColor(relayManager.isRunning ? .red : .green)
-                                        Text(relayManager.isBooting ? "Booting..." : (relayManager.isRunning ? "Stop Relay" : "Start Relay"))
+                                        Image(systemName: relayManager.isRunning ? "arrow.clockwise.circle.fill" : "play.circle.fill")
+                                            .foregroundColor(relayManager.isRunning ? .orange : .green)
+                                        Text(relayManager.isBooting ? "Booting..." : (relayManager.isRunning ? "Restart Relay" : "Start Relay"))
                                             .font(.system(size: 13, weight: .semibold))
                                         Spacer()
                                     }
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 8)
-                                    .background(relayManager.isRunning ? Color.red.opacity(0.1) : Color.green.opacity(0.1))
+                                    .background(relayManager.isRunning ? Color.orange.opacity(0.1) : Color.green.opacity(0.1))
                                     .cornerRadius(8)
                                 }
                                 .buttonStyle(.plain)
                                 .disabled(relayManager.isBooting)
                                 
-                                Button("Quit Nostr Vault") {
-                                    #if os(macOS)
-                                    NSApp.terminate(nil)
-                                    #endif
+                                HStack {
+                                    Button("Quit Nostr Vault") {
+                                        #if os(macOS)
+                                        NSApp.terminate(nil)
+                                        #endif
+                                    }
+                                    .buttonStyle(.plain)
+                                    .foregroundColor(.secondary)
+                                    .font(.system(size: 12))
+
+                                    Spacer()
+
+                                    Button(action: { selectedTab = .settings }) {
+                                        Image(systemName: "gearshape.fill")
+                                            .font(.system(size: 14))
+                                            .foregroundColor(.secondary)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .help("Settings")
                                 }
-                                .buttonStyle(.plain)
-                                .foregroundColor(.secondary)
-                                .font(.system(size: 12))
                                 .padding(.top, 4)
                             }
                             .padding(16)
@@ -231,11 +268,19 @@ struct MenuBarView: View {
                             case .search:
                                 SearchView()
                                     .transition(.opacity)
+                            case .media:
+                                MediaTabView()
+                                    .environmentObject(relayManager)
+                                    .environmentObject(configService)
+                                    .environmentObject(nostrService)
+                                    .environmentObject(StatsService.shared)
+                                    .transition(.opacity)
                             case .profile:
                                 ProfileView(pubkey: activeHex)
+                                    .id(activeHex)
                                     .environmentObject(nostrService)
                                     .environmentObject(configService)
-                                    .transition(.opacity)
+                                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
                             case .relay:
                                 ViewerView()
                                     .environmentObject(relayManager)
@@ -254,6 +299,7 @@ struct MenuBarView: View {
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .animation(.easeInOut(duration: 0.15), value: selectedTab)
+                        .animation(.easeInOut(duration: 0.3), value: activeHex)
                     }
                 } else {
                     // Original Narrow Layout (Menu Bar dropdown)
@@ -274,23 +320,25 @@ struct MenuBarView: View {
                             }
                             
                             HStack(spacing: 6) {
-                                // Power toggle icon button
+                                // Restart/start relay icon button
                                 Button(action: {
                                     if relayManager.isRunning {
-                                        relayManager.stopRelay()
+                                        relayManager.stopRelay {
+                                            relayManager.startRelay(config: configService.config)
+                                        }
                                     } else {
                                         relayManager.startRelay(config: configService.config)
                                     }
                                 }) {
-                                    Image(systemName: relayManager.isRunning ? "stop.circle" : "play.circle")
+                                    Image(systemName: relayManager.isRunning ? "arrow.clockwise.circle" : "play.circle")
                                         .font(.system(size: 16, weight: .medium))
-                                        .foregroundColor(relayManager.isBooting ? .orange : (relayManager.isRunning ? .red.opacity(0.8) : .secondary))
+                                        .foregroundColor(relayManager.isBooting ? .orange : (relayManager.isRunning ? .orange.opacity(0.8) : .secondary))
                                         .frame(width: 28, height: 28)
                                         .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
                                 .disabled(relayManager.isBooting)
-                                .help(relayManager.isBooting ? "Booting..." : (relayManager.isRunning ? "Stop Relay" : "Start Relay"))
+                                .help(relayManager.isBooting ? "Booting..." : (relayManager.isRunning ? "Restart Relay" : "Start Relay"))
 
                                 // Signal icon → relay dashboard
                                 Button(action: {
@@ -301,7 +349,7 @@ struct MenuBarView: View {
                                 }) {
                                     ZStack(alignment: .topTrailing) {
                                         Image(systemName: "antenna.radiowaves.left.and.right")
-                                            .font(.system(size: 15, weight: .medium))
+                                            .font(.system(size: 16, weight: .medium))
                                             .foregroundColor(
                                                 relayManager.isBooting ? .orange :
                                                 (relayManager.isRunning ? Color(red: 0.2, green: 0.85, blue: 0.5) : .secondary)
@@ -333,19 +381,57 @@ struct MenuBarView: View {
                         ZStack {
                             Color.platformControlBackground // Darker background
                                 .ignoresSafeArea()
-                            
+
                             switch selectedTab {
                             case .feed:
-                                FeedView()
-                                    .transition(.opacity)
+                                // Feed is disabled in narrow menu bar mode to prevent
+                                // memory/CPU pressure from unbounded note loading.
+                                VStack(spacing: 12) {
+                                    Spacer()
+                                    Image(systemName: "rectangle.expand.vertical")
+                                        .font(.system(size: 28, weight: .light))
+                                        .foregroundColor(.secondary.opacity(0.6))
+                                    Text("Open the full window to view your feed")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(.secondary)
+                                        .multilineTextAlignment(.center)
+                                    Button(action: {
+                                        #if os(macOS)
+                                        openWindow(id: "viewer-window")
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                            NSApp.activate(ignoringOtherApps: true)
+                                        }
+                                        #endif
+                                    }) {
+                                        Text("Open Window")
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundColor(.white)
+                                            .padding(.horizontal, 16)
+                                            .padding(.vertical, 6)
+                                            .background(Color.havenPurple)
+                                            .cornerRadius(8)
+                                    }
+                                    .buttonStyle(.plain)
+                                    Spacer()
+                                }
+                                .frame(maxWidth: .infinity)
+                                .transition(.opacity)
                             case .search:
                                 SearchView()
                                     .transition(.opacity)
+                            case .media:
+                                MediaTabView()
+                                    .environmentObject(relayManager)
+                                    .environmentObject(configService)
+                                    .environmentObject(nostrService)
+                                    .environmentObject(StatsService.shared)
+                                    .transition(.opacity)
                             case .profile:
                                 ProfileView(pubkey: activeHex)
+                                    .id(activeHex)
                                     .environmentObject(nostrService)
                                     .environmentObject(configService)
-                                    .transition(.opacity)
+                                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
                             case .relay:
                                 ViewerView()
                                     .environmentObject(relayManager)
@@ -354,16 +440,41 @@ struct MenuBarView: View {
                                     .environmentObject(StatsService.shared)
                                     .transition(.opacity)
                             case .settings:
-                                SettingsView(isEmbedded: true)
-                                    .environmentObject(relayManager)
-                                    .environmentObject(configService)
-                                    .environmentObject(nostrService)
-                                    .environmentObject(StatsService.shared)
-                                    .transition(.opacity)
+                                VStack(spacing: 12) {
+                                    Spacer()
+                                    Image(systemName: "gearshape")
+                                        .font(.system(size: 28, weight: .light))
+                                        .foregroundColor(.secondary.opacity(0.6))
+                                    Text("Open the full window to adjust settings")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(.secondary)
+                                        .multilineTextAlignment(.center)
+                                    Button(action: {
+                                        #if os(macOS)
+                                        openWindow(id: "viewer-window")
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                            NSApp.activate(ignoringOtherApps: true)
+                                        }
+                                        #endif
+                                    }) {
+                                        Text("Open Window")
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundColor(.white)
+                                            .padding(.horizontal, 16)
+                                            .padding(.vertical, 6)
+                                            .background(Color.havenPurple)
+                                            .cornerRadius(8)
+                                    }
+                                    .buttonStyle(.plain)
+                                    Spacer()
+                                }
+                                .frame(maxWidth: .infinity)
+                                .transition(.opacity)
                             }
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .animation(.easeInOut(duration: 0.2), value: selectedTab)
+                        .animation(.easeInOut(duration: 0.3), value: activeHex)
 
                         Divider()
 
@@ -391,16 +502,35 @@ struct MenuBarView: View {
                                     selectedTab = .search
                                 }
 
-                                TabButton(icon: "person.crop.circle", title: "Profile", isSelected: selectedTab == .profile) {
-                                    selectedTab = .profile
+                                // Profile tab with live account avatar
+                                Button(action: { selectedTab = .profile }) {
+                                    VStack(spacing: 4) {
+                                        AvatarView(url: nostrService.profiles[activeHex]?.pictureURL, pubkey: activeHex, size: 18)
+                                            .id(activeHex)
+                                            .overlay(
+                                                Circle()
+                                                    .stroke(
+                                                        selectedTab == .profile ? Color.havenPurple : Color.clear,
+                                                        lineWidth: 1.5
+                                                    )
+                                            )
+                                            .scaleEffect(selectedTab == .profile ? 1.1 : 1.0)
+                                        Text("Profile")
+                                            .font(.system(size: 10, weight: selectedTab == .profile ? .semibold : .regular))
+                                    }
+                                    .foregroundColor(selectedTab == .profile ? Color.havenPurple : .secondary)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 6)
+                                    .contentShape(Rectangle())
                                 }
+                                .buttonStyle(.plain)
 
                                 TabButton(icon: "doc.text.image", title: "Relay", isSelected: selectedTab == .relay) {
                                     selectedTab = .relay
                                 }
 
-                                TabButton(icon: "gearshape.fill", title: "Settings", isSelected: selectedTab == .settings) {
-                                    selectedTab = .settings
+                                TabButton(icon: "photo.on.rectangle", title: "Media", isSelected: selectedTab == .media) {
+                                    selectedTab = .media
                                 }
                             }
                             .padding(.horizontal, 4)
@@ -424,6 +554,7 @@ struct MenuBarView: View {
                                         url: nostrService.profiles[activeHex]?.pictureURL,
                                         pubkey: activeHex
                                     )
+                                    .id(activeHex)
                                     .frame(width: 26, height: 26)
                                     .overlay(
                                         Circle()
@@ -507,7 +638,15 @@ struct MenuBarView: View {
                             }
                             
                             Spacer()
-                            
+
+                            Button(action: { selectedTab = .settings }) {
+                                Image(systemName: "gearshape.fill")
+                                    .font(.system(size: 16))
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Settings")
+
                             Button("Quit Nostr Vault") {
                                 #if os(macOS)
                                 NSApp.terminate(nil)
@@ -523,10 +662,6 @@ struct MenuBarView: View {
                 }
             }
             .disabled(relayManager.isImporting) // Disable interaction when importing
-            .onChange(of: configService.config.activeAccountNpub) { _, _ in
-                // Force feed service to reload with the new account's perspective
-                feedService.switchMode(feedService.feedMode)
-            }
 
             // MARK: - Import Overlay
             if relayManager.isImporting {
@@ -689,6 +824,7 @@ struct MenuBarView: View {
         }
         .overlay(alignment: .top) {
             VStack(spacing: 6) {
+                PostActionNotificationBanner()
                 ZapNotificationBanner()
                 FollowNotificationBanner()
                 MediaUploadNotificationBanner()
@@ -702,13 +838,33 @@ struct MenuBarView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             startInactivityTimer()
+            // Pause the feed when the app loses focus to reduce background
+            // CPU/memory usage from relay traffic and note accumulation.
+            FeedService.shared.pauseFeed()
+            // Pause network sync to stop external relay traffic and event
+            // injection while the app is inactive — reduces log volume, CPU,
+            // and prevents pipe backpressure from Go stdout.
+            NetworkSyncService.shared.stop()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             stopInactivityTimer()
+            // Resume feed connections when the app becomes active again.
+            FeedService.shared.resumeFeed()
+            // Resume external relay syncing.
+            NetworkSyncService.shared.start()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .havenOpenFeedRelaySettings)) { _ in
+            selectedTab = .settings
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .havenOpenSettings)) { _ in
+            selectedTab = .settings
         }
         #endif
-
-
+        .onReceive(ConfigService.shared.$activeAccountHexPubkey) { newHex in
+            if activeHex != newHex {
+                activeHex = newHex
+            }
+        }
     }
     
     private func startInactivityTimer() {
@@ -793,6 +949,7 @@ struct TabButton: View {
 struct AccountSwitcherView: View {
     @ObservedObject var configService: ConfigService
     @ObservedObject private var nostrService = NostrService.shared
+    @Environment(\.dismiss) private var dismiss
 
     // Key import sheet state
     @State private var importingNpub: String? = nil
@@ -850,6 +1007,7 @@ struct AccountSwitcherView: View {
 
         Button(action: {
             configService.switchActiveAccount(to: npub)
+            dismiss()
         }) {
             HStack(spacing: 10) {
                 // Avatar
@@ -1070,27 +1228,40 @@ struct SearchView: View {
     @EnvironmentObject var nostrService: NostrService
 
     @State private var searchQuery: String = ""
-    @State private var searchSource: SearchSource = .all
+    @State private var resultTypeFilter: ResultTypeFilter = .all
     @State private var searchResults: SearchResults = .empty
     @State private var isSearching = false
+    @State private var searchDebounceTask: Task<Void, Never>?
     @State private var showingNoteDetail: FeedNote?
     @State private var showingProfile: String?
     @State private var showingMediaUrl: IdentifiableURL?
     @State private var pendingDirectNoteId: String?
+    @State private var showingCompose = false
+    @State private var recentSearches: [String] = UserDefaults.standard.stringArray(forKey: "recentSearches") ?? []
     #if os(iOS)
     @FocusState private var searchFieldFocused: Bool
     #endif
 
-    enum SearchSource {
-        case all
-        case havenRelay
-        case network
+    enum ResultTypeFilter: CaseIterable {
+        case all, users, notes, hashtags, links
 
         var label: String {
             switch self {
             case .all: return "All"
-            case .havenRelay: return "Nostr Vault Relay"
-            case .network: return "Network"
+            case .users: return "Users"
+            case .notes: return "Notes"
+            case .hashtags: return "Hashtags"
+            case .links: return "Links"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .all: return "square.grid.2x2"
+            case .users: return "person.2"
+            case .notes: return "note.text"
+            case .hashtags: return "number"
+            case .links: return "link"
             }
         }
     }
@@ -1114,6 +1285,44 @@ struct SearchView: View {
         let noteId: String
     }
 
+    private func saveRecentSearch(_ query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2 else { return }
+        recentSearches.removeAll { $0.lowercased() == trimmed.lowercased() }
+        recentSearches.insert(trimmed, at: 0)
+        if recentSearches.count > 8 { recentSearches = Array(recentSearches.prefix(8)) }
+        UserDefaults.standard.set(recentSearches, forKey: "recentSearches")
+    }
+
+    private var trendingHashtags: [String] {
+        var counts: [String: Int] = [:]
+        for note in feedService.notes {
+            for tag in note.tags where tag.count >= 2 && tag[0] == "t" {
+                let hashtag = tag[1].lowercased()
+                counts[hashtag, default: 0] += 1
+            }
+        }
+        return counts.sorted { $0.value > $1.value }.prefix(8).map { $0.key }
+    }
+
+    private var suggestedProfiles: [(String, FeedProfile)] {
+        // Profiles that appear most in the feed (most active posters)
+        var postCounts: [String: Int] = [:]
+        for note in feedService.notes {
+            postCounts[note.pubkey, default: 0] += 1
+        }
+        let ownPubkey = configService.activeAccountHexPubkey
+        return postCounts
+            .filter { $0.key != ownPubkey }
+            .sorted { $0.value > $1.value }
+            .prefix(6)
+            .compactMap { pubkey, _ in
+                guard let profile = nostrService.profiles[pubkey],
+                      profile.name != nil || profile.displayName != nil else { return nil }
+                return (pubkey, profile)
+            }
+    }
+
     var body: some View {
         ZStack {
             Color(red: 0.08, green: 0.08, blue: 0.1).ignoresSafeArea()
@@ -1135,12 +1344,26 @@ struct SearchView: View {
                             .onSubmit { searchFieldFocused = false }
                             #endif
                             .onChange(of: searchQuery) { _, query in
-                                performSearch(query: query)
+                                searchDebounceTask?.cancel()
+                                let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+                                if trimmed.isEmpty {
+                                    searchResults = .empty
+                                    pendingDirectNoteId = nil
+                                    isSearching = false
+                                    return
+                                }
+                                searchDebounceTask = Task {
+                                    try? await Task.sleep(nanoseconds: 300_000_000)
+                                    guard !Task.isCancelled else { return }
+                                    performSearch(query: query)
+                                    saveRecentSearch(query)
+                                }
                             }
 
                         if !searchQuery.isEmpty {
                             Button(action: {
                                 searchQuery = ""
+                                resultTypeFilter = .all
                                 #if os(iOS)
                                 searchFieldFocused = false
                                 #endif
@@ -1157,23 +1380,30 @@ struct SearchView: View {
                     .background(Color.secondary.opacity(0.1))
                     .cornerRadius(10)
 
-                    // Source filter
-                    HStack(spacing: 8) {
-                        ForEach([SearchSource.all, .havenRelay, .network], id: \.self) { source in
-                            Button(action: { searchSource = source }) {
-                                Text(source.label)
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundColor(searchSource == source ? .white : .secondary)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .background(searchSource == source ? Color.havenPurple : Color.clear)
-                                    .cornerRadius(6)
+                    // Result type filter
+                    if !searchQuery.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 6) {
+                                ForEach(ResultTypeFilter.allCases, id: \.self) { filter in
+                                    Button(action: { resultTypeFilter = filter }) {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: filter.icon)
+                                                .font(.system(size: 10, weight: .semibold))
+                                            Text(filter.label)
+                                                .font(.system(size: 12, weight: .semibold))
+                                        }
+                                        .foregroundColor(resultTypeFilter == filter ? .white : .secondary)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(resultTypeFilter == filter ? Color.havenPurple : Color.secondary.opacity(0.12))
+                                        .cornerRadius(6)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
                             }
-                            .buttonStyle(.plain)
+                            .padding(.horizontal, 4)
                         }
-                        Spacer()
                     }
-                    .padding(.horizontal, 4)
                 }
                 .padding()
                 .background(Color(red: 0.08, green: 0.08, blue: 0.1))
@@ -1196,7 +1426,39 @@ struct SearchView: View {
         .onTapGesture {
             searchFieldFocused = false
         }
+        .overlay(alignment: .bottomTrailing) {
+            Button(action: { showingCompose = true }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 15, weight: .bold))
+                    Text("Post")
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                }
+                .foregroundColor(.white)
+                .frame(height: 48)
+                .padding(.horizontal, 18)
+                .background(
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                gradient: Gradient(colors: [Color.havenPurple, Color.havenPurpleLight]),
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .shadow(color: Color.havenPurple.opacity(0.35), radius: 8, x: 0, y: 4)
+                )
+            }
+            .padding(.trailing, 20)
+            .padding(.bottom, 90)
+            .hoverEffect(.lift)
+        }
         #endif
+        .sheet(isPresented: $showingCompose) {
+            ComposeView(onDismiss: { showingCompose = false })
+                .environmentObject(nostrService)
+                .environmentObject(configService)
+        }
         .sheet(item: Binding<IdentifiableString?>(
             get: { showingProfile.map { IdentifiableString(id: $0) } },
             set: { showingProfile = $0?.id }
@@ -1236,25 +1498,176 @@ struct SearchView: View {
 
     @ViewBuilder
     private var emptyState: some View {
-        VStack(spacing: 24) {
-            VStack(spacing: 16) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 48, weight: .thin))
-                    .foregroundColor(.secondary.opacity(0.5))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                // Recent searches
+                if !recentSearches.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("Recent")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Button("Clear") {
+                                recentSearches = []
+                                UserDefaults.standard.removeObject(forKey: "recentSearches")
+                            }
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary.opacity(0.7))
+                            .buttonStyle(.plain)
+                        }
 
-                VStack(spacing: 8) {
-                    Text("Start Searching")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(.primary)
-                    Text("Search for users, notes, hashtags and links\nOr paste a note1 or nevent1 to jump directly to a note")
-                        .font(.system(size: 13))
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
+                        FlowLayout(spacing: 6) {
+                            ForEach(recentSearches, id: \.self) { query in
+                                Button(action: { searchQuery = query }) {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "clock.arrow.circlepath")
+                                            .font(.system(size: 10))
+                                        Text(query)
+                                            .font(.system(size: 12, weight: .medium))
+                                    }
+                                    .foregroundColor(.primary.opacity(0.8))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(Color.secondary.opacity(0.12))
+                                    .cornerRadius(14)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+
+                // Trending hashtags
+                let trending = trendingHashtags
+                if !trending.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Trending")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.secondary)
+
+                        FlowLayout(spacing: 6) {
+                            ForEach(trending, id: \.self) { tag in
+                                Button(action: { searchQuery = "#\(tag)" }) {
+                                    Text("#\(tag)")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundColor(Color.havenPurple)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(Color.havenPurple.opacity(0.12))
+                                        .cornerRadius(14)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+
+                // Suggested profiles
+                let suggested = suggestedProfiles
+                if !suggested.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Active in your feed")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.secondary)
+
+                        VStack(spacing: 4) {
+                            ForEach(suggested, id: \.0) { pubkey, profile in
+                                Button(action: { showingProfile = pubkey }) {
+                                    HStack(spacing: 10) {
+                                        AvatarView(url: profile.pictureURL, pubkey: pubkey)
+                                            .frame(width: 34, height: 34)
+                                        VStack(alignment: .leading, spacing: 1) {
+                                            Text(profile.bestName)
+                                                .font(.system(size: 13, weight: .medium))
+                                                .foregroundColor(.primary)
+                                                .lineLimit(1)
+                                            if let nip05 = profile.nip05, !nip05.isEmpty {
+                                                Text(nip05)
+                                                    .font(.system(size: 11))
+                                                    .foregroundColor(.secondary)
+                                                    .lineLimit(1)
+                                            }
+                                        }
+                                        Spacer()
+                                        Image(systemName: "chevron.right")
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundColor(.secondary.opacity(0.5))
+                                    }
+                                    .padding(.vertical, 6)
+                                    .padding(.horizontal, 8)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+
+                // Fallback if nothing to show
+                if recentSearches.isEmpty && trending.isEmpty && suggested.isEmpty {
+                    VStack(spacing: 16) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 48, weight: .thin))
+                            .foregroundColor(.secondary.opacity(0.5))
+                        VStack(spacing: 8) {
+                            Text("Search")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundColor(.primary)
+                            Text("Find users, notes, hashtags and links\nOr paste a note1 or nevent1 ID")
+                                .font(.system(size: 13))
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 60)
                 }
             }
+            .padding()
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding()
+    }
+
+    /// Simple wrapping layout for chips
+    private struct FlowLayout: Layout {
+        var spacing: CGFloat = 6
+
+        func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+            let width = proposal.width ?? .infinity
+            var x: CGFloat = 0
+            var y: CGFloat = 0
+            var rowHeight: CGFloat = 0
+
+            for subview in subviews {
+                let size = subview.sizeThatFits(.unspecified)
+                if x + size.width > width && x > 0 {
+                    x = 0
+                    y += rowHeight + spacing
+                    rowHeight = 0
+                }
+                x += size.width + spacing
+                rowHeight = max(rowHeight, size.height)
+            }
+            return CGSize(width: width, height: y + rowHeight)
+        }
+
+        func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+            var x: CGFloat = bounds.minX
+            var y: CGFloat = bounds.minY
+            var rowHeight: CGFloat = 0
+
+            for subview in subviews {
+                let size = subview.sizeThatFits(.unspecified)
+                if x + size.width > bounds.maxX && x > bounds.minX {
+                    x = bounds.minX
+                    y += rowHeight + spacing
+                    rowHeight = 0
+                }
+                subview.place(at: CGPoint(x: x, y: y), proposal: .init(size))
+                x += size.width + spacing
+                rowHeight = max(rowHeight, size.height)
+            }
+        }
     }
 
     @ViewBuilder
@@ -1292,7 +1705,7 @@ struct SearchView: View {
         ScrollView {
             VStack(spacing: 24) {
                 // Users section
-                if !searchResults.users.isEmpty {
+                if (resultTypeFilter == .all || resultTypeFilter == .users) && !searchResults.users.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Users")
                             .font(.system(size: 13, weight: .semibold))
@@ -1309,7 +1722,7 @@ struct SearchView: View {
                 }
 
                 // Notes section
-                if !searchResults.notes.isEmpty {
+                if (resultTypeFilter == .all || resultTypeFilter == .notes) && !searchResults.notes.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Notes")
                             .font(.system(size: 13, weight: .semibold))
@@ -1321,6 +1734,11 @@ struct SearchView: View {
                                 FeedNoteRow(
                                    note: note,
                                    profile: nostrService.profiles[note.pubkey],
+                                   rowData: FeedNoteRowData.resolve(
+                                       for: note,
+                                       feedService: feedService,
+                                       nostrService: nostrService
+                                   ),
                                    onProfile: { pubkey in
                                        showingProfile = pubkey
                                    },
@@ -1335,12 +1753,13 @@ struct SearchView: View {
                                     }
                             }
                         }
+                        .environment(\.feedActions, .make(feedService: feedService, nostrService: nostrService))
                         .padding(.horizontal, 16)
                     }
                 }
 
                 // Hashtags section
-                if !searchResults.hashtags.isEmpty {
+                if (resultTypeFilter == .all || resultTypeFilter == .hashtags) && !searchResults.hashtags.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Hashtags")
                             .font(.system(size: 13, weight: .semibold))
@@ -1357,7 +1776,7 @@ struct SearchView: View {
                 }
 
                 // Links section
-                if !searchResults.links.isEmpty {
+                if (resultTypeFilter == .all || resultTypeFilter == .links) && !searchResults.links.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Links")
                             .font(.system(size: 13, weight: .semibold))
@@ -1374,9 +1793,7 @@ struct SearchView: View {
                 }
             }
             .padding(.vertical, 16)
-            #if os(iOS)
-            .padding(.bottom, 90)
-            #endif
+            .tabBarBottomPadding()
         }
     }
 
@@ -1498,9 +1915,34 @@ struct SearchView: View {
             return
         }
 
+        // Decode npub to hex pubkey for direct profile lookup
+        if lower.hasPrefix("npub1"),
+           let decoded = Bech32.decode(trimmed),
+           decoded.hrp == "npub" {
+            let hexKey = decoded.hexString
+            var results = SearchResults()
+            if let profile = nostrService.profiles[hexKey] {
+                results.users[hexKey] = profile
+            } else {
+                results.users[hexKey] = FeedProfile(pubkey: hexKey)
+            }
+            searchResults = results
+            isSearching = false
+            pendingDirectNoteId = nil
+            return
+        }
+
         pendingDirectNoteId = nil
-        isSearching = true
+
+        // Require at least 2 characters for general search
         let trimmedQuery = query.lowercased().trimmingCharacters(in: .whitespaces)
+        guard trimmedQuery.count >= 2 else {
+            searchResults = .empty
+            isSearching = false
+            return
+        }
+
+        isSearching = true
 
         let localProfiles = nostrService.profiles
         let localNotes = feedService.notes
