@@ -38,10 +38,10 @@ struct DMInboxView: View {
                                 }
 
                                 VStack(spacing: 8) {
-                                    Text("No Messages Yet")
+                                    Text(String(localized: "dm.inbox.empty.title"))
                                         .font(.system(size: 18, weight: .semibold))
                                         .foregroundColor(.primary)
-                                    Text("Start an encrypted conversation\nwith the compose button above")
+                                    Text(String(localized: "dm.inbox.empty.subtitle"))
                                         .font(.system(size: 14))
                                         .foregroundColor(.secondary)
                                         .multilineTextAlignment(.center)
@@ -78,12 +78,12 @@ struct DMInboxView: View {
                     }
                 }
             }
-            .navigationTitle("Messages")
+            .navigationTitle(String(localized: "dm.inbox.title"))
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Close") {
+                    Button(String(localized: "dm.inbox.close")) {
                         dismiss()
                     }
                 }
@@ -94,7 +94,7 @@ struct DMInboxView: View {
                                 .font(.system(size: 16, weight: .semibold))
                                 .foregroundColor(.havenPurple)
                         }
-                        .help("Mark all as read")
+                        .help(String(localized: "dm.inbox.markAllRead"))
 
                         Button(action: { showingCompose = true }) {
                             Image(systemName: "square.and.pencil")
@@ -118,14 +118,14 @@ struct DMInboxView: View {
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundColor(.havenPurple)
                         }
-                        .help("Mark all as read")
+                        .help(String(localized: "dm.inbox.markAllRead"))
 
                         Button(action: { showingCompose = true }) {
                             Image(systemName: "square.and.pencil")
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundColor(.havenPurple)
                         }
-                        .help("New Message")
+                        .help(String(localized: "dm.inbox.newMessage"))
                     }
                 }
             }
@@ -153,6 +153,7 @@ struct MacComposeView: View {
     @State private var messageText = ""
     @State private var searchText = ""
     @State private var isSending = false
+    @State private var sendError: String?
 
     private var searchResults: [String] {
         if searchText.count < 2 { return [] }
@@ -173,10 +174,10 @@ struct MacComposeView: View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                Text("New Message")
+                Text(String(localized: "dm.compose.title"))
                     .font(.system(size: 15, weight: .semibold))
                 Spacer()
-                Button("Cancel") { dismiss() }
+                Button(String(localized: "dm.compose.cancel")) { dismiss() }
                     .foregroundColor(.havenPurple)
             }
             .padding()
@@ -186,7 +187,7 @@ struct MacComposeView: View {
             // Recipient
             if let recipient = selectedRecipient {
                 HStack(spacing: 10) {
-                    Text("To:")
+                    Text(String(localized: "dm.compose.to"))
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundColor(.secondary)
                     AvatarView(url: nostrService.profiles[recipient]?.pictureURL, pubkey: recipient)
@@ -204,7 +205,7 @@ struct MacComposeView: View {
                 .padding(.vertical, 10)
             } else {
                 VStack(alignment: .leading, spacing: 4) {
-                    TextField("Search users...", text: $searchText)
+                    TextField(String(localized: "dm.compose.searchPlaceholder"), text: $searchText)
                         .textFieldStyle(.plain)
                         .padding(10)
                         .background(Color.secondary.opacity(0.1))
@@ -258,7 +259,7 @@ struct MacComposeView: View {
                     } else {
                         HStack(spacing: 6) {
                             Image(systemName: "paperplane.fill")
-                            Text("Send")
+                            Text(String(localized: "dm.compose.send"))
                         }
                     }
                 }
@@ -267,6 +268,16 @@ struct MacComposeView: View {
                 .disabled(!canSend || isSending)
             }
             .padding()
+        }
+        .alert(String(localized: "dm.compose.sendFailed"), isPresented: Binding<Bool>(
+            get: { sendError != nil },
+            set: { if !$0 { sendError = nil } }
+        )) {
+            Button(String(localized: "dm.compose.ok")) { sendError = nil }
+        } message: {
+            if let sendError = sendError {
+                Text(sendError)
+            }
         }
     }
 
@@ -280,8 +291,13 @@ struct MacComposeView: View {
                 try await dmService.sendDM(content: content, to: recipient)
                 await MainActor.run { dismiss() }
             } catch {
+                #if DEBUG
                 print("Failed to send message: \(error)")
-                await MainActor.run { isSending = false }
+                #endif
+                await MainActor.run {
+                    isSending = false
+                    sendError = error.localizedDescription
+                }
             }
         }
     }
@@ -305,7 +321,7 @@ struct ConversationRow: View {
     private var lastMessagePreview: String {
         let message = conversation.lastMessage?.content ?? ""
         if message.isEmpty {
-            return "No message content"
+            return String(localized: "dm.inbox.noContent")
         }
         return message.prefix(60).trimmingCharacters(in: .whitespaces) + (message.count > 60 ? "…" : "")
     }

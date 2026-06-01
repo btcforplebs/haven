@@ -9,6 +9,7 @@ struct DMThreadView: View {
 
     @State private var messageInput: String = ""
     @State private var isSending: Bool = false
+    @State private var sendError: String?
     @State private var scrollPosition: String?
     @State private var useNIP04: Bool = false
     @Environment(\.dismiss) private var dismiss
@@ -156,6 +157,16 @@ struct DMThreadView: View {
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
+            .alert("Failed to Send", isPresented: Binding<Bool>(
+                get: { sendError != nil },
+                set: { if !$0 { sendError = nil } }
+            )) {
+                Button("OK") { sendError = nil }
+            } message: {
+                if let sendError = sendError {
+                    Text(sendError)
+                }
+            }
             .onAppear {
                 dmService.markRead(conversationWith: counterpartyPubkey)
             }
@@ -183,10 +194,13 @@ struct DMThreadView: View {
                     isSending = false
                 }
             } catch {
-                print("❌ Failed to send DM: \(error)")
+                #if DEBUG
+                print("Failed to send DM: \(error)")
+                #endif
                 await MainActor.run {
                     isSending = false
                     messageInput = messageToSend
+                    sendError = error.localizedDescription
                 }
             }
         }

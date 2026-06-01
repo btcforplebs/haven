@@ -213,6 +213,7 @@ struct iPadSidebarView: View {
                 ZapNotificationBanner()
                 FollowNotificationBanner()
                 MediaUploadNotificationBanner()
+                ErrorNotificationBanner()
             }
             .padding(.top, 4)
             .allowsHitTesting(true)
@@ -309,6 +310,7 @@ struct iPhoneTabView: View {
                 ZapNotificationBanner()
                 FollowNotificationBanner()
                 MediaUploadNotificationBanner()
+                ErrorNotificationBanner()
             }
             .padding(.top, 4)
             .allowsHitTesting(true)

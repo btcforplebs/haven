@@ -143,6 +143,7 @@ struct ComposeView: View {
                                 .font(.system(size: 16))
                                 .frame(minHeight: 200)
                                 .scrollContentBackground(.hidden)
+                                .accessibilityLabel("Post content")
                                 .onChange(of: content) { _, newValue in
                                     updateMentionQuery(in: newValue)
                                 }
@@ -621,20 +622,26 @@ struct ComposeView: View {
             switch result {
             case .success(let video):
                 guard let video = video else { return }
-                let thumbnail = self.generateVideoThumbnail(url: video.url)
                 // Prefer the actual file extension's UTType (e.g. .mpeg4Movie)
                 // so preferredMIMEType yields the right Content-Type on upload.
                 let derivedType = UTType(filenameExtension: video.url.pathExtension) ?? contentType
-                DispatchQueue.main.async {
+                let videoURL = video.url
+                Task { @MainActor in
+                    let thumbnail = await self.generateVideoThumbnail(url: videoURL)
                     self.attachments.append(Attachment(
                         data: nil,
-                        fileURL: video.url,
+                        fileURL: videoURL,
                         type: derivedType,
                         thumbnail: thumbnail
                     ))
                 }
             case .failure(let error):
+                #if DEBUG
                 print("Failed to load video: \(error)")
+                #endif
+                DispatchQueue.main.async {
+                    self.error = "Failed to load video: \(error.localizedDescription)"
+                }
             }
         }
     }
@@ -675,7 +682,12 @@ struct ComposeView: View {
                     ))
                 }
             case .failure(let error):
+                #if DEBUG
                 print("Failed to load media: \(error)")
+                #endif
+                DispatchQueue.main.async {
+                    self.error = "Failed to load media: \(error.localizedDescription)"
+                }
             }
         }
     }
@@ -708,22 +720,28 @@ struct ComposeView: View {
         }
     }
 
-    private func generateVideoThumbnail(url: URL) -> PlatformImage? {
-        let asset = AVAsset(url: url)
-        let imageGenerator = AVAssetImageGenerator(asset: asset)
-        imageGenerator.appliesPreferredTrackTransform = true
-
-        let time = CMTime(seconds: 0.0, preferredTimescale: 600)
-        do {
-            let cgImage = try imageGenerator.copyCGImage(at: time, actualTime: nil)
-            #if os(macOS)
-            return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
-            #else
-            return UIImage(cgImage: cgImage)
-            #endif
-        } catch {
-            print("Error generating video thumbnail: \(error)")
-            return nil
+    private func generateVideoThumbnail(url: URL) async -> PlatformImage? {
+        await withCheckedContinuation { continuation in
+            let asset = AVAsset(url: url)
+            let imageGenerator = AVAssetImageGenerator(asset: asset)
+            imageGenerator.appliesPreferredTrackTransform = true
+            let time = CMTime(seconds: 0.0, preferredTimescale: 600)
+            imageGenerator.generateCGImagesAsynchronously(forTimes: [NSValue(time: time)]) { _, cgImage, _, _, error in
+                if let cgImage = cgImage {
+                    #if os(macOS)
+                    continuation.resume(returning: NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height)))
+                    #else
+                    continuation.resume(returning: UIImage(cgImage: cgImage))
+                    #endif
+                } else {
+                    #if DEBUG
+                    if let error = error {
+                        print("Error generating video thumbnail: \(error)")
+                    }
+                    #endif
+                    continuation.resume(returning: nil)
+                }
+            }
         }
     }
     
@@ -791,22 +809,24 @@ struct ComposeView: View {
                         resolvedExt = ext
                     }
                     let isVideo = ["mp4", "mov", "webm"].contains(resolvedExt)
-                    await MainActor.run {
-                        if isVideo {
-                            let tempURL = FileManager.default.temporaryDirectory
-                                .appendingPathComponent("haven-paste-\(UUID().uuidString)")
-                                .appendingPathExtension(resolvedExt)
-                            try? data.write(to: tempURL)
-                            let thumbnail = generateVideoThumbnail(url: tempURL)
-                            let derivedType = UTType(filenameExtension: resolvedExt) ?? .mpeg4Movie
+                    if isVideo {
+                        let tempURL = FileManager.default.temporaryDirectory
+                            .appendingPathComponent("haven-paste-\(UUID().uuidString)")
+                            .appendingPathExtension(resolvedExt)
+                        try? data.write(to: tempURL)
+                        let thumbnail = await generateVideoThumbnail(url: tempURL)
+                        let derivedType = UTType(filenameExtension: resolvedExt) ?? .mpeg4Movie
+                        await MainActor.run {
                             attachments.append(Attachment(
                                 data: nil,
                                 fileURL: tempURL,
                                 type: derivedType,
                                 thumbnail: thumbnail
                             ))
-                        } else {
-                            let derivedType = UTType(filenameExtension: resolvedExt) ?? .jpeg
+                        }
+                    } else {
+                        let derivedType = UTType(filenameExtension: resolvedExt) ?? .jpeg
+                        await MainActor.run {
                             attachments.append(Attachment(
                                 data: data,
                                 fileURL: nil,

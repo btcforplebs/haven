@@ -11,6 +11,7 @@ require (
 	github.com/nbd-wtf/go-nostr v0.52.3
 	github.com/puzpuzpuz/xsync/v4 v4.4.0
 	github.com/spf13/afero v1.15.0
+	golang.org/x/crypto v0.48.0
 )
 
 require (
@@ -84,7 +85,6 @@ require (
 	go.opentelemetry.io/otel/trace v1.39.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/arch v0.23.0 // indirect
-	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/exp v0.0.0-20260112195511-716be5621a96 // indirect
 	golang.org/x/net v0.50.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect

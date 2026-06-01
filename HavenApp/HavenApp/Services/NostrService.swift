@@ -676,28 +676,30 @@ class NostrService: ObservableObject {
 
         let tags = hexKeys.map { ["p", $0] }
 
-        // Temporarily store the active account so we sign as the target account
+        // Capture the current active account so we can restore it after signing
         let originalActive = ConfigService.shared.config.activeAccountNpub
 
-        // Temporarily set activeAccountNpub to sign with the correct key
-        ConfigService.shared.config.activeAccountNpub = (accountNpub == ConfigService.shared.config.ownerNpub) ? "" : accountNpub
-        ConfigService.shared.refreshActiveAccountHex()
-
         Task {
-            if let event = await signEventAsync(kind: 10000, content: "", tags: tags) {
-                postEvent(event)
-
+            // Temporarily set activeAccountNpub to sign with the correct key.
+            // Mutation is inside the Task and wrapped in defer to guarantee restoration.
+            ConfigService.shared.config.activeAccountNpub = (accountNpub == ConfigService.shared.config.ownerNpub) ? "" : accountNpub
+            ConfigService.shared.refreshActiveAccountHex()
+            defer {
                 ConfigService.shared.config.activeAccountNpub = originalActive
                 ConfigService.shared.refreshActiveAccountHex()
+            }
+
+            if let event = await signEventAsync(kind: 10000, content: "", tags: tags) {
+                postEvent(event)
                 ConfigService.shared.config.blockedNpubsLastSyncTimestamp[accountNpub] = event.created_at
                 ConfigService.shared.save()
                 #if DEBUG
                 print("NostrService: Successfully published Kind 10000 mute list with \(tags.count) tags for \(accountNpub.prefix(8))")
                 #endif
             } else {
-                ConfigService.shared.config.activeAccountNpub = originalActive
-                ConfigService.shared.refreshActiveAccountHex()
+                #if DEBUG
                 print("NostrService: Failed to sign Kind 10000 mute list for \(accountNpub.prefix(8))")
+                #endif
             }
         }
     }
@@ -798,7 +800,7 @@ class NostrService: ObservableObject {
               let str = String(data: data, encoding: .utf8) else { return }
 
         // 1. Post to local relay
-        let localURL = URL(string: ConfigService.shared.config.nostrURL)!
+        guard let localURL = URL(string: ConfigService.shared.config.nostrURL) else { return }
         let localClient = WebSocketClient()
         localClient.isTemporary = true
 

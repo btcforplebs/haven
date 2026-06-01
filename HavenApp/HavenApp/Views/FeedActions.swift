@@ -58,7 +58,17 @@ struct FeedActions {
                 let relayHint = ConfigService.shared.config.nostrURL
                 Task {
                     guard let signed = await nostrService.signEventAsync(kind: 7, content: "+",
-                        tags: [["e", noteId, relayHint], ["p", note.pubkey], ["k", String(note.kind)]]) else { return }
+                        tags: [["e", noteId, relayHint], ["p", note.pubkey], ["k", String(note.kind)]]) else {
+                        // Rollback optimistic update on signing failure
+                        await MainActor.run {
+                            feedService.likedEventIds.remove(noteId)
+                            var s = feedService.noteStats[noteId] ?? NoteStats()
+                            s.reactions = max(0, s.reactions - 1)
+                            feedService.noteStats[noteId] = s
+                            feedService.saveInteractionState()
+                        }
+                        return
+                    }
                     nostrService.postEvent(signed)
                 }
             },
@@ -72,7 +82,8 @@ struct FeedActions {
                 }
             },
             reactToNote: { note, emoji in
-                if !feedService.likedEventIds.contains(note.id) {
+                let wasAlreadyLiked = feedService.likedEventIds.contains(note.id)
+                if !wasAlreadyLiked {
                     feedService.likedEventIds.insert(note.id)
                     var stats = feedService.noteStats[note.id] ?? NoteStats()
                     stats.reactions += 1
@@ -82,7 +93,19 @@ struct FeedActions {
                 let relayHint = ConfigService.shared.config.nostrURL
                 Task {
                     guard let signed = await nostrService.signEventAsync(kind: 7, content: emoji,
-                        tags: [["e", note.id, relayHint], ["p", note.pubkey], ["k", String(note.kind)]]) else { return }
+                        tags: [["e", note.id, relayHint], ["p", note.pubkey], ["k", String(note.kind)]]) else {
+                        // Rollback optimistic update on signing failure
+                        if !wasAlreadyLiked {
+                            await MainActor.run {
+                                feedService.likedEventIds.remove(note.id)
+                                var s = feedService.noteStats[note.id] ?? NoteStats()
+                                s.reactions = max(0, s.reactions - 1)
+                                feedService.noteStats[note.id] = s
+                                feedService.saveInteractionState()
+                            }
+                        }
+                        return
+                    }
                     nostrService.postEvent(signed)
                 }
             },
@@ -116,8 +139,11 @@ struct FeedActions {
                 return nil
             },
             deleteNote: { noteId in
-                nostrService.deleteNote(id: noteId)
-                feedService.removeNote(id: noteId)
+                PendingPostManager.shared.startDelete(
+                    noteId: noteId,
+                    nostrService: nostrService,
+                    feedService: feedService
+                )
             },
             fetchMissingNote: { id in feedService.fetchMissingNote(id: id) },
             fetchMissingProfiles: { pks in nostrService.fetchMissingProfiles(for: pks) },

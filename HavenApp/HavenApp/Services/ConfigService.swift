@@ -364,7 +364,10 @@ class ConfigService: ObservableObject {
         }
         #else
         DispatchQueue.main.async {
-            exit(0)
+            // Suspend to home screen instead of exit(0) — Apple rejects apps that
+            // programmatically terminate. The config is already cleared by resetApp(),
+            // so the next launch will start fresh.
+            UIControl().sendAction(#selector(URLSessionTask.suspend), to: UIApplication.shared, for: nil)
         }
         #endif
     }

@@ -20,13 +20,6 @@ class MacRelaySyncService: ObservableObject {
     // MARK: - Private
     private var client: WebSocketClient?
     private var cancellables = Set<AnyCancellable>()
-    private var syncedEventIds = Set<String>()
-    private var pendingEvents: [String: [[String: Any]]] = [
-        "outbox": [],
-        "inbox": [],
-        "private": [],
-        "chat": []
-    ]
     private let processingQueue = DispatchQueue(label: "com.haven.mac-relay-sync", qos: .userInitiated)
 
     // BadgerDB (Haven's default) enforces MaxLimit=1000. The query engine honours
@@ -34,9 +27,34 @@ class MacRelaySyncService: ObservableObject {
     // silently fall back to MaxLimit/4 = 250.  Requesting exactly 1000 therefore
     // maximises events per page on BadgerDB, and still fits within LMDB's 1500 cap.
     private let pageLimit = 1000
-    // Per-page tracking — reset at the start of each REQ.
-    private var pageEventCount: Int = 0
-    private var pageOldestTimestamp: Int64 = Int64.max
+
+    /// Thread-safe accumulator for background event processing.
+    /// All access is serialized on `processingQueue` to avoid data races.
+    private let bgAccumulator = SyncAccumulator()
+
+    final class SyncAccumulator: @unchecked Sendable {
+        var pageEventCount: Int = 0
+        var pageOldestTimestamp: Int64 = Int64.max
+        var syncedEventIds = Set<String>()
+        var pendingEvents: [String: [[String: Any]]] = [
+            "outbox": [],
+            "inbox": [],
+            "private": [],
+            "chat": []
+        ]
+
+        func reset() {
+            pageEventCount = 0
+            pageOldestTimestamp = Int64.max
+            syncedEventIds.removeAll()
+            pendingEvents = ["outbox": [], "inbox": [], "private": [], "chat": []]
+        }
+
+        func resetPage() {
+            pageEventCount = 0
+            pageOldestTimestamp = Int64.max
+        }
+    }
     
     /// UserDefaults key for the last successful sync timestamp
     private let lastSyncKey = "com.haven.macRelay.lastSyncTimestamp"
@@ -126,13 +144,7 @@ class MacRelaySyncService: ObservableObject {
         
         isSyncing = true
         notesSynced = 0
-        pendingEvents = [
-            "outbox": [],
-            "inbox": [],
-            "private": [],
-            "chat": []
-        ]
-        syncedEventIds.removeAll()
+        bgAccumulator.reset()
         syncStatus = "Connecting to Mac relay..."
         
         // Use provided timestamp or 1-hour overlap from last known sync
@@ -159,9 +171,8 @@ class MacRelaySyncService: ObservableObject {
             return
         }
 
-        // Reset page-level tracking for this request
-        pageEventCount = 0
-        pageOldestTimestamp = Int64.max
+        // Reset page-level tracking for this request (on processingQueue for thread safety)
+        processingQueue.sync { bgAccumulator.resetPage() }
 
         let wsClient = WebSocketClient()
         wsClient.isTemporary = true
@@ -258,9 +269,10 @@ class MacRelaySyncService: ObservableObject {
                 DispatchQueue.main.async { [weak self] in self?.client?.send(text: s) }
             }
 
-            // Capture page state before the async hop
-            let gotFullPage = pageEventCount >= pageLimit
-            let oldest = pageOldestTimestamp
+            // Capture page state before the async hop (we're on processingQueue here)
+            let pageCount = bgAccumulator.pageEventCount
+            let gotFullPage = pageCount >= pageLimit
+            let oldest = bgAccumulator.pageOldestTimestamp
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
                 guard let self = self else { return }
@@ -269,13 +281,13 @@ class MacRelaySyncService: ObservableObject {
                 // If we received a full page and haven't walked back to `since` yet, paginate
                 if gotFullPage && oldest > since && oldest != Int64.max {
                     #if DEBUG
-                    print("MacRelaySyncService: Full page (\(self.pageEventCount) events), paginating with until=\(oldest - 1)")
+                    print("MacRelaySyncService: Full page (\(pageCount) events), paginating with until=\(oldest - 1)")
                     #endif
                     self.syncFromEndpoints(endpoints, index: index, since: since, until: oldest - 1)
                 } else {
                     // Fewer than a full page — this endpoint is exhausted, move on
                     #if DEBUG
-                    print("MacRelaySyncService: Endpoint done (\(self.pageEventCount) events on last page), next endpoint")
+                    print("MacRelaySyncService: Endpoint done (\(pageCount) events on last page), next endpoint")
                     #endif
                     self.syncFromEndpoints(endpoints, index: index + 1, since: since)
                 }
@@ -288,8 +300,8 @@ class MacRelaySyncService: ObservableObject {
               let eventId = eventDict["id"] as? String else { return }
 
         // Deduplicate globally across all pages/endpoints
-        if syncedEventIds.contains(eventId) { return }
-        syncedEventIds.insert(eventId)
+        if bgAccumulator.syncedEventIds.contains(eventId) { return }
+        bgAccumulator.syncedEventIds.insert(eventId)
 
         let endpoint = endpoints[index]
         let dbKey: String
@@ -302,20 +314,22 @@ class MacRelaySyncService: ObservableObject {
         } else {
             dbKey = "outbox"
         }
-        pendingEvents[dbKey, default: []].append(eventDict)
+        bgAccumulator.pendingEvents[dbKey, default: []].append(eventDict)
 
         // Track page-level stats for pagination decision
-        pageEventCount += 1
+        bgAccumulator.pageEventCount += 1
         if let ts = eventDict["created_at"] as? Int64 {
-            if ts < pageOldestTimestamp { pageOldestTimestamp = ts }
+            if ts < bgAccumulator.pageOldestTimestamp { bgAccumulator.pageOldestTimestamp = ts }
         } else if let ts = eventDict["created_at"] as? Int {
             let ts64 = Int64(ts)
-            if ts64 < pageOldestTimestamp { pageOldestTimestamp = ts64 }
+            if ts64 < bgAccumulator.pageOldestTimestamp { bgAccumulator.pageOldestTimestamp = ts64 }
         }
 
+        // Capture count on processingQueue before dispatching to main
+        let count = bgAccumulator.syncedEventIds.count
         DispatchQueue.main.async { [weak self] in
-            self?.notesSynced = self?.syncedEventIds.count ?? 0
-            self?.syncStatus = "Synced \(self?.notesSynced ?? 0) notes..."
+            self?.notesSynced = count
+            self?.syncStatus = "Synced \(count) notes..."
         }
     }
 
@@ -323,7 +337,9 @@ class MacRelaySyncService: ObservableObject {
     // MARK: - Finish & Inject into Local Relay
 
     private func finishSync() {
-        let totalCount = pendingEvents.values.reduce(0) { $0 + $1.count }
+        // Safely capture accumulated events from the background queue
+        let capturedEvents = processingQueue.sync { bgAccumulator.pendingEvents }
+        let totalCount = capturedEvents.values.reduce(0) { $0 + $1.count }
         guard totalCount > 0 else {
             isSyncing = false
             syncStatus = "Already up to date"
@@ -350,10 +366,10 @@ class MacRelaySyncService: ObservableObject {
             return
         }
 
-        let outboxEvents = pendingEvents["outbox"] ?? []
-        let inboxEvents = pendingEvents["inbox"] ?? []
-        let privateEvents = pendingEvents["private"] ?? []
-        let chatEvents = pendingEvents["chat"] ?? []
+        let outboxEvents = capturedEvents["outbox"] ?? []
+        let inboxEvents = capturedEvents["inbox"] ?? []
+        let privateEvents = capturedEvents["private"] ?? []
+        let chatEvents = capturedEvents["chat"] ?? []
 
         #if DEBUG
         print("MacRelaySyncService: Routing \(outboxEvents.count) to outbox, \(inboxEvents.count) to inbox, \(privateEvents.count) to private, \(chatEvents.count) to chat")
@@ -362,7 +378,7 @@ class MacRelaySyncService: ObservableObject {
         var maxTimestamp: Int64 = self.lastSyncTimestamp
 
         // Track max timestamp across all events
-        for (_, events) in pendingEvents {
+        for (_, events) in capturedEvents {
             for eventDict in events {
                 if let ts = eventDict["created_at"] as? Int64 {
                     maxTimestamp = max(maxTimestamp, ts)

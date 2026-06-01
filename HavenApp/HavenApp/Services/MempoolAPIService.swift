@@ -26,7 +26,9 @@ enum MempoolAPIService {
             throw MempoolError.invalidURL
         }
 
-        let (data, response) = try await URLSession.shared.data(from: url)
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        let (data, response) = try await URLSession.shared.data(for: request)
 
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw MempoolError.fetchFailed(txid)

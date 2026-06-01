@@ -6,7 +6,7 @@ class PendingPostManager: ObservableObject {
     static let shared = PendingPostManager()
 
     enum ActionType: Equatable {
-        case reply, quote, newPost, repost
+        case reply, quote, newPost, repost, delete
 
         var label: String {
             switch self {
@@ -14,6 +14,7 @@ class PendingPostManager: ObservableObject {
             case .quote:   return "Quoting"
             case .newPost: return "Posting"
             case .repost:  return "Reposting"
+            case .delete:  return "Deleting"
             }
         }
 
@@ -23,6 +24,7 @@ class PendingPostManager: ObservableObject {
             case .quote:   return "quote.bubble.fill"
             case .newPost: return "paperplane.fill"
             case .repost:  return "arrow.2.squarepath"
+            case .delete:  return "trash.fill"
             }
         }
 
@@ -32,6 +34,7 @@ class PendingPostManager: ObservableObject {
             case .quote:   return Color(red: 0.12, green: 0.70, blue: 0.60)
             case .newPost: return Color(red: 0.55, green: 0.18, blue: 0.92)
             case .repost:  return Color(red: 0.55, green: 0.18, blue: 0.92)
+            case .delete:  return .red
             }
         }
 
@@ -42,12 +45,13 @@ class PendingPostManager: ObservableObject {
             case .quote:   return Color(red: 0.12, green: 0.70, blue: 0.60)
             case .newPost: return Color.havenPurple
             case .repost:  return Color.havenPurple
+            case .delete:  return .red
             }
         }
 
         static let countdownDuration: Double = 5.0
 
-        var canEdit: Bool { self != .repost }
+        var canEdit: Bool { self != .repost && self != .delete }
     }
 
     struct EditRequest: Identifiable {
@@ -132,6 +136,22 @@ class PendingPostManager: ObservableObject {
                 nostrService.postEvent(signed)
             }
             FeedService.shared.repostedEventIds.insert(originalId)
+        }
+    }
+
+    func startDelete(noteId: String, nostrService: NostrService, feedService: FeedService) {
+        clearPrevious()
+        pendingContent = ""
+        pendingReplyTo = nil
+        pendingQuoteTo = nil
+        bannerNoteId = noteId
+        actionType = .delete
+        timeRemaining = ActionType.countdownDuration
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { isShowing = true }
+
+        beginCountdown {
+            nostrService.deleteNote(id: noteId)
+            feedService.removeNote(id: noteId)
         }
     }
 

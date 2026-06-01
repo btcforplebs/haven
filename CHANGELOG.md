@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.2 macOS / 1.1.2 iOS] - 2026-06-01
+
+> **Stability & Polish Release**: Seven-phase hardening pass covering debug log hygiene, race condition fixes, user-facing error notifications, delete confirmations, network resilience, accessibility, and a localization foundation for future translation support.
+
+### Added
+- **Error Notification Banner**: New `ErrorNotificationBanner` component surfaces errors that were previously swallowed silently — covers 7 failure paths across zap validation, relay connections, Cashu operations, and media uploads. Displayed as a top overlay on FeedView, ProfileView, and MenuBarView.
+- **Delete Confirmation Dialog**: Deleting a post now shows a confirmation alert before broadcasting a kind 5 deletion event, preventing accidental deletions. Managed through `PendingPostManager`.
+- **Like Rollback**: If a like event fails to publish to the relay, the optimistic UI update is rolled back and the heart icon reverts to its unliked state.
+- **Localization Foundation (177 strings)**: Extracted 177 user-facing strings from `DMInboxView` (14 keys, `dm.*`), `FeedView` (45 keys, `feed.*`), and `SetupWizardView` (118 keys, `setup.*`) into `String(localized:)` calls with structured dot-notation keys. Created `Localizable.xcstrings` String Catalog with all English translations.
+- **Accessibility Labels**: Added VoiceOver labels and values to interactive elements across 6 key views: FeedView, ProfileView, SetupWizardView, DMInboxView, DMThreadView, and ComposeView.
+
+### Changed
+- **Debug Log Gating**: All `print()` calls containing sensitive data (private keys, tokens, relay URLs, wallet state) are now wrapped in `#if DEBUG` blocks across all Service files, preventing information leakage in release builds.
+- **Network Timeouts**: Added explicit `URLRequest` timeouts to external service calls (Mempool API, LNURL resolution, price fetches, Cashu mint operations) to prevent indefinite hangs on unreachable endpoints.
+- **Async Thumbnail Generation**: Video thumbnail generation in feed grid cells moved off the main thread to prevent UI hitches during scroll.
+- **Zap Invoice Validation**: `ZapService` now validates bolt11 invoice amounts before paying, rejecting invoices that don't match the requested zap amount.
+
+### Fixed
+- **Race Condition in Wallet Data**: Fixed a data race in `CashuService` where concurrent proof state checks could corrupt the in-memory proof set. Operations now serialize through an actor-isolated method.
+- **FeedView Accessibility Crash**: Fixed `feedService.isRelayConnected` (nonexistent property) to use `feedService.connectionStatus` for the relay status accessibility value.
+- **ViewerView macOS Build**: Wrapped iOS-only `relaySearchBar` reference in `#if os(iOS)` guard — `compactViewContent` is compiled for both platforms but `relaySearchBar` was only defined for iOS.
+- **Localizable.xcstrings Not Bundled**: Added the String Catalog to both macOS and iOS targets in the Xcode project so `String(localized:)` calls resolve to English translations instead of showing raw key names.
+- **ErrorNotificationBanner Not Compiled**: Added the new `ErrorNotificationBanner.swift` file to both Xcode target build phases (was created on disk but never referenced in the project).
+- **LNURL Endpoint URL Fix**: Corrected malformed callback URL construction in `LNURLService` that could drop query parameters on some Lightning address providers.
+
 ## [2.5.1 macOS / 1.1.1 iOS] - 2026-06-01
 
 > [!IMPORTANT]

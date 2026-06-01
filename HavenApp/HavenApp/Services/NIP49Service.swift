@@ -6,6 +6,10 @@ import Security
 /// NIP-49: Private Key Encryption
 /// Provides password-protected encryption of Nostr private keys
 /// Reference: https://nips.nostr.com/49
+///
+/// Encryption/decryption is handled by Go FFI bridge (scrypt + XChaCha20-Poly1305)
+/// for full NIP-49 spec compliance. A legacy AES-GCM fallback is retained for
+/// decrypting any ncryptsec values that may have been created by the old Swift implementation.
 struct NIP49Service {
 
     // MARK: - Error Types
@@ -34,71 +38,61 @@ struct NIP49Service {
 
     // MARK: - Encryption (nsec → ncryptsec)
 
-    /// Encrypts a private key (nsec) with a password to create ncryptsec format
-    /// - Parameters:
-    ///   - nsec: The bech32-encoded nsec private key
-    ///   - password: The user's password for encryption
-    /// - Returns: The encrypted key in ncryptsec format
+    /// Encrypts a private key (nsec) with a password to create ncryptsec format.
+    /// Uses Go FFI bridge for NIP-49 spec-compliant scrypt + XChaCha20-Poly1305.
     static func encrypt(nsec: String, password: String) throws -> String {
         guard !password.isEmpty else { throw NIP49Error.invalidPassword }
 
-        // Decode nsec to get raw key bytes
         let hexKey = try decodeNsec(nsec)
-        guard let keyData = Data(hex: hexKey) else { throw NIP49Error.decodingFailed }
 
-        // Generate random salt (16 bytes)
-        let salt = Data((0..<16).map { _ in UInt8.random(in: 0...255) })
-
-        // Derive encryption key using Argon2id-like approach
-        // For simplicity, use PBKDF2 which is available in CryptoKit
-        let passwordData = password.data(using: .utf8) ?? Data()
-        let derivedKey = PBKDF2.derive(
-            password: passwordData,
-            salt: salt,
-            iterations: 262144, // Recommended for Argon2id equivalent
-            keyLength: 32
-        )
-
-        // Generate random nonce (24 bytes for XChaCha20-Poly1305 equivalent)
-        let nonce = Data((0..<24).map { _ in UInt8.random(in: 0...255) })
-
-        // Encrypt using AES-256-GCM (CryptoKit native)
-        let sealedBox = try AES.GCM.seal(keyData, using: SymmetricKey(data: derivedKey), nonce: AES.GCM.Nonce(data: nonce))
-
-        // Combine: version (1 byte) + salt (16 bytes) + nonce (24 bytes) + ciphertext + tag
-        var payload = Data([1]) // version byte
-        payload.append(salt)
-        payload.append(nonce)
-        payload.append(sealedBox.ciphertext)
-        payload.append(sealedBox.tag)
-
-        // Bech32 encode as ncryptsec
-        guard let encoded = Bech32.encode(hrp: "ncryptsec", data: payload) else {
+        guard let resultCStr = EncryptNIP49C(
+            UnsafeMutablePointer(mutating: (hexKey as NSString).utf8String),
+            UnsafeMutablePointer(mutating: (password as NSString).utf8String)
+        ) else {
             throw NIP49Error.encodingFailed
         }
 
-        return encoded
+        let result = String(cString: resultCStr)
+        free(resultCStr)
+        return result
     }
 
     // MARK: - Decryption (ncryptsec → nsec)
 
-    /// Decrypts an ncryptsec key with a password to retrieve the private key
-    /// - Parameters:
-    ///   - ncryptsec: The encrypted key in ncryptsec format
-    ///   - password: The user's password for decryption
-    /// - Returns: The decrypted nsec (bech32-encoded private key)
+    /// Decrypts an ncryptsec key with a password to retrieve the private key.
+    /// Tries NIP-49 spec-compliant Go FFI first, then falls back to the legacy
+    /// AES-GCM method for backward compatibility with any existing stored values.
     static func decrypt(ncryptsec: String, password: String) throws -> String {
         guard !password.isEmpty else { throw NIP49Error.invalidPassword }
 
-        // Bech32 decode
+        // Try spec-compliant Go FFI first
+        if let resultCStr = DecryptNIP49C(
+            UnsafeMutablePointer(mutating: (ncryptsec as NSString).utf8String),
+            UnsafeMutablePointer(mutating: (password as NSString).utf8String)
+        ) {
+            let hexKey = String(cString: resultCStr)
+            free(resultCStr)
+
+            guard let nsec = Bech32.encode(hrp: "nsec", data: Data(hex: hexKey) ?? Data()) else {
+                throw NIP49Error.encodingFailed
+            }
+            return nsec
+        }
+
+        // Fallback: try legacy AES-GCM format for backward compatibility
+        return try decryptLegacy(ncryptsec: ncryptsec, password: password)
+    }
+
+    // MARK: - Legacy Decryption (backward compatibility)
+
+    /// Decrypts ncryptsec values created by the old PBKDF2 + AES-GCM implementation.
+    private static func decryptLegacy(ncryptsec: String, password: String) throws -> String {
         guard let decoded = Bech32.decode(ncryptsec.lowercased()),
               decoded.hrp == "ncryptsec" else {
             throw NIP49Error.invalidEncrypted
         }
 
         let payload = decoded.data
-
-        // Parse payload: version (1) + salt (16) + nonce (24) + ciphertext + tag (16)
         guard payload.count > 57 else { throw NIP49Error.invalidEncrypted }
 
         let version = payload[0]
@@ -109,7 +103,6 @@ struct NIP49Service {
         let ciphertext = payload[41..<(payload.count - 16)]
         let tag = payload[(payload.count - 16)...]
 
-        // Derive key using same parameters
         let passwordData = password.data(using: .utf8) ?? Data()
         let derivedKey = PBKDF2.derive(
             password: passwordData,
@@ -118,7 +111,6 @@ struct NIP49Service {
             keyLength: 32
         )
 
-        // Decrypt
         do {
             let sealedBox = try AES.GCM.SealedBox(
                 nonce: try AES.GCM.Nonce(data: Data(nonce)),
@@ -127,14 +119,14 @@ struct NIP49Service {
             )
             let decrypted = try AES.GCM.open(sealedBox, using: SymmetricKey(data: derivedKey))
 
-            // Encode as nsec
             guard let nsec = Bech32.encode(hrp: "nsec", data: decrypted) else {
                 throw NIP49Error.encodingFailed
             }
-
             return nsec
         } catch {
-            print("NIP49Service: AES-GCM decrypt failed (version=\(version), payloadSize=\(payload.count)): \(error)")
+            #if DEBUG
+            print("NIP49Service: Legacy AES-GCM decrypt also failed: \(error)")
+            #endif
             throw NIP49Error.decryptionFailed
         }
     }
@@ -155,19 +147,19 @@ struct NIP49Service {
         }
         return decoded.data.hex
     }
-    
+
     // MARK: - Keychain Storage for Password
-    
+
     /// Keychain service identifier
     private static let keychainService = "com.havenapp.nip49"
     private static let keychainAccount = "owner-key-password"
-    
+
     /// Stores the NIP-49 password securely in Keychain
     /// - Parameter password: The password to store
     /// - Returns: True if storage was successful
     static func storePasswordInKeychain(_ password: String) -> Bool {
         guard let passwordData = password.data(using: .utf8) else { return false }
-        
+
         // First, try to delete any existing item
         let deleteQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -175,7 +167,7 @@ struct NIP49Service {
             kSecAttrAccount as String: keychainAccount
         ]
         SecItemDelete(deleteQuery as CFDictionary)
-        
+
         // Add the new item
         let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -184,9 +176,9 @@ struct NIP49Service {
             kSecValueData as String: passwordData,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
-        
+
         let status = SecItemAdd(addQuery as CFDictionary, nil)
-        
+
         if status == errSecSuccess {
             #if DEBUG
             print("NIP49Service: Password stored successfully in Keychain")
@@ -199,7 +191,7 @@ struct NIP49Service {
             return false
         }
     }
-    
+
     /// Retrieves the NIP-49 password from Keychain
     /// - Returns: The stored password, or nil if not found
     static func getPasswordFromKeychain() -> String? {
@@ -210,10 +202,10 @@ struct NIP49Service {
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
-        
+
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        
+
         if status == errSecSuccess, let passwordData = result as? Data {
             return String(data: passwordData, encoding: .utf8)
         } else if status == errSecItemNotFound {
@@ -225,10 +217,10 @@ struct NIP49Service {
             print("NIP49Service: Error retrieving password from Keychain: \(status)")
             #endif
         }
-        
+
         return nil
     }
-    
+
     /// Deletes the NIP-49 password from Keychain
     /// - Returns: True if deletion was successful
     static func deletePasswordFromKeychain() -> Bool {
@@ -237,9 +229,9 @@ struct NIP49Service {
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: keychainAccount
         ]
-        
+
         let status = SecItemDelete(query as CFDictionary)
-        
+
         if status == errSecSuccess || status == errSecItemNotFound {
             #if DEBUG
             print("NIP49Service: Password deleted from Keychain")
@@ -252,33 +244,33 @@ struct NIP49Service {
             return false
         }
     }
-    
+
     /// Checks if a password is stored in Keychain
     /// - Returns: True if password exists
     static func hasStoredPassword() -> Bool {
         return getPasswordFromKeychain() != nil
     }
-    
+
     // MARK: - Per-Account Keychain Storage (whitelisted accounts)
-    
+
     /// Returns the Keychain account identifier namespaced by npub
     private static func keychainAccountId(forNpub npub: String) -> String {
         return "account-key-password-\(npub)"
     }
-    
+
     /// Stores the NIP-49 password for a specific npub in Keychain
     @discardableResult
     static func storePasswordInKeychain(_ password: String, forNpub npub: String) -> Bool {
         guard let passwordData = password.data(using: .utf8) else { return false }
         let accountId = keychainAccountId(forNpub: npub)
-        
+
         let deleteQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: accountId
         ]
         SecItemDelete(deleteQuery as CFDictionary)
-        
+
         let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -286,14 +278,14 @@ struct NIP49Service {
             kSecValueData as String: passwordData,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
-        
+
         let status = SecItemAdd(addQuery as CFDictionary, nil)
         #if DEBUG
         print("NIP49Service: Store password for npub \(npub.prefix(12))... status=\(status == errSecSuccess ? "ok" : "\(status)")")
         #endif
         return status == errSecSuccess
     }
-    
+
     /// Retrieves the NIP-49 password for a specific npub from Keychain
     static func getPasswordFromKeychain(forNpub npub: String) -> String? {
         let accountId = keychainAccountId(forNpub: npub)
@@ -304,16 +296,16 @@ struct NIP49Service {
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
-        
+
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        
+
         if status == errSecSuccess, let passwordData = result as? Data {
             return String(data: passwordData, encoding: .utf8)
         }
         return nil
     }
-    
+
     /// Removes the stored password for a specific npub from Keychain
     @discardableResult
     static func deletePasswordFromKeychain(forNpub npub: String) -> Bool {
@@ -328,7 +320,7 @@ struct NIP49Service {
     }
 }
 
-// MARK: - PBKDF2 Helper
+// MARK: - Legacy PBKDF2 Helper (retained for backward-compatible decryption)
 
 private struct PBKDF2 {
     static func derive(password: Data, salt: Data, iterations: Int, keyLength: Int) -> Data {

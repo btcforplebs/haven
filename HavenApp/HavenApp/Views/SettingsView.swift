@@ -580,7 +580,7 @@ struct SettingsView: View {
                     .onTapGesture {
                         PlatformClipboard.copy("npub1vxlhjzeqjjhmqdy4e8sndt8kzklqlnxzew2mtt8mtakvalsckp3qa0gnvx")
                     }
-                Link("Privacy Policy", destination: URL(string: "https://nostrvault.com/privacy.html")!)
+                Link("Privacy Policy", destination: URL(string: "https://nostrvault.app/privacy.html")!)
                     .font(.system(size: 10))
                     .foregroundColor(.havenPurple)
                     .padding(.top, 2)

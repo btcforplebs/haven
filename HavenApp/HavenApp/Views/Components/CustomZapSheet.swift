@@ -139,6 +139,8 @@ struct CustomZapSheet: View {
                         )
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("\(preset.sats) sats")
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
     }

@@ -55,6 +55,7 @@ targets:
         excludes:
           - "haven.dylib"
       - path: HavenApp/Views
+      - path: HavenApp/Localizable.xcstrings
       - path: Resources/Assets.xcassets
       - path: Resources/haven
       - path: Resources/templates
@@ -113,6 +114,7 @@ targets:
         excludes:
           - "haven.dylib"
       - path: HavenApp/Views
+      - path: HavenApp/Localizable.xcstrings
       - path: Resources/Assets.xcassets
       - path: Resources/haven
       - path: Resources/templates

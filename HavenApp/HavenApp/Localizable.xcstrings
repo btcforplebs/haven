@@ -1,0 +1,3045 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    " " : {
+
+    },
+    " icon in the top-right corner of your screen" : {
+
+    },
+    "--" : {
+
+    },
+    "–" : {
+
+    },
+    "?" : {
+
+    },
+    "·" : {
+
+    },
+    "(Tap to copy)" : {
+
+    },
+    "#%@" : {
+
+    },
+    "%@" : {
+
+    },
+    "%@ / %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ / %2$@"
+          }
+        }
+      }
+    },
+    "%@ %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ %2$@"
+          }
+        }
+      }
+    },
+    "%@ following" : {
+
+    },
+    "%@ in %@s" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ in %2$@s"
+          }
+        }
+      }
+    },
+    "%@ New Posts" : {
+
+    },
+    "%@ reposted" : {
+
+    },
+    "%@ sat/vB" : {
+
+    },
+    "%@ sats" : {
+
+    },
+    "%@: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@: %2$@"
+          }
+        }
+      }
+    },
+    "%@. %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@. %2$@"
+          }
+        }
+      }
+    },
+    "%@/%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@/%2$@"
+          }
+        }
+      }
+    },
+    "%@%%" : {
+
+    },
+    "•" : {
+
+    },
+    "+ %@ more" : {
+
+    },
+    "+%@" : {
+
+    },
+    "∞" : {
+
+    },
+    "😕" : {
+
+    },
+    "1 day" : {
+
+    },
+    "1 Hour" : {
+
+    },
+    "3 days" : {
+
+    },
+    "7 days" : {
+
+    },
+    "7 Days" : {
+
+    },
+    "12 Hours" : {
+
+    },
+    "14 days" : {
+
+    },
+    "14d" : {
+
+    },
+    "24 Hours" : {
+
+    },
+    "30 days" : {
+
+    },
+    "A previous Nostr Vault process is still running. Run the following command in Terminal to stop it, then relaunch the app." : {
+
+    },
+    "Abuse Reporting: npub1vxlh...g0nvx" : {
+
+    },
+    "Accent Theme" : {
+
+    },
+    "Account" : {
+
+    },
+    "Accounts" : {
+
+    },
+    "Actions" : {
+
+    },
+    "ACTIONS" : {
+
+    },
+    "Active" : {
+
+    },
+    "Active in your feed" : {
+
+    },
+    "Active Signing Method" : {
+
+    },
+    "Add a Cashu mint URL in Settings to enable the ecash wallet." : {
+
+    },
+    "Add a Nostr Wallet Connect URI in Settings to enable Lightning payments." : {
+
+    },
+    "Add Account" : {
+
+    },
+    "Add external Blossom servers. The relay will fetch from and mirror your media to these servers." : {
+
+    },
+    "Added Since (%@)" : {
+
+    },
+    "Additional Blossom Servers" : {
+
+    },
+    "Additional details (optional)" : {
+
+    },
+    "Amount: %@ sats" : {
+
+    },
+    "As long as your Haven relay is running and you have your nsec, your ecash is recoverable." : {
+
+    },
+    "Auto-Applied Blossom Servers" : {
+
+    },
+    "Auto-Mirror Media" : {
+
+    },
+    "Automatic Backups" : {
+
+    },
+    "Automatically download your media from mirrors when the relay starts" : {
+
+    },
+    "Available balance" : {
+
+    },
+    "Balance" : {
+
+    },
+    "BEARER INSTRUMENTS" : {
+
+    },
+    "BETA - EXPERIMENTAL" : {
+
+    },
+    "Bitcoin" : {
+
+    },
+    "Blacklisted" : {
+
+    },
+    "Blastr automatically broadcasts your local notes to these external relays." : {
+
+    },
+    "Blastr Configuration" : {
+
+    },
+    "Block Profile" : {
+
+    },
+    "Blocked" : {
+
+    },
+    "Blocked users' content is hidden from your feed. Spam and noise are filtered automatically." : {
+
+    },
+    "Blossom Import" : {
+
+    },
+    "Blossom Path" : {
+
+    },
+    "BROADCAST" : {
+
+    },
+    "Broadcast Relays" : {
+
+    },
+    "Broadcasting to %@ relay(s):" : {
+
+    },
+    "Bunker URI" : {
+
+    },
+    "Cached Files" : {
+
+    },
+    "Cancel" : {
+
+    },
+    "Cancel Import" : {
+
+    },
+    "Cashu ecash backed by your relay. Tokens are stored encrypted on your private relay for cross-device sync and recovery. Do not store large amounts." : {
+
+    },
+    "Cashu Ecash Wallet" : {
+
+    },
+    "Cashu is an open-source ecash protocol for Bitcoin. It lets you hold sats as digital bearer tokens — like digital cash — that are private, instant, and nearly free to transfer." : {
+
+    },
+    "Cashu Mint URL" : {
+
+    },
+    "Choose an accent color for the Nostr Vault interface. This will change the primary color and gradients across the application." : {
+
+    },
+    "Clear Cache" : {
+
+    },
+    "Clear Locks Only" : {
+
+    },
+    "Click the icon to get started" : {
+
+    },
+    "Close" : {
+
+    },
+    "Cloudflare Tunnel Setup" : {
+
+    },
+    "Configure your Mac relay in the 'Mac Relay' tab to automatically apply it here." : {
+
+    },
+    "Connect" : {
+
+    },
+    "Connect Remote Signer" : {
+
+    },
+    "Connecting..." : {
+
+    },
+    "CONTENT FILTERS" : {
+
+    },
+    "Counting blobs…" : {
+
+    },
+    "Counting events by kind…" : {
+
+    },
+    "Create Invoice" : {
+
+    },
+    "Create Token" : {
+
+    },
+    "Current" : {
+
+    },
+    "Danger Zone" : {
+
+    },
+    "Database" : {
+
+    },
+    "Debug" : {
+
+    },
+    "Default Zap Amount" : {
+
+    },
+    "Deleted" : {
+
+    },
+    "Deleting..." : {
+
+    },
+    "Derived Addresses" : {
+
+    },
+    "Destination address" : {
+
+    },
+    "Digital cash backed by your relay" : {
+
+    },
+    "Dismiss" : {
+
+    },
+    "DM relay preferences published to network" : {
+
+    },
+    "DM Relays" : {
+
+    },
+    "dm.compose.cancel" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel"
+          }
+        }
+      }
+    },
+    "dm.compose.ok" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OK"
+          }
+        }
+      }
+    },
+    "dm.compose.searchPlaceholder" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Search users..."
+          }
+        }
+      }
+    },
+    "dm.compose.send" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Send"
+          }
+        }
+      }
+    },
+    "dm.compose.sendFailed" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Failed to Send"
+          }
+        }
+      }
+    },
+    "dm.compose.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New Message"
+          }
+        }
+      }
+    },
+    "dm.compose.to" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "To:"
+          }
+        }
+      }
+    },
+    "dm.inbox.close" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Close"
+          }
+        }
+      }
+    },
+    "dm.inbox.empty.subtitle" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start an encrypted conversation\nwith the compose button above"
+          }
+        }
+      }
+    },
+    "dm.inbox.empty.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Messages Yet"
+          }
+        }
+      }
+    },
+    "dm.inbox.markAllRead" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mark all as read"
+          }
+        }
+      }
+    },
+    "dm.inbox.newMessage" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New Message"
+          }
+        }
+      }
+    },
+    "dm.inbox.noContent" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No message content"
+          }
+        }
+      }
+    },
+    "dm.inbox.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Messages"
+          }
+        }
+      }
+    },
+    "Do not send to a hardware wallet." : {
+
+    },
+    "Do not send to an exchange." : {
+
+    },
+    "DO NOT store significant amounts as ecash. Use this for small, everyday amounts you want to move quickly and privately." : {
+
+    },
+    "Download your media from external Blossom mirrors to local storage" : {
+
+    },
+    "Downloads your own Blossom media from active servers to your local relay for offline access." : {
+
+    },
+    "Each account can hold both a local key and a remote signer. Tap to manage signing. Swipe to remove." : {
+
+    },
+    "ECASH BALANCE" : {
+
+    },
+    "Ecash is best suited for spending money — smaller amounts you plan to use — not long-term savings." : {
+
+    },
+    "Ecash requires trusting the mint. This is fundamentally different from self-custodial Bitcoin:" : {
+
+    },
+    "ECASH TOKENS" : {
+
+    },
+    "Edit" : {
+
+    },
+    "Edit Profile" : {
+
+    },
+    "Encrypt with Password" : {
+
+    },
+    "Engine" : {
+
+    },
+    "Enter a Cashu mint URL to enable the ecash wallet. Example: https://mint.minibits.cash/Bitcoin" : {
+
+    },
+    "Enter a domain to make your relay publicly accessible. Leave blank for local-only. Accepts any format (https://, wss://, or bare domain)." : {
+
+    },
+    "Enter an npub to block it. Blocked profiles cannot interact with you." : {
+
+    },
+    "Enter Password" : {
+
+    },
+    "Enter the nsec for %@" : {
+
+    },
+    "Enter your Mac relay in any format — https://, wss://, or bare domain. All derived addresses below are computed automatically." : {
+
+    },
+    "Error" : {
+
+    },
+    "Error 404" : {
+
+    },
+    "EVENT ID" : {
+
+    },
+    "Events will be signed by the remote signer (NIP-46)." : {
+
+    },
+    "Events will be signed with the locally stored private key." : {
+
+    },
+    "Export" : {
+
+    },
+    "Export creates a compressed backup of all your notes. Import restores from a previously exported backup." : {
+
+    },
+    "Export creates a compressed backup of your images and videos. Import restores media from a previously exported backup." : {
+
+    },
+    "Export Media" : {
+
+    },
+    "Export Notes" : {
+
+    },
+    "Failed to load image" : {
+
+    },
+    "Failed to load video" : {
+
+    },
+    "Fee rate" : {
+
+    },
+    "Fee: %@ sats" : {
+
+    },
+    "Feed Dashboard" : {
+
+    },
+    "Feed Relays" : {
+
+    },
+    "FEED RELAYS" : {
+
+    },
+    "feed.action.post" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Post"
+          }
+        }
+      }
+    },
+    "feed.action.refresh" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Refresh Feed"
+          }
+        }
+      }
+    },
+    "feed.alert.sensitiveContent.cancel" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel"
+          }
+        }
+      }
+    },
+    "feed.alert.sensitiveContent.message" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The global media feed shows unmoderated content shared across the entire Nostr network. This may include sensitive, explicit, or NSFW media."
+          }
+        }
+      }
+    },
+    "feed.alert.sensitiveContent.proceed" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Proceed"
+          }
+        }
+      }
+    },
+    "feed.alert.sensitiveContent.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sensitive Content Warning"
+          }
+        }
+      }
+    },
+    "feed.empty.discovery.subtitle" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Follow more people on Nostr to build your extended network"
+          }
+        }
+      }
+    },
+    "feed.empty.discovery.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Discovery Feed"
+          }
+        }
+      }
+    },
+    "feed.empty.following.subtitle" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Follow npubs on Nostr to see their posts here"
+          }
+        }
+      }
+    },
+    "feed.empty.following.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Following Feed"
+          }
+        }
+      }
+    },
+    "feed.empty.initializingRelay" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Initializing relay"
+          }
+        }
+      }
+    },
+    "feed.empty.popular.subtitle" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not enough engagement data from relays.\nCheck back later or try refreshing."
+          }
+        }
+      }
+    },
+    "feed.empty.popular.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Popular Notes Found"
+          }
+        }
+      }
+    },
+    "feed.empty.relayStarting" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Relay Starting..."
+          }
+        }
+      }
+    },
+    "feed.help.autoLoadOff" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto-load Off"
+          }
+        }
+      }
+    },
+    "feed.help.autoLoadOn" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Auto-load On"
+          }
+        }
+      }
+    },
+    "feed.help.filterToFollows" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Filter to Follows"
+          }
+        }
+      }
+    },
+    "feed.help.filterToNonFollows" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Filter to Non-Follows"
+          }
+        }
+      }
+    },
+    "feed.help.followingMedia" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Following Media"
+          }
+        }
+      }
+    },
+    "feed.help.globalMedia" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Global Media"
+          }
+        }
+      }
+    },
+    "feed.help.hideEngagementStats" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide Engagement Stats"
+          }
+        }
+      }
+    },
+    "feed.help.hideReplies" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide Replies"
+          }
+        }
+      }
+    },
+    "feed.help.hideReposts" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Hide Reposts"
+          }
+        }
+      }
+    },
+    "feed.help.relayStatus" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Relay Status"
+          }
+        }
+      }
+    },
+    "feed.help.showEngagementStats" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show Engagement Stats"
+          }
+        }
+      }
+    },
+    "feed.help.showingFollowsOnly" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Showing Follows Only"
+          }
+        }
+      }
+    },
+    "feed.help.showingNonFollowsOnly" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Showing Non-Follows Only"
+          }
+        }
+      }
+    },
+    "feed.help.showReplies" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show Replies"
+          }
+        }
+      }
+    },
+    "feed.help.showReposts" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show Reposts"
+          }
+        }
+      }
+    },
+    "feed.loading.analyzingNetwork" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Analyzing Network"
+          }
+        }
+      }
+    },
+    "feed.loading.analyzingReactions" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Analyzing reactions, reposts, and zaps"
+          }
+        }
+      }
+    },
+    "feed.loading.fetchingFollows" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "fetching your follows"
+          }
+        }
+      }
+    },
+    "feed.loading.findingConnections" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "finding mutual connections"
+          }
+        }
+      }
+    },
+    "feed.loading.findingPopular" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Finding Popular Notes"
+          }
+        }
+      }
+    },
+    "feed.loading.indicator" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Loading..."
+          }
+        }
+      }
+    },
+    "feed.loading.patience" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This may take a moment"
+          }
+        }
+      }
+    },
+    "feed.loading.scoringEngagement" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "scoring engagement across relays"
+          }
+        }
+      }
+    },
+    "feed.loading.synchronizing" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Synchronizing"
+          }
+        }
+      }
+    },
+    "feed.media.empty.following" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your followers haven't shared any media yet."
+          }
+        }
+      }
+    },
+    "feed.media.empty.global" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No global media found on connected relays."
+          }
+        }
+      }
+    },
+    "feed.media.empty.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No Media Found"
+          }
+        }
+      }
+    },
+    "feed.media.showEarlier" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Show earlier"
+          }
+        }
+      }
+    },
+    "feed.note.loadingRepost" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Loading reposted note..."
+          }
+        }
+      }
+    },
+    "feed.share.message" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check out this note on Nostr"
+          }
+        }
+      }
+    },
+    "feed.share.subject" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nostr Note"
+          }
+        }
+      }
+    },
+    "Fetching note..." : {
+
+    },
+    "Find users, notes, hashtags and links\nOr paste a note1 or nevent1 ID" : {
+
+    },
+    "FOLLOWING" : {
+
+    },
+    "FOLLOWS YOU" : {
+
+    },
+    "Force Restart" : {
+
+    },
+    "Format: YYYY-MM-DD. Notes will be fetched starting from this date." : {
+
+    },
+    "Fund from Lightning" : {
+
+    },
+    "Generate Invoice" : {
+
+    },
+    "Get Started" : {
+
+    },
+    "GIF" : {
+
+    },
+    "Global Web of Trust" : {
+
+    },
+    "Go Back" : {
+
+    },
+    "Hashtags" : {
+
+    },
+    "Haven manages your Nostr identity, relay, and payments in one place. Ecash completes a three-layer payment stack — each layer suited for different use cases:" : {
+
+    },
+    "https://%@" : {
+
+    },
+    "I understand, continue" : {
+
+    },
+    "I will NOT send to a hardware wallet or exchange" : {
+
+    },
+    "If you sweep to a Ledger, Trezor, Coldcard, Coinbase, Kraken, or ANY custodial service, your Nostr npub is permanently tied to that wallet on the public blockchain. There is no way to reverse this." : {
+
+    },
+    "Import" : {
+
+    },
+    "Import Configuration" : {
+
+    },
+    "Import Key" : {
+
+    },
+    "Import Media" : {
+
+    },
+    "Import Notes" : {
+
+    },
+    "Import Progress" : {
+
+    },
+    "Important Security Warning" : {
+
+    },
+    "Importing Notes" : {
+
+    },
+    "Include as Blossom Mirror" : {
+
+    },
+    "Include in Blastr" : {
+
+    },
+    "Include in Import" : {
+
+    },
+    "Info" : {
+
+    },
+    "Insufficient funds after fees" : {
+
+    },
+    "Keep this key safe. Anyone with your nsec has full control of your Nostr identity." : {
+
+    },
+    "Key imported successfully!" : {
+
+    },
+    "Last sync %@ ago" : {
+
+    },
+    "LIGHTNING BALANCE" : {
+
+    },
+    "LIGHTNING BRIDGE" : {
+
+    },
+    "Link copied to clipboard" : {
+
+    },
+    "Links" : {
+
+    },
+    "Loading likes..." : {
+
+    },
+    "Loading media..." : {
+
+    },
+    "Loading replies…" : {
+
+    },
+    "Loading thread…" : {
+
+    },
+    "Loading video..." : {
+
+    },
+    "Loading zaps..." : {
+
+    },
+    "LOCAL GATEWAY RELAYS" : {
+
+    },
+    "Local Key" : {
+
+    },
+    "LOCAL RELAY SERVER CONSOLE" : {
+
+    },
+    "Look for the" : {
+
+    },
+    "Looking up note..." : {
+
+    },
+    "MAC RELAY SYNC" : {
+
+    },
+    "Mac Relay Sync Server" : {
+
+    },
+    "Mac Relay URL" : {
+
+    },
+    "Magic Paste" : {
+
+    },
+    "Media" : {
+
+    },
+    "Media (Blossom)" : {
+
+    },
+    "Media Mirroring" : {
+
+    },
+    "Media Missing" : {
+
+    },
+    "Message" : {
+
+    },
+    "Mirror from Servers" : {
+
+    },
+    "Mirror Now" : {
+
+    },
+    "Mirror to Blossom" : {
+
+    },
+    "Mirrored to Blossom" : {
+
+    },
+    "Mirroring to Blossom..." : {
+
+    },
+    "MUTUAL" : {
+
+    },
+    "My Profile" : {
+
+    },
+    "Network" : {
+
+    },
+    "Never" : {
+
+    },
+    "New" : {
+
+    },
+    "Newest: %@" : {
+
+    },
+    "NIP-04" : {
+
+    },
+    "NIP-17 encrypted DMs are sent to these relays. Your local Haven relay and Mac relay (if configured) are automatically added when publishing." : {
+
+    },
+    "No additional Blossom servers configured." : {
+
+    },
+    "No blocked accounts." : {
+
+    },
+    "No ecash tokens stored on relay." : {
+
+    },
+    "No Longer Following (%@)" : {
+
+    },
+    "No Mac Sync Relay Configured" : {
+
+    },
+    "No matching emojis found" : {
+
+    },
+    "No media found" : {
+
+    },
+    "No media on Blossom" : {
+
+    },
+    "No Mint Connected" : {
+
+    },
+    "No notes found" : {
+
+    },
+    "No other accounts" : {
+
+    },
+    "No profiles found" : {
+
+    },
+    "No replies yet" : {
+
+    },
+    "No results found" : {
+
+    },
+    "No signing key" : {
+
+    },
+    "No Wallet Connected" : {
+
+    },
+    "NOISE FILTERING" : {
+
+    },
+    "Nostr Vault" : {
+
+    },
+    "Nostr Vault lives in your menu bar" : {
+
+    },
+    "Nostr Vault v%@" : {
+
+    },
+    "Nostr Wallet Connect (NWC) URI" : {
+
+    },
+    "NOT a hardware wallet." : {
+
+    },
+    "NOT an exchange." : {
+
+    },
+    "Notes" : {
+
+    },
+    "Notes (JSONL)" : {
+
+    },
+    "Npub" : {
+
+    },
+    "npub1vxlhjzeqjjhmqdy4e8sndt8kzklqlnxzew2mtt8mtakvalsckp3qa0gnvx" : {
+
+    },
+    "nsec1..." : {
+
+    },
+    "Oldest: %@" : {
+
+    },
+    "Open the full window to adjust settings" : {
+
+    },
+    "Open the full window to view your feed" : {
+
+    },
+    "Open Window" : {
+
+    },
+    "Owner" : {
+
+    },
+    "Paid Externally" : {
+
+    },
+    "Paste the bunker:// connection string from your remote signer app." : {
+
+    },
+    "Paste the bunker:// URI from your remote signer app to connect it to this account." : {
+
+    },
+    "Paste your nostr+walletconnect:// URI here to enable sending Zaps directly from Nostr Vault." : {
+
+    },
+    "Pay from Ecash" : {
+
+    },
+    "Pay Invoice" : {
+
+    },
+    "People in this backup that you no longer follow." : {
+
+    },
+    "People you follow now that were not in this backup." : {
+
+    },
+    "Performance & Limits" : {
+
+    },
+    "pkill -9 haven" : {
+
+    },
+    "Please keep the app open." : {
+
+    },
+    "Port" : {
+
+    },
+    "Port %@ is currently in use. Stop the other process or change the port in Settings." : {
+
+    },
+    "Post" : {
+
+    },
+    "Posting note..." : {
+
+    },
+    "Private Key (nsec)" : {
+
+    },
+    "Private key stored" : {
+
+    },
+    "Profile" : {
+
+    },
+    "Push Server" : {
+
+    },
+    "Queries your local relay and external relays for all historical contact list events. Select one to view or restore." : {
+
+    },
+    "Quick Reactions" : {
+
+    },
+    "RAW EVENT" : {
+
+    },
+    "React" : {
+
+    },
+    "React with Custom Emoji" : {
+
+    },
+    "React with Emoji" : {
+
+    },
+    "RECEIVE" : {
+
+    },
+    "Receive notifications for mentions, replies, DMs, zaps, and more." : {
+
+    },
+    "Recent" : {
+
+    },
+    "Recover Following List" : {
+
+    },
+    "Recovered %@ sats of ecash" : {
+
+    },
+    "Redeem" : {
+
+    },
+    "Relay" : {
+
+    },
+    "Relay Dashboard" : {
+
+    },
+    "Relay Domain" : {
+
+    },
+    "RELAY STATUS" : {
+
+    },
+    "Relays" : {
+
+    },
+    "Remote Signer" : {
+
+    },
+    "Remote Signer (NIP-46)" : {
+
+    },
+    "Remote signer configured" : {
+
+    },
+    "Replies" : {
+
+    },
+    "Reply" : {
+
+    },
+    "reply to %@" : {
+
+    },
+    "Replying to %@..." : {
+
+    },
+    "Report & Block" : {
+
+    },
+    "Report Content" : {
+
+    },
+    "Reporting will also automatically block this user for you." : {
+
+    },
+    "Reposted" : {
+
+    },
+    "Request deletion of this post? Not all relays honor NIP-09 deletion requests." : {
+
+    },
+    "Reset" : {
+
+    },
+    "Restart Required" : {
+
+    },
+    "Restore from Relays" : {
+
+    },
+    "Restore media from a Blossom backup (.zip)" : {
+
+    },
+    "Restore notes from a Nostr Vault JSONL backup (.zip)" : {
+
+    },
+    "Restore This List" : {
+
+    },
+    "Retry" : {
+
+    },
+    "Reveal Private Key" : {
+
+    },
+    "sats" : {
+
+    },
+    "Save" : {
+
+    },
+    "Save & Restart Relay" : {
+
+    },
+    "Save all Blossom media files as a backup" : {
+
+    },
+    "Save all notes and metadata as a JSONL backup" : {
+
+    },
+    "Scanning cache…" : {
+
+    },
+    "Scanning for uploads" : {
+
+    },
+    "Search" : {
+
+    },
+    "Seed Relays" : {
+
+    },
+    "Send" : {
+
+    },
+    "SEND" : {
+
+    },
+    "Set up your relay and start storing your Nostr notes locally" : {
+
+    },
+    "Settings" : {
+
+    },
+    "Setup Incomplete" : {
+
+    },
+    "setup.action.cancel" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel"
+          }
+        }
+      }
+    },
+    "setup.action.continue" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Continue"
+          }
+        }
+      }
+    },
+    "setup.alert.error.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Setup Error"
+          }
+        }
+      }
+    },
+    "setup.alert.error.unknown" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "An unknown error occurred during setup"
+          }
+        }
+      }
+    },
+    "setup.alert.ok" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "OK"
+          }
+        }
+      }
+    },
+    "setup.complete.browse.connected" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connected to the Nostr network"
+          }
+        }
+      }
+    },
+    "setup.complete.browse.upgradeHint" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Re-run setup to unlock posting, DMs, and zaps"
+          }
+        }
+      }
+    },
+    "setup.complete.full.blossomActive" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Blossom media hosting active"
+          }
+        }
+      }
+    },
+    "setup.complete.full.dmsEnabled" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Encrypted DMs enabled"
+          }
+        }
+      }
+    },
+    "setup.complete.full.postsBroadcast" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Posts broadcast to the Nostr network"
+          }
+        }
+      }
+    },
+    "setup.complete.full.relayRunning" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your relay is running locally"
+          }
+        }
+      }
+    },
+    "setup.complete.launch" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Launch Nostr Vault"
+          }
+        }
+      }
+    },
+    "setup.complete.menuBarHint" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Look for the relay icon in your menu bar!"
+          }
+        }
+      }
+    },
+    "setup.complete.title.browse" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ready to Browse"
+          }
+        }
+      }
+    },
+    "setup.complete.title.full" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "You're All Set"
+          }
+        }
+      }
+    },
+    "setup.error.processKill.message" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A previous Nostr Vault process is still running. Run the following command in Terminal to stop it, then relaunch the app."
+          }
+        }
+      }
+    },
+    "setup.error.processKill.retry" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retry"
+          }
+        }
+      }
+    },
+    "setup.error.processKill.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Startup Error"
+          }
+        }
+      }
+    },
+    "setup.identity.browseHint" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your public key lets you follow your feed and see your profile."
+          }
+        }
+      }
+    },
+    "setup.identity.bunker.connect" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connect"
+          }
+        }
+      }
+    },
+    "setup.identity.bunker.disconnect" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Disconnect"
+          }
+        }
+      }
+    },
+    "setup.identity.bunkerConnected" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connected to remote signer"
+          }
+        }
+      }
+    },
+    "setup.identity.bunkerHint" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paste the bunker:// connection string from your signer app (e.g. nsec.app, Amber)"
+          }
+        }
+      }
+    },
+    "setup.identity.generateKeys" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New to Nostr? Generate Keys"
+          }
+        }
+      }
+    },
+    "setup.identity.invalidNpub" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter a valid npub (bech32-encoded public key)"
+          }
+        }
+      }
+    },
+    "setup.identity.invalidNsec" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Must be a valid nsec (starts with 'nsec')"
+          }
+        }
+      }
+    },
+    "setup.identity.label.bunker" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bunker URI"
+          }
+        }
+      }
+    },
+    "setup.identity.label.npub" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Public Key (npub)"
+          }
+        }
+      }
+    },
+    "setup.identity.label.nsec" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Private Key (nsec)"
+          }
+        }
+      }
+    },
+    "setup.identity.label.password" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Encryption Password"
+          }
+        }
+      }
+    },
+    "setup.identity.method.local.subtitle" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sign with your nsec"
+          }
+        }
+      }
+    },
+    "setup.identity.method.local.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Private Key"
+          }
+        }
+      }
+    },
+    "setup.identity.method.remote.subtitle" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connect via bunker://"
+          }
+        }
+      }
+    },
+    "setup.identity.method.remote.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remote Signer"
+          }
+        }
+      }
+    },
+    "setup.identity.nsecWarning" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Save your nsec somewhere safe! You need it to log in on other Nostr clients. It cannot be recovered."
+          }
+        }
+      }
+    },
+    "setup.identity.passwordHint" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Encrypts your key with NIP-49. You'll need this to unlock."
+          }
+        }
+      }
+    },
+    "setup.identity.passwordRequired" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Password is required to proceed"
+          }
+        }
+      }
+    },
+    "setup.identity.title.browse" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter Your Public Key"
+          }
+        }
+      }
+    },
+    "setup.identity.title.full" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enter Your Keys"
+          }
+        }
+      }
+    },
+    "setup.import.action" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import Notes"
+          }
+        }
+      }
+    },
+    "setup.import.alert.portConflict" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Port Already in Use"
+          }
+        }
+      }
+    },
+    "setup.import.alert.restoreFailed" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restore Failed"
+          }
+        }
+      }
+    },
+    "setup.import.alert.retry" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retry"
+          }
+        }
+      }
+    },
+    "setup.import.backupHint" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select a Nostr Vault backup (.zip or .json)"
+          }
+        }
+      }
+    },
+    "setup.import.cancelImport" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cancel Import"
+          }
+        }
+      }
+    },
+    "setup.import.chooseBackup" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose Backup File"
+          }
+        }
+      }
+    },
+    "setup.import.done" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Done!"
+          }
+        }
+      }
+    },
+    "setup.import.importing" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Importing..."
+          }
+        }
+      }
+    },
+    "setup.import.restoreSuccess" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Notes restored successfully!"
+          }
+        }
+      }
+    },
+    "setup.import.restoring" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Restoring..."
+          }
+        }
+      }
+    },
+    "setup.import.seedRelays" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Seed Relays"
+          }
+        }
+      }
+    },
+    "setup.import.skip" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skip — I'll start fresh"
+          }
+        }
+      }
+    },
+    "setup.import.startDate" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Start Date"
+          }
+        }
+      }
+    },
+    "setup.import.subtitle" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pull your existing posts from the Nostr network into your local relay."
+          }
+        }
+      }
+    },
+    "setup.import.tab.backup" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "From Backup"
+          }
+        }
+      }
+    },
+    "setup.import.tab.network" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "From Network"
+          }
+        }
+      }
+    },
+    "setup.import.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Bring Your Notes Home"
+          }
+        }
+      }
+    },
+    "setup.media.alert.importFailed" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Import Failed"
+          }
+        }
+      }
+    },
+    "setup.media.backupHint" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Select a Blossom backup (.zip)"
+          }
+        }
+      }
+    },
+    "setup.media.chooseArchive" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Choose Media Archive"
+          }
+        }
+      }
+    },
+    "setup.media.importing" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Importing media..."
+          }
+        }
+      }
+    },
+    "setup.media.importSuccess" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Media imported!"
+          }
+        }
+      }
+    },
+    "setup.media.label.blossomURL" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Blossom Server URL"
+          }
+        }
+      }
+    },
+    "setup.media.skip" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skip Media"
+          }
+        }
+      }
+    },
+    "setup.media.subtitle" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sync your images and videos from a Blossom server to your local relay."
+          }
+        }
+      }
+    },
+    "setup.media.syncAction" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Sync Media"
+          }
+        }
+      }
+    },
+    "setup.media.syncing" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Syncing..."
+          }
+        }
+      }
+    },
+    "setup.media.syncSuccess" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Media synced!"
+          }
+        }
+      }
+    },
+    "setup.media.tab.backup" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "From Backup"
+          }
+        }
+      }
+    },
+    "setup.media.tab.server" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "From Server"
+          }
+        }
+      }
+    },
+    "setup.media.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mirror Your Media"
+          }
+        }
+      }
+    },
+    "setup.nav.back" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Back"
+          }
+        }
+      }
+    },
+    "setup.notifications.directMessages" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Direct Messages"
+          }
+        }
+      }
+    },
+    "setup.notifications.enable" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Enable Notifications"
+          }
+        }
+      }
+    },
+    "setup.notifications.mentions" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mentions"
+          }
+        }
+      }
+    },
+    "setup.notifications.skip" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Not now"
+          }
+        }
+      }
+    },
+    "setup.notifications.subtitle" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Get notified about DMs, zaps, and mentions."
+          }
+        }
+      }
+    },
+    "setup.notifications.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Stay in the Loop"
+          }
+        }
+      }
+    },
+    "setup.notifications.zaps" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Zaps"
+          }
+        }
+      }
+    },
+    "setup.path.browse.description" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Explore Nostr read-only with just your public key. No posting, no signing. You can upgrade to full setup anytime."
+          }
+        }
+      }
+    },
+    "setup.path.browse.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Browse Mode"
+          }
+        }
+      }
+    },
+    "setup.path.full.description" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Post, DM, and zap. Import your existing notes and media. Requires your private key or a remote signer."
+          }
+        }
+      }
+    },
+    "setup.path.full.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Full Setup"
+          }
+        }
+      }
+    },
+    "setup.path.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "How do you want to use Nostr Vault?"
+          }
+        }
+      }
+    },
+    "setup.relay.diagram.iphone" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone"
+          }
+        }
+      }
+    },
+    "setup.relay.diagram.mac" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Mac"
+          }
+        }
+      }
+    },
+    "setup.relay.diagram.macRelay" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac Relay"
+          }
+        }
+      }
+    },
+    "setup.relay.diagram.network" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nostr Network"
+          }
+        }
+      }
+    },
+    "setup.relay.diagram.nostr" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nostr"
+          }
+        }
+      }
+    },
+    "setup.relay.diagram.public" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Public"
+          }
+        }
+      }
+    },
+    "setup.relay.diagram.relay" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Relay"
+          }
+        }
+      }
+    },
+    "setup.relay.ios.description1" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Running Nostr Vault on your Mac? Connect your iPhone to keep notes and DMs in sync across devices."
+          }
+        }
+      }
+    },
+    "setup.relay.ios.description2" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This is optional — the app works fully on its own."
+          }
+        }
+      }
+    },
+    "setup.relay.ios.hint" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Find this in Nostr Vault settings on your Mac."
+          }
+        }
+      }
+    },
+    "setup.relay.ios.label" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac Relay URL (optional)"
+          }
+        }
+      }
+    },
+    "setup.relay.ios.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connect to Your Mac Relay"
+          }
+        }
+      }
+    },
+    "setup.relay.mac.description1" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Mac runs a personal relay that stores everything locally. Posts always reach the Nostr network."
+          }
+        }
+      }
+    },
+    "setup.relay.mac.description2" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Add a domain to make your relay accessible from other devices."
+          }
+        }
+      }
+    },
+    "setup.relay.mac.hint" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Leave blank for local only. Configurable later in Settings."
+          }
+        }
+      }
+    },
+    "setup.relay.mac.label" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Relay Domain (optional)"
+          }
+        }
+      }
+    },
+    "setup.relay.mac.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your Personal Relay"
+          }
+        }
+      }
+    },
+    "setup.relay.skip" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skip — configure later"
+          }
+        }
+      }
+    },
+    "setup.wallet.cashu.hint" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tokens stored encrypted on your private relay"
+          }
+        }
+      }
+    },
+    "setup.wallet.cashu.label" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cashu Mint URL"
+          }
+        }
+      }
+    },
+    "setup.wallet.cashu.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Cashu Ecash"
+          }
+        }
+      }
+    },
+    "setup.wallet.lightning.connected" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connected"
+          }
+        }
+      }
+    },
+    "setup.wallet.lightning.connecting" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connecting..."
+          }
+        }
+      }
+    },
+    "setup.wallet.lightning.failed" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Failed to connect"
+          }
+        }
+      }
+    },
+    "setup.wallet.lightning.hint" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Works with Alby, Zeus, Mutiny, and other NWC wallets"
+          }
+        }
+      }
+    },
+    "setup.wallet.lightning.label" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nostr Wallet Connect URI"
+          }
+        }
+      }
+    },
+    "setup.wallet.lightning.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lightning (NWC)"
+          }
+        }
+      }
+    },
+    "setup.wallet.skip" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Skip — set up later"
+          }
+        }
+      }
+    },
+    "setup.wallet.subtitle" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connect a wallet to send zaps, or set up ecash. Both optional — configurable later in Settings."
+          }
+        }
+      }
+    },
+    "setup.wallet.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lightning + Ecash"
+          }
+        }
+      }
+    },
+    "setup.welcome.appName" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nostr Vault"
+          }
+        }
+      }
+    },
+    "setup.welcome.getStarted" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Get Started"
+          }
+        }
+      }
+    },
+    "setup.welcome.subtitle1" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A Nostr client with a built-in personal relay."
+          }
+        }
+      }
+    },
+    "setup.welcome.subtitle2" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your posts go everywhere. Your data stays with you."
+          }
+        }
+      }
+    },
+    "Show %@ more %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Show %1$@ more %2$@"
+          }
+        }
+      }
+    },
+    "Show more" : {
+
+    },
+    "Snapshots are saved automatically when your following list changes. Up to 50 are kept." : {
+
+    },
+    "Some changes require a relay restart to take effect." : {
+
+    },
+    "Some messages use NIP-04 (legacy encryption). New messages default to NIP-17." : {
+
+    },
+    "Spam Filter" : {
+
+    },
+    "Startup Error" : {
+
+    },
+    "Statistics" : {
+
+    },
+    "Summary" : {
+
+    },
+    "Support & Abuse Reporting" : {
+
+    },
+    "Sweep Wallet" : {
+
+    },
+    "Sweeping to a hardware wallet or exchange creates a permanent on-chain link between your Bitcoin and your Nostr identity. This cannot be undone." : {
+
+    },
+    "Sweeping your wallet requires careful consideration" : {
+
+    },
+    "Swept!" : {
+
+    },
+    "Switch" : {
+
+    },
+    "Sync" : {
+
+    },
+    "Sync Now" : {
+
+    },
+    "Sync Now fetches notes missed since the last sync. Full Resync resets the timestamp and re-fetches everything from the beginning." : {
+
+    },
+    "System Logs" : {
+
+    },
+    "Tap \"Scan Relays\" to search for historical contact lists." : {
+
+    },
+    "Tap to complete setup" : {
+
+    },
+    "Tap to complete setup and start your relay." : {
+
+    },
+    "The Cashu protocol uses Blind Diffie-Hellman key exchange (BDHKE) so the mint signs your tokens without seeing them:" : {
+
+    },
+    "The feed reads from multiple relays to build your timeline. Connect to relays your followers are actively using." : {
+
+    },
+    "The import process will fetch your own notes and notes where you are tagged. Make sure you have your npub set correctly in the Identity tab." : {
+
+    },
+    "The JSON file containing relays to broadcast notes to." : {
+
+    },
+    "The Lightning Bridge lets you move sats between Lightning and Ecash in two taps. Fund ecash from Lightning for spending, cash out back to Lightning when you want." : {
+
+    },
+    "The relay listens on all network interfaces (0.0.0.0). Default port is 3355." : {
+
+    },
+    "These limits help protect your relay from spam and abuse." : {
+
+    },
+    "This action cannot be undone. All your relay data will be lost and the app will quit." : {
+
+    },
+    "This Cashu implementation is experimental. Known limitations:" : {
+
+    },
+    "This may take a moment" : {
+
+    },
+    "This user hasn't configured a lightning address, so they can't receive zaps." : {
+
+    },
+    "This will remove all cached images, videos, and thumbnails. Blossom media will not be affected. Files will be re-downloaded as needed." : {
+
+    },
+    "This will replace your current %@ follows with %@ follows from this backup and publish the updated list to your relays." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This will replace your current %1$@ follows with %2$@ follows from this backup and publish the updated list to your relays."
+          }
+        }
+      }
+    },
+    "This will replace your current %@ follows with %@ follows from this snapshot and publish the updated list to your relays." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "This will replace your current %1$@ follows with %2$@ follows from this snapshot and publish the updated list to your relays."
+          }
+        }
+      }
+    },
+    "This will stop the relay, delete all data (database, logs), and reset settings to default." : {
+
+    },
+    "To keep the tunnel running in the background, use `brew services start cloudflared` or add it to your login items." : {
+
+    },
+    "To report objectionable content or abusive users, contact the developer via Nostr" : {
+
+    },
+    "To:" : {
+
+    },
+    "Total Blobs" : {
+
+    },
+    "Total Events" : {
+
+    },
+    "Total Size" : {
+
+    },
+    "Total Storage Used" : {
+
+    },
+    "Transaction ID" : {
+
+    },
+    "Trending" : {
+
+    },
+    "Try a different search term" : {
+
+    },
+    "Try Again" : {
+
+    },
+    "Try changing your filter settings" : {
+
+    },
+    "TTL: %@" : {
+
+    },
+    "Unknown" : {
+
+    },
+    "Unknown Format" : {
+
+    },
+    "Unliking in %@s" : {
+
+    },
+    "Upload" : {
+
+    },
+    "URL of the push notification server. Only change this if you self-host your own push server." : {
+
+    },
+    "Users" : {
+
+    },
+    "Version %@" : {
+
+    },
+    "Video" : {
+
+    },
+    "View on mempool" : {
+
+    },
+    "Waiting for payment to confirm..." : {
+
+    },
+    "Warning" : {
+
+    },
+    "WebSocket Sync" : {
+
+    },
+    "WebSocket sync runs automatically whenever the app is foregrounded. Enabling Import, Blastr, or Blossom Mirror adds your Mac relay to those lists so outbound traffic also reaches your personal relay." : {
+
+    },
+    "Welcome to Nostr Vault" : {
+
+    },
+    "What's happening?" : {
+
+    },
+    "When autoplay is off, videos show a thumbnail until tapped. Cache TTL controls how long downloaded media is kept before automatic cleanup. Clearing the cache will remove downloaded remote images but won't touch your local Blossom data." : {
+
+    },
+    "Why are you reporting this?" : {
+
+    },
+    "WoT determines who can post to your inbox and chat relays. Lower depth is more private." : {
+
+    },
+    "Write a message..." : {
+
+    },
+    "wss://%@" : {
+
+    },
+    "YOU" : {
+
+    },
+    "Your ecash tokens are stored encrypted on your Haven private relay using NIP-60. Unlike other wallets that depend on third-party relays, your tokens live on infrastructure you control:" : {
+
+    },
+    "Your Nostr key is a valid Bitcoin Taproot key. This address is derived deterministically from your npub via BIP-341 — no separate seed phrase needed." : {
+
+    },
+    "Your personal Mac Sync Relay is automatically applied as a Blossom mirror. No manual setup required." : {
+
+    },
+    "Your Personal Nostr Relay" : {
+
+    },
+    "Your Private Key (nsec)" : {
+
+    },
+    "Your relay lives here" : {
+
+    },
+    "Zap %@" : {
+
+    },
+    "Zap %@ sats" : {
+
+    },
+    "Zap Amount" : {
+
+    }
+  },
+  "version" : "1.0"
+}

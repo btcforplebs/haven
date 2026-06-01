@@ -73,10 +73,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             // doesn't redundantly call refreshAll() on its next onAppear.
             NostrService.shared.lastForegroundReconnectTime = Date()
             let config = ConfigService.shared.config
-            var urls = [
-                URL(string: config.nostrURL)!,
-                URL(string: config.nostrURL + "/inbox")!
-            ]
+            var urls = [config.nostrURL, config.nostrURL + "/inbox"].compactMap { URL(string: $0) }
+            guard !urls.isEmpty else { return }
             let macURL = config.macRelayURL.trimmingCharacters(in: .whitespacesAndNewlines)
             if !macURL.isEmpty, let macInbox = URL(string: macURL + "/inbox") {
                 urls.append(macInbox)

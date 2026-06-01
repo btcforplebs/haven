@@ -51,7 +51,9 @@ class PriceService: ObservableObject {
         guard let url = URL(string: "https://api.kraken.com/0/public/Ticker?pair=XBTUSD") else { return nil }
 
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 10
+            let (data, _) = try await URLSession.shared.data(for: request)
             let decoder = JSONDecoder()
             let response = try decoder.decode(KrakenResponse.self, from: data)
 
@@ -73,7 +75,9 @@ class PriceService: ObservableObject {
         guard let url = URL(string: "https://www.bitstamp.net/api/v2/ticker/btcusd/") else { return nil }
 
         do {
-            let (data, _) = try await URLSession.shared.data(from: url)
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 10
+            let (data, _) = try await URLSession.shared.data(for: request)
             let decoder = JSONDecoder()
             let response = try decoder.decode(BitstampResponse.self, from: data)
 

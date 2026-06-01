@@ -26,6 +26,12 @@ class ZapService: ObservableObject {
     /// Executes a full Zap flow: LNURL -> Zap Request -> Invoice -> NWC Payment
     func zapNote(noteId: String, notePubkey: String, lud16: String, amountSats: Int? = nil, message: String = "Zap from Nostr Vault") async throws {
         let amountSats = amountSats ?? (ConfigService.shared.config.defaultZapAmount / 1000)
+        guard amountSats > 0 else {
+            throw ZapError.paymentFailed("Zap amount must be greater than 0")
+        }
+        guard amountSats <= 10_000_000 else {
+            throw ZapError.paymentFailed("Zap amount exceeds safety limit")
+        }
         let amountMsat = amountSats * 1000
         
         let recipientName = NostrService.shared.profiles[notePubkey]?.bestName ?? String(notePubkey.prefix(8))

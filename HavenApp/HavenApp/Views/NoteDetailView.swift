@@ -532,7 +532,7 @@ struct NoteDetailView: View {
         isLoadingReplies = true
 
         // Try local relay AND external relays to find replies
-        var relayURLs: [URL] = [URL(string: configService.config.nostrURL)!]
+        var relayURLs: [URL] = [configService.config.nostrURL].compactMap { URL(string: $0) }
         let externalStrs = configService.config.feedRelays.isEmpty ? [
             "wss://relay.damus.io",
             "wss://relay.primal.net",
@@ -693,7 +693,7 @@ struct NoteDetailView: View {
         detailedReposts.removeAll()
         detailedZaps.removeAll()
 
-        var relayURLs: [URL] = [URL(string: configService.config.nostrURL)!]
+        var relayURLs: [URL] = [configService.config.nostrURL].compactMap { URL(string: $0) }
         let externalStrs = configService.config.feedRelays.isEmpty ? [
             "wss://relay.damus.io",
             "wss://relay.primal.net",
@@ -761,7 +761,7 @@ struct NoteDetailView: View {
         guard !noteIds.isEmpty else { return }
         isLoadingExpandedEngagement = true
 
-        var relayURLs: [URL] = [URL(string: configService.config.nostrURL)!]
+        var relayURLs: [URL] = [configService.config.nostrURL].compactMap { URL(string: $0) }
         let externalStrs = configService.config.feedRelays.isEmpty ? [
             "wss://relay.damus.io",
             "wss://relay.primal.net",
@@ -999,7 +999,7 @@ struct NoteDetailView: View {
         guard !ancestorIds.isEmpty, !isLoadingParents else { return }
         isLoadingParents = true
 
-        var relayURLs: [URL] = [URL(string: configService.config.nostrURL)!]
+        var relayURLs: [URL] = [configService.config.nostrURL].compactMap { URL(string: $0) }
         let externalStrs = configService.config.feedRelays.isEmpty ? [
             "wss://relay.damus.io",
             "wss://relay.primal.net",
@@ -1630,8 +1630,8 @@ struct NoteDetailViewWrapper: View {
             hexId = noteId
         }
 
-        let relays = [URL(string: configService.config.nostrURL)!] + 
-                     [URL(string: "wss://relay.damus.io")!, URL(string: "wss://relay.primal.net")!]
+        let relays = [configService.config.nostrURL, "wss://relay.damus.io", "wss://relay.primal.net"].compactMap { URL(string: $0) }
+        guard !relays.isEmpty else { return }
 
         for url in relays {
             let client = WebSocketClient()

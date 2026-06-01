@@ -17,6 +17,7 @@
 		0BDACF2A52FF38A77AFC41F0 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = AECE3C16F322D12D0CC02FC1 /* SceneDelegate.swift */; };
 		0EB42E4E52C93FD4809FB152 /* ComposeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F4167692AA94E7EC99B29BD /* ComposeView.swift */; };
 		10E6C6B7E07DA9D13ABCF3F8 /* NotificationNames.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04523F59A639178480E832F1 /* NotificationNames.swift */; };
+		13D725A196B255A2840F5D13 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 267CA8F66B906BCC33FDC831 /* Localizable.xcstrings */; };
 		14ABF30BD7FF762D64D8EE9A /* NostrEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3D0631CF48FD1659E6F1005 /* NostrEvent.swift */; };
 		153C669E4280A9BDBDE81676 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCB7EF5F402D9835CC63612F /* DashboardView.swift */; };
 		181A20D1BDF43139FC45DAD7 /* NIP44Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC4BE714B3E17900FD46C8BF /* NIP44Service.swift */; };
@@ -120,6 +121,7 @@
 		BB0000000000000000000001 /* MediaCacheService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000003 /* MediaCacheService.swift */; };
 		BB0000000000000000000002 /* MediaCacheService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000000000000000000003 /* MediaCacheService.swift */; };
 		BBADE21A4A5A36ACE752BE4A /* FeedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3041B6BA67CC97B2AC442E6D /* FeedView.swift */; };
+		BD4E6E9BAACB638E67D0FED1 /* ErrorNotificationBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D0B7F6F2066869547D307CB /* ErrorNotificationBanner.swift */; };
 		BMC0000000000000000000002 /* BlossomMediaCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = BMC0000000000000000000001 /* BlossomMediaCache.swift */; };
 		BMC0000000000000000000003 /* BlossomMediaCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = BMC0000000000000000000001 /* BlossomMediaCache.swift */; };
 		C3D4E5F6071829304150A1B2 /* FeedActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6071829304150 /* FeedActions.swift */; };
@@ -128,8 +130,6 @@
 		CA497CFA23450F95D10AA7F8 /* NIP04Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7167339BB13F4557E0E0BB77 /* NIP04Service.swift */; };
 		CC0000000000000000000001 /* ZapNotificationBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000003 /* ZapNotificationBanner.swift */; };
 		CC0000000000000000000002 /* ZapNotificationBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000003 /* ZapNotificationBanner.swift */; };
-		F2E1D0C9B8A7F6E5D4C3B2A1 /* CustomZapSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D0E1F2 /* CustomZapSheet.swift */; };
-		F2E1D0C9B8A7F6E5D4C3B2A2 /* CustomZapSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D0E1F2 /* CustomZapSheet.swift */; };
 		CDCA7BD2C08A31E082391BD4 /* NostrEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3D0631CF48FD1659E6F1005 /* NostrEvent.swift */; };
 		CE658646406692011C5ACEF1 /* QuotedNoteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0470608431CE649B6E55F7D /* QuotedNoteView.swift */; };
 		CS2000000000000000000001 /* CashuModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = CS1000000000000000000001 /* CashuModels.swift */; };
@@ -151,6 +151,7 @@
 		DDF232D616C179F4250BAA90 /* CachedAsyncImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E04A276931F29CD944A3474 /* CachedAsyncImage.swift */; };
 		E0D882CB85829D6B7D8940E5 /* NostrContentFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF76B5373E734C5934402DBD /* NostrContentFormatter.swift */; };
 		E2389BDAE865939E68BC3A87 /* NIP17Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD9140488955952DAF1FB978 /* NIP17Service.swift */; };
+		E241786193DC5D3282DDCEAD /* ErrorNotificationBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D0B7F6F2066869547D307CB /* ErrorNotificationBanner.swift */; };
 		E50C4B4F8787584FC7E29EA2 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 848045286D78E78658D43BE3 /* MenuBarView.swift */; };
 		EB0000000000000000000002 /* EventBroadcastSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB0000000000000000000001 /* EventBroadcastSheet.swift */; };
 		EB0000000000000000000003 /* EventBroadcastSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB0000000000000000000001 /* EventBroadcastSheet.swift */; };
@@ -162,9 +163,12 @@
 		F0694D267F5D22ACDBC17561 /* NIP44Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC4BE714B3E17900FD46C8BF /* NIP44Service.swift */; };
 		F1279E34C9790D996125E66C /* DMService.swift in Sources */ = {isa = PBXBuildFile; fileRef = CADB0CCFC9247268CD1B658A /* DMService.swift */; };
 		F22FA656E63FA88BF7E97461 /* CachedAsyncImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E04A276931F29CD944A3474 /* CachedAsyncImage.swift */; };
+		F2E1D0C9B8A7F6E5D4C3B2A1 /* CustomZapSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D0E1F2 /* CustomZapSheet.swift */; };
+		F2E1D0C9B8A7F6E5D4C3B2A2 /* CustomZapSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D0E1F2 /* CustomZapSheet.swift */; };
 		F869E49FB6A5FA8DDFC1A20C /* StatsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05E22622B26A3F1A5C9D0A2A /* StatsService.swift */; };
 		F909E9664DAB54DA38575736 /* WelcomeWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34B22EE405098B9706D5B1D8 /* WelcomeWindowView.swift */; };
 		F909FCD41DFC0995A6916DD8 /* FeedMediaViewer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EDBCA3BC62E9A4C8AA9E128 /* FeedMediaViewer.swift */; };
+		FA64BE29622101490876E23C /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = 267CA8F66B906BCC33FDC831 /* Localizable.xcstrings */; };
 		FB2000000000000000000001 /* FollowingSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB1000000000000000000001 /* FollowingSnapshot.swift */; };
 		FB2000000000000000000002 /* FollowingBackupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB1000000000000000000002 /* FollowingBackupService.swift */; };
 		FB2000000000000000000003 /* FollowingBackupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB1000000000000000000003 /* FollowingBackupView.swift */; };
@@ -198,6 +202,7 @@
 		1F4167692AA94E7EC99B29BD /* ComposeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposeView.swift; sourceTree = "<group>"; };
 		2181DC8AEE2B3F8376683F88 /* UGCReportingDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UGCReportingDialog.swift; sourceTree = "<group>"; };
 		22D8D67DB985CB4EA94E4FAF /* RelayProcessManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelayProcessManager.swift; sourceTree = "<group>"; };
+		267CA8F66B906BCC33FDC831 /* Localizable.xcstrings */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.json.xcstrings; name = Localizable.xcstrings; path = HavenApp/Localizable.xcstrings; sourceTree = "<group>"; };
 		27A87225270090D65AC98D48 /* libhaven.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; name = libhaven.a; path = build/libhaven.a; sourceTree = SDKROOT; };
 		2B14053AFA5E916B43335BEE /* LNURLService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LNURLService.swift; sourceTree = "<group>"; };
 		3041B6BA67CC97B2AC442E6D /* FeedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedView.swift; sourceTree = "<group>"; };
@@ -205,6 +210,7 @@
 		3CB15AE080BDC0999543399A /* WebSocketClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebSocketClient.swift; sourceTree = "<group>"; };
 		4AB6A6872532B023E705FC6C /* RelayListEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelayListEditor.swift; sourceTree = "<group>"; };
 		4C6F73BF6DECD70643354714 /* FloatingArrowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingArrowController.swift; sourceTree = "<group>"; };
+		4D0B7F6F2066869547D307CB /* ErrorNotificationBanner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ErrorNotificationBanner.swift; sourceTree = "<group>"; };
 		51EA54117C5443C0DA93781D /* HAVEN.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = HAVEN.app; path = "Nostr Vault.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		5E687B37FB00F4ED20723DBB /* HavenApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HavenApp.swift; sourceTree = "<group>"; };
 		649EE87FE3A42105E4EC17E9 /* haven */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.executable"; path = haven; sourceTree = "<group>"; };
@@ -240,6 +246,7 @@
 		9410075B1BE7FC5BBAA601AD /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		A0470608431CE649B6E55F7D /* QuotedNoteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuotedNoteView.swift; sourceTree = "<group>"; };
 		A1B2C3D4E5F6071829304150 /* FeedActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedActions.swift; sourceTree = "<group>"; };
+		A1B2C3D4E5F6A7B8C9D0E1F2 /* CustomZapSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomZapSheet.swift; sourceTree = "<group>"; };
 		A271B5E3364858651DC05603 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		A3192A668A74BAFF6F4B60FC /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		A3DD3ED79F874383BC2F54F2 /* VideoPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPlayerView.swift; sourceTree = "<group>"; };
@@ -256,7 +263,6 @@
 		C3D0631CF48FD1659E6F1005 /* NostrEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NostrEvent.swift; sourceTree = "<group>"; };
 		CADB0CCFC9247268CD1B658A /* DMService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = DMService.swift; path = HavenApp/Services/DMService.swift; sourceTree = "<group>"; };
 		CC0000000000000000000003 /* ZapNotificationBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZapNotificationBanner.swift; sourceTree = "<group>"; };
-		A1B2C3D4E5F6A7B8C9D0E1F2 /* CustomZapSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomZapSheet.swift; sourceTree = "<group>"; };
 		CD9140488955952DAF1FB978 /* NIP17Service.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = NIP17Service.swift; path = HavenApp/Services/NIP17Service.swift; sourceTree = "<group>"; };
 		CS1000000000000000000001 /* CashuModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CashuModels.swift; sourceTree = "<group>"; };
 		CS1000000000000000000002 /* CashuService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CashuService.swift; sourceTree = "<group>"; };
@@ -342,9 +348,19 @@
 				SP1000000000000000000002 /* WalletView.swift */,
 				CS1000000000000000000003 /* WalletCashuTab.swift */,
 				34B22EE405098B9706D5B1D8 /* WelcomeWindowView.swift */,
+				1B5E62121D53EB6B61388736 /* Components */,
 			);
 			name = Views;
 			path = HavenApp/Views;
+			sourceTree = "<group>";
+		};
+		1B5E62121D53EB6B61388736 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				4D0B7F6F2066869547D307CB /* ErrorNotificationBanner.swift */,
+			);
+			name = Components;
+			path = Components;
 			sourceTree = "<group>";
 		};
 		2266412EFA43E3675FD9D4F9 /* Services */ = {
@@ -393,13 +409,6 @@
 			name = HavenApp;
 			sourceTree = "<group>";
 		};
-		4D4FD437C63EB19F3EF782D9 /* Components */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			name = Components;
-			sourceTree = "<group>";
-		};
 		51DFAECCE77ECC30197B3D1B /* haven */ = {
 			isa = PBXGroup;
 			children = (
@@ -412,6 +421,7 @@
 			isa = PBXGroup;
 			children = (
 				DD76EC8604AB22E6BFCF8EBE /* Views */,
+				267CA8F66B906BCC33FDC831 /* Localizable.xcstrings */,
 			);
 			name = HavenApp;
 			sourceTree = "<group>";
@@ -439,7 +449,7 @@
 				2F6458DDD6182931FDCAB6E1 /* Frameworks */,
 				5A21732AE3ED1711ABA42459 /* Products */,
 				57C46A4214CF004FAFC6D86F /* HavenApp */,
-				A0657B8080803873E17EDB1E,
+				A0657B8080803873E17EDB1E /*  */,
 			);
 			sourceTree = "<group>";
 		};
@@ -452,7 +462,7 @@
 			path = Resources;
 			sourceTree = "<group>";
 		};
-		A0657B8080803873E17EDB1E = {
+		A0657B8080803873E17EDB1E /*  */ = {
 			isa = PBXGroup;
 			children = (
 				FC8D5EC67EA15B841A5A677B /* Users */,
@@ -517,7 +527,6 @@
 		DD76EC8604AB22E6BFCF8EBE /* Views */ = {
 			isa = PBXGroup;
 			children = (
-				4D4FD437C63EB19F3EF782D9 /* Components */,
 			);
 			name = Views;
 			sourceTree = "<group>";
@@ -659,6 +668,7 @@
 				02C56DADF8359B80C31AFCF8 /* Assets.xcassets in Resources */,
 				87D56536906D88D1C28BD2E2 /* PrivacyInfo.xcprivacy in Resources */,
 				18EE26703E5765D972FEE57B /* templates in Resources */,
+				FA64BE29622101490876E23C /* Localizable.xcstrings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -669,6 +679,7 @@
 				37D16CFE232E4B8997174675 /* Assets.xcassets in Resources */,
 				4980734C45973D0525500813 /* PrivacyInfo.xcprivacy in Resources */,
 				423F5321A3A3F1B60E407B0D /* templates in Resources */,
+				13D725A196B255A2840F5D13 /* Localizable.xcstrings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -804,6 +815,7 @@
 				FB2000000000000000000001 /* FollowingSnapshot.swift in Sources */,
 				FB2000000000000000000002 /* FollowingBackupService.swift in Sources */,
 				FB2000000000000000000003 /* FollowingBackupView.swift in Sources */,
+				BD4E6E9BAACB638E67D0FED1 /* ErrorNotificationBanner.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -892,6 +904,7 @@
 				FB3000000000000000000001 /* FollowingSnapshot.swift in Sources */,
 				FB3000000000000000000002 /* FollowingBackupService.swift in Sources */,
 				FB3000000000000000000003 /* FollowingBackupView.swift in Sources */,
+				E241786193DC5D3282DDCEAD /* ErrorNotificationBanner.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

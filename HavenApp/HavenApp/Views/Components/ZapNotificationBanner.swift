@@ -162,6 +162,7 @@ struct UnlikePill: View {
         )
         .foregroundColor(.white)
         .buttonStyle(.plain)
+        .accessibilityLabel("Unliking in \(max(1, Int(ceil(timeRemaining)))) seconds")
     }
 }
 
@@ -192,6 +193,8 @@ struct ZapPill: View {
                 .shadow(color: Color.black.opacity(0.4), radius: 8, x: 0, y: 4)
         )
         .foregroundColor(.white)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(pillLabel), \(notification.amountSats) sats")
     }
 
     @ViewBuilder
@@ -314,6 +317,8 @@ struct FollowPill: View {
                 .shadow(color: Color.black.opacity(0.4), radius: 8, x: 0, y: 4)
         )
         .foregroundColor(.white)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
     }
 
     private var iconName: String {
@@ -510,6 +515,7 @@ struct PostActionPill: View {
         )
         .foregroundColor(.white)
         .buttonStyle(.plain)
+        .accessibilityLabel("\(actionType.label) in \(max(1, Int(ceil(timeRemaining)))) seconds")
     }
 }
 

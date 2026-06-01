@@ -15,6 +15,7 @@ struct MessageComposerView: View {
     @State private var selectedImage: UIImage?
     @State private var selectedImageData: Data?
     @State private var isSending = false
+    @State private var sendError: String?
     @State private var searchText = ""
     @State private var showPhotoPicker = false
 
@@ -229,6 +230,16 @@ struct MessageComposerView: View {
                     .foregroundColor(.havenPurple)
                 }
             }
+            .alert("Failed to Send", isPresented: Binding<Bool>(
+                get: { sendError != nil },
+                set: { if !$0 { sendError = nil } }
+            )) {
+                Button("OK") { sendError = nil }
+            } message: {
+                if let sendError = sendError {
+                    Text(sendError)
+                }
+            }
         }
     }
 
@@ -246,9 +257,12 @@ struct MessageComposerView: View {
                     dismiss()
                 }
             } catch {
+                #if DEBUG
                 print("Failed to send message: \(error)")
+                #endif
                 await MainActor.run {
                     isSending = false
+                    sendError = error.localizedDescription
                 }
             }
         }

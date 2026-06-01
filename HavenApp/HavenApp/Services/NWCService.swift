@@ -258,7 +258,9 @@ struct NWCService {
                                     remotePubkey: connData.pubkey,
                                     localPrivkey: connData.secret
                                 )
-                                RelayProcessManager.shared.addLog("NWC: Decrypted response payload: \(decryptedStr)", level: "DEBUG")
+                                #if DEBUG
+                                print("NWC: Decrypted response payload: \(decryptedStr)")
+                                #endif
                                 
                                 if let decData = decryptedStr.data(using: .utf8) {
                                     let responseObj = try JSONDecoder().decode(NWCResponse.self, from: decData)
@@ -454,7 +456,9 @@ struct NWCService {
                                     remotePubkey: connData.pubkey,
                                     localPrivkey: connData.secret
                                 )
-                                RelayProcessManager.shared.addLog("NWC: Decrypted balance payload: \(decryptedStr)", level: "DEBUG")
+                                #if DEBUG
+                                print("NWC: Decrypted balance payload: \(decryptedStr)")
+                                #endif
                                 
                                 if let decData = decryptedStr.data(using: .utf8) {
                                     let responseObj = try JSONDecoder().decode(NWCResponse.self, from: decData)
@@ -661,7 +665,9 @@ struct NWCService {
                                     remotePubkey: connData.pubkey,
                                     localPrivkey: connData.secret
                                 )
-                                RelayProcessManager.shared.addLog("NWC: Decrypted make_invoice payload: \(decryptedStr)", level: "DEBUG")
+                                #if DEBUG
+                                print("NWC: Decrypted make_invoice payload: \(decryptedStr)")
+                                #endif
 
                                 if let decData = decryptedStr.data(using: .utf8) {
                                     let responseObj = try JSONDecoder().decode(NWCResponse.self, from: decData)

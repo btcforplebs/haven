@@ -788,7 +788,9 @@ class DMService: ObservableObject {
                 isFromMe: isFromMe
             )
 
+            #if DEBUG
             print("Received DM from \(senderPubkey.prefix(8)): \(content.prefix(50))")
+            #endif
 
             if let idx = conversations.firstIndex(where: { $0.id == counterpartyPubkey }) {
                 guard !conversations[idx].messages.contains(where: { $0.id == event.id }) else { return }

@@ -1517,19 +1517,6 @@ struct ViewerView: View {
                         IconFilterButton(icon: "bolt.fill", tooltip: "Zaps", isSelected: viewMode == .zaps, color: .havenPurple) {
                             withAnimation(.easeInOut(duration: 0.15)) { viewMode = .zaps }
                         }
-                    }
-                } else {
-                    HStack(spacing: 4) {
-                        IconFilterButton(icon: mediaTypeFilter.count == 4 ? "circle.grid.2x2.fill" : "circle.grid.2x2", tooltip: "All Media", isSelected: mediaTypeFilter.count == 4, color: .havenPurple, action: selectAllMediaTypes)
-                        IconFilterButton(icon: mediaTypeFilter.contains(.photo) ? "photo.fill" : "photo", tooltip: "Photos", isSelected: mediaTypeFilter.contains(.photo), color: .primary) { toggleMediaTypeFilter(.photo) }
-                        IconFilterButton(icon: mediaTypeFilter.contains(.video) ? "video.fill" : "video", tooltip: "Videos", isSelected: mediaTypeFilter.contains(.video), color: .primary) { toggleMediaTypeFilter(.video) }
-                        IconFilterButton(icon: "GIF", tooltip: "GIFs", isSelected: mediaTypeFilter.contains(.gif), color: .primary) { toggleMediaTypeFilter(.gif) }
-                    }
-                }
-            }
-            ToolbarItem(placement: .navigationBarTrailing) {
-                HStack(spacing: 4) {
-                    if !mediaOnly {
                         Button {
                             withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
                                 isSearchBarVisible.toggle()
@@ -1552,99 +1539,111 @@ struct ViewerView: View {
                                         .fill(isSearchBarVisible ? Color.havenPurple : Color.secondary.opacity(0.15))
                                 )
                         }
-
-                        Divider()
-                            .frame(height: 18)
-                            .background(Color.white.opacity(0.12))
                     }
-
+                } else {
+                    HStack(spacing: 4) {
+                        IconFilterButton(icon: mediaTypeFilter.count == 4 ? "circle.grid.2x2.fill" : "circle.grid.2x2", tooltip: "All Media", isSelected: mediaTypeFilter.count == 4, color: .havenPurple, action: selectAllMediaTypes)
+                        IconFilterButton(icon: mediaTypeFilter.contains(.photo) ? "photo.fill" : "photo", tooltip: "Photos", isSelected: mediaTypeFilter.contains(.photo), color: .primary) { toggleMediaTypeFilter(.photo) }
+                        IconFilterButton(icon: mediaTypeFilter.contains(.video) ? "video.fill" : "video", tooltip: "Videos", isSelected: mediaTypeFilter.contains(.video), color: .primary) { toggleMediaTypeFilter(.video) }
+                        IconFilterButton(icon: "GIF", tooltip: "GIFs", isSelected: mediaTypeFilter.contains(.gif), color: .primary) { toggleMediaTypeFilter(.gif) }
+                    }
+                }
+            }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                HStack(spacing: 4) {
                     if viewMode == .notes {
-                    HStack(spacing: 4) {
-                        IconFilterButton(icon: "square.stack", tooltip: "All", isSelected: contentFilter == .all, color: .havenPurple) { contentFilter = .all }
-                        IconFilterButton(icon: "person.fill", tooltip: "My Notes", isSelected: contentFilter == .mine, color: .havenPurple) { contentFilter = .mine }
-                        IconFilterButton(icon: "at", tooltip: "Tagged", isSelected: contentFilter == .tagged, color: .havenPurple) { contentFilter = .tagged }
-                        IconFilterButton(icon: "checkmark.seal.fill", tooltip: "Whitelisted", isSelected: contentFilter == .whitelist, color: .havenPurple) { contentFilter = .whitelist }
-                    }
-                } else if viewMode == .media && !mediaOnly {
-                    HStack(spacing: 4) {
-                        // Upload button with action sheet
-                        IconFilterButton(icon: "plus", tooltip: "Upload", isSelected: true, color: .havenPurple) {
-                            showingUploadOptions = true
+                        HStack(spacing: 4) {
+                            IconFilterButton(icon: "square.stack", tooltip: "All", isSelected: contentFilter == .all, color: .havenPurple) { contentFilter = .all }
+                            IconFilterButton(icon: "person.fill", tooltip: "My Notes", isSelected: contentFilter == .mine, color: .havenPurple) { contentFilter = .mine }
+                            IconFilterButton(icon: "at", tooltip: "Tagged", isSelected: contentFilter == .tagged, color: .havenPurple) { contentFilter = .tagged }
+                            IconFilterButton(icon: "checkmark.seal.fill", tooltip: "Whitelisted", isSelected: contentFilter == .whitelist, color: .havenPurple) { contentFilter = .whitelist }
                         }
-                        .confirmationDialog("Upload Media", isPresented: $showingUploadOptions) {
-                            Button("Photos") {
-                                showingPhotoPicker = true
+                        .transition(.opacity)
+                    } else if viewMode == .media && !mediaOnly {
+                        HStack(spacing: 4) {
+                            // Upload button with action sheet
+                            IconFilterButton(icon: "plus", tooltip: "Upload", isSelected: true, color: .havenPurple) {
+                                showingUploadOptions = true
                             }
-                            Button("Files") {
-                                showingFileImporter = true
+                            .confirmationDialog("Upload Media", isPresented: $showingUploadOptions) {
+                                Button("Photos") {
+                                    showingPhotoPicker = true
+                                }
+                                Button("Files") {
+                                    showingFileImporter = true
+                                }
+                                Button("Cancel", role: .cancel) { }
                             }
-                            Button("Cancel", role: .cancel) { }
-                        }
 
-                        // PhotosPicker triggered by state
-                        if showingPhotoPicker {
-                            PhotosPicker(selection: $selectedUploadItems, matching: .any(of: [.images, .videos])) {
-                                EmptyView()
+                            // PhotosPicker triggered by state
+                            if showingPhotoPicker {
+                                PhotosPicker(selection: $selectedUploadItems, matching: .any(of: [.images, .videos])) {
+                                    EmptyView()
+                                }
+                                .onChange(of: selectedUploadItems) {
+                                    showingPhotoPicker = false
+                                }
                             }
-                            .onChange(of: selectedUploadItems) {
-                                showingPhotoPicker = false
-                            }
-                        }
 
-                        IconFilterButton(icon: "wand.and.stars", tooltip: "Magic Paste", isSelected: !isPastingContent, color: isPastingContent ? .secondary : .havenPurple) {
-                            handlePasteFromClipboard()
-                        }
-                        .disabled(isPastingContent)
-                    }
-                } else if mediaOnly {
-                    HStack(spacing: 4) {
-                        // Standing plus button that triggers confirmationDialog with all 3 upload options
-                        IconFilterButton(icon: "plus", tooltip: "Upload Options", isSelected: true, color: .havenPurple) {
-                            showingUploadOptions = true
-                        }
-                        .confirmationDialog("Upload Media", isPresented: $showingUploadOptions) {
-                            Button("Photos") {
-                                showingPhotoPicker = true
-                            }
-                            Button("Files") {
-                                showingFileImporter = true
-                            }
-                            Button("Magic Paste") {
+                            IconFilterButton(icon: "wand.and.stars", tooltip: "Magic Paste", isSelected: !isPastingContent, color: isPastingContent ? .secondary : .havenPurple) {
                                 handlePasteFromClipboard()
                             }
-                            Button("Cancel", role: .cancel) { }
+                            .disabled(isPastingContent)
                         }
+                        .transition(.opacity)
+                    } else if mediaOnly {
+                        HStack(spacing: 4) {
+                            // Standing plus button that triggers confirmationDialog with all 3 upload options
+                            IconFilterButton(icon: "plus", tooltip: "Upload Options", isSelected: true, color: .havenPurple) {
+                                showingUploadOptions = true
+                            }
+                            .confirmationDialog("Upload Media", isPresented: $showingUploadOptions) {
+                                Button("Photos") {
+                                    showingPhotoPicker = true
+                                }
+                                Button("Files") {
+                                    showingFileImporter = true
+                                }
+                                Button("Magic Paste") {
+                                    handlePasteFromClipboard()
+                                }
+                                Button("Cancel", role: .cancel) { }
+                            }
 
-                        Divider()
-                            .frame(height: 18)
-                            .background(Color.white.opacity(0.12))
+                            Divider()
+                                .frame(height: 18)
+                                .background(Color.white.opacity(0.12))
 
-                        // Blossom Button (flower icon: camera.macro)
-                        IconFilterButton(icon: "camera.macro", tooltip: "Blossom", isSelected: mediaLocationFilter == .blossom, color: .havenPurple) {
-                            selectLocationFilter(.blossom)
+                            // Blossom Button (flower icon: camera.macro)
+                            IconFilterButton(icon: "camera.macro", tooltip: "Blossom", isSelected: mediaLocationFilter == .blossom, color: .havenPurple) {
+                                selectLocationFilter(.blossom)
+                            }
+
+                            // Cache Button (document stack icon: doc.on.doc.fill)
+                            IconFilterButton(icon: "doc.on.doc.fill", tooltip: "Cache", isSelected: mediaLocationFilter == .cache, color: .havenPurple) {
+                                selectLocationFilter(.cache)
+                            }
                         }
-
-                        // Cache Button (document stack icon: doc.on.doc.fill)
-                        IconFilterButton(icon: "doc.on.doc.fill", tooltip: "Cache", isSelected: mediaLocationFilter == .cache, color: .havenPurple) {
-                            selectLocationFilter(.cache)
+                        .transition(.opacity)
+                    } else if viewMode == .likes {
+                        HStack(spacing: 4) {
+                            IconFilterButton(icon: "person.fill", tooltip: "My Notes", isSelected: likesFilter == .onMyNotes, color: .havenPurple) { likesFilter = .onMyNotes }
+                            IconFilterButton(icon: "at", tooltip: "Tagged", isSelected: likesFilter == .onTagged, color: .havenPurple) { likesFilter = .onTagged }
+                            IconFilterButton(icon: "checkmark.seal.fill", tooltip: "Whitelisted", isSelected: likesFilter == .onWhitelisted, color: .havenPurple) { likesFilter = .onWhitelisted }
+                            IconFilterButton(icon: "heart", tooltip: "My Likes", isSelected: likesFilter == .myLikes, color: .havenPurple) { likesFilter = .myLikes }
                         }
-                    }
-                } else if viewMode == .likes {
-                    HStack(spacing: 4) {
-                        IconFilterButton(icon: "person.fill", tooltip: "My Notes", isSelected: likesFilter == .onMyNotes, color: .havenPurple) { likesFilter = .onMyNotes }
-                        IconFilterButton(icon: "at", tooltip: "Tagged", isSelected: likesFilter == .onTagged, color: .havenPurple) { likesFilter = .onTagged }
-                        IconFilterButton(icon: "checkmark.seal.fill", tooltip: "Whitelisted", isSelected: likesFilter == .onWhitelisted, color: .havenPurple) { likesFilter = .onWhitelisted }
-                        IconFilterButton(icon: "heart", tooltip: "My Likes", isSelected: likesFilter == .myLikes, color: .havenPurple) { likesFilter = .myLikes }
-                    }
-                } else if viewMode == .zaps && !mediaOnly {
-                    HStack(spacing: 4) {
-                        IconFilterButton(icon: "person.fill", tooltip: "My Notes", isSelected: zapsFilter == .onMyNotes, color: .havenPurple) { zapsFilter = .onMyNotes }
-                        IconFilterButton(icon: "at", tooltip: "Tagged", isSelected: zapsFilter == .onTagged, color: .havenPurple) { zapsFilter = .onTagged }
-                        IconFilterButton(icon: "checkmark.seal.fill", tooltip: "Whitelisted", isSelected: zapsFilter == .onWhitelisted, color: .havenPurple) { zapsFilter = .onWhitelisted }
-                        IconFilterButton(icon: "bolt", tooltip: "My Zaps", isSelected: zapsFilter == .myZaps, color: .havenPurple) { zapsFilter = .myZaps }
+                        .transition(.opacity)
+                    } else if viewMode == .zaps && !mediaOnly {
+                        HStack(spacing: 4) {
+                            IconFilterButton(icon: "person.fill", tooltip: "My Notes", isSelected: zapsFilter == .onMyNotes, color: .havenPurple) { zapsFilter = .onMyNotes }
+                            IconFilterButton(icon: "at", tooltip: "Tagged", isSelected: zapsFilter == .onTagged, color: .havenPurple) { zapsFilter = .onTagged }
+                            IconFilterButton(icon: "checkmark.seal.fill", tooltip: "Whitelisted", isSelected: zapsFilter == .onWhitelisted, color: .havenPurple) { zapsFilter = .onWhitelisted }
+                            IconFilterButton(icon: "bolt", tooltip: "My Zaps", isSelected: zapsFilter == .myZaps, color: .havenPurple) { zapsFilter = .myZaps }
+                        }
+                        .transition(.opacity)
                     }
                 }
-                }
+                .animation(.easeInOut(duration: 0.15), value: viewMode)
             }
         }
         #endif
@@ -1657,10 +1656,12 @@ struct ViewerView: View {
 
             Divider()
 
+            #if os(iOS)
             if isSearchBarVisible {
                 relaySearchBar
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
+            #endif
 
             ScrollView {
                 VStack(spacing: 0) {
@@ -2681,10 +2682,8 @@ struct ViewerView: View {
     private func performRefresh() {
         nostrService.resetConnections()
         // Use the centralized nostrURL which handles local vs remote correctly
-        var urls = [
-            URL(string: configService.config.nostrURL)!,
-            URL(string: configService.config.nostrURL + "/inbox")!
-        ]
+        var urls = [configService.config.nostrURL, configService.config.nostrURL + "/inbox"].compactMap { URL(string: $0) }
+        guard !urls.isEmpty else { return }
 
         // Also query the Mac relay for tagged notes the local relay may
         // not have (e.g. due to shorter WoT depth or notes missed while suspended).
@@ -2723,7 +2722,7 @@ struct ViewerView: View {
         print("ViewerView: Fetching \(missingIds.count) missing liked notes")
         #endif
 
-        var urls = [URL(string: configService.config.nostrURL)!]
+        var urls = [configService.config.nostrURL].compactMap { URL(string: $0) }
         let macURL = configService.config.macRelayURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if !macURL.isEmpty, let macRelay = URL(string: macURL) {
             urls.append(macRelay)
@@ -2745,10 +2744,8 @@ struct ViewerView: View {
         guard !hasFetchedZapReceipts else { return }
         hasFetchedZapReceipts = true
 
-        var urls = [
-            URL(string: configService.config.nostrURL)!,
-            URL(string: configService.config.nostrURL + "/inbox")!
-        ]
+        var urls = [configService.config.nostrURL, configService.config.nostrURL + "/inbox"].compactMap { URL(string: $0) }
+        guard !urls.isEmpty else { return }
         let macURL = configService.config.macRelayURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if !macURL.isEmpty, let macRelay = URL(string: macURL) {
             urls.append(macRelay)
@@ -2784,7 +2781,7 @@ struct ViewerView: View {
         print("ViewerView: Fetching \(missingIds.count) missing zapped notes")
         #endif
 
-        var urls = [URL(string: configService.config.nostrURL)!]
+        var urls = [configService.config.nostrURL].compactMap { URL(string: $0) }
         let macURL = configService.config.macRelayURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if !macURL.isEmpty, let macRelay = URL(string: macURL) {
             urls.append(macRelay)
@@ -2823,15 +2820,13 @@ struct ViewerView: View {
         #if DEBUG
         print("ViewerView: Requesting older events until: \(oldestTimestamp - 1)")
         #endif
-        var urls = [
-            URL(string: configService.config.nostrURL)!,
-            URL(string: configService.config.nostrURL + "/inbox")!
-        ]
+        var urls = [configService.config.nostrURL, configService.config.nostrURL + "/inbox"].compactMap { URL(string: $0) }
+        guard !urls.isEmpty else { return }
         let macURL = configService.config.macRelayURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if !macURL.isEmpty, let macInbox = URL(string: macURL + "/inbox") {
             urls.append(macInbox)
         }
-        
+
         var authorsSet = Set<String>()
         if let ownerHex = Bech32.decode(configService.config.ownerNpub)?.hexString {
             authorsSet.insert(ownerHex)

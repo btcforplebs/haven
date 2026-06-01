@@ -256,7 +256,7 @@ struct SetupWizardView: View {
                         Button(action: goBack) {
                             HStack(spacing: 4) {
                                 Image(systemName: "chevron.left")
-                                Text("Back")
+                                Text(String(localized: "setup.nav.back"))
                             }
                             .font(.system(size: 14, weight: .medium))
                             .foregroundColor(WizardColors.textMuted)
@@ -291,10 +291,10 @@ struct SetupWizardView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .alert("Setup Error", isPresented: $showSetupError) {
-            Button("OK", role: .cancel) {}
+        .alert(String(localized: "setup.alert.error.title"), isPresented: $showSetupError) {
+            Button(String(localized: "setup.alert.ok"), role: .cancel) {}
         } message: {
-            Text(setupError ?? "An unknown error occurred during setup")
+            Text(setupError ?? String(localized: "setup.alert.error.unknown"))
         }
     }
 
@@ -448,11 +448,11 @@ struct SetupWizardView: View {
                     .foregroundColor(WizardColors.accentPrimary)
 
                 VStack(spacing: 6) {
-                    Text("Startup Error")
+                    Text(String(localized: "setup.error.processKill.title"))
                         .font(.title2.bold())
                         .foregroundColor(WizardColors.textPrimary)
 
-                    Text("A previous Nostr Vault process is still running. Run the following command in Terminal to stop it, then relaunch the app.")
+                    Text(String(localized: "setup.error.processKill.message"))
                         .multilineTextAlignment(.center)
                         .foregroundColor(WizardColors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -488,7 +488,7 @@ struct SetupWizardView: View {
                     relayManager.showProcessKillAlert = false
                     relayManager.forceCleanAndRestart()
                 }) {
-                    Text("Retry")
+                    Text(String(localized: "setup.error.processKill.retry"))
                         .font(.headline)
                         .foregroundColor(WizardColors.textPrimary)
                         .frame(width: 140, height: 36)
@@ -534,7 +534,7 @@ private struct WelcomeStepView: View {
                 .animation(WizardAnimations.springEnter, value: appeared)
 
             // Title
-            Text("Nostr Vault")
+            Text(String(localized: "setup.welcome.appName"))
                 .font(.system(size: isIOSDevice ? 32 : 36, weight: .bold, design: .default))
                 .foregroundColor(WizardColors.textPrimary)
                 .opacity(appeared ? 1 : 0)
@@ -543,8 +543,8 @@ private struct WelcomeStepView: View {
 
             // Subtitle lines
             VStack(spacing: 6) {
-                Text("A Nostr client with a built-in personal relay.")
-                Text("Your posts go everywhere. Your data stays with you.")
+                Text(String(localized: "setup.welcome.subtitle1"))
+                Text(String(localized: "setup.welcome.subtitle2"))
             }
             .font(.system(size: isIOSDevice ? 15 : 16))
             .foregroundColor(WizardColors.textSecondary)
@@ -564,7 +564,7 @@ private struct WelcomeStepView: View {
             }
 
             // CTA
-            WizardPrimaryButton(title: "Get Started", action: onContinue)
+            WizardPrimaryButton(title: String(localized: "setup.welcome.getStarted"), action: onContinue)
                 .opacity(appeared ? 1 : 0)
                 .offset(y: appeared ? 0 : 10)
                 .animation(WizardAnimations.springEnter.delay(1.0), value: appeared)
@@ -614,7 +614,7 @@ private struct ChoosePathStep: View {
         VStack(spacing: 28) {
             Spacer().frame(height: 40)
 
-            Text("How do you want to use Nostr Vault?")
+            Text(String(localized: "setup.path.title"))
                 .font(.system(size: isIOSDevice ? 24 : 28, weight: .semibold))
                 .foregroundColor(WizardColors.textPrimary)
                 .multilineTextAlignment(.center)
@@ -634,7 +634,7 @@ private struct ChoosePathStep: View {
 
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack {
-                                    Text("Full Setup")
+                                    Text(String(localized: "setup.path.full.title"))
                                         .font(.system(size: 18, weight: .semibold))
                                         .foregroundColor(WizardColors.textPrimary)
                                     Spacer()
@@ -644,7 +644,7 @@ private struct ChoosePathStep: View {
                                             .transition(.scale.combined(with: .opacity))
                                     }
                                 }
-                                Text("Post, DM, and zap. Import your existing notes and media. Requires your private key or a remote signer.")
+                                Text(String(localized: "setup.path.full.description"))
                                     .font(.system(size: 14))
                                     .foregroundColor(WizardColors.textSecondary)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -669,7 +669,7 @@ private struct ChoosePathStep: View {
 
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack {
-                                    Text("Browse Mode")
+                                    Text(String(localized: "setup.path.browse.title"))
                                         .font(.system(size: 18, weight: .semibold))
                                         .foregroundColor(WizardColors.textPrimary)
                                     Spacer()
@@ -679,7 +679,7 @@ private struct ChoosePathStep: View {
                                             .transition(.scale.combined(with: .opacity))
                                     }
                                 }
-                                Text("Explore Nostr read-only with just your public key. No posting, no signing. You can upgrade to full setup anytime.")
+                                Text(String(localized: "setup.path.browse.description"))
                                     .font(.system(size: 14))
                                     .foregroundColor(WizardColors.textSecondary)
                                     .fixedSize(horizontal: false, vertical: true)
@@ -695,7 +695,7 @@ private struct ChoosePathStep: View {
             }
 
             if selectedPath != .none {
-                WizardPrimaryButton(title: "Continue", action: onContinue)
+                WizardPrimaryButton(title: String(localized: "setup.action.continue"), action: onContinue)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
@@ -743,7 +743,7 @@ private struct IdentityStepView: View {
         VStack(spacing: 24) {
             Spacer().frame(height: 20)
 
-            Text(isBrowseMode ? "Enter Your Public Key" : "Enter Your Keys")
+            Text(isBrowseMode ? String(localized: "setup.identity.title.browse") : String(localized: "setup.identity.title.full"))
                 .font(.system(size: isIOSDevice ? 24 : 28, weight: .semibold))
                 .foregroundColor(WizardColors.textPrimary)
                 .opacity(appeared ? 1 : 0)
@@ -751,7 +751,7 @@ private struct IdentityStepView: View {
                 .animation(WizardAnimations.springEnter.delay(0.1), value: appeared)
 
             if isBrowseMode {
-                Text("Your public key lets you follow your feed and see your profile.")
+                Text(String(localized: "setup.identity.browseHint"))
                     .font(.system(size: 15))
                     .foregroundColor(WizardColors.textSecondary)
                     .multilineTextAlignment(.center)
@@ -760,7 +760,7 @@ private struct IdentityStepView: View {
             }
 
             // npub field
-            WizardInputField(label: "Public Key (npub)", text: $npub, placeholder: "npub1...", isDisabled: selectedMethod == .nip46 && bunkerConnected)
+            WizardInputField(label: String(localized: "setup.identity.label.npub"), text: $npub, placeholder: "npub1...", isDisabled: selectedMethod == .nip46 && bunkerConnected)
                 .opacity(appeared ? 1 : 0)
                 .offset(x: appeared ? 0 : 20)
                 .animation(WizardAnimations.springEnter.delay(0.2), value: appeared)
@@ -769,7 +769,7 @@ private struct IdentityStepView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.caption)
-                    Text("Enter a valid npub (bech32-encoded public key)")
+                    Text(String(localized: "setup.identity.invalidNpub"))
                         .font(.system(size: 13))
                 }
                 .foregroundColor(WizardColors.error)
@@ -781,14 +781,14 @@ private struct IdentityStepView: View {
                     signingMethodCard(
                         method: .local,
                         icon: "key.fill",
-                        title: "Private Key",
-                        subtitle: "Sign with your nsec"
+                        title: String(localized: "setup.identity.method.local.title"),
+                        subtitle: String(localized: "setup.identity.method.local.subtitle")
                     )
                     signingMethodCard(
                         method: .nip46,
                         icon: "link.badge.plus",
-                        title: "Remote Signer",
-                        subtitle: "Connect via bunker://"
+                        title: String(localized: "setup.identity.method.remote.title"),
+                        subtitle: String(localized: "setup.identity.method.remote.subtitle")
                     )
                 }
                 .opacity(appeared ? 1 : 0)
@@ -798,23 +798,23 @@ private struct IdentityStepView: View {
                 // Fields for the selected method
                 if selectedMethod == .local {
                     VStack(spacing: 16) {
-                        WizardInputField(label: "Private Key (nsec)", text: $nsec, placeholder: "nsec1...", isSecure: true)
+                        WizardInputField(label: String(localized: "setup.identity.label.nsec"), text: $nsec, placeholder: "nsec1...", isSecure: true)
 
                         if !nsec.isEmpty && !nsec.hasPrefix("nsec") {
                             HStack(spacing: 6) {
                                 Image(systemName: "exclamationmark.triangle")
                                     .font(.caption)
-                                Text("Must be a valid nsec (starts with 'nsec')")
+                                Text(String(localized: "setup.identity.invalidNsec"))
                                     .font(.system(size: 13))
                             }
                             .foregroundColor(WizardColors.error)
                         }
 
                         if !nsec.isEmpty {
-                            WizardInputField(label: "Encryption Password", text: $nsecPassword, placeholder: "Enter password...", isSecure: true)
+                            WizardInputField(label: String(localized: "setup.identity.label.password"), text: $nsecPassword, placeholder: "Enter password...", isSecure: true)
                                 .transition(.move(edge: .top).combined(with: .opacity))
 
-                            Text("Encrypts your key with NIP-49. You'll need this to unlock.")
+                            Text(String(localized: "setup.identity.passwordHint"))
                                 .font(.system(size: 12))
                                 .foregroundColor(WizardColors.textMuted)
 
@@ -822,7 +822,7 @@ private struct IdentityStepView: View {
                                 HStack(spacing: 6) {
                                     Image(systemName: "exclamationmark.circle.fill")
                                         .font(.caption)
-                                    Text("Password is required to proceed")
+                                    Text(String(localized: "setup.identity.passwordRequired"))
                                         .font(.system(size: 13))
                                 }
                                 .foregroundColor(WizardColors.accentPrimary)
@@ -833,7 +833,7 @@ private struct IdentityStepView: View {
                             HStack(spacing: 6) {
                                 Image(systemName: "sparkles")
                                     .foregroundColor(WizardColors.accentPrimary)
-                                Text("New to Nostr? Generate Keys")
+                                Text(String(localized: "setup.identity.generateKeys"))
                                     .font(.system(size: 14, weight: .medium))
                                     .foregroundColor(WizardColors.accentPrimary)
                             }
@@ -844,7 +844,7 @@ private struct IdentityStepView: View {
                             HStack(spacing: 8) {
                                 Image(systemName: "exclamationmark.shield.fill")
                                     .foregroundColor(WizardColors.accentPrimary)
-                                Text("Save your nsec somewhere safe! You need it to log in on other Nostr clients. It cannot be recovered.")
+                                Text(String(localized: "setup.identity.nsecWarning"))
                                     .font(.system(size: 13))
                                     .foregroundColor(WizardColors.accentPrimary)
                             }
@@ -857,9 +857,9 @@ private struct IdentityStepView: View {
                     .transition(.move(edge: .leading).combined(with: .opacity))
                 } else {
                     VStack(spacing: 12) {
-                        WizardInputField(label: "Bunker URI", text: $bunkerURI, placeholder: "bunker://...", isDisabled: bunkerConnected)
+                        WizardInputField(label: String(localized: "setup.identity.label.bunker"), text: $bunkerURI, placeholder: "bunker://...", isDisabled: bunkerConnected)
 
-                        Text("Paste the bunker:// connection string from your signer app (e.g. nsec.app, Amber)")
+                        Text(String(localized: "setup.identity.bunkerHint"))
                             .font(.system(size: 12))
                             .foregroundColor(WizardColors.textMuted)
 
@@ -877,7 +877,7 @@ private struct IdentityStepView: View {
                             HStack(spacing: 6) {
                                 Image(systemName: "checkmark.circle.fill")
                                     .foregroundColor(WizardColors.success)
-                                Text("Connected to remote signer")
+                                Text(String(localized: "setup.identity.bunkerConnected"))
                                     .font(.system(size: 13))
                                     .foregroundColor(WizardColors.success)
                             }
@@ -885,7 +885,7 @@ private struct IdentityStepView: View {
 
                         HStack(spacing: 12) {
                             WizardPrimaryButton(
-                                title: bunkerConnected ? "Disconnect" : "Connect",
+                                title: bunkerConnected ? String(localized: "setup.identity.bunker.disconnect") : String(localized: "setup.identity.bunker.connect"),
                                 action: {
                                     if bunkerConnected {
                                         disconnectBunker()
@@ -907,7 +907,7 @@ private struct IdentityStepView: View {
                 }
             }
 
-            WizardPrimaryButton(title: "Continue", action: onContinue, disabled: !canContinue)
+            WizardPrimaryButton(title: String(localized: "setup.action.continue"), action: onContinue, disabled: !canContinue)
 
             Spacer().frame(height: 8)
         }
@@ -1034,9 +1034,9 @@ private struct RelayConfigStep: View {
             iOSRelayContent
             #endif
 
-            WizardPrimaryButton(title: "Continue", action: onContinue)
+            WizardPrimaryButton(title: String(localized: "setup.action.continue"), action: onContinue)
 
-            WizardSkipLink(title: "Skip — configure later") {
+            WizardSkipLink(title: String(localized: "setup.relay.skip")) {
                 onSkip()
             }
 
@@ -1048,7 +1048,7 @@ private struct RelayConfigStep: View {
     // MARK: macOS variant
     private var macOSRelayContent: some View {
         VStack(spacing: 20) {
-            Text("Your Personal Relay")
+            Text(String(localized: "setup.relay.mac.title"))
                 .font(.system(size: 28, weight: .semibold))
                 .foregroundColor(WizardColors.textPrimary)
                 .opacity(appeared ? 1 : 0)
@@ -1062,12 +1062,12 @@ private struct RelayConfigStep: View {
                 .animation(WizardAnimations.fadeIn.delay(0.3), value: appeared)
 
             VStack(spacing: 8) {
-                Text("Your Mac runs a personal relay that stores everything locally. Posts always reach the Nostr network.")
+                Text(String(localized: "setup.relay.mac.description1"))
                     .font(.system(size: 15))
                     .foregroundColor(WizardColors.textSecondary)
                     .multilineTextAlignment(.center)
 
-                Text("Add a domain to make your relay accessible from other devices.")
+                Text(String(localized: "setup.relay.mac.description2"))
                     .font(.system(size: 15))
                     .foregroundColor(WizardColors.textSecondary)
                     .multilineTextAlignment(.center)
@@ -1075,12 +1075,12 @@ private struct RelayConfigStep: View {
             .opacity(appeared ? 1 : 0)
             .animation(WizardAnimations.fadeIn.delay(0.2), value: appeared)
 
-            WizardInputField(label: "Relay Domain (optional)", text: $relayURL, placeholder: "relay.yourdomain.com")
+            WizardInputField(label: String(localized: "setup.relay.mac.label"), text: $relayURL, placeholder: "relay.yourdomain.com")
                 .opacity(appeared ? 1 : 0)
                 .offset(y: appeared ? 0 : 10)
                 .animation(WizardAnimations.springEnter.delay(0.4), value: appeared)
 
-            Text("Leave blank for local only. Configurable later in Settings.")
+            Text(String(localized: "setup.relay.mac.hint"))
                 .font(.system(size: 12))
                 .foregroundColor(WizardColors.textMuted)
         }
@@ -1089,7 +1089,7 @@ private struct RelayConfigStep: View {
     // MARK: iOS variant
     private var iOSRelayContent: some View {
         VStack(spacing: 20) {
-            Text("Connect to Your Mac Relay")
+            Text(String(localized: "setup.relay.ios.title"))
                 .font(.system(size: 24, weight: .semibold))
                 .foregroundColor(WizardColors.textPrimary)
                 .multilineTextAlignment(.center)
@@ -1104,12 +1104,12 @@ private struct RelayConfigStep: View {
                 .animation(WizardAnimations.fadeIn.delay(0.3), value: appeared)
 
             VStack(spacing: 8) {
-                Text("Running Nostr Vault on your Mac? Connect your iPhone to keep notes and DMs in sync across devices.")
+                Text(String(localized: "setup.relay.ios.description1"))
                     .font(.system(size: 15))
                     .foregroundColor(WizardColors.textSecondary)
                     .multilineTextAlignment(.center)
 
-                Text("This is optional — the app works fully on its own.")
+                Text(String(localized: "setup.relay.ios.description2"))
                     .font(.system(size: 15, weight: .medium))
                     .foregroundColor(WizardColors.textSecondary)
                     .multilineTextAlignment(.center)
@@ -1117,12 +1117,12 @@ private struct RelayConfigStep: View {
             .opacity(appeared ? 1 : 0)
             .animation(WizardAnimations.fadeIn.delay(0.2), value: appeared)
 
-            WizardInputField(label: "Mac Relay URL (optional)", text: $macRelayURL, placeholder: "wss://relay.yourdomain.com")
+            WizardInputField(label: String(localized: "setup.relay.ios.label"), text: $macRelayURL, placeholder: "wss://relay.yourdomain.com")
                 .opacity(appeared ? 1 : 0)
                 .offset(y: appeared ? 0 : 10)
                 .animation(WizardAnimations.springEnter.delay(0.4), value: appeared)
 
-            Text("Find this in Nostr Vault settings on your Mac.")
+            Text(String(localized: "setup.relay.ios.hint"))
                 .font(.system(size: 12))
                 .foregroundColor(WizardColors.textMuted)
         }
@@ -1191,7 +1191,7 @@ private struct RelayDiagramMac: View {
                                 .font(.system(size: 32))
                                 .foregroundColor(WizardColors.textPrimary)
                                 .shadow(color: WizardColors.accentGlow, radius: 6)
-                            Text("Your Mac")
+                            Text(String(localized: "setup.relay.diagram.mac"))
                                 .font(.system(size: 11))
                                 .foregroundColor(WizardColors.textMuted)
                         }
@@ -1201,7 +1201,7 @@ private struct RelayDiagramMac: View {
                             Image(systemName: "network")
                                 .font(.system(size: 24))
                                 .foregroundColor(WizardColors.textMuted)
-                            Text("Nostr Network")
+                            Text(String(localized: "setup.relay.diagram.network"))
                                 .font(.system(size: 11))
                                 .foregroundColor(WizardColors.textMuted)
                         }
@@ -1212,7 +1212,7 @@ private struct RelayDiagramMac: View {
                         Image(systemName: "server.rack")
                             .font(.system(size: 16))
                             .foregroundColor(WizardColors.accentPrimary)
-                        Text("Relay")
+                        Text(String(localized: "setup.relay.diagram.relay"))
                             .font(.system(size: 11))
                             .foregroundColor(WizardColors.accentPrimary)
                     }
@@ -1223,7 +1223,7 @@ private struct RelayDiagramMac: View {
                             Image(systemName: "globe")
                                 .font(.system(size: 14))
                                 .foregroundColor(WizardColors.accentPrimary.opacity(0.7))
-                            Text("Public")
+                            Text(String(localized: "setup.relay.diagram.public"))
                                 .font(.system(size: 10))
                                 .foregroundColor(WizardColors.textMuted)
                         }
@@ -1253,7 +1253,7 @@ private struct RelayDiagramiOS: View {
                 Image(systemName: "iphone")
                     .font(.system(size: 28))
                     .foregroundColor(WizardColors.textPrimary)
-                Text("iPhone")
+                Text(String(localized: "setup.relay.diagram.iphone"))
                     .font(.system(size: 11))
                     .foregroundColor(WizardColors.textMuted)
             }
@@ -1288,7 +1288,7 @@ private struct RelayDiagramiOS: View {
                 HStack(spacing: 2) {
                     Image(systemName: "server.rack")
                         .font(.system(size: 10))
-                    Text("Mac Relay")
+                    Text(String(localized: "setup.relay.diagram.macRelay"))
                         .font(.system(size: 11))
                 }
                 .foregroundColor(hasURL ? WizardColors.accentPrimary : WizardColors.textMuted)
@@ -1304,7 +1304,7 @@ private struct RelayDiagramiOS: View {
                 Image(systemName: "network")
                     .font(.system(size: 24))
                     .foregroundColor(WizardColors.textMuted)
-                Text("Nostr")
+                Text(String(localized: "setup.relay.diagram.nostr"))
                     .font(.system(size: 11))
                     .foregroundColor(WizardColors.textMuted)
             }
@@ -1333,14 +1333,14 @@ private struct ImportNotesStep: View {
         VStack(spacing: 24) {
             Spacer().frame(height: 20)
 
-            Text("Bring Your Notes Home")
+            Text(String(localized: "setup.import.title"))
                 .font(.system(size: isIOSDevice ? 24 : 28, weight: .semibold))
                 .foregroundColor(WizardColors.textPrimary)
                 .opacity(appeared ? 1 : 0)
                 .offset(y: appeared ? 0 : 10)
                 .animation(WizardAnimations.springEnter.delay(0.1), value: appeared)
 
-            Text("Pull your existing posts from the Nostr network into your local relay.")
+            Text(String(localized: "setup.import.subtitle"))
                 .font(.system(size: 15))
                 .foregroundColor(WizardColors.textSecondary)
                 .multilineTextAlignment(.center)
@@ -1349,8 +1349,8 @@ private struct ImportNotesStep: View {
 
             // Tab bar
             HStack(spacing: 4) {
-                tabPill("From Network", isActive: activeTab == 0) { activeTab = 0 }
-                tabPill("From Backup", isActive: activeTab == 1) { activeTab = 1 }
+                tabPill(String(localized: "setup.import.tab.network"), isActive: activeTab == 0) { activeTab = 0 }
+                tabPill(String(localized: "setup.import.tab.backup"), isActive: activeTab == 1) { activeTab = 1 }
             }
             .padding(3)
             .background(WizardColors.bgCard)
@@ -1369,7 +1369,7 @@ private struct ImportNotesStep: View {
             .opacity(appeared ? 1 : 0)
             .animation(WizardAnimations.fadeIn.delay(0.3), value: appeared)
 
-            WizardSkipLink(title: "Skip — I'll start fresh") { onSkip() }
+            WizardSkipLink(title: String(localized: "setup.import.skip")) { onSkip() }
 
             Spacer().frame(height: 8)
         }
@@ -1388,17 +1388,17 @@ private struct ImportNotesStep: View {
                 showRestoreError = true
             }
         }
-        .alert("Restore Failed", isPresented: $showRestoreError) {
-            Button("OK", role: .cancel) {}
+        .alert(String(localized: "setup.import.alert.restoreFailed"), isPresented: $showRestoreError) {
+            Button(String(localized: "setup.alert.ok"), role: .cancel) {}
         } message: {
             Text(restoreError ?? "Unknown error")
         }
-        .alert("Port Already in Use", isPresented: $relayManager.isPortConflict) {
-            Button("Retry") {
+        .alert(String(localized: "setup.import.alert.portConflict"), isPresented: $relayManager.isPortConflict) {
+            Button(String(localized: "setup.import.alert.retry")) {
                 relayManager.isPortConflict = false
                 relayManager.importNotes(config: configService.config)
             }
-            Button("Cancel", role: .cancel) {
+            Button(String(localized: "setup.action.cancel"), role: .cancel) {
                 relayManager.isPortConflict = false
                 relayManager.cancelImport()
             }
@@ -1413,7 +1413,7 @@ private struct ImportNotesStep: View {
             if relayManager.isImporting || relayManager.importCompleted {
                 VStack(spacing: 12) {
                     HStack {
-                        Text(relayManager.importCompleted ? "Done!" : "Importing...")
+                        Text(relayManager.importCompleted ? String(localized: "setup.import.done") : String(localized: "setup.import.importing"))
                             .font(.system(size: 13))
                             .foregroundColor(WizardColors.textSecondary)
                         Spacer()
@@ -1442,10 +1442,10 @@ private struct ImportNotesStep: View {
                     }
 
                     if relayManager.importCompleted {
-                        WizardPrimaryButton(title: "Continue", action: onContinue)
+                        WizardPrimaryButton(title: String(localized: "setup.action.continue"), action: onContinue)
                     } else {
                         Button(action: { relayManager.cancelImport() }) {
-                            Text("Cancel Import")
+                            Text(String(localized: "setup.import.cancelImport"))
                                 .font(.system(size: 14, weight: .medium))
                                 .foregroundColor(WizardColors.error)
                         }
@@ -1458,7 +1458,7 @@ private struct ImportNotesStep: View {
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(WizardColors.borderSubtle, lineWidth: 1))
             } else {
                 VStack(alignment: .leading, spacing: 12) {
-                    DatePicker("Start Date", selection: Binding(
+                    DatePicker(String(localized: "setup.import.startDate"), selection: Binding(
                         get: {
                             let formatter = DateFormatter()
                             formatter.dateFormat = "yyyy-MM-dd"
@@ -1476,7 +1476,7 @@ private struct ImportNotesStep: View {
 
                     Divider().background(WizardColors.borderSubtle)
 
-                    Text("Seed Relays")
+                    Text(String(localized: "setup.import.seedRelays"))
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundColor(WizardColors.textPrimary)
 
@@ -1489,7 +1489,7 @@ private struct ImportNotesStep: View {
                 .cornerRadius(12)
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(WizardColors.borderSubtle, lineWidth: 1))
 
-                WizardPrimaryButton(title: "Import Notes") {
+                WizardPrimaryButton(title: String(localized: "setup.import.action")) {
                     configService.save()
                     relayManager.importNotes(config: configService.config)
                 }
@@ -1505,7 +1505,7 @@ private struct ImportNotesStep: View {
                     ProgressView()
                         .controlSize(.small)
                         .tint(WizardColors.accentPrimary)
-                    Text("Restoring...")
+                    Text(String(localized: "setup.import.restoring"))
                         .font(.system(size: 14))
                         .foregroundColor(WizardColors.textSecondary)
                 }
@@ -1518,7 +1518,7 @@ private struct ImportNotesStep: View {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(WizardColors.success)
                         .font(.title2)
-                    Text("Notes restored successfully!")
+                    Text(String(localized: "setup.import.restoreSuccess"))
                         .font(.system(size: 15, weight: .medium))
                         .foregroundColor(WizardColors.textPrimary)
                 }
@@ -1528,7 +1528,7 @@ private struct ImportNotesStep: View {
                 .cornerRadius(12)
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(WizardColors.success.opacity(0.5), lineWidth: 2))
 
-                WizardPrimaryButton(title: "Continue", action: onContinue)
+                WizardPrimaryButton(title: String(localized: "setup.action.continue"), action: onContinue)
             } else {
                 Button(action: {
                     #if os(macOS)
@@ -1539,7 +1539,7 @@ private struct ImportNotesStep: View {
                     HStack {
                         Image(systemName: "doc.zipper")
                             .font(.title3)
-                        Text("Choose Backup File")
+                        Text(String(localized: "setup.import.chooseBackup"))
                             .font(.system(size: 15, weight: .medium))
                     }
                     .foregroundColor(WizardColors.textSecondary)
@@ -1555,7 +1555,7 @@ private struct ImportNotesStep: View {
                 }
                 .buttonStyle(.plain)
 
-                Text("Select a Nostr Vault backup (.zip or .json)")
+                Text(String(localized: "setup.import.backupHint"))
                     .font(.system(size: 12))
                     .foregroundColor(WizardColors.textMuted)
             }
@@ -1639,14 +1639,14 @@ private struct MirrorMediaStep: View {
         VStack(spacing: 24) {
             Spacer().frame(height: 20)
 
-            Text("Mirror Your Media")
+            Text(String(localized: "setup.media.title"))
                 .font(.system(size: isIOSDevice ? 24 : 28, weight: .semibold))
                 .foregroundColor(WizardColors.textPrimary)
                 .opacity(appeared ? 1 : 0)
                 .offset(y: appeared ? 0 : 10)
                 .animation(WizardAnimations.springEnter.delay(0.1), value: appeared)
 
-            Text("Sync your images and videos from a Blossom server to your local relay.")
+            Text(String(localized: "setup.media.subtitle"))
                 .font(.system(size: 15))
                 .foregroundColor(WizardColors.textSecondary)
                 .multilineTextAlignment(.center)
@@ -1655,8 +1655,8 @@ private struct MirrorMediaStep: View {
 
             // Tab bar
             HStack(spacing: 4) {
-                tabPill("From Server", isActive: activeTab == 0) { activeTab = 0 }
-                tabPill("From Backup", isActive: activeTab == 1) { activeTab = 1 }
+                tabPill(String(localized: "setup.media.tab.server"), isActive: activeTab == 0) { activeTab = 0 }
+                tabPill(String(localized: "setup.media.tab.backup"), isActive: activeTab == 1) { activeTab = 1 }
             }
             .padding(3)
             .background(WizardColors.bgCard)
@@ -1674,7 +1674,7 @@ private struct MirrorMediaStep: View {
             .opacity(appeared ? 1 : 0)
             .animation(WizardAnimations.fadeIn.delay(0.3), value: appeared)
 
-            WizardSkipLink(title: "Skip Media") { onSkip() }
+            WizardSkipLink(title: String(localized: "setup.media.skip")) { onSkip() }
 
             Spacer().frame(height: 8)
         }
@@ -1693,8 +1693,8 @@ private struct MirrorMediaStep: View {
                 showSyncError = true
             }
         }
-        .alert("Import Failed", isPresented: $showSyncError) {
-            Button("OK", role: .cancel) {}
+        .alert(String(localized: "setup.media.alert.importFailed"), isPresented: $showSyncError) {
+            Button(String(localized: "setup.alert.ok"), role: .cancel) {}
         } message: {
             Text(syncError ?? "Unknown error")
         }
@@ -1722,7 +1722,7 @@ private struct MirrorMediaStep: View {
                             .foregroundColor(WizardColors.textPrimary)
                     }
 
-                    Text(progressMessage.isEmpty ? "Syncing..." : progressMessage)
+                    Text(progressMessage.isEmpty ? String(localized: "setup.media.syncing") : progressMessage)
                         .font(.system(size: 13))
                         .foregroundColor(WizardColors.textSecondary)
                 }
@@ -1735,7 +1735,7 @@ private struct MirrorMediaStep: View {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(WizardColors.success)
                         .font(.title2)
-                    Text(progressMessage.isEmpty ? "Media synced!" : progressMessage)
+                    Text(progressMessage.isEmpty ? String(localized: "setup.media.syncSuccess") : progressMessage)
                         .font(.system(size: 15, weight: .medium))
                         .foregroundColor(WizardColors.textPrimary)
                 }
@@ -1745,11 +1745,11 @@ private struct MirrorMediaStep: View {
                 .cornerRadius(12)
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(WizardColors.success.opacity(0.5), lineWidth: 2))
 
-                WizardPrimaryButton(title: "Continue", action: onContinue)
+                WizardPrimaryButton(title: String(localized: "setup.action.continue"), action: onContinue)
             } else {
-                WizardInputField(label: "Blossom Server URL", text: $blossomURL, placeholder: "https://blossom.primal.net")
+                WizardInputField(label: String(localized: "setup.media.label.blossomURL"), text: $blossomURL, placeholder: "https://blossom.primal.net")
 
-                WizardPrimaryButton(title: "Sync Media") {
+                WizardPrimaryButton(title: String(localized: "setup.media.syncAction")) {
                     startNetworkSync()
                 }
             }
@@ -1764,7 +1764,7 @@ private struct MirrorMediaStep: View {
                     ProgressView()
                         .controlSize(.small)
                         .tint(WizardColors.accentPrimary)
-                    Text("Importing media...")
+                    Text(String(localized: "setup.media.importing"))
                         .font(.system(size: 14))
                         .foregroundColor(WizardColors.textSecondary)
                 }
@@ -1777,7 +1777,7 @@ private struct MirrorMediaStep: View {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(WizardColors.success)
                         .font(.title2)
-                    Text("Media imported!")
+                    Text(String(localized: "setup.media.importSuccess"))
                         .font(.system(size: 15, weight: .medium))
                         .foregroundColor(WizardColors.textPrimary)
                 }
@@ -1787,7 +1787,7 @@ private struct MirrorMediaStep: View {
                 .cornerRadius(12)
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(WizardColors.success.opacity(0.5), lineWidth: 2))
 
-                WizardPrimaryButton(title: "Continue", action: onContinue)
+                WizardPrimaryButton(title: String(localized: "setup.action.continue"), action: onContinue)
             } else {
                 Button(action: {
                     #if os(macOS)
@@ -1798,7 +1798,7 @@ private struct MirrorMediaStep: View {
                     HStack {
                         Image(systemName: "doc.zipper")
                             .font(.title3)
-                        Text("Choose Media Archive")
+                        Text(String(localized: "setup.media.chooseArchive"))
                             .font(.system(size: 15, weight: .medium))
                     }
                     .foregroundColor(WizardColors.textSecondary)
@@ -1814,7 +1814,7 @@ private struct MirrorMediaStep: View {
                 }
                 .buttonStyle(.plain)
 
-                Text("Select a Blossom backup (.zip)")
+                Text(String(localized: "setup.media.backupHint"))
                     .font(.system(size: 12))
                     .foregroundColor(WizardColors.textMuted)
             }
@@ -1918,14 +1918,14 @@ private struct WalletSetupStep: View {
         VStack(spacing: 24) {
             Spacer().frame(height: 20)
 
-            Text("Lightning + Ecash")
+            Text(String(localized: "setup.wallet.title"))
                 .font(.system(size: isIOSDevice ? 24 : 28, weight: .semibold))
                 .foregroundColor(WizardColors.textPrimary)
                 .opacity(appeared ? 1 : 0)
                 .offset(y: appeared ? 0 : 10)
                 .animation(WizardAnimations.springEnter.delay(0.1), value: appeared)
 
-            Text("Connect a wallet to send zaps, or set up ecash. Both optional — configurable later in Settings.")
+            Text(String(localized: "setup.wallet.subtitle"))
                 .font(.system(size: 15))
                 .foregroundColor(WizardColors.textSecondary)
                 .multilineTextAlignment(.center)
@@ -1939,7 +1939,7 @@ private struct WalletSetupStep: View {
                         Image(systemName: "bolt.fill")
                             .font(.system(size: 18))
                             .foregroundColor(WizardColors.accentPrimary)
-                        Text("Lightning (NWC)")
+                        Text(String(localized: "setup.wallet.lightning.title"))
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundColor(WizardColors.textPrimary)
                         Spacer()
@@ -1955,9 +1955,9 @@ private struct WalletSetupStep: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Divider().background(WizardColors.borderSubtle)
 
-                        WizardInputField(label: "Nostr Wallet Connect URI", text: $nwcURI, placeholder: "nostr+walletconnect://...")
+                        WizardInputField(label: String(localized: "setup.wallet.lightning.label"), text: $nwcURI, placeholder: "nostr+walletconnect://...")
 
-                        Text("Works with Alby, Zeus, Mutiny, and other NWC wallets")
+                        Text(String(localized: "setup.wallet.lightning.hint"))
                             .font(.system(size: 12))
                             .foregroundColor(WizardColors.textMuted)
 
@@ -1965,21 +1965,21 @@ private struct WalletSetupStep: View {
                         if nwcStatus == .testing {
                             HStack(spacing: 6) {
                                 ProgressView().controlSize(.mini).tint(WizardColors.accentPrimary)
-                                Text("Connecting...")
+                                Text(String(localized: "setup.wallet.lightning.connecting"))
                                     .font(.system(size: 13))
                                     .foregroundColor(WizardColors.textSecondary)
                             }
                         } else if nwcStatus == .connected {
                             HStack(spacing: 6) {
                                 Circle().fill(WizardColors.success).frame(width: 8, height: 8)
-                                Text("Connected")
+                                Text(String(localized: "setup.wallet.lightning.connected"))
                                     .font(.system(size: 13))
                                     .foregroundColor(WizardColors.success)
                             }
                         } else if nwcStatus == .failed {
                             HStack(spacing: 6) {
                                 Circle().fill(WizardColors.error).frame(width: 8, height: 8)
-                                Text("Failed to connect")
+                                Text(String(localized: "setup.wallet.lightning.failed"))
                                     .font(.system(size: 13))
                                     .foregroundColor(WizardColors.error)
                             }
@@ -2003,7 +2003,7 @@ private struct WalletSetupStep: View {
                         Image(systemName: "centsign.circle.fill")
                             .font(.system(size: 18))
                             .foregroundColor(WizardColors.accentPrimary)
-                        Text("Cashu Ecash")
+                        Text(String(localized: "setup.wallet.cashu.title"))
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundColor(WizardColors.textPrimary)
                         Spacer()
@@ -2019,9 +2019,9 @@ private struct WalletSetupStep: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Divider().background(WizardColors.borderSubtle)
 
-                        WizardInputField(label: "Cashu Mint URL", text: $cashuMintURL, placeholder: "https://mint.example.com")
+                        WizardInputField(label: String(localized: "setup.wallet.cashu.label"), text: $cashuMintURL, placeholder: "https://mint.example.com")
 
-                        Text("Tokens stored encrypted on your private relay")
+                        Text(String(localized: "setup.wallet.cashu.hint"))
                             .font(.system(size: 12))
                             .foregroundColor(WizardColors.textMuted)
                     }
@@ -2036,9 +2036,9 @@ private struct WalletSetupStep: View {
             .opacity(appeared ? 1 : 0)
             .animation(WizardAnimations.springEnter.delay(0.38), value: appeared)
 
-            WizardPrimaryButton(title: "Continue", action: onContinue)
+            WizardPrimaryButton(title: String(localized: "setup.action.continue"), action: onContinue)
 
-            WizardSkipLink(title: "Skip — set up later") { onSkip() }
+            WizardSkipLink(title: String(localized: "setup.wallet.skip")) { onSkip() }
 
             Spacer().frame(height: 8)
         }
@@ -2067,13 +2067,13 @@ private struct PushNotificationStep: View {
                 .offset(y: appeared ? 0 : -20)
                 .animation(WizardAnimations.springBounce.delay(0.1), value: appeared)
 
-            Text("Stay in the Loop")
+            Text(String(localized: "setup.notifications.title"))
                 .font(.system(size: 24, weight: .semibold))
                 .foregroundColor(WizardColors.textPrimary)
                 .opacity(appeared ? 1 : 0)
                 .animation(WizardAnimations.fadeIn.delay(0.3), value: appeared)
 
-            Text("Get notified about DMs, zaps, and mentions.")
+            Text(String(localized: "setup.notifications.subtitle"))
                 .font(.system(size: 15))
                 .foregroundColor(WizardColors.textSecondary)
                 .opacity(appeared ? 1 : 0)
@@ -2081,11 +2081,11 @@ private struct PushNotificationStep: View {
 
             // Toggle cards
             VStack(spacing: 0) {
-                notificationToggle(icon: "bubble.left.fill", label: "Direct Messages", isOn: $dmEnabled)
+                notificationToggle(icon: "bubble.left.fill", label: String(localized: "setup.notifications.directMessages"), isOn: $dmEnabled)
                 Divider().background(WizardColors.borderSubtle).padding(.horizontal, 16)
-                notificationToggle(icon: "bolt.fill", label: "Zaps", isOn: $zapEnabled)
+                notificationToggle(icon: "bolt.fill", label: String(localized: "setup.notifications.zaps"), isOn: $zapEnabled)
                 Divider().background(WizardColors.borderSubtle).padding(.horizontal, 16)
-                notificationToggle(icon: "at", label: "Mentions", isOn: $mentionEnabled)
+                notificationToggle(icon: "at", label: String(localized: "setup.notifications.mentions"), isOn: $mentionEnabled)
             }
             .background(WizardColors.bgCard)
             .cornerRadius(12)
@@ -2093,9 +2093,9 @@ private struct PushNotificationStep: View {
             .opacity(appeared ? 1 : 0)
             .animation(WizardAnimations.springEnter.delay(0.5), value: appeared)
 
-            WizardPrimaryButton(title: "Enable Notifications", action: onContinue)
+            WizardPrimaryButton(title: String(localized: "setup.notifications.enable"), action: onContinue)
 
-            WizardSkipLink(title: "Not now") { onSkip() }
+            WizardSkipLink(title: String(localized: "setup.notifications.skip")) { onSkip() }
 
             Spacer()
         }
@@ -2169,7 +2169,7 @@ private struct CompleteStep: View {
             }
 
             // Title
-            Text(isBrowseMode ? "Ready to Browse" : "You're All Set")
+            Text(isBrowseMode ? String(localized: "setup.complete.title.browse") : String(localized: "setup.complete.title.full"))
                 .font(.system(size: isIOSDevice ? 28 : 32, weight: .bold))
                 .foregroundColor(WizardColors.textPrimary)
                 .opacity(showContent ? 1 : 0)
@@ -2179,20 +2179,20 @@ private struct CompleteStep: View {
             // Summary bullets
             VStack(alignment: .leading, spacing: 14) {
                 if isBrowseMode {
-                    completeBullet(icon: "checkmark.circle.fill", text: "Connected to the Nostr network", color: WizardColors.success, delay: 1.0)
-                    completeBullet(icon: "info.circle.fill", text: "Re-run setup to unlock posting, DMs, and zaps", color: WizardColors.accentPrimary, delay: 1.1)
+                    completeBullet(icon: "checkmark.circle.fill", text: String(localized: "setup.complete.browse.connected"), color: WizardColors.success, delay: 1.0)
+                    completeBullet(icon: "info.circle.fill", text: String(localized: "setup.complete.browse.upgradeHint"), color: WizardColors.accentPrimary, delay: 1.1)
                 } else {
-                    completeBullet(icon: "checkmark.circle.fill", text: "Your relay is running locally", color: WizardColors.success, delay: 1.0)
-                    completeBullet(icon: "checkmark.circle.fill", text: "Encrypted DMs enabled", color: WizardColors.success, delay: 1.1)
-                    completeBullet(icon: "checkmark.circle.fill", text: "Blossom media hosting active", color: WizardColors.success, delay: 1.2)
-                    completeBullet(icon: "checkmark.circle.fill", text: "Posts broadcast to the Nostr network", color: WizardColors.success, delay: 1.3)
+                    completeBullet(icon: "checkmark.circle.fill", text: String(localized: "setup.complete.full.relayRunning"), color: WizardColors.success, delay: 1.0)
+                    completeBullet(icon: "checkmark.circle.fill", text: String(localized: "setup.complete.full.dmsEnabled"), color: WizardColors.success, delay: 1.1)
+                    completeBullet(icon: "checkmark.circle.fill", text: String(localized: "setup.complete.full.blossomActive"), color: WizardColors.success, delay: 1.2)
+                    completeBullet(icon: "checkmark.circle.fill", text: String(localized: "setup.complete.full.postsBroadcast"), color: WizardColors.success, delay: 1.3)
                 }
             }
 
             Spacer()
 
             #if os(macOS)
-            Text("Look for the relay icon in your menu bar!")
+            Text(String(localized: "setup.complete.menuBarHint"))
                 .font(.system(size: 14))
                 .foregroundColor(WizardColors.accentPrimary.opacity(0.8))
                 .opacity(showContent ? 1 : 0)
@@ -2200,7 +2200,7 @@ private struct CompleteStep: View {
             #endif
 
             // Launch button with pulse
-            WizardPrimaryButton(title: "Launch Nostr Vault", action: onLaunch)
+            WizardPrimaryButton(title: String(localized: "setup.complete.launch"), action: onLaunch)
                 .shadow(color: buttonPulse ? WizardColors.accentGlow : .clear, radius: buttonPulse ? 16 : 8)
                 .opacity(showContent ? 1 : 0)
                 .offset(y: showContent ? 0 : 10)

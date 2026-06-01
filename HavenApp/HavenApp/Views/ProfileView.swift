@@ -36,6 +36,7 @@ struct ProfileView: View {
     // Lightning (NWC) balance — own profile only
     @State private var lightningBalanceSats: Int? = nil
     @State private var isLoadingLightningBalance = false
+    @State private var lightningBalanceError = false
 
     // Edit profile
     @State private var showingEditProfile = false
@@ -299,27 +300,30 @@ struct ProfileView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
                 if isOwnProfile {
-                    HStack(spacing: 18) {
+                    HStack(spacing: 16) {
                         if isOwnerProfile {
                             Button(action: { showingLightning = true }) {
                                 Image(systemName: "bolt.fill")
-                                    .font(.system(size: 18))
-                                    .foregroundColor(.yellow)
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundColor(.havenPurple)
                             }
+                            .buttonStyle(.plain)
                         }
                         Button(action: { showingCashu = true }) {
                             Image(systemName: "banknote.fill")
-                                .font(.system(size: 18))
-                                .foregroundColor(Color(red: 0.65, green: 0.45, blue: 0.2))
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(.havenPurple)
                         }
+                        .buttonStyle(.plain)
                     }
                 }
             }
             ToolbarItem(placement: .navigationBarTrailing) {
                 if isOwnProfile {
-                    HStack(spacing: 20) {
+                    HStack(spacing: 16) {
                         Button(action: { showingDMInbox = true }) {
                             Image(systemName: "bubble.right.fill")
+                                .font(.system(size: 16, weight: .semibold))
                                 .foregroundColor(.havenPurple)
                                 .overlay(alignment: .topTrailing) {
                                     if dmService.totalUnreadCount > 0 {
@@ -330,17 +334,22 @@ struct ProfileView: View {
                                     }
                                 }
                         }
+                        .buttonStyle(.plain)
 
                         Button(action: { showingSettings = true }) {
                             Image(systemName: "gearshape.fill")
+                                .font(.system(size: 16, weight: .semibold))
                                 .foregroundColor(.secondary)
                         }
+                        .buttonStyle(.plain)
                     }
                 } else {
                     Button(action: { showingMessageComposer = true }) {
                         Image(systemName: "message.fill")
+                            .font(.system(size: 16, weight: .semibold))
                             .foregroundColor(.havenPurple)
                     }
+                    .buttonStyle(.plain)
                 }
             }
         }
@@ -379,7 +388,7 @@ struct ProfileView: View {
                 if isOwnerProfile {
                     Button(action: { showingLightning = true }) {
                         Image(systemName: "bolt.fill")
-                            .foregroundColor(.yellow)
+                            .foregroundColor(.havenPurple)
                     }
                     .help("Lightning")
                 }
@@ -388,7 +397,7 @@ struct ProfileView: View {
                 if isOwnProfile {
                     Button(action: { showingCashu = true }) {
                         Image(systemName: "banknote.fill")
-                            .foregroundColor(Color(red: 0.65, green: 0.45, blue: 0.2))
+                            .foregroundColor(.havenPurple)
                     }
                     .help("Ecash")
                 }
@@ -439,6 +448,7 @@ struct ProfileView: View {
                 VStack(spacing: 6) {
                     FollowNotificationBanner()
                     ZapNotificationBanner()
+                    ErrorNotificationBanner()
                 }
                 .padding(.top, 4)
                 .allowsHitTesting(true)
@@ -573,6 +583,7 @@ struct ProfileView: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(copiedNpub ? "Public key copied" : "Copy public key")
             }
         }
         .padding(.horizontal, 16)
@@ -692,6 +703,7 @@ struct ProfileView: View {
                     .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(isFollowing ? "Unfollow" : "Follow")
 
                 Button(action: { showingMessageComposer = true }) {
                     HStack(spacing: 6) {
@@ -756,9 +768,9 @@ struct ProfileView: View {
                 if isOwnerProfile {
                     statDivider
                     statCell(
-                        value: lightningBalanceSats.map(shortSats) ?? (isLoadingLightningBalance ? "…" : "—"),
+                        value: lightningBalanceSats.map(shortSats) ?? (isLoadingLightningBalance ? "…" : (lightningBalanceError ? "⚠" : "—")),
                         label: "⚡ LIGHTNING",
-                        tint: lightningBalanceSats != nil ? .orange : .secondary
+                        tint: lightningBalanceError ? .red : (lightningBalanceSats != nil ? .orange : .secondary)
                     )
                 }
             } else {
@@ -823,6 +835,8 @@ struct ProfileView: View {
         .frame(height: 30)
         .padding(.horizontal, 16)
         .padding(.top, 4)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Posting activity, \(buckets.reduce(0, +)) posts in last 14 days")
     }
 
     private func activityBuckets(days: Int) -> [Int] {
@@ -1431,6 +1445,7 @@ struct ProfileView: View {
             } catch {
                 await MainActor.run {
                     isLoadingLightningBalance = false
+                    lightningBalanceError = true
                 }
                 #if DEBUG
                 print("ProfileView: lightning balance fetch failed: \(error)")

@@ -65,14 +65,22 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             forTaskWithIdentifier: kBGProcessingTaskID,
             using: nil
         ) { task in
-            Self.handleBackgroundProcessingTask(task as! BGProcessingTask)
+            guard let processingTask = task as? BGProcessingTask else {
+                task.setTaskCompleted(success: false)
+                return
+            }
+            Self.handleBackgroundProcessingTask(processingTask)
         }
 
         BGTaskScheduler.shared.register(
             forTaskWithIdentifier: kBGRefreshTaskID,
             using: nil
         ) { task in
-            Self.handleAppRefreshTask(task as! BGAppRefreshTask)
+            guard let refreshTask = task as? BGAppRefreshTask else {
+                task.setTaskCompleted(success: false)
+                return
+            }
+            Self.handleAppRefreshTask(refreshTask)
         }
 
         // Set notification center delegate
@@ -85,6 +93,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             Task { @MainActor in
                 PushNotificationService.shared.requestPermissionAndRegister()
             }
+            Self.scheduleAppRefresh()
         }
 
         return true

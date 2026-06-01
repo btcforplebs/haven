@@ -5,8 +5,9 @@ package main
 import "C"
 
 import (
-	"C"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,6 +28,8 @@ import (
 	"github.com/nbd-wtf/go-nostr/nip44"
 	"github.com/nbd-wtf/go-nostr/nip46"
 	"github.com/spf13/afero"
+	"golang.org/x/crypto/chacha20poly1305"
+	"golang.org/x/crypto/scrypt"
 )
 
 var (
@@ -464,6 +468,198 @@ func DecryptNIP44C(ciphertext *C.char, pubkey *C.char, privkey *C.char) *C.char 
 		return nil
 	}
 	return C.CString(decrypted)
+}
+
+// --- NIP-49 Helpers (bech32 + scrypt + XChaCha20-Poly1305) ---
+
+const bech32OrigConst = uint32(1) // original bech32 (not bech32m)
+
+func bech32Checksum(hrp string, data []byte) []byte {
+	values := append(bech32HRPExpand(hrp), data...)
+	polymod := bech32Polymod(append(values, 0, 0, 0, 0, 0, 0)) ^ bech32OrigConst
+	ret := make([]byte, 6)
+	for i := range ret {
+		ret[i] = byte(polymod>>(5*(5-i))) & 31
+	}
+	return ret
+}
+
+func encodeBech32(hrp string, payload []byte) (string, error) {
+	data5 := convertBits8to5(payload)
+	checksum := bech32Checksum(hrp, data5)
+	combined := append(data5, checksum...)
+	var sb strings.Builder
+	sb.WriteString(hrp)
+	sb.WriteByte('1')
+	for _, b := range combined {
+		sb.WriteByte(bech32Charset[b])
+	}
+	return sb.String(), nil
+}
+
+func convertBits5to8(data []byte) ([]byte, error) {
+	acc, bits := 0, 0
+	var ret []byte
+	for _, v := range data {
+		if v >= 32 {
+			return nil, fmt.Errorf("invalid bech32 data byte: %d", v)
+		}
+		acc = (acc << 5) | int(v)
+		bits += 5
+		for bits >= 8 {
+			bits -= 8
+			ret = append(ret, byte((acc>>bits)&0xff))
+		}
+	}
+	return ret, nil
+}
+
+func decodeBech32(s string) (string, []byte, error) {
+	s = strings.ToLower(s)
+	pos := strings.LastIndex(s, "1")
+	if pos < 1 || pos+7 > len(s) {
+		return "", nil, fmt.Errorf("invalid bech32 separator position")
+	}
+	hrp := s[:pos]
+	dataStr := s[pos+1:]
+
+	var data5 []byte
+	for _, c := range dataStr {
+		idx := strings.IndexByte(bech32Charset, byte(c))
+		if idx < 0 {
+			return "", nil, fmt.Errorf("invalid bech32 character: %c", c)
+		}
+		data5 = append(data5, byte(idx))
+	}
+
+	// Verify checksum
+	values := append(bech32HRPExpand(hrp), data5...)
+	if bech32Polymod(values) != bech32OrigConst {
+		return "", nil, fmt.Errorf("bech32 checksum mismatch")
+	}
+
+	// Strip checksum (last 6 bytes)
+	data5 = data5[:len(data5)-6]
+	payload, err := convertBits5to8(data5)
+	if err != nil {
+		return "", nil, err
+	}
+	return hrp, payload, nil
+}
+
+//export EncryptNIP49C
+func EncryptNIP49C(nsecHex *C.char, password *C.char) *C.char {
+	keyBytes, err := hex.DecodeString(C.GoString(nsecHex))
+	if err != nil || len(keyBytes) != 32 {
+		slog.Error("EncryptNIP49C: invalid hex key", "err", err)
+		return nil
+	}
+
+	pw := []byte(C.GoString(password))
+	if len(pw) == 0 {
+		slog.Error("EncryptNIP49C: empty password")
+		return nil
+	}
+
+	// NIP-49: scrypt with N=2^16, r=8, p=1
+	logN := byte(16)
+	N := 1 << int(logN) // 65536
+
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		slog.Error("EncryptNIP49C: rand salt failed", "err", err)
+		return nil
+	}
+
+	derivedKey, err := scrypt.Key(pw, salt, N, 8, 1, 32)
+	if err != nil {
+		slog.Error("EncryptNIP49C: scrypt failed", "err", err)
+		return nil
+	}
+
+	nonce := make([]byte, chacha20poly1305.NonceSizeX) // 24 bytes
+	if _, err := rand.Read(nonce); err != nil {
+		slog.Error("EncryptNIP49C: rand nonce failed", "err", err)
+		return nil
+	}
+
+	aead, err := chacha20poly1305.NewX(derivedKey)
+	if err != nil {
+		slog.Error("EncryptNIP49C: NewX failed", "err", err)
+		return nil
+	}
+
+	// Encrypt (ciphertext includes 16-byte Poly1305 tag appended)
+	ciphertext := aead.Seal(nil, nonce, keyBytes, nil)
+
+	// NIP-49 payload: version(1) + logN(1) + salt(16) + nonce(24) + encrypted(48 = 32+16)
+	payload := make([]byte, 0, 1+1+16+24+len(ciphertext))
+	payload = append(payload, 0x02) // NIP-49 version 2
+	payload = append(payload, logN)
+	payload = append(payload, salt...)
+	payload = append(payload, nonce...)
+	payload = append(payload, ciphertext...)
+
+	encoded, err := encodeBech32("ncryptsec", payload)
+	if err != nil {
+		slog.Error("EncryptNIP49C: bech32 encode failed", "err", err)
+		return nil
+	}
+
+	return C.CString(encoded)
+}
+
+//export DecryptNIP49C
+func DecryptNIP49C(ncryptsec *C.char, password *C.char) *C.char {
+	hrp, payload, err := decodeBech32(C.GoString(ncryptsec))
+	if err != nil || hrp != "ncryptsec" {
+		slog.Error("DecryptNIP49C: bech32 decode failed", "err", err, "hrp", hrp)
+		return nil
+	}
+
+	pw := []byte(C.GoString(password))
+	if len(pw) == 0 {
+		slog.Error("DecryptNIP49C: empty password")
+		return nil
+	}
+
+	// NIP-49 payload: version(1) + logN(1) + salt(16) + nonce(24) + ciphertext(48)
+	if len(payload) < 1+1+16+24+32+16 {
+		slog.Error("DecryptNIP49C: payload too short", "len", len(payload))
+		return nil
+	}
+
+	version := payload[0]
+	if version != 0x02 {
+		slog.Error("DecryptNIP49C: unsupported version", "version", version)
+		return nil
+	}
+
+	logN := payload[1]
+	N := 1 << int(logN)
+	salt := payload[2:18]
+	nonce := payload[18:42]
+	ciphertext := payload[42:]
+
+	derivedKey, err := scrypt.Key(pw, salt, N, 8, 1, 32)
+	if err != nil {
+		slog.Error("DecryptNIP49C: scrypt failed", "err", err)
+		return nil
+	}
+
+	aead, err := chacha20poly1305.NewX(derivedKey)
+	if err != nil {
+		slog.Error("DecryptNIP49C: NewX failed", "err", err)
+		return nil
+	}
+
+	plaintext, err := aead.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		slog.Error("DecryptNIP49C: decrypt failed", "err", err)
+		return nil
+	}
+
+	return C.CString(hex.EncodeToString(plaintext))
 }
 
 //export FetchFeeEstimatesC

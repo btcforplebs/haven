@@ -828,6 +828,7 @@ struct MenuBarView: View {
                 ZapNotificationBanner()
                 FollowNotificationBanner()
                 MediaUploadNotificationBanner()
+                ErrorNotificationBanner()
             }
             .padding(.top, 4)
         }

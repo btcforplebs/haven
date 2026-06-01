@@ -71,7 +71,9 @@ enum LNURLService {
     /// Shared HTTP fetch + decode for any LNURL pay endpoint URL.
     private static func fetchPayResponse(from url: URL) async throws -> LNURLPayResponse {
         RelayProcessManager.shared.addLog("LNURL: Resolving \(url.absoluteString)", level: "DEBUG")
-        let (data, response) = try await URLSession.shared.data(from: url)
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10
+        let (data, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse else {
             throw LNURLError.invalidResponse
@@ -121,7 +123,9 @@ enum LNURLService {
         }
         
         RelayProcessManager.shared.addLog("LNURL: Fetching invoice from \(url.absoluteString)", level: "DEBUG")
-        let (data, response) = try await URLSession.shared.data(from: url)
+        var invoiceRequest = URLRequest(url: url)
+        invoiceRequest.timeoutInterval = 10
+        let (data, response) = try await URLSession.shared.data(for: invoiceRequest)
         
         guard let httpResponse = response as? HTTPURLResponse else {
             throw LNURLError.invalidResponse

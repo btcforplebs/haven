@@ -848,7 +848,14 @@ class CashuService: ObservableObject {
 
     private func generateRandomSecret() -> Data {
         var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, 32, &bytes)
+        let status = SecRandomCopyBytes(kSecRandomDefault, 32, &bytes)
+        if status != errSecSuccess {
+            RelayProcessManager.shared.addLog(
+                "CashuService: SecRandomCopyBytes failed with status \(status), using fallback",
+                level: "ERROR"
+            )
+            for i in 0..<32 { bytes[i] = UInt8.random(in: 0...255) }
+        }
         return Data(bytes)
     }
 
@@ -925,12 +932,19 @@ class CashuService: ObservableObject {
             lastSyncTimestamp: Int64(Date().timeIntervalSince1970),
             pendingMintQuotes: pendingMintQuotes
         )
-        guard let data = try? JSONEncoder().encode(state) else { return }
-        let url = stateFileURL()
-        try? FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(), withIntermediateDirectories: true
-        )
-        try? data.write(to: url)
+        do {
+            let data = try JSONEncoder().encode(state)
+            let url = stateFileURL()
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(), withIntermediateDirectories: true
+            )
+            try data.write(to: url, options: .atomic)
+        } catch {
+            RelayProcessManager.shared.addLog(
+                "CashuService: Failed to save wallet state: \(error.localizedDescription)",
+                level: "ERROR"
+            )
+        }
     }
 
     // MARK: - Pending Quote Management

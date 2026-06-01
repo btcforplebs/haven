@@ -72,7 +72,9 @@ struct FeedView: View {
                     .shadow(color: feedService.connectionDotColor.opacity(0.8), radius: 3)
             }
             .buttonStyle(.plain)
-            .help("Relay Status")
+            .help(String(localized: "feed.help.relayStatus"))
+            .accessibilityLabel("Relay status")
+            .accessibilityValue(feedService.connectionStatus)
 
             // Feed mode picker
             Menu {
@@ -111,7 +113,7 @@ struct FeedView: View {
                         .foregroundColor(feedService.mediaFeedMode == .following ? Color.havenPurple : .secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Following Media")
+                .help(String(localized: "feed.help.followingMedia"))
 
                 Button(action: {
                     showingGlobalMediaWarning = true
@@ -121,7 +123,7 @@ struct FeedView: View {
                         .foregroundColor(feedService.mediaFeedMode == .global ? Color.havenPurple : .secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Global Media")
+                .help(String(localized: "feed.help.globalMedia"))
             } else if feedService.feedMode == .popular {
                 // My Follows filter
                 Button(action: {
@@ -133,7 +135,7 @@ struct FeedView: View {
                         .foregroundColor(feedService.popularFilter == .follows ? Color.havenPurple : .secondary)
                 }
                 .buttonStyle(.plain)
-                .help(feedService.popularFilter == .follows ? "Showing Follows Only" : "Filter to Follows")
+                .help(feedService.popularFilter == .follows ? String(localized: "feed.help.showingFollowsOnly") : String(localized: "feed.help.filterToFollows"))
 
                 // Non-Follows filter
                 Button(action: {
@@ -145,7 +147,7 @@ struct FeedView: View {
                         .foregroundColor(feedService.popularFilter == .nonFollows ? Color.havenPurple : .secondary)
                 }
                 .buttonStyle(.plain)
-                .help(feedService.popularFilter == .nonFollows ? "Showing Non-Follows Only" : "Filter to Non-Follows")
+                .help(feedService.popularFilter == .nonFollows ? String(localized: "feed.help.showingNonFollowsOnly") : String(localized: "feed.help.filterToNonFollows"))
 
                 // Engagement stats toggle
                 Button(action: { feedService.showPopularEngagement.toggle() }) {
@@ -154,7 +156,7 @@ struct FeedView: View {
                         .foregroundColor(feedService.showPopularEngagement ? Color.havenPurple : .secondary)
                 }
                 .buttonStyle(.plain)
-                .help(feedService.showPopularEngagement ? "Hide Engagement Stats" : "Show Engagement Stats")
+                .help(feedService.showPopularEngagement ? String(localized: "feed.help.hideEngagementStats") : String(localized: "feed.help.showEngagementStats"))
             } else {
                 // Auto-load new posts
                 Button(action: { configService.config.autoLoadNewPosts.toggle(); configService.save() }) {
@@ -163,7 +165,7 @@ struct FeedView: View {
                         .foregroundColor(configService.config.autoLoadNewPosts ? Color.havenPurple : .secondary)
                 }
                 .buttonStyle(.plain)
-                .help(configService.config.autoLoadNewPosts ? "Auto-load On" : "Auto-load Off")
+                .help(configService.config.autoLoadNewPosts ? String(localized: "feed.help.autoLoadOn") : String(localized: "feed.help.autoLoadOff"))
 
                 // Reposts toggle
                 Button(action: { configService.config.showReposts.toggle(); configService.save(); feedService.recomputeFilteredNotes() }) {
@@ -172,7 +174,7 @@ struct FeedView: View {
                         .foregroundColor(configService.config.showReposts ? Color.havenPurple : .secondary)
                 }
                 .buttonStyle(.plain)
-                .help(configService.config.showReposts ? "Hide Reposts" : "Show Reposts")
+                .help(configService.config.showReposts ? String(localized: "feed.help.hideReposts") : String(localized: "feed.help.showReposts"))
 
                 // Replies toggle
                 Button(action: { configService.config.showReplies.toggle(); configService.save(); feedService.recomputeFilteredNotes() }) {
@@ -181,7 +183,7 @@ struct FeedView: View {
                         .foregroundColor(configService.config.showReplies ? Color.havenPurple : .secondary)
                 }
                 .buttonStyle(.plain)
-                .help(configService.config.showReplies ? "Hide Replies" : "Show Replies")
+                .help(configService.config.showReplies ? String(localized: "feed.help.hideReplies") : String(localized: "feed.help.showReplies"))
             }
         }
         .padding(.horizontal, 16)
@@ -443,14 +445,14 @@ struct FeedView: View {
                 selectedGridMediaNoteId = nil
             }
         }
-        .alert("Sensitive Content Warning", isPresented: $showingGlobalMediaWarning) {
-            Button("Proceed", role: .destructive) {
+        .alert(String(localized: "feed.alert.sensitiveContent.title"), isPresented: $showingGlobalMediaWarning) {
+            Button(String(localized: "feed.alert.sensitiveContent.proceed"), role: .destructive) {
                 feedService.mediaFeedMode = .global
                 feedService.refresh()
             }
-            Button("Cancel", role: .cancel) {}
+            Button(String(localized: "feed.alert.sensitiveContent.cancel"), role: .cancel) {}
         } message: {
-            Text("The global media feed shows unmoderated content shared across the entire Nostr network. This may include sensitive, explicit, or NSFW media.")
+            Text(String(localized: "feed.alert.sensitiveContent.message"))
         }
     }
 
@@ -464,16 +466,16 @@ struct FeedView: View {
                     .tint(Color.havenPurple)
 
                 VStack(spacing: 8) {
-                    Text("Synchronizing")
+                    Text(String(localized: "feed.loading.synchronizing"))
                         .font(.system(size: 18, weight: .bold, design: .default))
                         .tracking(0.3)
-                    Text("fetching your follows")
+                    Text(String(localized: "feed.loading.fetchingFollows"))
                         .font(.system(size: 13, weight: .regular, design: .monospaced))
                         .foregroundColor(.secondary)
                 }
             }
 
-            Text("This may take a moment")
+            Text(String(localized: "feed.loading.patience"))
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundColor(.secondary.opacity(0.6))
                 .tracking(0.5)
@@ -490,16 +492,16 @@ struct FeedView: View {
                     .tint(Color.havenPurple)
 
                 VStack(spacing: 8) {
-                    Text("Analyzing Network")
+                    Text(String(localized: "feed.loading.analyzingNetwork"))
                         .font(.system(size: 18, weight: .bold, design: .default))
                         .tracking(0.3)
-                    Text("finding mutual connections")
+                    Text(String(localized: "feed.loading.findingConnections"))
                         .font(.system(size: 13, weight: .regular, design: .monospaced))
                         .foregroundColor(.secondary)
                 }
             }
 
-            Text("This may take a moment")
+            Text(String(localized: "feed.loading.patience"))
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundColor(.secondary.opacity(0.6))
                 .tracking(0.5)
@@ -520,11 +522,11 @@ struct FeedView: View {
                         .tint(Color.havenPurple)
 
                     VStack(spacing: 12) {
-                        Text("Relay Starting...")
+                        Text(String(localized: "feed.empty.relayStarting"))
                             .font(.system(size: 22, weight: .bold, design: .default))
                             .tracking(0.2)
 
-                        Text(relayManager.bootStatusMessage.isEmpty ? "Initializing relay" : relayManager.bootStatusMessage)
+                        Text(relayManager.bootStatusMessage.isEmpty ? String(localized: "feed.empty.initializingRelay") : relayManager.bootStatusMessage)
                             .font(.system(size: 13, weight: .regular, design: .monospaced))
                             .foregroundColor(.secondary)
                             .tracking(0.3)
@@ -545,11 +547,11 @@ struct FeedView: View {
                         )
 
                     VStack(spacing: 12) {
-                        Text("No Following Feed")
+                        Text(String(localized: "feed.empty.following.title"))
                             .font(.system(size: 22, weight: .bold, design: .default))
                             .tracking(0.2)
 
-                        Text("Follow npubs on Nostr to see their posts here")
+                        Text(String(localized: "feed.empty.following.subtitle"))
                             .font(.system(size: 13, weight: .regular, design: .monospaced))
                             .foregroundColor(.secondary)
                             .tracking(0.3)
@@ -561,7 +563,7 @@ struct FeedView: View {
                 } label: {
                     HStack(spacing: 10) {
                         Image(systemName: "arrow.clockwise")
-                        Text("Refresh Feed")
+                        Text(String(localized: "feed.action.refresh"))
                     }
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.black)
@@ -594,11 +596,11 @@ struct FeedView: View {
                         .tint(Color.havenPurple)
 
                     VStack(spacing: 12) {
-                        Text("Relay Starting...")
+                        Text(String(localized: "feed.empty.relayStarting"))
                             .font(.system(size: 22, weight: .bold, design: .default))
                             .tracking(0.2)
 
-                        Text(relayManager.bootStatusMessage.isEmpty ? "Initializing relay" : relayManager.bootStatusMessage)
+                        Text(relayManager.bootStatusMessage.isEmpty ? String(localized: "feed.empty.initializingRelay") : relayManager.bootStatusMessage)
                             .font(.system(size: 13, weight: .regular, design: .monospaced))
                             .foregroundColor(.secondary)
                             .tracking(0.3)
@@ -618,11 +620,11 @@ struct FeedView: View {
                         )
 
                     VStack(spacing: 12) {
-                        Text("No Discovery Feed")
+                        Text(String(localized: "feed.empty.discovery.title"))
                             .font(.system(size: 22, weight: .bold, design: .default))
                             .tracking(0.2)
 
-                        Text("Follow more people on Nostr to build your extended network")
+                        Text(String(localized: "feed.empty.discovery.subtitle"))
                             .font(.system(size: 13, weight: .regular, design: .monospaced))
                             .foregroundColor(.secondary)
                             .tracking(0.3)
@@ -635,7 +637,7 @@ struct FeedView: View {
                 } label: {
                     HStack(spacing: 10) {
                         Image(systemName: "arrow.clockwise")
-                        Text("Refresh Feed")
+                        Text(String(localized: "feed.action.refresh"))
                     }
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.black)
@@ -668,16 +670,16 @@ struct FeedView: View {
                     .tint(Color.havenPurple)
 
                 VStack(spacing: 8) {
-                    Text("Finding Popular Notes")
+                    Text(String(localized: "feed.loading.findingPopular"))
                         .font(.system(size: 18, weight: .bold, design: .default))
                         .tracking(0.3)
-                    Text("scoring engagement across relays")
+                    Text(String(localized: "feed.loading.scoringEngagement"))
                         .font(.system(size: 13, weight: .regular, design: .monospaced))
                         .foregroundColor(.secondary)
                 }
             }
 
-            Text("Analyzing reactions, reposts, and zaps")
+            Text(String(localized: "feed.loading.analyzingReactions"))
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundColor(.secondary.opacity(0.6))
                 .tracking(0.5)
@@ -700,11 +702,11 @@ struct FeedView: View {
                     )
 
                 VStack(spacing: 12) {
-                    Text("No Popular Notes Found")
+                    Text(String(localized: "feed.empty.popular.title"))
                         .font(.system(size: 22, weight: .bold, design: .default))
                         .tracking(0.2)
 
-                    Text("Not enough engagement data from relays.\nCheck back later or try refreshing.")
+                    Text(String(localized: "feed.empty.popular.subtitle"))
                         .font(.system(size: 13, weight: .regular, design: .monospaced))
                         .foregroundColor(.secondary)
                         .tracking(0.3)
@@ -717,7 +719,7 @@ struct FeedView: View {
             } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "arrow.clockwise")
-                    Text("Refresh Feed")
+                    Text(String(localized: "feed.action.refresh"))
                 }
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundColor(.black)
@@ -932,7 +934,7 @@ struct FeedView: View {
                             if feedService.isLoadingFeed {
                                 HStack(spacing: 8) {
                                     ProgressView().controlSize(.small).tint(Color.havenPurple)
-                                    Text("Loading...")
+                                    Text(String(localized: "feed.loading.indicator"))
                                         .font(.system(size: 12, weight: .semibold, design: .monospaced))
                                 }
                                 .foregroundColor(.secondary)
@@ -1017,6 +1019,7 @@ struct FeedView: View {
                         .foregroundColor(.white)
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("\(feedService.pendingNotes.count) new posts, tap to load")
                     .padding(.top, 12)
                     .transition(.asymmetric(
                         insertion: .move(edge: .top).combined(with: .opacity),
@@ -1070,7 +1073,7 @@ struct FeedView: View {
                 HStack(spacing: 6) {
                     Image(systemName: "square.and.pencil")
                         .font(.system(size: 15, weight: .bold))
-                    Text("Post")
+                    Text(String(localized: "feed.action.post"))
                         .font(.system(size: 14, weight: .bold, design: .rounded))
                 }
                 .foregroundColor(.white)
@@ -1088,6 +1091,7 @@ struct FeedView: View {
                         .shadow(color: Color.havenPurple.opacity(0.35), radius: 8, x: 0, y: 4)
                 )
             }
+            .accessibilityLabel("Compose new post")
             .padding(.trailing, 20)
             .padding(.bottom, 90)
             .hoverEffect(.lift)
@@ -1110,10 +1114,10 @@ struct FeedView: View {
                                 endPoint: .bottomTrailing
                             )
                         )
-                    Text("No Media Found")
+                    Text(String(localized: "feed.media.empty.title"))
                         .font(.system(size: 18, weight: .bold))
                         .foregroundColor(.white)
-                    Text(feedService.mediaFeedMode == .following ? "Your followers haven't shared any media yet." : "No global media found on connected relays.")
+                    Text(feedService.mediaFeedMode == .following ? String(localized: "feed.media.empty.following") : String(localized: "feed.media.empty.global"))
                         .font(.system(size: 13, weight: .regular, design: .monospaced))
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -1158,7 +1162,7 @@ struct FeedView: View {
                                 Image(systemName: "chevron.down")
                                     .font(.system(size: 12, weight: .semibold))
                             }
-                            Text(feedService.isLoadingFeed ? "Loading..." : "Show earlier")
+                            Text(feedService.isLoadingFeed ? String(localized: "feed.loading.indicator") : String(localized: "feed.media.showEarlier"))
                                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
                         }
                         .foregroundColor(.secondary)
@@ -1268,7 +1272,7 @@ struct FeedNoteRow: View {
                 HStack(spacing: 6) {
                     ProgressView()
                         .controlSize(.small)
-                    Text("Loading reposted note...")
+                    Text(String(localized: "feed.note.loadingRepost"))
                         .font(.system(size: 13))
                         .foregroundColor(.secondary)
                 }
@@ -1323,22 +1327,26 @@ struct FeedNoteRow: View {
         // Actions row - minimal and clean
         HStack(spacing: 12) {
             actionButton(icon: "message", action: { onReply?() })
+                .accessibilityLabel("Reply")
 
             actionButton(
                 icon: "arrow.2.squarepath",
                 color: rowData.isReposted ? .green : .secondary,
                 action: { actions.repostNote(note) }
             )
+            .accessibilityLabel(rowData.isReposted ? "Reposted" : "Repost")
             .scaleEffect(rowData.isReposted ? 1.2 : 1.0)
             .animation(.spring(response: 0.3, dampingFraction: 0.45), value: rowData.isReposted)
 
             actionButton(icon: "quote.closing", action: { onQuote?() })
+                .accessibilityLabel("Quote")
 
             actionButton(
                 icon: rowData.isLiked ? "heart.fill" : "heart",
                 color: rowData.isLiked ? .red : .secondary,
                 action: { toggleLike() }
             )
+            .accessibilityLabel(rowData.isLiked ? "Unlike" : "Like")
             .scaleEffect(rowData.isLiked ? 1.2 : 1.0)
             .animation(.spring(response: 0.3, dampingFraction: 0.45), value: rowData.isLiked)
             .simultaneousGesture(
@@ -1373,6 +1381,8 @@ struct FeedNoteRow: View {
                     .scaleEffect(isZapped ? 1.2 : 1.0)
                     .animation(.spring(response: 0.3, dampingFraction: 0.45), value: isZapped)
                     .contentShape(Capsule())
+                    .accessibilityLabel(isZapped ? "Zapped" : "Zap")
+                    .accessibilityHint(hasLightning ? "Tap to send sats" : "No lightning address")
                     .onLongPressGesture {
                         if hasLightning {
                             #if os(iOS)
@@ -1393,8 +1403,8 @@ struct FeedNoteRow: View {
 
             ShareLink(
                 item: URL(string: "https://mynostrspace.com/thread/\(note.nevent)")!,
-                subject: Text("Nostr Note"),
-                message: Text("Check out this note on Nostr")
+                subject: Text(String(localized: "feed.share.subject")),
+                message: Text(String(localized: "feed.share.message"))
             ) {
                 Image(systemName: "square.and.arrow.up")
                     .font(.system(size: 14, weight: .medium))

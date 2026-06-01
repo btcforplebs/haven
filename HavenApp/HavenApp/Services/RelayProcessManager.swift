@@ -57,6 +57,8 @@ class RelayProcessManager: ObservableObject {
     private var activitySuppressedUntil: Date?
 
     private var outputPipe: Pipe?
+    private var savedStdout: Int32 = -1
+    private var savedStderr: Int32 = -1
     private var logBuffer = Data() // Buffer for incomplete log lines
     
     // Track if we are in the middle of a shutdown to prevent recursive restarts
@@ -369,6 +371,7 @@ class RelayProcessManager: ObservableObject {
         let stopTimeoutItem = DispatchWorkItem { [weak self] in
             guard let self = self, self.state == .stopping else { return }
             self.logStore.append(LogEntry(timestamp: Date(), level: "WARN", message: "Stop timed out after 5s — force-resetting state"))
+            self.restoreOutput()
             self.state = .idle
             self.isRunning = false
             self.isShuttingDown = false
@@ -391,6 +394,7 @@ class RelayProcessManager: ObservableObject {
                 guard self?.state == .stopping else { return } // Timeout already fired
 
                 self?.logStore.append(LogEntry(timestamp: Date(), level: "INFO", message: "C-Shared relay natively stopped."))
+                self?.restoreOutput()
                 self?.state = .idle
                 self?.isRunning = false
                 self?.isShuttingDown = false
@@ -563,9 +567,7 @@ class RelayProcessManager: ObservableObject {
         eventsStored = 0
         eventsStoredWhenLastViewed = 0
         hasNewRelayActivity = false
-        
-        clearDatabaseLocks()
-        
+
         let relayDataDir = ConfigService.shared.relayDataDir
         try? FileManager.default.createDirectory(at: relayDataDir, withIntermediateDirectories: true)
         try? FileManager.default.createDirectory(at: relayDataDir.appendingPathComponent("data"), withIntermediateDirectories: true)
@@ -590,16 +592,27 @@ class RelayProcessManager: ObservableObject {
         let envURL = relayDataDir.appendingPathComponent(".env")
         let envContent = generateMinimalEnv(config: config)
         try? envContent.write(to: envURL, atomically: true, encoding: .utf8)
-        
+
         let configEnv = generateEnvDictionary(config: config)
         for (key, value) in configEnv {
             setenv(key, value, 1)
+            if let cKey = strdup(key), let cValue = strdup(value) {
+                SetHavenEnvC(cKey, cValue)
+                free(cKey)
+                free(cValue)
+            }
         }
         #if os(macOS)
-        setenv("RELAY_BIND_ADDRESS", "0.0.0.0", 1)
+        let bindAddress = "0.0.0.0"
         #else
-        setenv("RELAY_BIND_ADDRESS", config.allowNetworkAccess ? "0.0.0.0" : "127.0.0.1", 1)
+        let bindAddress = config.allowNetworkAccess ? "0.0.0.0" : "127.0.0.1"
         #endif
+        setenv("RELAY_BIND_ADDRESS", bindAddress, 1)
+        if let cKey = strdup("RELAY_BIND_ADDRESS"), let cValue = strdup(bindAddress) {
+            SetHavenEnvC(cKey, cValue)
+            free(cKey)
+            free(cValue)
+        }
 
         FileManager.default.changeCurrentDirectoryPath(relayDataDir.path)
         captureOutput(in: relayDataDir)
@@ -656,6 +669,10 @@ class RelayProcessManager: ObservableObject {
         if outputPipe == nil {
             let pipe = Pipe()
             outputPipe = pipe
+
+            // Save original FDs so they can be restored when the relay stops
+            savedStdout = dup(STDOUT_FILENO)
+            savedStderr = dup(STDERR_FILENO)
 
             // Redirect STDOUT and STDERR to our pipe
             dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
@@ -720,7 +737,24 @@ class RelayProcessManager: ObservableObject {
             }
         }
     }
-    
+
+    /// Restores stdout/stderr to their original file descriptors and tears down the pipe.
+    private func restoreOutput() {
+        if savedStdout >= 0 {
+            dup2(savedStdout, STDOUT_FILENO)
+            close(savedStdout)
+            savedStdout = -1
+        }
+        if savedStderr >= 0 {
+            dup2(savedStderr, STDERR_FILENO)
+            close(savedStderr)
+            savedStderr = -1
+        }
+        outputPipe?.fileHandleForReading.readabilityHandler = nil
+        outputPipe = nil
+        logFileHandle = nil
+    }
+
     func generateMinimalEnv(config: HavenConfig) -> String {
         let envDict = generateEnvDictionary(config: config)
         var content = ""
@@ -1199,7 +1233,9 @@ class RelayProcessManager: ObservableObject {
             self.prepareEnvForBackup(config: config)
 
             DispatchQueue.global().async {
-                let result = BackupDatabaseC(strdup(outputPath))
+                let cPath = strdup(outputPath)
+                let result = BackupDatabaseC(cPath)
+                free(cPath)
                 Task { @MainActor in
                     completion(result == 0)
                     if wasRunning {
@@ -1224,7 +1260,9 @@ class RelayProcessManager: ObservableObject {
             self.prepareEnvForBackup(config: config)
 
             DispatchQueue.global().async {
-                let result = RestoreDatabaseC(strdup(inputPath))
+                let cPath = strdup(inputPath)
+                let result = RestoreDatabaseC(cPath)
+                free(cPath)
                 Task { @MainActor in
                     completion(result == 0)
                     if wasRunning {
@@ -1315,8 +1353,12 @@ class RelayProcessManager: ObservableObject {
         
         // Launch Go ZipDirectoryC on background thread
         DispatchQueue.global().async { [weak self] in
-            let result = ZipDirectoryC(strdup(blossomDir.path), strdup(tempZipURL.path))
-            
+            let cSrc = strdup(blossomDir.path)
+            let cDst = strdup(tempZipURL.path)
+            let result = ZipDirectoryC(cSrc, cDst)
+            free(cSrc)
+            free(cDst)
+
             Task { @MainActor in
                 if result == 0 {
                     do {
@@ -1340,7 +1382,7 @@ class RelayProcessManager: ObservableObject {
             }
         }
     }
-    
+
     func runBlossomImport(config: HavenConfig, inputPath: String, completion: @escaping @Sendable (Bool) -> Void) {
         let blossomDir = ConfigService.shared.relayDataDir.appendingPathComponent(config.blossomPath)
         
@@ -1366,11 +1408,15 @@ class RelayProcessManager: ObservableObject {
         
         // Launch Go UnzipDirectoryC on background thread
         DispatchQueue.global().async { [weak self] in
-            let result = UnzipDirectoryC(strdup(tempZipURL.path), strdup(blossomDir.path))
-            
+            let cSrc = strdup(tempZipURL.path)
+            let cDst = strdup(blossomDir.path)
+            let result = UnzipDirectoryC(cSrc, cDst)
+            free(cSrc)
+            free(cDst)
+
             Task { @MainActor in
                 try? FileManager.default.removeItem(at: tempZipURL)
-                
+
                 if result == 0 {
                     self?.logStore.append(LogEntry(timestamp: Date(), level: "INFO", message: "Blossom import complete."))
                     completion(true)
@@ -1438,7 +1484,11 @@ class RelayProcessManager: ObservableObject {
                 }
                 
                 // Zip the staging directory content using Go ZipDirectoryC
-                let result = ZipDirectoryC(strdup(stagingDir.path), strdup(tempZipURL.path))
+                let cSrc = strdup(stagingDir.path)
+                let cDst = strdup(tempZipURL.path)
+                let result = ZipDirectoryC(cSrc, cDst)
+                free(cSrc)
+                free(cDst)
                 
                 await MainActor.run {
                     // Cleanup staging
@@ -1502,7 +1552,11 @@ class RelayProcessManager: ObservableObject {
         
         // 2. Unzip to staging using Go UnzipDirectoryC
         DispatchQueue.global().async { [weak self] in
-            let result = UnzipDirectoryC(strdup(tempZipURL.path), strdup(stagingDir.path))
+            let cSrc = strdup(tempZipURL.path)
+            let cDst = strdup(stagingDir.path)
+            let result = UnzipDirectoryC(cSrc, cDst)
+            free(cSrc)
+            free(cDst)
             
             Task { @MainActor in
                 // Cleanup zip copy
