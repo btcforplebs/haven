@@ -136,8 +136,8 @@ struct ProfileView: View {
         return items.map { item in
             let ext = item.url.pathExtension.lowercased()
             var isGIF = ext == "gif"
-            var isVideo = ["mp4", "mov", "webm", "m4v", "hevc", "h265"].contains(ext)
-            var isAudio = ["mp3", "wav", "ogg", "m4a", "flac"].contains(ext)
+            var isVideo = SupportedMediaFormats.videoExtensions.contains(ext)
+            var isAudio = SupportedMediaFormats.audioExtensions.contains(ext)
             
             if let cachedMime = MediaTypeDetector.shared.getCachedContentType(for: item.url) {
                 isGIF = MediaTypeDetector.shared.isGIFContentType(cachedMime)
@@ -212,7 +212,7 @@ struct ProfileView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(red: 0.08, green: 0.08, blue: 0.1).ignoresSafeArea())
         .onAppear {
-            nostrService.fetchMissingProfiles(for: [pubkey], force: true)
+            nostrService.fetchMissingProfiles(for: [pubkey])
             fetchAuthorNotes()
             fetchLightningBalance()
             fetchLocalRelayCounts()

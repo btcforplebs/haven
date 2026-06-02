@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1 (3) macOS / 1.1.1 (3) iOS] - 2026-06-02
+
+> **Network Performance Release**: Reduces simultaneous TCP/WebSocket connections on app reopen from 12-15 to 2-3 in the first 500ms, targeting 5G/cellular usability.
+
+### Changed
+- **Deferred Auxiliary Feed Subscriptions**: Feed subscriptions now send only the primary content filter (kinds 1, 6, 30023) on initial relay connect. Auxiliary subscriptions (mentions, reactions, incoming/outgoing zaps) are deferred until after the primary EOSE arrives per-relay, preventing bandwidth starvation of feed content. Pagination calls continue to send all filters at once.
+- **Staggered External Relay Connections**: Local relay connects immediately on feed subscribe; external relays stagger 200ms apart to avoid TCP/TLS handshake storms on cellular connections. Already-connected relays (warm resume) skip the stagger.
+- **Extended Network Caching**: Discovery mode now caches the computed `extendedNetworkPubkeys` with a 1-hour TTL, skipping the 75-125+ REQ messages needed to recompute the web-of-trust graph on reopen. Cache is cleared on account switch and restored from disk snapshots.
+- **Filtered Notes Change Suppression**: `recomputeFilteredNotes()` now compares the new ID list against the current one and skips the `@Published` assignment when the visible list hasn't changed, preventing unnecessary SwiftUI re-renders and scroll position resets from background buffer flushes.
+- **Precomputed Parent-Is-Next Set**: `FeedService.parentIsNextNote` is now precomputed during filtering, eliminating per-row `Array(enumerated())` lookups in the view's `ForEach`.
+- **Single-Assignment Batch Inserts**: Note batch inserts in `flushNotes()` now build the sorted/capped array locally and assign to `notes` once, reducing `objectWillChange` notifications from multiple mutations to a single publish.
+- **Two-Phase Boot Status**: Relay boot now transitions through three visual states — yellow "BOOTING" while the Go process initializes, orange while Web of Trust graph syncs, and green "ONLINE" once inbox subscriptions are active. `RelayProcessManager.isWotSyncing` tracks the intermediate phase.
+- **DashboardView Single Stats Refresh**: Dashboard `onAppear` now performs a single combined refresh (disk sizes + relay COUNT) when the relay is ready, instead of firing a disk-only refresh and a full relay refresh simultaneously. The `onChange(isBooting)` handler remains unchanged for post-boot refresh.
+- **ProfileView Cache-Respecting Fetch**: Profile `onAppear` now calls `fetchMissingProfiles` without forcing a refetch, respecting the in-memory profile cache instead of opening 3 Blastr relay connections on every profile view appearance. Pull-to-refresh still force-fetches.
+
+### Added
+- **ensureRelayReady() Helper**: New async helper on `RelayProcessManager` that polls until the relay is running and no longer booting, with a configurable timeout (default 15s), preventing race conditions where services attempt relay operations before the process is ready.
+
+### Removed
+- **Metrics Timer**: Removed the 2-second repeating metrics timer from `RelayProcessManager` — `updateMetrics()` had an empty body and metrics were already tracked via relay log parsing in `collectStateChanges()`.
+- **Warm-Up Relay Connections**: Removed `warmUpExternalRelays()` and the `warmClients` pool from `FeedService`. These pre-opened bare WebSocket connections to external relays during contact list loading, but `subscribeToAllRelays()` created its own connections immediately after, making the warm-up redundant.
+
+## [2.5.1 (2) macOS / 1.1.1 (2) iOS] - 2026-06-01
+
+### Added
+- **Notes Tab in Mac Sidebar**: Added dedicated "Notes" tab to the macOS sidebar navigation, displaying the full ViewerView interface for browsing notes and media. Provides quick access to the complete notes viewer experience directly from the sidebar, positioned between Relay and Media tabs.
+- **Blossom Directory Watcher**: New filesystem monitoring service (`BlossomDirectoryWatcher`) that detects when external devices (e.g., iPhone) upload media blobs to the Mac relay. Automatically triggers media grid refresh when new files appear in the blossom directory, with debounced notifications to prevent excessive reloads.
+- **Network Sync Event Deduplication**: `NetworkSyncService` now tracks injected event IDs (up to 10,000) to prevent blast feedback loops where events are received back from blastr relays and re-injected into the local relay, causing infinite broadcast cycles.
+
+### Changed
+- **MenuBarView Navigation**: Enhanced sidebar tab structure with notes-specific navigation, integrating ViewerView with proper environment object configuration for relay manager, config service, and Nostr service.
+- **Blastr Broadcasting Architecture**: Removed Swift-side blastr relay broadcasting from `NostrService.publishEvent()`. All blastr broadcasting now happens server-side in the Go relay's `StoreEvent` handler, eliminating the double-blast feedback loop where events were sent to blastr relays twice (once from Swift, once from Go).
+- **ViewerView Blossom Auto-Reload**: Media grid now subscribes to `blossomDirectoryChanged` notifications and starts filesystem watcher on load, enabling real-time media grid updates when external devices upload to the relay.
+- **ViewerView Media-Only Mode Guards**: Added guards to prevent notification-driven view mode changes when `ViewerView` is initialized in media-only mode (e.g., from MediaTabView), preventing accidental tab switches.
+
+### Fixed
+- **QuickTime MIME Type Detection**: Fixed file type detection order in `RelayProcessManager.detectMIMEType()` to check QuickTime (`qt  `) brand before HEVC brands. macOS screen recordings use HEVC in MOV containers and were incorrectly classified as `video/mp4` instead of `video/quicktime`.
+- **Stats Service Race Conditions**: Fixed multiple race conditions in `StatsService.fetchKindCounts()` async continuation handling. Added proper `guard !resumed` checks and explicit cancellable cleanup to prevent double-resume crashes and dangling subscriptions.
+
+### Removed
+- **DM_PLAN.md**: Removed planning document (implementation complete).
+
 ## [2.5.2 macOS / 1.1.2 iOS] - 2026-06-01
 
 > **Stability & Polish Release**: Seven-phase hardening pass covering debug log hygiene, race condition fixes, user-facing error notifications, delete confirmations, network resilience, accessibility, and a localization foundation for future translation support.

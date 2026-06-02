@@ -20,7 +20,7 @@ struct DashboardView: View {
     @State private var showingStorageBreakdown = false
     @State private var shareSheetURL: URL?
     @State private var showingShareSheet = false
-    
+
     var isSidebar: Bool = false
     
     var body: some View {
@@ -36,13 +36,13 @@ struct DashboardView: View {
             #endif
         }
         .onAppear {
-            // Fresh disk-only refresh on appear
-            statsService.refreshStats()
-
-            // If relay is already running AND not booting, get full stats
             if relayManager.isRunning && !relayManager.isBooting {
+                // Relay ready: single combined refresh (disk sizes + relay COUNT)
                 let urlString = configService.config.relayURL.isEmpty ? "localhost:\(configService.config.relayPort)" : configService.config.relayURL
                 statsService.refreshStats(relayURLString: urlString)
+            } else {
+                // Relay not ready: disk-only refresh; full refresh fires from onChange after boot
+                statsService.refreshStats()
             }
         }
         .onChange(of: relayManager.isBooting) { _, isBooting in
@@ -799,7 +799,7 @@ struct DashboardView: View {
     }
 
     private var relayStatusHeader: some View {
-        let statusColor = relayManager.isBooting ? Color.yellow : (relayManager.isRunning ? Color.green : Color.red)
+        let statusColor = relayManager.isBooting ? Color.yellow : (relayManager.isRunning && relayManager.isWotSyncing ? Color.orange : (relayManager.isRunning ? Color.green : Color.red))
         return VStack(spacing: 16) {
             HStack {
                 VStack(alignment: .leading, spacing: 6) {
@@ -826,7 +826,7 @@ struct DashboardView: View {
                                 .shadow(color: statusColor.opacity(0.8), radius: 4)
                         }
 
-                        Text(relayManager.isBooting ? "BOOTING..." : (relayManager.isRunning ? "ONLINE" : "OFFLINE"))
+                        Text(relayManager.isBooting ? "BOOTING..." : (relayManager.isRunning && relayManager.isWotSyncing ? "ONLINE" : (relayManager.isRunning ? "ONLINE" : "OFFLINE")))
                              .font(.system(size: 16, weight: .bold, design: .monospaced))
                              .foregroundColor(.white)
                     }
@@ -889,10 +889,10 @@ struct DashboardView: View {
             )
             .shadow(color: statusColor.opacity(relayManager.isRunning && !relayManager.isBooting ? 0.08 : 0), radius: 10, x: 0, y: 4)
             
-            if relayManager.isBooting, !relayManager.bootStatusMessage.isEmpty {
+            if (relayManager.isBooting || relayManager.isWotSyncing), !relayManager.bootStatusMessage.isEmpty {
                  Text(relayManager.bootStatusMessage)
                       .font(.system(size: 11, design: .monospaced))
-                      .foregroundColor(.yellow.opacity(0.8))
+                      .foregroundColor(relayManager.isWotSyncing ? .orange.opacity(0.8) : .yellow.opacity(0.8))
                       .lineLimit(2)
                       .fixedSize(horizontal: false, vertical: true)
             }

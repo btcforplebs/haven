@@ -141,9 +141,7 @@ struct FeedNote: Identifiable, Hashable, Equatable, Codable {
 
     // MARK: - Static parsers (called once at init)
 
-    private static let mediaRegex: NSRegularExpression? = {
-        try? NSRegularExpression(pattern: #"https?://\S+?\.(?:jpg|jpeg|png|gif|webp|avif|tiff|mp4|mov|webm|m4v|heic|hevc|h265)(?:\?\S+)?"#, options: .caseInsensitive)
-    }()
+    private static let mediaRegex: NSRegularExpression? = SupportedMediaFormats.mediaExtensionRegex
 
     /// Matches extensionless Blossom URLs where the path is a 64-char SHA-256 hex hash.
     private static let blossomRegex: NSRegularExpression? = {
@@ -470,6 +468,9 @@ class FeedService: ObservableObject {
     @Published var parentNotesCache: [String: FeedNote] = [:]
     @Published var followedPubkeys: [String] = []
     @Published var extendedNetworkPubkeys: [String] = []
+    /// When the extended network was last computed. Used to skip re-fetching within 1 hour.
+    private var extendedNetworkComputedAt: Date?
+    private static let extendedNetworkCacheAge: TimeInterval = 3600 // 1 hour
     @Published var isLoadingContacts = false
     /// True once contact loading has completed at least once (success, empty, or timeout).
     /// Used to gate follow/unfollow so we don't publish before the kind-3 has had a chance to arrive.
@@ -513,6 +514,10 @@ class FeedService: ObservableObject {
     @Published private(set) var filteredNotes: [FeedNote] = []
     @Published private(set) var filteredMediaNotes: [FeedNote] = []
 
+    /// Set of note IDs where the parent event is the immediately next item in filteredNotes.
+    /// Precomputed to avoid needing `Array(enumerated())` in the view's ForEach.
+    private(set) var parentIsNextNote: Set<String> = []
+
     /// Recompute the cached filtered-notes arrays. Called after any mutation to
     /// `notes`, `feedMode`, or relevant config (showReposts / showReplies / blocked).
     func recomputeFilteredNotes() {
@@ -521,7 +526,7 @@ class FeedService: ObservableObject {
         let showReplies = ConfigService.shared.config.showReplies
         let mode = feedMode
 
-        filteredNotes = notes.filter { note in
+        var newFiltered = notes.filter { note in
             if blocked.contains(note.pubkey) { return false }
             if note.kind == 6 && !showReposts { return false }
             if mode == .popular {
@@ -541,7 +546,7 @@ class FeedService: ObservableObject {
 
         // Popular feed: sort by engagement score instead of chronological
         if mode == .popular && !popularNoteScores.isEmpty {
-            filteredNotes.sort { a, b in
+            newFiltered.sort { a, b in
                 let scoreA = popularNoteScores[a.id] ?? 0
                 let scoreB = popularNoteScores[b.id] ?? 0
                 if scoreA != scoreB { return scoreA > scoreB }
@@ -549,13 +554,38 @@ class FeedService: ObservableObject {
             }
         }
 
+        // Only publish a change when the visible list actually differs.
+        // This prevents unnecessary SwiftUI re-renders (and scroll position resets)
+        // when a background buffer flush adds notes that are filtered out or
+        // sorted into the same positions.
+        let newIDs = newFiltered.map(\.id)
+        let oldIDs = filteredNotes.map(\.id)
+        if newIDs != oldIDs {
+            filteredNotes = newFiltered
+
+            // Precompute parent-is-next relationships for the view
+            var newParentIsNext = Set<String>()
+            for i in 0..<newFiltered.count {
+                if let parentId = newFiltered[i].parentEventId,
+                   i + 1 < newFiltered.count,
+                   newFiltered[i + 1].id == parentId {
+                    newParentIsNext.insert(newFiltered[i].id)
+                }
+            }
+            parentIsNextNote = newParentIsNext
+        }
+
         let isGlobalMedia = feedMode == .media && mediaFeedMode == .global
-        filteredMediaNotes = notes.filter { note in
+        let newMedia = notes.filter { note in
             if blocked.contains(note.pubkey) { return false }
             // Only show media from WOT members in global media mode
             if isGlobalMedia && !wotPubkeys.isEmpty && !wotPubkeys.contains(note.pubkey) { return false }
             return !note.mediaURLs.isEmpty
         }.sorted { $0.createdAt > $1.createdAt }
+
+        if newMedia.map(\.id) != filteredMediaNotes.map(\.id) {
+            filteredMediaNotes = newMedia
+        }
     }
 
     /// Cache of raw event JSON strings for NIP-18 repost embedding.
@@ -584,8 +614,6 @@ class FeedService: ObservableObject {
 
     // One client per relay URL
     private var feedClients: [String: WebSocketClient] = [:]
-    /// Pre-warmed WebSocket connections awaiting adoption by connectFeedRelay().
-    private var warmClients: [String: WebSocketClient] = [:]
     private var cancellables = Set<AnyCancellable>()
     private var seenIds = Set<String>()
     /// Timestamp (unix seconds) of the newest event successfully processed.
@@ -593,6 +621,10 @@ class FeedService: ObservableObject {
     private var lastEventTimestamp: Int64 = 0
     private var newSinceLastView = Date()
     private var eoseCount = 0   // track when all relays return EOSE
+    /// Relay keys that have received primary feed EOSE — triggers deferred auxiliary subscriptions.
+    private var primaryEoseRelays = Set<String>()
+    /// Maps primary feed subscription IDs to relay keys for EOSE → auxiliary dispatch.
+    private var subIdToRelayKey: [String: String] = [:]
 
     // Background queue for JSON parsing — keeps the main thread free for UI
     private let processingQueue = DispatchQueue(label: "com.haven.feed-processing", qos: .userInitiated)
@@ -867,6 +899,7 @@ class FeedService: ObservableObject {
         // 3. Cancel in-flight loading flags + timers so the new flow isn't blocked.
         isLoadingContacts = false
         isLoadingExtendedNetwork = false
+        extendedNetworkComputedAt = nil
         isLoadingFeed = false
         isSyncing = false
         contactLoadingTimeout?.invalidate()
@@ -886,6 +919,9 @@ class FeedService: ObservableObject {
                 notes = diskSnap.notes
                 followedPubkeys = diskSnap.followedPubkeys
                 extendedNetworkPubkeys = diskSnap.extendedNetworkPubkeys
+                if !diskSnap.extendedNetworkPubkeys.isEmpty {
+                    extendedNetworkComputedAt = diskSnap.capturedAt
+                }
                 noteStats = diskSnap.noteStats
                 contactListContent = diskSnap.contactListContent
                 contactListPTags = diskSnap.contactListPTags
@@ -1073,10 +1109,6 @@ class FeedService: ObservableObject {
         newSinceLastView = Date()
         lastEventTimestamp = 0
 
-        // Start external relay handshakes in parallel with the contact list
-        // fetch so connections are already open when subscribeToAllRelays runs.
-        warmUpExternalRelays()
-
         loadContactList { [weak self] in
             guard let self = self else { return }
             if self.feedMode == .discovery {
@@ -1239,8 +1271,6 @@ class FeedService: ObservableObject {
     private func disconnectFeedClients() {
         feedClients.values.forEach { $0.disconnect() }
         feedClients.removeAll()
-        warmClients.values.forEach { $0.disconnect() }
-        warmClients.removeAll()
     }
 
     /// Whether the feed is currently paused (no active relay connections).
@@ -1744,12 +1774,24 @@ class FeedService: ObservableObject {
     
     private var extendedNetworkTimeout: Timer?
     
-    private func loadExtendedNetwork(completion: @escaping () -> Void) {
+    private func loadExtendedNetwork(forceRefresh: Bool = false, completion: @escaping () -> Void) {
         guard !followedPubkeys.isEmpty else {
             completion()
             return
         }
-        
+
+        // Reuse cached result if recent enough
+        if !forceRefresh,
+           !extendedNetworkPubkeys.isEmpty,
+           let computedAt = extendedNetworkComputedAt,
+           Date().timeIntervalSince(computedAt) < Self.extendedNetworkCacheAge {
+            #if DEBUG
+            print("FeedService: Reusing cached extended network (\(extendedNetworkPubkeys.count) pubkeys, age \(Int(Date().timeIntervalSince(computedAt)))s)")
+            #endif
+            completion()
+            return
+        }
+
         isLoadingExtendedNetwork = true
         connectionStatus = "Analyzing network..."
         
@@ -1792,7 +1834,8 @@ class FeedService: ObservableObject {
             let sorted = mutualCounts.sorted { $0.value > $1.value }
             // Take top 500
             self.extendedNetworkPubkeys = Array(sorted.prefix(500).map { $0.key })
-            
+            self.extendedNetworkComputedAt = Date()
+
             self.isLoadingExtendedNetwork = false
             completion()
         }
@@ -1960,6 +2003,8 @@ class FeedService: ObservableObject {
 
         isLoadingFeed = true
         eoseCount = 0
+        primaryEoseRelays.removeAll()
+        subIdToRelayKey.removeAll()
         relayErrorCounts.removeAll()
         connectionStatus = "Loading feed…"
 
@@ -2008,37 +2053,34 @@ class FeedService: ObservableObject {
             }
         }
 
+        // Connect local relay(s) immediately; stagger external connections
+        // by 200ms each to avoid a TCP/TLS handshake storm on cellular.
+        var externalQueue: [URL] = []
         for url in allURLs {
             let key = url.absoluteString
             if let existing = feedClients[key],
                existing.connectionState == .connected {
-                // Relay is already connected — just re-send the subscription
-                // filters.  In the Nostr protocol a new REQ with the same
-                // subscription ID replaces the previous one.  The relay will
-                // reply with fresh events + EOSE which the existing message
-                // pipeline handles normally.
-                sendFeedSubscription(client: existing, label: key)
-            } else {
-                // No existing connection — create a new one.
+                sendPrimaryFeedSubscription(client: existing, label: key)
+            } else if url == localRelayURL || url == localInboxURL {
                 connectFeedRelay(url: url, totalRelays: totalRelays)
+            } else {
+                externalQueue.append(url)
             }
         }
-    }
-
-    /// Start bare WebSocket connections to external relays so the TCP/TLS/WS
-    /// handshake completes while the contact list is still loading.  These
-    /// connections carry no message handlers and send no subscriptions —
-    /// `connectFeedRelay` adopts them later.
-    private func warmUpExternalRelays() {
-        for url in externalRelayURLs {
+        for (index, url) in externalQueue.enumerated() {
             let key = url.absoluteString
-            guard warmClients[key] == nil, feedClients[key] == nil else { continue }
-            let c = WebSocketClient()
-            warmClients[key] = c
-            c.connect(url: url)
-            #if DEBUG
-            print("FeedService: Warming up connection to \(key)")
-            #endif
+            if feedClients[key]?.connectionState == .connected || feedClients[key]?.connectionState == .connecting {
+                continue
+            }
+            let delay = Double(index) * 0.2
+            if delay == 0 {
+                connectFeedRelay(url: url, totalRelays: totalRelays)
+            } else {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                    guard let self = self, !self.isPaused else { return }
+                    self.connectFeedRelay(url: url, totalRelays: totalRelays)
+                }
+            }
         }
     }
 
@@ -2052,20 +2094,7 @@ class FeedService: ObservableObject {
             return
         }
 
-        // Reuse a pre-warmed connection if available
-        let c: WebSocketClient
-        let needsConnect: Bool
-        if let warm = warmClients.removeValue(forKey: key),
-           warm.connectionState == .connected || warm.connectionState == .connecting {
-            c = warm
-            needsConnect = false
-            #if DEBUG
-            print("FeedService: Reusing warm connection for \(key)")
-            #endif
-        } else {
-            c = WebSocketClient()
-            needsConnect = true
-        }
+        let c = WebSocketClient()
         feedClients[key] = c
 
         c.messageSubject
@@ -2073,9 +2102,6 @@ class FeedService: ObservableObject {
             .sink { [weak self] msg in self?.handleFeedMsgBackground(msg, totalRelays: totalRelays) }
             .store(in: &cancellables)
 
-        // @Published emits the current value on subscribe, so if the warm
-        // client is already .connected the sink fires immediately and
-        // sendFeedSubscription is called without waiting for a handshake.
         c.$connectionState
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
@@ -2083,7 +2109,7 @@ class FeedService: ObservableObject {
                 switch state {
                 case .connected:
                     self.relayErrorCounts[key] = 0
-                    self.sendFeedSubscription(client: c, label: key)
+                    self.sendPrimaryFeedSubscription(client: c, label: key)
                 case .error:
                     let errorCount = (self.relayErrorCounts[key] ?? 0) + 1
                     self.relayErrorCounts[key] = errorCount
@@ -2119,9 +2145,7 @@ class FeedService: ObservableObject {
             }
             .store(in: &cancellables)
 
-        if needsConnect {
-            c.connect(url: url)
-        }
+        c.connect(url: url)
     }
 
     /// One-shot pagination client — opens, fetches until the given timestamp, then disconnects.
@@ -2148,99 +2172,185 @@ class FeedService: ObservableObject {
         c.connect(url: url)
     }
 
-    private func sendFeedSubscription(client: WebSocketClient, label: String, until: Int64? = nil) {
+    /// Shared "since" and filter computation for feed subscriptions.
+    private func feedSinceAndLimit(until: Int64? = nil) -> (since: Int64, limit: Int) {
         let isResume = lastEventTimestamp > 0 && until == nil
-        let since: Int64
-        let limitVal: Int
         if isResume {
-            // Resume: fetch only the gap since last event, with clock-drift buffer
-            since = lastEventTimestamp - 60
-            limitVal = feedMode == .media ? 500 : 500
+            return (lastEventTimestamp - 60, feedMode == .media ? 500 : 500)
         } else {
-            // Cold start or pagination: original behavior
-            since = Int64(Date().timeIntervalSince1970) - (7 * 24 * 3600)
-            limitVal = feedMode == .media ? 300 : 500
+            return (Int64(Date().timeIntervalSince1970) - (7 * 24 * 3600), feedMode == .media ? 300 : 500)
         }
-        let isGlobal = feedMode == .global || (feedMode == .media && mediaFeedMode == .global)
+    }
+
+    private func feedSubId(for label: String) -> String {
+        "feed-\(label.suffix(8).filter { $0.isLetter || $0.isNumber })"
+    }
+
+    /// Send only the primary feed filter (kinds 1, 6, 30023). Auxiliary subscriptions
+    /// (mentions, reactions, zaps) are deferred until this relay's primary EOSE.
+    private func sendPrimaryFeedSubscription(client: WebSocketClient, label: String) {
+        let (since, limitVal) = feedSinceAndLimit()
         var filter: [String: Any] = [
             "kinds": [1, 6, 30023],
             "since": since,
             "limit": limitVal
         ]
-        
         if feedMode == .following || (feedMode == .media && mediaFeedMode == .following) {
             filter["authors"] = followedPubkeys
         } else if feedMode == .discovery {
             filter["authors"] = extendedNetworkPubkeys
         }
-        if let until = until { filter["until"] = until }
-        let subId = "feed-\(label.suffix(8).filter { $0.isLetter || $0.isNumber })"
+        let subId = feedSubId(for: label)
+        subIdToRelayKey[subId] = label
 
-        // Filter 1: Notes (from followed authors in following mode, or anyone in global mode)
+        let req = ["REQ", subId, filter] as [Any]
+        if let data = try? JSONSerialization.data(withJSONObject: req),
+           let str = String(data: data, encoding: .utf8) {
+            client.send(text: str)
+        }
+    }
+
+    /// Send auxiliary subscriptions (mentions, reactions, zaps) to a relay after
+    /// its primary feed EOSE has arrived so feed content isn't bandwidth-starved.
+    private func sendAuxiliarySubscriptions(client: WebSocketClient, label: String) {
+        let isGlobal = feedMode == .global || (feedMode == .media && mediaFeedMode == .global)
+        guard !isGlobal else { return }
+
+        let ownerHex = NostrService.shared.activeHexPubkey
+        guard !ownerHex.isEmpty else { return }
+
+        let (since, _) = feedSinceAndLimit()
+        let subId = feedSubId(for: label)
+
+        // Mentions (#p) of the owner (from anyone)
+        let mentionsFilter: [String: Any] = [
+            "kinds": [1, 6, 30023],
+            "since": since,
+            "#p": [ownerHex],
+            "limit": 50
+        ]
+        let mReq = ["REQ", "m-\(subId)", mentionsFilter] as [Any]
+        if let mData = try? JSONSerialization.data(withJSONObject: mReq),
+           let mStr = String(data: mData, encoding: .utf8) {
+            client.send(text: mStr)
+        }
+
+        // Reactions from followed users
+        let reactionsFilter: [String: Any] = [
+            "kinds": [7],
+            "authors": followedPubkeys,
+            "since": since,
+            "limit": 150
+        ]
+        let rxReq = ["REQ", "rx-\(subId)", reactionsFilter] as [Any]
+        if let rxData = try? JSONSerialization.data(withJSONObject: rxReq),
+           let rxStr = String(data: rxData, encoding: .utf8) {
+            client.send(text: rxStr)
+        }
+
+        // Incoming zap receipts (kind 9735, #p = owner)
+        let incomingZapsFilter: [String: Any] = [
+            "kinds": [9735],
+            "#p": [ownerHex],
+            "since": since,
+            "limit": 50
+        ]
+        let inZapsReq = ["REQ", "zaps-in-\(subId)", incomingZapsFilter] as [Any]
+        if let data = try? JSONSerialization.data(withJSONObject: inZapsReq),
+           let str = String(data: data, encoding: .utf8) {
+            client.send(text: str)
+        }
+
+        // Outgoing zap requests (kind 9734, authored by owner)
+        let outgoingZapsFilter: [String: Any] = [
+            "kinds": [9734],
+            "authors": [ownerHex],
+            "since": since,
+            "limit": 50
+        ]
+        let outZapsReq = ["REQ", "zaps-out-\(subId)", outgoingZapsFilter] as [Any]
+        if let data = try? JSONSerialization.data(withJSONObject: outZapsReq),
+           let str = String(data: data, encoding: .utf8) {
+            client.send(text: str)
+        }
+    }
+
+    /// Combined subscription — sends primary + auxiliary at once. Used for
+    /// pagination (connectFeedRelayWithUntil) where deferral isn't needed.
+    private func sendFeedSubscription(client: WebSocketClient, label: String, until: Int64) {
+        let (since, limitVal) = feedSinceAndLimit(until: until)
+        var filter: [String: Any] = [
+            "kinds": [1, 6, 30023],
+            "since": since,
+            "limit": limitVal
+        ]
+        if feedMode == .following || (feedMode == .media && mediaFeedMode == .following) {
+            filter["authors"] = followedPubkeys
+        } else if feedMode == .discovery {
+            filter["authors"] = extendedNetworkPubkeys
+        }
+        filter["until"] = until
+        let subId = feedSubId(for: label)
+
         let req = ["REQ", subId, filter] as [Any]
         if let data = try? JSONSerialization.data(withJSONObject: req),
            let str = String(data: data, encoding: .utf8) {
             client.send(text: str)
         }
 
-        // User-specific filters only apply in following mode
+        let isGlobal = feedMode == .global || (feedMode == .media && mediaFeedMode == .global)
         guard !isGlobal else { return }
 
         let ownerHex = NostrService.shared.activeHexPubkey
-        if !ownerHex.isEmpty {
-            // Filter 2: Mentions (#p) of the owner (from anyone)
-            var mentionsFilter = filter
-            mentionsFilter["#p"] = [ownerHex]
-            mentionsFilter["authors"] = nil // From anyone
-            mentionsFilter["limit"] = 50
-            let mReq = ["REQ", "m-\(subId)", mentionsFilter] as [Any]
-            if let mData = try? JSONSerialization.data(withJSONObject: mReq),
-               let mStr = String(data: mData, encoding: .utf8) {
-                client.send(text: mStr)
-            }
+        guard !ownerHex.isEmpty else { return }
 
-            // Reactions from followed users (includes self) — used for both
-            // self-like detection and per-note reaction counts.
-            var reactionsFilter: [String: Any] = [
-                "kinds": [7],
-                "authors": followedPubkeys,
-                "since": since,
-                "limit": 150
-            ]
-            if let until = until { reactionsFilter["until"] = until }
-            let rxReq = ["REQ", "rx-\(subId)", reactionsFilter] as [Any]
-            if let rxData = try? JSONSerialization.data(withJSONObject: rxReq),
-               let rxStr = String(data: rxData, encoding: .utf8) {
-                client.send(text: rxStr)
-            }
+        var mentionsFilter = filter
+        mentionsFilter["#p"] = [ownerHex]
+        mentionsFilter["authors"] = nil
+        mentionsFilter["limit"] = 50
+        let mReq = ["REQ", "m-\(subId)", mentionsFilter] as [Any]
+        if let mData = try? JSONSerialization.data(withJSONObject: mReq),
+           let mStr = String(data: mData, encoding: .utf8) {
+            client.send(text: mStr)
+        }
 
-            // Incoming zap receipts: Kind 9735 where #p = owner (zaps received on my notes)
-            var incomingZapsFilter: [String: Any] = [
-                "kinds": [9735],
-                "#p": [ownerHex],
-                "since": since,
-                "limit": 50
-            ]
-            if let until = until { incomingZapsFilter["until"] = until }
-            let inZapsReq = ["REQ", "zaps-in-\(subId)", incomingZapsFilter] as [Any]
-            if let data = try? JSONSerialization.data(withJSONObject: inZapsReq),
-               let str = String(data: data, encoding: .utf8) {
-                client.send(text: str)
-            }
+        let reactionsFilter: [String: Any] = [
+            "kinds": [7],
+            "authors": followedPubkeys,
+            "since": since,
+            "limit": 150,
+            "until": until
+        ]
+        let rxReq = ["REQ", "rx-\(subId)", reactionsFilter] as [Any]
+        if let rxData = try? JSONSerialization.data(withJSONObject: rxReq),
+           let rxStr = String(data: rxData, encoding: .utf8) {
+            client.send(text: rxStr)
+        }
 
-            // Outgoing zap requests: Kind 9734 authored by owner (zaps I sent)
-            var outgoingZapsFilter: [String: Any] = [
-                "kinds": [9734],
-                "authors": [ownerHex],
-                "since": since,
-                "limit": 50
-            ]
-            if let until = until { outgoingZapsFilter["until"] = until }
-            let outZapsReq = ["REQ", "zaps-out-\(subId)", outgoingZapsFilter] as [Any]
-            if let data = try? JSONSerialization.data(withJSONObject: outZapsReq),
-               let str = String(data: data, encoding: .utf8) {
-                client.send(text: str)
-            }
+        let incomingZapsFilter: [String: Any] = [
+            "kinds": [9735],
+            "#p": [ownerHex],
+            "since": since,
+            "limit": 50,
+            "until": until
+        ]
+        let inZapsReq = ["REQ", "zaps-in-\(subId)", incomingZapsFilter] as [Any]
+        if let data = try? JSONSerialization.data(withJSONObject: inZapsReq),
+           let str = String(data: data, encoding: .utf8) {
+            client.send(text: str)
+        }
+
+        let outgoingZapsFilter: [String: Any] = [
+            "kinds": [9734],
+            "authors": [ownerHex],
+            "since": since,
+            "limit": 50,
+            "until": until
+        ]
+        let outZapsReq = ["REQ", "zaps-out-\(subId)", outgoingZapsFilter] as [Any]
+        if let data = try? JSONSerialization.data(withJSONObject: outZapsReq),
+           let str = String(data: data, encoding: .utf8) {
+            client.send(text: str)
         }
     }
 
@@ -2261,6 +2371,16 @@ class FeedService: ObservableObject {
                 guard let self = self else { return }
                 if isPrimaryFeed {
                     self.eoseCount += 1
+
+                    // Dispatch deferred auxiliary subscriptions now that
+                    // this relay's primary feed content has arrived.
+                    if let subId = subId,
+                       let relayKey = self.subIdToRelayKey[subId],
+                       !self.primaryEoseRelays.contains(relayKey),
+                       let client = self.feedClients[relayKey] {
+                        self.primaryEoseRelays.insert(relayKey)
+                        self.sendAuxiliarySubscriptions(client: client, label: relayKey)
+                    }
                 }
                 if self.eoseCount >= totalRelays {
                     self.feedLoadingTimeout?.invalidate()
@@ -2554,14 +2674,17 @@ class FeedService: ObservableObject {
             MediaTypeDetector.shared.prefetchContentTypes(for: allMediaURLs)
         }
 
-        // During initial load, add everything at once then sort once
+        // During initial load, add everything at once then sort once.
+        // Build the array locally to avoid multiple @Published mutations
+        // (each triggers objectWillChange and a SwiftUI body re-evaluation).
         if notes.isEmpty || isLoadingFeed {
-            notes.append(contentsOf: batch)
-            notes.sort { $0.createdAt > $1.createdAt }
-            // Cap to prevent memory bloat
-            if notes.count > Self.maxNotes {
-                notes.removeLast(notes.count - Self.maxNotes)
+            var updated = notes
+            updated.append(contentsOf: batch)
+            updated.sort { $0.createdAt > $1.createdAt }
+            if updated.count > Self.maxNotes {
+                updated.removeLast(updated.count - Self.maxNotes)
             }
+            notes = updated  // single @Published assignment
             recomputeFilteredNotes()
             return
         }
@@ -2584,11 +2707,14 @@ class FeedService: ObservableObject {
         }
 
         if !toAdd.isEmpty {
-            notes.append(contentsOf: toAdd)
-            notes.sort { $0.createdAt > $1.createdAt }
-            if notes.count > Self.maxNotes {
-                notes.removeLast(notes.count - Self.maxNotes)
+            // Build locally, assign once to minimize objectWillChange notifications
+            var updated = notes
+            updated.append(contentsOf: toAdd)
+            updated.sort { $0.createdAt > $1.createdAt }
+            if updated.count > Self.maxNotes {
+                updated.removeLast(updated.count - Self.maxNotes)
             }
+            notes = updated
         }
 
         if !toPending.isEmpty {

@@ -32,6 +32,7 @@ class RelayProcessManager: ObservableObject {
     @Published var state: RelayState = .idle
     @Published var isRunning = false
     @Published var isBooting = false
+    @Published var isWotSyncing = false
     @Published var isImporting = false
     @Published var importCompleted = false
     @Published var isLocked = false
@@ -80,8 +81,6 @@ class RelayProcessManager: ObservableObject {
     private static let bootWatchdogTimeout: TimeInterval = 90
 
     // (Log throttling moved to LogStore)
-    
-    private var metricsTimer: Timer?
     
     struct LogEntry: Identifiable {
         let id = UUID()
@@ -302,8 +301,6 @@ class RelayProcessManager: ObservableObject {
         isLocked = false
         startDate = Date()
         
-        // Start metrics timer
-        startMetricsTimer()
     }
     
     func clearDatabaseLocks(completion: (@Sendable () -> Void)? = nil) {
@@ -346,6 +343,20 @@ class RelayProcessManager: ObservableObject {
         }
     }
     
+    /// Waits for the relay to be ready (running, not booting).
+    /// Returns true if ready, false on timeout or if relay is idle/stopping.
+    func ensureRelayReady(timeout: TimeInterval = 15.0) async -> Bool {
+        if isRunning && !isBooting { return true }
+        if state == .idle || state == .stopping { return false }
+
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if isRunning && !isBooting { return true }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+        return isRunning && !isBooting
+    }
+
     func stopRelay(completion: (() -> Void)? = nil) {
         // Must check if running, booting, or importing
         guard self.isRunning || self.isBooting || self.isImporting else {
@@ -360,10 +371,10 @@ class RelayProcessManager: ObservableObject {
 
         self.state = .stopping
         self.isShuttingDown = true
-        stopMetricsTimer()
         stopLogThrottler()
         cancelBootWatchdog()
         isBooting = false
+        isWotSyncing = false
 
         logStore.append(LogEntry(timestamp: Date(), level: "INFO", message: "Stopping C-Shared relay natively..."))
 
@@ -374,6 +385,7 @@ class RelayProcessManager: ObservableObject {
             self.restoreOutput()
             self.state = .idle
             self.isRunning = false
+            self.isWotSyncing = false
             self.isShuttingDown = false
             #if os(macOS)
             NetworkSyncService.shared.stop()
@@ -397,6 +409,7 @@ class RelayProcessManager: ObservableObject {
                 self?.restoreOutput()
                 self?.state = .idle
                 self?.isRunning = false
+                self?.isWotSyncing = false
                 self?.isShuttingDown = false
                 #if os(macOS)
                 NetworkSyncService.shared.stop()
@@ -481,21 +494,6 @@ class RelayProcessManager: ObservableObject {
         }
     }
     
-    private func startMetricsTimer() {
-        metricsTimer?.invalidate()
-        metricsTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                self?.updateMetrics()
-            }
-        }
-        // Update immediately
-        updateMetrics()
-    }
-    
-    private func stopMetricsTimer() {
-        metricsTimer?.invalidate()
-        metricsTimer = nil
-    }
 
     // MARK: - Boot Watchdog
 
@@ -517,22 +515,6 @@ class RelayProcessManager: ObservableObject {
         bootWatchdogTimer = nil
     }
     
-    private func updateMetrics() {
-        // For now, we'll track events through log parsing
-        // A proper implementation would require querying the database directly
-        // which would need either:
-        // 1. A metrics endpoint in the Go backend
-        // 2. Direct database access (complex for LMDB/Badger from Swift)
-        // 3. Parsing structured output from the relay
-        
-        // Keep the current log-based counting for now
-        // The eventsStored counter is updated in processOutput when we see "stored" messages
-    }
-    
-    private func countEventsInDatabase(at path: URL) -> Int? {
-        // Disabled for now - file size is not a reliable indicator
-        return nil
-    }
     
     /// Kills any existing haven processes and clears database locks before import
     // Note: Replaced by forceCleanLocks() but kept as stub if needed for future refactoring, 
@@ -782,6 +764,7 @@ class RelayProcessManager: ObservableObject {
         var stopImporting: Bool = false
         var bootStatusMessage: String?
         var stopBooting: Bool = false
+        var stopWotSyncing: Bool = false
         var eventsStoredDelta: Int = 0
         var connectionsDelta: Int = 0
         var isLocked: Bool = false
@@ -913,6 +896,7 @@ class RelayProcessManager: ObservableObject {
             }
         } else if lowerLine.contains("listening at") || lowerLine.contains("listening on") {
             batch.bootStatusMessage = "Initializing network listeners..."
+            batch.stopBooting = true  // Relay is accepting connections — ready for Blossom/blastr
         } else if lowerLine.contains("building web of trust graph") || lowerLine.contains("initializing wot") {
             batch.bootStatusMessage = "Building trust network..."
         } else if lowerLine.contains("analysed") || lowerLine.contains("analysing nostr events") {
@@ -944,7 +928,7 @@ class RelayProcessManager: ObservableObject {
         }
 
         if line.contains("subscribing to inbox") || line.contains("Subscribing to inbox") {
-            batch.stopBooting = true
+            batch.stopWotSyncing = true  // WoT finished, inbox subscriptions active
         }
 
         // Connection tracking
@@ -990,18 +974,25 @@ class RelayProcessManager: ObservableObject {
         }
 
         // Boot state
-        if isBooting {
+        if isBooting || isWotSyncing {
             if let status = batch.bootStatusMessage {
                 bootStatusMessage = status
             }
             if batch.stopBooting {
                 isBooting = false
                 bootStatusMessage = ""
+                isWotSyncing = true  // Relay is up, WoT may still be syncing
                 cancelBootWatchdog()
                 #if os(macOS)
                 NetworkSyncService.shared.start()
                 #endif
             }
+        }
+
+        // WoT sync completion (outside isBooting guard since boot already ended)
+        if batch.stopWotSyncing {
+            isWotSyncing = false
+            bootStatusMessage = ""
         }
 
         // Metrics
@@ -1690,11 +1681,12 @@ class RelayProcessManager: ObservableObject {
         if brandSet.contains("heic") || brandSet.contains("heix") {
             return "image/heic"
         }
-        if brandSet.contains("hevc") || brandSet.contains("hev1") || brandSet.contains("hvc1") {
-            return "video/mp4"
-        }
+        // Check QuickTime brand BEFORE HEVC - macOS screen recordings use HEVC in MOV container
         if brandSet.contains("qt  ") {
             return "video/quicktime"
+        }
+        if brandSet.contains("hevc") || brandSet.contains("hev1") || brandSet.contains("hvc1") {
+            return "video/mp4"
         }
         return "video/mp4"
     }
