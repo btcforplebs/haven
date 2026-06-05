@@ -343,29 +343,13 @@ struct iPhoneTabView: View {
             .toolbar(.hidden, for: .tabBar)
             .tag(2)
 
-            NavigationStack(path: $mediaPath) {
-                MediaTabView()
-                    .navigationTitle("")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbarBackground(.hidden, for: .navigationBar)
-                    .navigationDestination(for: FeedNote.self) { note in
-                        NoteDetailView(note: note)
-                    }
-            }
-            .toolbar(.hidden, for: .tabBar)
-            .tag(3)
+            MediaTabView()
+                .toolbar(.hidden, for: .tabBar)
+                .tag(3)
 
-            NavigationStack(path: $relayPath) {
-                ViewerView()
-                    .navigationTitle("")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbarBackground(.hidden, for: .navigationBar)
-                    .navigationDestination(for: FeedNote.self) { note in
-                        NoteDetailView(note: note)
-                    }
-            }
-            .toolbar(.hidden, for: .tabBar)
-            .tag(4)
+            ViewerView()
+                .toolbar(.hidden, for: .tabBar)
+                .tag(4)
         }
         .tint(.havenPurple)
         .toolbar(.hidden, for: .tabBar)
@@ -603,7 +587,7 @@ struct BottomTabBar: View {
             VStack(spacing: 4) {
                 Image(systemName: icon)
                     .font(.appSystem(size: 20, weight: selected ? .semibold : .regular))
-                    .foregroundStyle(selected ? Color.havenPurple : .white.opacity(0.5))
+                    .foregroundStyle(selected ? Color.havenPurple : .white)
                     .frame(height: 24)
                     .overlay(alignment: .topTrailing) {
                         if hasRedBadge {
@@ -615,7 +599,7 @@ struct BottomTabBar: View {
                     }
                 Text(title)
                     .font(.appSystem(size: 10, weight: selected ? .semibold : .regular))
-                    .foregroundStyle(selected ? Color.havenPurple : .white.opacity(0.5))
+                    .foregroundStyle(selected ? Color.havenPurple : .white)
             }
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
@@ -642,7 +626,7 @@ struct BottomTabBar: View {
                 AvatarView(url: nostrService.profiles[activeHex]?.pictureURL, pubkey: activeHex, size: 24)
                     .overlay(
                         Circle()
-                            .stroke(selected ? Color.havenPurple : .white.opacity(0.3), lineWidth: selected ? 2 : 1)
+                            .stroke(selected ? Color.havenPurple : .white.opacity(0.5), lineWidth: selected ? 2 : 1)
                     )
                     .frame(height: 24)
                     .overlay(alignment: .topTrailing) {
@@ -655,7 +639,7 @@ struct BottomTabBar: View {
                     }
                 Text("Profile")
                     .font(.appSystem(size: 10, weight: selected ? .semibold : .regular))
-                    .foregroundStyle(selected ? Color.havenPurple : .white.opacity(0.5))
+                    .foregroundStyle(selected ? Color.havenPurple : .white)
             }
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())

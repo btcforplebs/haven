@@ -142,7 +142,7 @@ struct DashboardView: View {
                 StatsCard(
                     title: "Blossom Storage",
                     value: statsService.formattedBlossomSize,
-                    icon: "server.rack",
+                    icon: "camera.macro",
                     color: .green,
                     action: { showingBlossomBreakdown = true }
                 )
@@ -383,24 +383,6 @@ struct DashboardView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                HStack(spacing: 12) {
-                    Button(action: {}) {
-                        Circle()
-                            .fill(relayManager.isBooting ? Color.yellow : (relayManager.isRunning ? Color.green : Color.red))
-                            .frame(width: 10, height: 10)
-                            .shadow(color: (relayManager.isBooting ? Color.yellow : (relayManager.isRunning ? Color.green : Color.red)).opacity(0.6), radius: 3)
-                    }
-                    .buttonStyle(.plain)
-                    .frame(width: 30, height: 30)
-                    .applyGlassCircle()
-
-                    Text("Relay Dashboard")
-                        .font(.appSystem(size: 16, weight: .semibold))
-                        .foregroundColor(.primary)
-                }
-            }
-
             ToolbarItem(placement: .navigationBarTrailing) {
                 IconFilterButton(
                     icon: "rectangle.compress.vertical",
@@ -430,7 +412,7 @@ struct DashboardView: View {
             LazyVGrid(columns: columns, spacing: 8) {
                 StatsCard(title: "Total Relay Events", value: "\(statsService.loadedEventsCount)", icon: "doc.text.fill", color: Color.havenPurple, isLoading: statsService.isUpdatingCount && statsService.loadedEventsCount == 0, action: { showingKindBreakdown = true })
                 StatsCard(title: "Storage Used", value: statsService.formattedStorageSize, icon: "internaldrive.fill", color: .blue, action: { showingStorageBreakdown = true })
-                StatsCard(title: "Blossom Storage", value: statsService.formattedBlossomSize, icon: "server.rack", color: .green, action: { showingBlossomBreakdown = true })
+                StatsCard(title: "Blossom Storage", value: statsService.formattedBlossomSize, icon: "camera.macro", color: .green, action: { showingBlossomBreakdown = true })
                 StatsCard(title: "Media Cache", value: statsService.formattedCacheSize, icon: "photo.stack.fill", color: .orange, action: { showingCacheBreakdown = true })
             }
             .padding(.horizontal)
@@ -506,7 +488,7 @@ struct DashboardView: View {
                         showingBlossomBreakdown = true
                     } label: {
                         HStack(spacing: 6) {
-                            Image(systemName: "server.rack")
+                            Image(systemName: "camera.macro")
                                 .font(.appSystem(size: 12, weight: .semibold))
                                 .foregroundColor(.green)
                                 .frame(width: 20)
@@ -1860,7 +1842,7 @@ struct StorageBreakdownView: View {
         let dbSize = max(0, statsService.storageSize - statsService.blossomSize - statsService.cacheSize - statsService.thumbnailSize)
         return [
             StorageBucket(label: "Database", icon: "cylinder.fill", color: .blue, size: dbSize),
-            StorageBucket(label: "Blossom Media", icon: "server.rack", color: .green, size: statsService.blossomSize),
+            StorageBucket(label: "Blossom Media", icon: "camera.macro", color: .green, size: statsService.blossomSize),
             StorageBucket(label: "Media Cache", icon: "photo.stack.fill", color: .orange, size: statsService.cacheSize + statsService.thumbnailSize),
         ].filter { $0.size > 0 }
     }

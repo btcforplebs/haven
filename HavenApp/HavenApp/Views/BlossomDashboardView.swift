@@ -13,6 +13,7 @@ struct BlossomDashboardView: View {
     @State private var mirrors: [MirrorInfo] = []
     @State private var isLoadingStats = true
     @State private var showMirrorSection = false
+    @State private var showingBlossomSettings = false
 
     // Sync operations
     @State private var isPulling = false
@@ -118,17 +119,25 @@ struct BlossomDashboardView: View {
                 }
                 .padding(.vertical)
             }
-            .navigationTitle("Blossom")
-            .navigationBarTitleDisplayMode(.large)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "camera.macro")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(.havenPurple)
+                        Text("Blossom")
+                            .font(.system(size: 17, weight: .bold, design: .rounded))
+                    }
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("Done") { dismiss() }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack(spacing: 12) {
-                        Button(action: {
-                            // TODO: Open Blossom settings
-                        }) {
+                        Button(action: { showingBlossomSettings = true }) {
                             Image(systemName: "gearshape")
                         }
 
@@ -142,6 +151,20 @@ struct BlossomDashboardView: View {
         }
         .task {
             await loadDashboard()
+        }
+        .sheet(isPresented: $showingBlossomSettings) {
+            NavigationStack {
+                BlossomSettingsView()
+                    .environmentObject(configService)
+                    .environmentObject(nostrService)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { showingBlossomSettings = false }
+                                .foregroundColor(.havenPurple)
+                        }
+                    }
+            }
         }
     }
 
@@ -202,6 +225,51 @@ struct BlossomDashboardView: View {
             mirrors = mirrorInfos
             stats.mirrorCount = mirrorInfos.count
         }
+
+        // Auto-check health after loading
+        await checkMirrorHealth()
+    }
+
+    private func checkMirrorHealth() async {
+        let currentMirrors = await MainActor.run { mirrors }
+        guard !currentMirrors.isEmpty else { return }
+
+        await withTaskGroup(of: (Int, Bool, Int?).self) { group in
+            for (index, mirror) in currentMirrors.enumerated() {
+                group.addTask {
+                    let start = Date()
+                    guard let url = URL(string: mirror.url) else {
+                        return (index, false, nil)
+                    }
+                    var request = URLRequest(url: url)
+                    request.httpMethod = "HEAD"
+                    request.timeoutInterval = 10
+                    do {
+                        let (_, response) = try await URLSession.shared.data(for: request)
+                        let elapsed = Int(Date().timeIntervalSince(start) * 1000)
+                        if let httpResponse = response as? HTTPURLResponse,
+                           (200..<500).contains(httpResponse.statusCode) {
+                            return (index, true, elapsed)
+                        }
+                        return (index, false, elapsed)
+                    } catch {
+                        return (index, false, nil)
+                    }
+                }
+            }
+
+            for await (index, healthy, responseTime) in group {
+                await MainActor.run {
+                    guard index < mirrors.count else { return }
+                    mirrors[index].isHealthy = healthy
+                    mirrors[index].responseTime = responseTime
+                }
+            }
+        }
+
+        let healthyCount = await MainActor.run { mirrors.filter { $0.isHealthy == true }.count }
+        let totalCount = await MainActor.run { mirrors.count }
+        addLog("Mirror check: \(healthyCount)/\(totalCount) healthy", level: healthyCount == totalCount ? .success : .warning)
     }
 
     private func addLog(_ message: String, level: BlossomActivityLog.LogLevel) {
@@ -280,7 +348,17 @@ struct BlossomDashboardView: View {
     }
 
     private func testMirrors() {
-        // TODO: Implement mirror health check
+        Task {
+            addLog("Testing mirror connectivity...", level: .info)
+            // Reset to pending state
+            await MainActor.run {
+                for i in mirrors.indices {
+                    mirrors[i].isHealthy = nil
+                    mirrors[i].responseTime = nil
+                }
+            }
+            await checkMirrorHealth()
+        }
     }
 }
 
@@ -430,7 +508,7 @@ struct QuickActionsSection: View {
 
                 UnifiedActionButton(
                     icon: "arrow.up.circle",
-                    title: needsBackupCount > 0 ? "Backup \(needsBackupCount)" : "Backed Up",
+                    title: needsBackupCount > 0 ? "Backup \(needsBackupCount)" : "100% Backed Up",
                     isLoading: isPushing,
                     action: onPush
                 )

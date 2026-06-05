@@ -247,7 +247,7 @@ extension View {
                 Color.clear
                     .overlay(
                         Capsule()
-                            .glassEffect(.regular, in: .capsule)
+                            .glassEffect(.clear, in: .capsule)
                     )
             )
         } else {
@@ -255,14 +255,14 @@ extension View {
                 .background(
                     Capsule()
                         .fill(.ultraThinMaterial)
-                        .opacity(isOLED ? 0.85 : 0.55)
+                        .opacity(isOLED ? 0.65 : 0.35)
                 )
                 .clipShape(Capsule())
                 .overlay(
                     Capsule()
-                        .stroke(.white.opacity(isOLED ? 0.25 : 0.12), lineWidth: 0.5)
+                        .stroke(.white.opacity(isOLED ? 0.20 : 0.08), lineWidth: 0.5)
                 )
-                .shadow(color: .black.opacity(0.08), radius: 12, x: 0, y: 5)
+                .shadow(color: .black.opacity(0.05), radius: 10, x: 0, y: 4)
         }
         #else
         self

@@ -17,6 +17,7 @@ struct ViewerView: View {
     @EnvironmentObject var relayManager: RelayProcessManager
     @StateObject private var feedService = FeedService.shared
 
+    @State private var navigationPath = NavigationPath()
     @State private var searchText = ""
     @State private var committedSearch = ""
     @State private var searchScope: SearchScope = .notes
@@ -1001,7 +1002,408 @@ struct ViewerView: View {
     }
     
     var body: some View {
+        #if os(iOS)
+        NavigationStack(path: $navigationPath) {
+            iOSContent
+                .navigationTitle("")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbarBackground(.hidden, for: .navigationBar)
+                .navigationDestination(for: FeedNote.self) { note in
+                    NoteDetailView(note: note)
+                }
+        }
+        #else
         viewContent
+        #endif
+    }
+
+    // MARK: - iOS Root Content
+    /// Flat content view matching FeedView's rootContent pattern:
+    /// toolbar + handlers first, navigation modifiers applied in body.
+    private var iOSContent: some View {
+        viewContentPlatform
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                if !mediaOnly {
+                    HStack(spacing: 12) {
+                        IconFilterButton(icon: "doc.text", tooltip: "Notes", isSelected: viewMode == .notes, color: .havenPurple) {
+                            withAnimation(.easeInOut(duration: 0.15)) { viewMode = .notes }
+                        }
+                        IconFilterButton(icon: "heart.fill", tooltip: "Likes", isSelected: viewMode == .likes, color: .havenPurple) {
+                            withAnimation(.easeInOut(duration: 0.15)) { viewMode = .likes }
+                            fetchMissingLikedNotes()
+                        }
+                        IconFilterButton(icon: "bolt.fill", tooltip: "Zaps", isSelected: viewMode == .zaps, color: .havenPurple) {
+                            withAnimation(.easeInOut(duration: 0.15)) { viewMode = .zaps }
+                        }
+                        Button {
+                            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
+                                isSearchBarVisible.toggle()
+                                if isSearchBarVisible {
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                        isSearchFocused = true
+                                    }
+                                } else {
+                                    searchText = ""
+                                    committedSearch = ""
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "magnifyingglass")
+                                .font(.appSystem(size: 14, weight: .semibold))
+                                .foregroundColor(isSearchBarVisible ? .white : .secondary)
+                                .frame(width: 34, height: 34)
+                                .background(
+                                    Circle()
+                                        .fill(isSearchBarVisible ? Color.havenPurple : Color.secondary.opacity(0.15))
+                                )
+                        }
+                    }
+                } else {
+                    HStack(spacing: 12) {
+                        let allSelected = mediaTypeFilter.count == MediaTypeFilter.allCases.count
+                        let photoSelected = mediaTypeFilter.contains(.photo)
+                        let videoSelected = mediaTypeFilter.contains(.video)
+                        let gifSelected = mediaTypeFilter.contains(.gif)
+                        let otherSelected = mediaTypeFilter.contains(.other)
+
+                        IconFilterButton(
+                            icon: allSelected ? "circle.grid.2x2.fill" : "circle.grid.2x2",
+                            tooltip: "All Media",
+                            isSelected: allSelected,
+                            color: .havenPurple,
+                            action: selectAllMediaTypes
+                        )
+                        IconFilterButton(
+                            icon: photoSelected ? "photo.fill" : "photo",
+                            tooltip: "Photos",
+                            isSelected: photoSelected,
+                            color: .primary
+                        ) { toggleMediaTypeFilter(.photo) }
+                        IconFilterButton(
+                            icon: videoSelected ? "video.fill" : "video",
+                            tooltip: "Videos",
+                            isSelected: videoSelected,
+                            color: .primary
+                        ) { toggleMediaTypeFilter(.video) }
+                        IconFilterButton(
+                            icon: "GIF",
+                            tooltip: "GIFs",
+                            isSelected: gifSelected,
+                            color: .primary
+                        ) { toggleMediaTypeFilter(.gif) }
+                        IconFilterButton(
+                            icon: otherSelected ? "doc.fill" : "doc",
+                            tooltip: "Documents",
+                            isSelected: otherSelected,
+                            color: .primary
+                        ) { toggleMediaTypeFilter(.other) }
+                    }
+                }
+            }
+            ToolbarItem(placement: .navigationBarTrailing) {
+                HStack(spacing: 4) {
+                    if viewMode == .notes {
+                        HStack(spacing: 4) {
+                            IconFilterButton(icon: "square.stack", tooltip: "All", isSelected: contentFilter == .all, color: .havenPurple) { contentFilter = .all }
+                            IconFilterButton(icon: "person.fill", tooltip: "My Notes", isSelected: contentFilter == .mine, color: .havenPurple) { contentFilter = .mine }
+                            IconFilterButton(icon: "at", tooltip: "Tagged", isSelected: contentFilter == .tagged, color: .havenPurple) { contentFilter = .tagged }
+                            IconFilterButton(icon: "checkmark.seal.fill", tooltip: "Whitelisted", isSelected: contentFilter == .whitelist, color: .havenPurple) { contentFilter = .whitelist }
+                        }
+                        .transition(.opacity)
+                    } else if viewMode == .media && !mediaOnly {
+                        HStack(spacing: 4) {
+                            IconFilterButton(icon: "plus", tooltip: "Upload", isSelected: true, color: .havenPurple) {
+                                showingUploadOptions = true
+                            }
+                            .confirmationDialog("Upload Media", isPresented: $showingUploadOptions) {
+                                Button("Photos") {
+                                    photosPickerFilter = .images
+                                    showingPhotoPicker = true
+                                }
+                                Button("Videos") {
+                                    photosPickerFilter = .videos
+                                    showingPhotoPicker = true
+                                }
+                                Button("Files") {
+                                    showingFileImporter = true
+                                }
+                                Button("Magic Paste") {
+                                    handlePasteFromClipboard()
+                                }
+                                Button("Cancel", role: .cancel) { }
+                            }
+                        }
+                        .transition(.opacity)
+                    } else if mediaOnly {
+                        HStack(spacing: 4) {
+                            IconFilterButton(
+                                icon: mediaLayoutMode == .grid ? "list.bullet" : "square.grid.2x2.fill",
+                                tooltip: mediaLayoutMode == .grid ? "List View" : "Grid View",
+                                isSelected: false,
+                                color: .havenPurple
+                            ) {
+                                withAnimation {
+                                    mediaLayoutMode = mediaLayoutMode == .grid ? .list : .grid
+                                }
+                            }
+
+                            IconFilterButton(icon: "plus", tooltip: "Upload Options", isSelected: true, color: .havenPurple) {
+                                showingUploadOptions = true
+                            }
+                            .confirmationDialog("Upload Media", isPresented: $showingUploadOptions) {
+                                Button("Photos") {
+                                    photosPickerFilter = .images
+                                    showingPhotoPicker = true
+                                }
+                                Button("Videos") {
+                                    photosPickerFilter = .videos
+                                    showingPhotoPicker = true
+                                }
+                                Button("Files") {
+                                    showingFileImporter = true
+                                }
+                                Button("Magic Paste") {
+                                    handlePasteFromClipboard()
+                                }
+                                Button("Cancel", role: .cancel) { }
+                            }
+                        }
+                        .transition(.opacity)
+                    } else if viewMode == .likes {
+                        HStack(spacing: 4) {
+                            IconFilterButton(icon: "person.fill", tooltip: "My Notes", isSelected: likesFilter == .onMyNotes, color: .havenPurple) { likesFilter = .onMyNotes }
+                            IconFilterButton(icon: "at", tooltip: "Tagged", isSelected: likesFilter == .onTagged, color: .havenPurple) { likesFilter = .onTagged }
+                            IconFilterButton(icon: "checkmark.seal.fill", tooltip: "Whitelisted", isSelected: likesFilter == .onWhitelisted, color: .havenPurple) { likesFilter = .onWhitelisted }
+                            IconFilterButton(icon: "heart", tooltip: "My Likes", isSelected: likesFilter == .myLikes, color: .havenPurple) { likesFilter = .myLikes }
+                        }
+                        .transition(.opacity)
+                    } else if viewMode == .zaps && !mediaOnly {
+                        HStack(spacing: 4) {
+                            IconFilterButton(icon: "person.fill", tooltip: "My Notes", isSelected: zapsFilter == .onMyNotes, color: .havenPurple) { zapsFilter = .onMyNotes }
+                            IconFilterButton(icon: "at", tooltip: "Tagged", isSelected: zapsFilter == .onTagged, color: .havenPurple) { zapsFilter = .onTagged }
+                            IconFilterButton(icon: "checkmark.seal.fill", tooltip: "Whitelisted", isSelected: zapsFilter == .onWhitelisted, color: .havenPurple) { zapsFilter = .onWhitelisted }
+                            IconFilterButton(icon: "bolt", tooltip: "My Zaps", isSelected: zapsFilter == .myZaps, color: .havenPurple) { zapsFilter = .myZaps }
+                        }
+                        .transition(.opacity)
+                    }
+                }
+                .animation(.easeInOut(duration: 0.15), value: viewMode)
+            }
+        }
+        // -- handlers from viewContentBase --
+        .onAppear {
+            if relayManager.isRunning && !relayManager.isBooting {
+                if !mediaOnly && feedService.followedPubkeys.isEmpty {
+                    feedService.refresh()
+                }
+                let recentlyReconnected: Bool
+                if let lastReconnect = nostrService.lastForegroundReconnectTime {
+                    recentlyReconnected = Date().timeIntervalSince(lastReconnect) < 3.0
+                } else {
+                    recentlyReconnected = false
+                }
+                if nostrService.connectionStatus == "Disconnected" && !recentlyReconnected {
+                    refreshAll()
+                }
+                initialLoad = true
+                updateDisplayData()
+            }
+            if !mediaOnly && !hasEstablishedNotificationBaseline {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    establishNotificationBaseline()
+                }
+            }
+        }
+        .onChange(of: relayManager.isBooting) { _, isBooting in
+            if !isBooting && relayManager.isRunning {
+                refreshAll()
+                initialLoad = true
+                triggerAutoMirrorIfEnabled()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                    establishNotificationBaseline()
+                }
+            }
+        }
+        .onChange(of: relayManager.isRunning) { _, isRunning in
+            if isRunning && !relayManager.isBooting {
+                refreshAll()
+                initialLoad = true
+            }
+        }
+        .onChange(of: selectedMedia) { _, _ in
+            isCopied = false
+        }
+        .fullScreenCover(isPresented: isPresentingViewer) {
+            if let item = selectedMedia {
+                mediaViewerContent(for: item)
+            }
+        }
+        // -- handlers from viewContentWithHandlers --
+        .modifier(ViewerChangeHandlers(
+            viewMode: viewMode,
+            likesFilter: likesFilter,
+            zapsFilter: zapsFilter,
+            committedSearch: committedSearch,
+            searchScope: searchScope,
+            contentFilter: contentFilter,
+            mediaSourceFilter: mediaSourceFilter,
+            mediaLocationFilter: mediaLocationFilter,
+            mediaTypeFilter: mediaTypeFilter,
+            eventsCount: nostrService.events.count,
+            noteMediaCount: nostrService.noteMedia.count,
+            blacklistedNpubs: configService.config.blockedNpubsPerAccount[configService.config.activeAccountNpub.isEmpty ? configService.config.ownerNpub : configService.config.activeAccountNpub] ?? (configService.config.activeAccountNpub.isEmpty ? configService.config.blacklistedNpubs : []),
+            activeAccountNpub: configService.config.activeAccountNpub,
+            blossomCount: blossomCache.items.count,
+            onResetAndUpdate: {
+                maxDisplayedItems = 50
+                notesHasLoadedOnce = false
+                mediaHasLoadedOnce = false
+                scheduleUpdateDisplayData()
+            },
+            onUpdate: { scheduleUpdateDisplayData() },
+            onViewModeChange: { newMode in
+                updateDisplayData()
+                markTabViewed(newMode)
+                if newMode == .likes {
+                    fetchMissingLikedNotes()
+                    updateLikesSettleState()
+                }
+                if newMode == .zaps {
+                    fetchMoreZapReceipts()
+                    fetchMissingZappedNotes()
+                    updateZapsSettleState()
+                }
+            },
+            onEventsChange: {
+                scheduleUpdateDisplayData()
+                checkForNewNotifications()
+                if viewMode == .likes && likesFilter == .myLikes {
+                    fetchMissingLikedNotes()
+                }
+                if viewMode == .zaps {
+                    fetchMissingZappedNotes()
+                }
+            }
+        ))
+        .onChange(of: likesFilter) { _, _ in
+            likesHasLoadedOnce = false
+            likesInitialSettled = false
+            updateLikesSettleState()
+        }
+        .onChange(of: zapsFilter) { _, _ in
+            zapsHasLoadedOnce = false
+            zapsInitialSettled = false
+            updateZapsSettleState()
+        }
+        .onChange(of: configService.config.activeAccountNpub) { _, _ in
+            notesHasLoadedOnce = false
+            mediaHasLoadedOnce = false
+            likesHasLoadedOnce = false
+            likesInitialSettled = false
+            zapsHasLoadedOnce = false
+            zapsInitialSettled = false
+            hasFetchedZapReceipts = false
+            zapReceiptCache = [:]
+            refreshAll()
+        }
+        .onChange(of: nostrService.isFetching) { _, _ in
+            if viewMode == .likes { updateLikesSettleState() }
+            if viewMode == .zaps { updateZapsSettleState() }
+        }
+        .onChange(of: relayManager.isBooting) { _, _ in
+            if viewMode == .likes { updateLikesSettleState() }
+            if viewMode == .zaps { updateZapsSettleState() }
+        }
+        // -- handlers from viewContent --
+        .onReceive(MirrorService.shared.$state) { newState in
+            if newState == .complete {
+                loadLocalMedia(force: true)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .feedInjectionComplete)) { _ in
+            refreshAll()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .mediaNotFoundChanged)) { _ in
+            scheduleUpdateDisplayData()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .blossomDirectoryChanged)) { _ in
+            loadLocalMedia(force: true)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openRelayDashboard)) { _ in
+            showingRelayDashboard = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .havenOpenRelayLikes)) { _ in
+            guard !mediaOnly else { return }
+            withAnimation(.easeInOut(duration: 0.15)) { viewMode = .likes }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .havenOpenRelayNotes)) { _ in
+            guard !mediaOnly else { return }
+            withAnimation(.easeInOut(duration: 0.15)) { viewMode = .notes }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .havenOpenRelayZaps)) { _ in
+            guard !mediaOnly else { return }
+            withAnimation(.easeInOut(duration: 0.15)) { viewMode = .zaps }
+        }
+        .sheet(item: Binding<IdentifiableString?>(
+            get: { showingProfilePubkey.map { IdentifiableString(id: $0) } },
+            set: { showingProfilePubkey = $0?.id }
+        )) { p in
+            ProfileView(pubkey: p.id, onDismiss: { showingProfilePubkey = nil })
+        }
+        .sheet(item: Binding<IdentifiableString?>(
+            get: { showingNoteId.map { IdentifiableString(id: $0) } },
+            set: { showingNoteId = $0?.id }
+        )) { noteId in
+            NoteDetailViewWrapper(noteId: noteId.id, onDismiss: { showingNoteId = nil })
+                .environmentObject(nostrService)
+                .environmentObject(configService)
+        }
+        .sheet(isPresented: $showingRelayDashboard) {
+            NavigationView {
+                DashboardView()
+                    .environmentObject(relayManager)
+                    .environmentObject(configService)
+                    .environmentObject(nostrService)
+                    .environmentObject(StatsService.shared)
+                    .navigationTitle("")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbarBackground(.hidden, for: .navigationBar)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { showingRelayDashboard = false }
+                        }
+                    }
+            }
+        }
+        .fileImporter(
+            isPresented: $showingFileImporter,
+            allowedContentTypes: [.image, .movie],
+            allowsMultipleSelection: true
+        ) { result in
+            switch result {
+            case .success(let urls):
+                handleUploadFileURLs(urls)
+            case .failure(let error):
+                print("Failed to select files: \(error)")
+            }
+        }
+        .photosPicker(
+            isPresented: $showingPhotoPicker,
+            selection: $selectedUploadItems,
+            matching: photosPickerFilter
+        )
+        .onChange(of: selectedUploadItems) { _, items in
+            if !items.isEmpty {
+                handleUploadSelectedItems(items)
+                showingPhotoPicker = false
+            }
+        }
+        .sheet(isPresented: $showingBlossomMediaList) {
+            BlossomDashboardView()
+                .environmentObject(configService)
+                .environmentObject(nostrService)
+        }
     }
     @ViewBuilder
     private func headerView(isNarrow: Bool) -> some View {
@@ -1215,12 +1617,155 @@ struct ViewerView: View {
     }
 
     @ViewBuilder
-    private var viewContentBase: some View {
+    private var viewContentPlatform: some View {
+        #if os(iOS)
+        if mediaOnly {
+            // Full-bleed layout: ScrollView in a ZStack so content scrolls
+            // behind the transparent navigation bar, enabling the glass toolbar effect.
+            ZStack {
+                Color.platformWindowBackground.ignoresSafeArea()
+
+                ScrollView {
+                    VStack(spacing: 0) {
+                        listContent
+
+                        if !displayMedia.isEmpty {
+                            Color.clear
+                                .frame(height: 1)
+                                .padding(.bottom, 20)
+                                .onAppear {
+                                    if !nostrService.isFetching {
+                                        loadMore()
+                                    }
+                                }
+                                .id(nostrService.events.count)
+                        }
+                    }
+                    .tabBarBottomPadding()
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .refreshable {
+                    refreshAll()
+                }
+                .scrollDirectionTracking(feedService: feedService)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if !feedService.feedScrollingDown {
+                    Button(action: { showingBlossomMediaList = true }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "camera.macro")
+                                .font(.appSystem(size: 15, weight: .bold))
+                            Text("Blossom")
+                                .font(.appSystem(size: 14, weight: .bold, design: .rounded))
+                        }
+                        .foregroundColor(.white)
+                        .frame(height: 48)
+                        .padding(.horizontal, 18)
+                        .background(
+                            Capsule()
+                                .fill(Color.havenPurple)
+                                .shadow(color: Color.havenPurple.opacity(0.35), radius: 8, x: 0, y: 4)
+                        )
+                    }
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 90)
+                    .hoverEffect(.lift)
+                    .transition(.scale(scale: 0.5).combined(with: .opacity))
+                }
+            }
+            .animation(.spring(response: 0.4, dampingFraction: 0.75), value: feedService.feedScrollingDown)
+        } else {
+            // Relay tab: full-bleed layout so content scrolls behind
+            // the transparent navigation bar, matching the glass toolbar effect.
+            ZStack {
+                Color.platformWindowBackground.ignoresSafeArea()
+
+                ScrollView {
+                    VStack(spacing: 0) {
+                        listContent
+
+                        if !displayNotes.isEmpty || !displayMedia.isEmpty || !displayLikedNotes.isEmpty {
+                            Color.clear
+                                .frame(height: 1)
+                                .padding(.bottom, 20)
+                                .onAppear {
+                                    if !nostrService.isFetching && (!displayNotes.isEmpty || !displayMedia.isEmpty) {
+                                        loadMore()
+                                    }
+                                }
+                                .id(nostrService.events.count)
+                        }
+                    }
+                    .tabBarBottomPadding()
+                }
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    VStack(spacing: 0) {
+                        if isSearchBarVisible {
+                            relaySearchBar
+                                .transition(.move(edge: .top).combined(with: .opacity))
+                        }
+                    }
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .refreshable {
+                    refreshAll()
+                }
+                .scrollDirectionTracking(feedService: feedService)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if !feedService.feedScrollingDown {
+                    if viewMode == .media {
+                        Button(action: { showingBlossomMediaList = true }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "chart.bar.fill")
+                                    .font(.appSystem(size: 15, weight: .bold))
+                                Text("Blossom")
+                                    .font(.appSystem(size: 14, weight: .bold, design: .rounded))
+                            }
+                            .foregroundColor(.white)
+                            .frame(height: 48)
+                            .padding(.horizontal, 18)
+                            .background(
+                                Capsule()
+                                    .fill(Color.havenPurple)
+                                    .shadow(color: Color.havenPurple.opacity(0.35), radius: 8, x: 0, y: 4)
+                            )
+                        }
+                        .padding(.trailing, 20)
+                        .padding(.bottom, 90)
+                        .hoverEffect(.lift)
+                        .transition(.scale(scale: 0.5).combined(with: .opacity))
+                    } else {
+                        Button(action: { showingRelayDashboard = true }) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "antenna.radiowaves.left.and.right")
+                                    .font(.appSystem(size: 15, weight: .bold))
+                                Text("Relay")
+                                    .font(.appSystem(size: 14, weight: .bold, design: .rounded))
+                            }
+                            .foregroundColor(.white)
+                            .frame(height: 48)
+                            .padding(.horizontal, 18)
+                            .background(
+                                Capsule()
+                                    .fill(statusColor)
+                                    .shadow(color: statusColor.opacity(0.35), radius: 8, x: 0, y: 4)
+                            )
+                        }
+                        .padding(.trailing, 20)
+                        .padding(.bottom, 90)
+                        .hoverEffect(.lift)
+                        .transition(.scale(scale: 0.5).combined(with: .opacity))
+                    }
+                }
+            }
+            .animation(.spring(response: 0.4, dampingFraction: 0.75), value: feedService.feedScrollingDown)
+        }
+        #else
         GeometryReader { geometry in
             ZStack {
                 Color.platformWindowBackground.ignoresSafeArea()
 
-                #if os(macOS)
                 if mediaOnly {
                     compactViewContent(isNarrow: geometry.size.width < 500)
                 } else if embedded {
@@ -1357,12 +1902,13 @@ struct ViewerView: View {
                         compactViewContent(isNarrow: geometry.size.width < 500)
                     }
                 }
-                #else
-                compactViewContent(isNarrow: geometry.size.width < 500)
-                #endif
-
             }
         }
+        #endif
+    }
+
+    private var viewContentBase: some View {
+        viewContentPlatform
         .onAppear {
             if relayManager.isRunning && !relayManager.isBooting {
                 if !mediaOnly && feedService.followedPubkeys.isEmpty {
@@ -1555,8 +2101,9 @@ struct ViewerView: View {
                     .environmentObject(configService)
                     .environmentObject(nostrService)
                     .environmentObject(StatsService.shared)
-                    .navigationTitle("Relay Dashboard")
+                    .navigationTitle("")
                     .navigationBarTitleDisplayMode(.inline)
+                    .toolbarBackground(.hidden, for: .navigationBar)
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
                             Button("Done") { showingRelayDashboard = false }
@@ -1593,188 +2140,6 @@ struct ViewerView: View {
                 .environmentObject(configService)
                 .environmentObject(nostrService)
         }
-
-        #if os(iOS)
-        .navigationTitle(currentPageTitle)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.hidden, for: .navigationBar)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                if !mediaOnly {
-                    HStack(spacing: 12) {
-                        IconFilterButton(icon: "doc.text", tooltip: "Notes", isSelected: viewMode == .notes, color: .havenPurple) {
-                            withAnimation(.easeInOut(duration: 0.15)) { viewMode = .notes }
-                        }
-                        IconFilterButton(icon: "heart.fill", tooltip: "Likes", isSelected: viewMode == .likes, color: .havenPurple) {
-                            withAnimation(.easeInOut(duration: 0.15)) { viewMode = .likes }
-                            fetchMissingLikedNotes()
-                        }
-                        IconFilterButton(icon: "bolt.fill", tooltip: "Zaps", isSelected: viewMode == .zaps, color: .havenPurple) {
-                            withAnimation(.easeInOut(duration: 0.15)) { viewMode = .zaps }
-                        }
-                        Button {
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                                isSearchBarVisible.toggle()
-                                if isSearchBarVisible {
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                        isSearchFocused = true
-                                    }
-                                } else {
-                                    searchText = ""
-                                    committedSearch = ""
-                                }
-                            }
-                        } label: {
-                            Image(systemName: "magnifyingglass")
-                                .font(.appSystem(size: 14, weight: .semibold))
-                                .foregroundColor(isSearchBarVisible ? .white : .secondary)
-                                .frame(width: 34, height: 34)
-                                .background(
-                                    Circle()
-                                        .fill(isSearchBarVisible ? Color.havenPurple : Color.secondary.opacity(0.15))
-                                )
-                        }
-                    }
-                } else {
-                    HStack(spacing: 12) {
-                        let allSelected = mediaTypeFilter.count == MediaTypeFilter.allCases.count
-                        let photoSelected = mediaTypeFilter.contains(.photo)
-                        let videoSelected = mediaTypeFilter.contains(.video)
-                        let gifSelected = mediaTypeFilter.contains(.gif)
-                        let otherSelected = mediaTypeFilter.contains(.other)
-
-                        IconFilterButton(
-                            icon: allSelected ? "circle.grid.2x2.fill" : "circle.grid.2x2",
-                            tooltip: "All Media",
-                            isSelected: allSelected,
-                            color: .havenPurple,
-                            action: selectAllMediaTypes
-                        )
-                        IconFilterButton(
-                            icon: photoSelected ? "photo.fill" : "photo",
-                            tooltip: "Photos",
-                            isSelected: photoSelected,
-                            color: .primary
-                        ) { toggleMediaTypeFilter(.photo) }
-                        IconFilterButton(
-                            icon: videoSelected ? "video.fill" : "video",
-                            tooltip: "Videos",
-                            isSelected: videoSelected,
-                            color: .primary
-                        ) { toggleMediaTypeFilter(.video) }
-                        IconFilterButton(
-                            icon: "GIF",
-                            tooltip: "GIFs",
-                            isSelected: gifSelected,
-                            color: .primary
-                        ) { toggleMediaTypeFilter(.gif) }
-                        IconFilterButton(
-                            icon: otherSelected ? "doc.fill" : "doc",
-                            tooltip: "Documents",
-                            isSelected: otherSelected,
-                            color: .primary
-                        ) { toggleMediaTypeFilter(.other) }
-                    }
-                }
-            }
-            ToolbarItem(placement: .navigationBarTrailing) {
-                HStack(spacing: 4) {
-                    if viewMode == .notes {
-                        HStack(spacing: 4) {
-                            IconFilterButton(icon: "square.stack", tooltip: "All", isSelected: contentFilter == .all, color: .havenPurple) { contentFilter = .all }
-                            IconFilterButton(icon: "person.fill", tooltip: "My Notes", isSelected: contentFilter == .mine, color: .havenPurple) { contentFilter = .mine }
-                            IconFilterButton(icon: "at", tooltip: "Tagged", isSelected: contentFilter == .tagged, color: .havenPurple) { contentFilter = .tagged }
-                            IconFilterButton(icon: "checkmark.seal.fill", tooltip: "Whitelisted", isSelected: contentFilter == .whitelist, color: .havenPurple) { contentFilter = .whitelist }
-                        }
-                        .applyGlassCapsule()
-                        .transition(.opacity)
-                    } else if viewMode == .media && !mediaOnly {
-                        HStack(spacing: 4) {
-                            IconFilterButton(icon: "plus", tooltip: "Upload", isSelected: true, color: .havenPurple) {
-                                showingUploadOptions = true
-                            }
-                            .confirmationDialog("Upload Media", isPresented: $showingUploadOptions) {
-                                Button("Photos") {
-                                    photosPickerFilter = .images
-                                    showingPhotoPicker = true
-                                }
-                                Button("Videos") {
-                                    photosPickerFilter = .videos
-                                    showingPhotoPicker = true
-                                }
-                                Button("Files") {
-                                    showingFileImporter = true
-                                }
-                                Button("Magic Paste") {
-                                    handlePasteFromClipboard()
-                                }
-                                Button("Cancel", role: .cancel) { }
-                            }
-                        }
-                        .applyGlassCapsule()
-                        .transition(.opacity)
-                    } else if mediaOnly {
-                        HStack(spacing: 4) {
-                            // Grid/List toggle button - shows the mode you'll switch TO
-                            IconFilterButton(
-                                icon: mediaLayoutMode == .grid ? "list.bullet" : "square.grid.2x2.fill",
-                                tooltip: mediaLayoutMode == .grid ? "List View" : "Grid View",
-                                isSelected: false,
-                                color: .havenPurple
-                            ) {
-                                withAnimation {
-                                    mediaLayoutMode = mediaLayoutMode == .grid ? .list : .grid
-                                }
-                            }
-
-                            // Standing plus button that triggers confirmationDialog with all 3 upload options
-                            IconFilterButton(icon: "plus", tooltip: "Upload Options", isSelected: true, color: .havenPurple) {
-                                showingUploadOptions = true
-                            }
-                            .confirmationDialog("Upload Media", isPresented: $showingUploadOptions) {
-                                Button("Photos") {
-                                    photosPickerFilter = .images
-                                    showingPhotoPicker = true
-                                }
-                                Button("Videos") {
-                                    photosPickerFilter = .videos
-                                    showingPhotoPicker = true
-                                }
-                                Button("Files") {
-                                    showingFileImporter = true
-                                }
-                                Button("Magic Paste") {
-                                    handlePasteFromClipboard()
-                                }
-                                Button("Cancel", role: .cancel) { }
-                            }
-                        }
-                        .applyGlassCapsule()
-                        .transition(.opacity)
-                    } else if viewMode == .likes {
-                        HStack(spacing: 4) {
-                            IconFilterButton(icon: "person.fill", tooltip: "My Notes", isSelected: likesFilter == .onMyNotes, color: .havenPurple) { likesFilter = .onMyNotes }
-                            IconFilterButton(icon: "at", tooltip: "Tagged", isSelected: likesFilter == .onTagged, color: .havenPurple) { likesFilter = .onTagged }
-                            IconFilterButton(icon: "checkmark.seal.fill", tooltip: "Whitelisted", isSelected: likesFilter == .onWhitelisted, color: .havenPurple) { likesFilter = .onWhitelisted }
-                            IconFilterButton(icon: "heart", tooltip: "My Likes", isSelected: likesFilter == .myLikes, color: .havenPurple) { likesFilter = .myLikes }
-                        }
-                        .applyGlassCapsule()
-                        .transition(.opacity)
-                    } else if viewMode == .zaps && !mediaOnly {
-                        HStack(spacing: 4) {
-                            IconFilterButton(icon: "person.fill", tooltip: "My Notes", isSelected: zapsFilter == .onMyNotes, color: .havenPurple) { zapsFilter = .onMyNotes }
-                            IconFilterButton(icon: "at", tooltip: "Tagged", isSelected: zapsFilter == .onTagged, color: .havenPurple) { zapsFilter = .onTagged }
-                            IconFilterButton(icon: "checkmark.seal.fill", tooltip: "Whitelisted", isSelected: zapsFilter == .onWhitelisted, color: .havenPurple) { zapsFilter = .onWhitelisted }
-                            IconFilterButton(icon: "bolt", tooltip: "My Zaps", isSelected: zapsFilter == .myZaps, color: .havenPurple) { zapsFilter = .myZaps }
-                        }
-                        .applyGlassCapsule()
-                        .transition(.opacity)
-                    }
-                }
-                .animation(.easeInOut(duration: 0.15), value: viewMode)
-            }
-        }
-        #endif
     }
 
     @ViewBuilder
@@ -1823,7 +2188,7 @@ struct ViewerView: View {
                     // Blossom button for Media mode
                     Button(action: { showingBlossomMediaList = true }) {
                         HStack(spacing: 6) {
-                            Image(systemName: "chart.bar.fill")
+                            Image(systemName: "camera.macro")
                                 .font(.appSystem(size: 15, weight: .bold))
                             Text("Blossom")
                                 .font(.appSystem(size: 14, weight: .bold, design: .rounded))
