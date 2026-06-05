@@ -12,14 +12,15 @@ struct DashboardView: View {
     @State private var isBackingUpBlossom = false
     @State private var isPreparingImport = false
     @State private var exportStatusMessage = ""
-    @State private var relaysExpanded = false
     @State private var statusAnimate = false
     @State private var showingKindBreakdown = false
     @State private var showingBlossomBreakdown = false
     @State private var showingCacheBreakdown = false
     @State private var showingStorageBreakdown = false
+    @State private var showingFullLogs = false
     @State private var shareSheetURL: URL?
     @State private var showingShareSheet = false
+    @State private var isCompactView = false
 
     var isSidebar: Bool = false
     
@@ -89,6 +90,20 @@ struct DashboardView: View {
             StorageBreakdownView()
                 .environmentObject(statsService)
         }
+        .sheet(isPresented: $showingFullLogs) {
+            NavigationStack {
+                LogsView(logStore: relayManager.logStore)
+                    .environmentObject(relayManager)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { showingFullLogs = false }
+                        }
+                    }
+            }
+            #if os(macOS)
+            .frame(minWidth: 600, idealWidth: 700, minHeight: 400, idealHeight: 500)
+            #endif
+        }
     }
 
     #if os(macOS)
@@ -96,7 +111,7 @@ struct DashboardView: View {
         VStack(spacing: 12) {
             relayStatusHeader
                 .padding(.top, 8)
-                .background(Color(red: 0.08, green: 0.08, blue: 0.1))
+                .background(Color.platformWindowBackground)
             
             // Statistics Grid (Full Width 4 Columns)
             let statsColumns = [
@@ -144,61 +159,8 @@ struct DashboardView: View {
             
             // Side-by-Side Console & Controls
             HStack(alignment: .top, spacing: 16) {
-                // Left Column: Relays and Actions
+                // Left Column: Actions
                 VStack(alignment: .leading, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("LOCAL GATEWAY RELAYS")
-                            .font(.system(size: 10, weight: .bold, design: .monospaced))
-                            .foregroundColor(.secondary.opacity(0.8))
-                        
-                        VStack(spacing: 1) {
-                            RelayRow(
-                                name: "Outbox",
-                                subtitle: "Public notes",
-                                icon: "arrow.up.doc",
-                                uri: configService.config.nostrURL,
-                                endpoint: ""
-                            )
-
-                            RelayRow(
-                                name: "Private",
-                                subtitle: "Drafts & eCash",
-                                icon: "lock.fill",
-                                uri: configService.config.nostrURL,
-                                endpoint: "/private"
-                            )
-
-                            RelayRow(
-                                name: "Inbox",
-                                subtitle: "Tagged notes",
-                                icon: "arrow.down.doc",
-                                uri: configService.config.nostrURL,
-                                endpoint: "/inbox"
-                            )
-
-                            RelayRow(
-                                name: "Chat",
-                                subtitle: "Private DMs",
-                                icon: "bubble.left.and.bubble.right",
-                                uri: configService.config.nostrURL,
-                                endpoint: "/chat"
-                            )
-
-                            RelayRow(
-                                name: "Blossom",
-                                subtitle: "Media Storage",
-                                icon: "photo.stack",
-                                uri: configService.config.webURL,
-                                endpoint: ""
-                            )
-                        }
-                        .cornerRadius(8)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color.white.opacity(0.04), lineWidth: 0.5)
-                        )
-                    }
-                    
                     if relayManager.isImporting {
                         importProgressSection
                     }
@@ -249,11 +211,11 @@ struct DashboardView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     HStack {
                         Image(systemName: "terminal.fill")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.appSystem(size: 10, weight: .bold))
                             .foregroundColor(.green)
                         
                         Text("LOCAL RELAY SERVER CONSOLE")
-                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .font(.appSystem(size: 10, weight: .bold, design: .monospaced))
                             .foregroundColor(.secondary)
                         
                         Spacer()
@@ -266,16 +228,16 @@ struct DashboardView: View {
                     }
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(Color(red: 0.12, green: 0.12, blue: 0.15))
+                    .background(Color.platformConsoleHeaderBackground)
                     
                     Divider()
-                        .background(Color.white.opacity(0.06))
+                        .background(Color.platformCardBorder)
                     
                     LogsView(logStore: relayManager.logStore, hideHeader: true)
                         .frame(maxHeight: .infinity)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(red: 0.05, green: 0.05, blue: 0.07))
+                .background(Color.platformTertiaryGroupedBackground)
                 .cornerRadius(8)
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
@@ -286,7 +248,7 @@ struct DashboardView: View {
             .padding(.bottom, 12)
         }
         .frame(maxHeight: .infinity, alignment: .top)
-        .background(Color(red: 0.08, green: 0.08, blue: 0.1).ignoresSafeArea())
+        .background(Color.platformWindowBackground.ignoresSafeArea())
     }
     #endif
 
@@ -296,117 +258,44 @@ struct DashboardView: View {
                 #if os(macOS)
                 HStack(spacing: 8) {
                     Image(systemName: "server.rack")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.appSystem(size: 14, weight: .semibold))
                         .foregroundColor(.havenPurple)
                     Text("Relay Dashboard")
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.appSystem(size: 14, weight: .bold))
                         .foregroundColor(.primary)
                     Spacer()
                 }
                 .padding(.horizontal)
                 .padding(.top, 14)
                 .padding(.bottom, 6)
-                .background(Color(red: 0.08, green: 0.08, blue: 0.1))
+                .background(Color.platformWindowBackground)
                 #endif
             }
             
             relayStatusHeader
                 .padding(.top, isSidebar ? 4 : 8)
-                .background(Color(red: 0.08, green: 0.08, blue: 0.1))
+                .background(Color.platformWindowBackground)
             
             ScrollView {
                 VStack(spacing: 20) {
-                    // MARK: - Relays List
-                    VStack(alignment: .leading, spacing: 8) {
-                        Button(action: {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                                relaysExpanded.toggle()
-                            }
-                        }) {
-                            HStack {
-                                Text("Relays")
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Image(systemName: relaysExpanded ? "eye.fill" : "eye.slash")
-                                    .font(.system(size: 12))
-                                    .foregroundColor(.secondary)
-                            }
-                            .padding(.horizontal)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-
-                        if relaysExpanded {
-                            VStack(spacing: 1) {
-                                RelayRow(
-                                    name: "Outbox",
-                                    subtitle: "Public notes",
-                                    icon: "arrow.up.doc",
-                                    uri: configService.config.nostrURL,
-                                    endpoint: ""
-                                )
-
-                                RelayRow(
-                                    name: "Private",
-                                    subtitle: "Drafts & eCash",
-                                    icon: "lock.fill",
-                                    uri: configService.config.nostrURL,
-                                    endpoint: "/private"
-                                )
-
-                                RelayRow(
-                                    name: "Inbox",
-                                    subtitle: "Tagged notes",
-                                    icon: "arrow.down.doc",
-                                    uri: configService.config.nostrURL,
-                                    endpoint: "/inbox"
-                                )
-
-                                RelayRow(
-                                    name: "Chat",
-                                    subtitle: "Private DMs",
-                                    icon: "bubble.left.and.bubble.right",
-                                    uri: configService.config.nostrURL,
-                                    endpoint: "/chat"
-                                )
-
-                                RelayRow(
-                                    name: "Blossom",
-                                    subtitle: "Media Storage",
-                                    icon: "photo.stack",
-                                    uri: configService.config.webURL,
-                                    endpoint: ""
-                                )
-                            }
-                            .background(Color.platformSeparator)
-                            .cornerRadius(8)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.platformSeparator, lineWidth: 0.5)
-                            )
-                            .padding(.horizontal)
-                            .transition(.opacity.combined(with: .move(edge: .top)))
-                        }
-                    }
-
+                    // MARK: - Compact Log Console
+                    compactLogConsole
 
                     // MARK: - Statistics
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Statistics")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal)
-                        
-                        let columns = [GridItem(.flexible()), GridItem(.flexible())]
-                        
-                        LazyVGrid(columns: columns, spacing: 8) {
-                            StatsCard(title: "Total Relay Events", value: "\(statsService.loadedEventsCount)", icon: "doc.text.fill", color: Color.havenPurple, isLoading: statsService.isUpdatingCount && statsService.loadedEventsCount == 0, action: { showingKindBreakdown = true })
-                            StatsCard(title: "Storage Used", value: statsService.formattedStorageSize, icon: "internaldrive.fill", color: .blue, action: { showingStorageBreakdown = true })
-                            StatsCard(title: "Blossom Storage", value: statsService.formattedBlossomSize, icon: "server.rack", color: .green, action: { showingBlossomBreakdown = true })
-                            StatsCard(title: "Media Cache", value: statsService.formattedCacheSize, icon: "photo.stack.fill", color: .orange, action: { showingCacheBreakdown = true })
+                    Group {
+                        if isCompactView {
+                            compactStatsLayout
+                                .transition(.asymmetric(
+                                    insertion: AnyTransition.opacity.combined(with: AnyTransition.scale(scale: 0.95)),
+                                    removal: AnyTransition.opacity
+                                ))
+                        } else {
+                            fullStatsLayout
+                                .transition(.asymmetric(
+                                    insertion: AnyTransition.opacity.combined(with: AnyTransition.scale(scale: 0.95)),
+                                    removal: AnyTransition.opacity
+                                ))
                         }
-                        .padding(.horizontal)
                     }
                     
                     // MARK: - Actions
@@ -414,7 +303,7 @@ struct DashboardView: View {
                     
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Actions")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.appSystem(size: 13, weight: .semibold))
                             .foregroundColor(.secondary)
                             .padding(.horizontal)
 
@@ -466,7 +355,7 @@ struct DashboardView: View {
 
                         if !exportStatusMessage.isEmpty {
                             Text(exportStatusMessage)
-                                .font(.caption)
+                                .font(.appCaption)
                                 .foregroundColor(.secondary)
                                 .padding(.horizontal)
                         }
@@ -488,12 +377,279 @@ struct DashboardView: View {
                 isPreparingImport = false
             }
         }
-        .background(Color(red: 0.08, green: 0.08, blue: 0.1).ignoresSafeArea())
+        .background(Color.platformWindowBackground.ignoresSafeArea())
+        #if os(iOS)
+        .navigationTitle("")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                HStack(spacing: 12) {
+                    Button(action: {}) {
+                        Circle()
+                            .fill(relayManager.isBooting ? Color.yellow : (relayManager.isRunning ? Color.green : Color.red))
+                            .frame(width: 10, height: 10)
+                            .shadow(color: (relayManager.isBooting ? Color.yellow : (relayManager.isRunning ? Color.green : Color.red)).opacity(0.6), radius: 3)
+                    }
+                    .buttonStyle(.plain)
+                    .frame(width: 30, height: 30)
+                    .applyGlassCircle()
+
+                    Text("Relay Dashboard")
+                        .font(.appSystem(size: 16, weight: .semibold))
+                        .foregroundColor(.primary)
+                }
+            }
+
+            ToolbarItem(placement: .navigationBarTrailing) {
+                IconFilterButton(
+                    icon: "rectangle.compress.vertical",
+                    tooltip: "Toggle Compact View",
+                    isSelected: isCompactView,
+                    color: .havenPurple,
+                    action: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                            isCompactView.toggle()
+                        }
+                    }
+                )
+            }
+        }
+        #endif
     }
-    
+
+    private var fullStatsLayout: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Statistics")
+                .font(.appSystem(size: 13, weight: .semibold))
+                .foregroundColor(.secondary)
+                .padding(.horizontal)
+
+            let columns = [GridItem(.flexible()), GridItem(.flexible())]
+
+            LazyVGrid(columns: columns, spacing: 8) {
+                StatsCard(title: "Total Relay Events", value: "\(statsService.loadedEventsCount)", icon: "doc.text.fill", color: Color.havenPurple, isLoading: statsService.isUpdatingCount && statsService.loadedEventsCount == 0, action: { showingKindBreakdown = true })
+                StatsCard(title: "Storage Used", value: statsService.formattedStorageSize, icon: "internaldrive.fill", color: .blue, action: { showingStorageBreakdown = true })
+                StatsCard(title: "Blossom Storage", value: statsService.formattedBlossomSize, icon: "server.rack", color: .green, action: { showingBlossomBreakdown = true })
+                StatsCard(title: "Media Cache", value: statsService.formattedCacheSize, icon: "photo.stack.fill", color: .orange, action: { showingCacheBreakdown = true })
+            }
+            .padding(.horizontal)
+        }
+    }
+
+    private var compactStatsLayout: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Statistics")
+                .font(.appSystem(size: 13, weight: .semibold))
+                .foregroundColor(.secondary)
+                .padding(.horizontal)
+
+            VStack(spacing: 8) {
+                // Row 1: Events and Storage
+                HStack(spacing: 12) {
+                    Button {
+                        showingKindBreakdown = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "doc.text.fill")
+                                .font(.appSystem(size: 12, weight: .semibold))
+                                .foregroundColor(.havenPurple)
+                                .frame(width: 20)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Events")
+                                    .font(.appSystem(size: 10, weight: .medium))
+                                    .foregroundColor(.secondary)
+                                Text("\(statsService.loadedEventsCount)")
+                                    .font(.appSystem(size: 13, weight: .bold))
+                                    .foregroundColor(.primary)
+                            }
+
+                            Spacer()
+                        }
+                        .padding(10)
+                        .background(Color.havenPurple.opacity(0.08))
+                        .cornerRadius(8)
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        showingStorageBreakdown = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "internaldrive.fill")
+                                .font(.appSystem(size: 12, weight: .semibold))
+                                .foregroundColor(.blue)
+                                .frame(width: 20)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Storage")
+                                    .font(.appSystem(size: 10, weight: .medium))
+                                    .foregroundColor(.secondary)
+                                Text(statsService.formattedStorageSize)
+                                    .font(.appSystem(size: 13, weight: .bold))
+                                    .foregroundColor(.primary)
+                            }
+
+                            Spacer()
+                        }
+                        .padding(10)
+                        .background(Color.blue.opacity(0.08))
+                        .cornerRadius(8)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                // Row 2: Blossom and Cache
+                HStack(spacing: 12) {
+                    Button {
+                        showingBlossomBreakdown = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "server.rack")
+                                .font(.appSystem(size: 12, weight: .semibold))
+                                .foregroundColor(.green)
+                                .frame(width: 20)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Blossom")
+                                    .font(.appSystem(size: 10, weight: .medium))
+                                    .foregroundColor(.secondary)
+                                Text(statsService.formattedBlossomSize)
+                                    .font(.appSystem(size: 13, weight: .bold))
+                                    .foregroundColor(.primary)
+                            }
+
+                            Spacer()
+                        }
+                        .padding(10)
+                        .background(Color.green.opacity(0.08))
+                        .cornerRadius(8)
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        showingCacheBreakdown = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "photo.stack.fill")
+                                .font(.appSystem(size: 12, weight: .semibold))
+                                .foregroundColor(.orange)
+                                .frame(width: 20)
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Cache")
+                                    .font(.appSystem(size: 10, weight: .medium))
+                                    .foregroundColor(.secondary)
+                                Text(statsService.formattedCacheSize)
+                                    .font(.appSystem(size: 13, weight: .bold))
+                                    .foregroundColor(.primary)
+                            }
+
+                            Spacer()
+                        }
+                        .padding(10)
+                        .background(Color.orange.opacity(0.08))
+                        .cornerRadius(8)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal)
+        }
+    }
+
+    private var compactLogConsole: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Image(systemName: "terminal.fill")
+                    .font(.appSystem(size: 10, weight: .bold))
+                    .foregroundColor(.green)
+
+                Text("CONSOLE")
+                    .font(.appSystem(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundColor(.secondary)
+
+                Spacer()
+
+                Button {
+                    showingFullLogs = true
+                } label: {
+                    Text("View All")
+                        .font(.appSystem(size: 10, weight: .semibold))
+                        .foregroundColor(Color.havenPurple)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.platformConsoleHeaderBackground)
+
+            Divider()
+                .background(Color.platformCardBorder)
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(relayManager.logStore.logs.suffix(50)) { log in
+                            HStack(alignment: .top, spacing: 6) {
+                                Text(log.timestamp, style: .time)
+                                    .font(.appSystem(size: 9, design: .monospaced))
+                                    .foregroundColor(.secondary.opacity(0.6))
+                                    .frame(width: 55, alignment: .leading)
+
+                                Text(log.level)
+                                    .font(.appSystem(size: 9, weight: .bold, design: .monospaced))
+                                    .foregroundColor(logLevelColor(log.level))
+                                    .frame(width: 35, alignment: .leading)
+
+                                Text(log.message)
+                                    .font(.appSystem(size: 10, design: .monospaced))
+                                    .foregroundColor(.primary.opacity(0.85))
+                                    .lineLimit(2)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .id(log.id)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                        }
+                    }
+                }
+                .frame(height: 140)
+                .onChange(of: relayManager.logStore.logs.count) { _, _ in
+                    if let lastId = relayManager.logStore.logs.last?.id {
+                        withAnimation {
+                            proxy.scrollTo(lastId, anchor: .bottom)
+                        }
+                    }
+                }
+                .onAppear {
+                    if let lastId = relayManager.logStore.logs.last?.id {
+                        proxy.scrollTo(lastId, anchor: .bottom)
+                    }
+                }
+            }
+        }
+        .background(Color.platformTertiaryGroupedBackground)
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.green.opacity(0.12), lineWidth: 1)
+        )
+        .padding(.horizontal)
+    }
+
+    private func logLevelColor(_ level: String) -> Color {
+        switch level {
+        case "ERROR": return .red
+        case "WARN": return .orange
+        case "DEBUG": return .gray
+        default: return .green
+        }
+    }
+
     private func geometryHeight(for width: CGFloat) -> CGFloat {
         var height: CGFloat = 350
-        if relaysExpanded { height += 250 }
         if width < 400 { height += 200 } // Stacked stats
         if width < 350 { height += 150 } // Stacked buttons
         return height
@@ -613,11 +769,11 @@ struct DashboardView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Import Progress")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.appSystem(size: 13, weight: .semibold))
                         .foregroundColor(.secondary)
                     
                     Text(relayManager.importStatusMessage)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.appSystem(size: 14, weight: .medium))
                         .foregroundColor(.primary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -625,7 +781,7 @@ struct DashboardView: View {
                 Spacer()
                 
                 Text("\(Int(relayManager.importProgress * 100))%")
-                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .font(.appSystem(size: 14, weight: .bold, design: .monospaced))
                     .foregroundColor(Color.havenPurple)
             }
             
@@ -652,7 +808,7 @@ struct DashboardView: View {
                     relayManager.dismissImport()
                 }) {
                     Text("Dismiss")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.appSystem(size: 13, weight: .bold))
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
@@ -678,11 +834,11 @@ struct DashboardView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Blossom Import")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.appSystem(size: 13, weight: .semibold))
                         .foregroundColor(.secondary)
 
                     Text(mirrorService.statusText.isEmpty ? "Complete" : mirrorService.statusText)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.appSystem(size: 14, weight: .medium))
                         .foregroundColor(.primary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -691,7 +847,7 @@ struct DashboardView: View {
 
                 if let prog = mirrorService.progress {
                     Text("\(prog.completed)/\(prog.total)")
-                        .font(.system(size: 14, weight: .bold, design: .monospaced))
+                        .font(.appSystem(size: 14, weight: .bold, design: .monospaced))
                         .foregroundColor(.green)
                 }
             }
@@ -724,17 +880,17 @@ struct DashboardView: View {
                             ForEach(mirrorService.logEntries) { entry in
                                 HStack(alignment: .top, spacing: 6) {
                                     Text(entry.timestamp, style: .time)
-                                        .font(.system(size: 9, design: .monospaced))
+                                        .font(.appSystem(size: 9, design: .monospaced))
                                         .foregroundColor(.secondary.opacity(0.6))
                                         .frame(width: 55, alignment: .leading)
 
                                     Text(entry.level)
-                                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                        .font(.appSystem(size: 9, weight: .bold, design: .monospaced))
                                         .foregroundColor(blossomLogColor(entry.level))
                                         .frame(width: 35, alignment: .leading)
 
                                     Text(entry.message)
-                                        .font(.system(size: 10, design: .monospaced))
+                                        .font(.appSystem(size: 10, design: .monospaced))
                                         .foregroundColor(.white.opacity(0.85))
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
@@ -746,7 +902,7 @@ struct DashboardView: View {
                         .padding(.vertical, 4)
                     }
                     .frame(maxHeight: 160)
-                    .background(Color(red: 0.05, green: 0.05, blue: 0.07))
+                    .background(Color.platformTertiaryGroupedBackground)
                     .cornerRadius(6)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
@@ -768,7 +924,7 @@ struct DashboardView: View {
                     mirrorService.logEntries = []
                 }) {
                     Text("Dismiss")
-                        .font(.system(size: 13, weight: .bold))
+                        .font(.appSystem(size: 13, weight: .bold))
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
@@ -804,7 +960,7 @@ struct DashboardView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("RELAY STATUS")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .font(.appSystem(size: 10, weight: .bold, design: .monospaced))
                         .foregroundColor(.secondary.opacity(0.8))
 
                     HStack(spacing: 12) {
@@ -827,7 +983,7 @@ struct DashboardView: View {
                         }
 
                         Text(relayManager.isBooting ? "BOOTING..." : (relayManager.isRunning && relayManager.isWotSyncing ? "ONLINE" : (relayManager.isRunning ? "ONLINE" : "OFFLINE")))
-                             .font(.system(size: 16, weight: .bold, design: .monospaced))
+                             .font(.appSystem(size: 16, weight: .bold, design: .monospaced))
                              .foregroundColor(.white)
                     }
                 }
@@ -845,9 +1001,9 @@ struct DashboardView: View {
                 }) {
                     HStack(spacing: 6) {
                         Image(systemName: relayManager.isRunning ? "arrow.clockwise" : "play.fill")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.appSystem(size: 11, weight: .bold))
                         Text(relayManager.isRunning ? "Restart Relay" : "Start Relay")
-                            .font(.system(size: 12, weight: .bold))
+                            .font(.appSystem(size: 12, weight: .bold))
                     }
                     .foregroundColor(.white)
                     .padding(.horizontal, 16)
@@ -870,7 +1026,7 @@ struct DashboardView: View {
             .padding(.vertical, 14)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(red: 0.1, green: 0.1, blue: 0.12).opacity(0.6))
+                    .fill(Color.platformCardBackground)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
@@ -878,7 +1034,7 @@ struct DashboardView: View {
                         LinearGradient(
                             gradient: Gradient(colors: [
                                 statusColor.opacity(0.35),
-                                Color.white.opacity(0.06),
+                                Color.platformCardBorder,
                                 Color.white.opacity(0.02)
                             ]),
                             startPoint: .topLeading,
@@ -889,14 +1045,6 @@ struct DashboardView: View {
             )
             .shadow(color: statusColor.opacity(relayManager.isRunning && !relayManager.isBooting ? 0.08 : 0), radius: 10, x: 0, y: 4)
             
-            if (relayManager.isBooting || relayManager.isWotSyncing), !relayManager.bootStatusMessage.isEmpty {
-                 Text(relayManager.bootStatusMessage)
-                      .font(.system(size: 11, design: .monospaced))
-                      .foregroundColor(relayManager.isWotSyncing ? .orange.opacity(0.8) : .yellow.opacity(0.8))
-                      .lineLimit(2)
-                      .fixedSize(horizontal: false, vertical: true)
-            }
-
             // Error recovery banner
             if relayManager.isLocked || relayManager.isPortConflict {
                 VStack(spacing: 12) {
@@ -904,7 +1052,7 @@ struct DashboardView: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundColor(.orange)
                         Text(relayManager.isPortConflict ? "Port 3355 is already in use" : "Database lock detected")
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.appSystem(size: 13, weight: .medium))
                             .foregroundColor(.primary)
                         Spacer()
                     }
@@ -912,7 +1060,7 @@ struct DashboardView: View {
                     Text(relayManager.isPortConflict
                         ? "Another process is using the relay port. Close other Nostr Vault instances or restart your computer."
                         : "A previous session did not shut down cleanly. Clear locks to restart the relay.")
-                        .font(.system(size: 12))
+                        .font(.appSystem(size: 12))
                         .foregroundColor(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -924,7 +1072,7 @@ struct DashboardView: View {
                                 Image(systemName: "arrow.clockwise")
                                 Text("Force Restart")
                             }
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.appSystem(size: 13, weight: .semibold))
                             .foregroundColor(.white)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 8)
@@ -942,7 +1090,7 @@ struct DashboardView: View {
                                 }
                             } label: {
                                 Text("Clear Locks Only")
-                                    .font(.system(size: 13, weight: .medium))
+                                    .font(.appSystem(size: 13, weight: .medium))
                                     .foregroundColor(.secondary)
                             }
                             .buttonStyle(.plain)
@@ -977,23 +1125,23 @@ struct RelayRow: View {
     var body: some View {
         HStack {
             Image(systemName: icon)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.appSystem(size: 15, weight: .semibold))
                 .foregroundColor(Color.havenPurple)
                 .frame(width: 28)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(name)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.appSystem(size: 13, weight: .semibold))
                     .foregroundColor(.white)
                 Text(subtitle)
-                    .font(.system(size: 11))
+                    .font(.appSystem(size: 11))
                     .foregroundColor(.secondary)
             }
 
             Spacer()
 
             Text(fullURI)
-                .font(.system(size: 10, design: .monospaced))
+                .font(.appSystem(size: 10, design: .monospaced))
                 .foregroundColor(copied ? .green : Color.havenPurpleLight)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -1028,7 +1176,7 @@ struct RelayRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(isHovered ? Color(red: 0.14, green: 0.14, blue: 0.14).opacity(0.75) : Color(red: 0.12, green: 0.12, blue: 0.12).opacity(0.6))
+        .background(isHovered ? Color.platformSecondaryGroupedBackground : Color.platformCardBackground)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(isHovered ? Color.havenPurple.opacity(0.2) : Color.white.opacity(0.03), lineWidth: 0.5)
@@ -1058,11 +1206,11 @@ struct ActionButton: View {
                         .colorScheme(.dark)
                 } else {
                     Image(systemName: icon)
-                        .font(.system(size: 20, weight: .medium))
+                        .font(.appSystem(size: 20, weight: .medium))
                         .foregroundColor(.white)
                 }
                 Text(title)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.appSystem(size: 13, weight: .bold))
                     .foregroundColor(.white)
                     .lineLimit(1)
             }
@@ -1106,11 +1254,11 @@ struct StatsCard: View {
             HStack {
                 Image(systemName: icon)
                     .foregroundColor(color)
-                    .font(.system(size: 16))
+                    .font(.appSystem(size: 16))
                 Spacer()
                 if action != nil {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.appSystem(size: 10, weight: .semibold))
                         .foregroundColor(.secondary.opacity(0.6))
                 }
             }
@@ -1123,21 +1271,21 @@ struct StatsCard: View {
                         .frame(height: 24)
                 } else {
                     Text(value)
-                        .font(.system(size: 22, weight: .bold, design: .monospaced))
+                        .font(.appSystem(size: 22, weight: .bold, design: .monospaced))
                         .foregroundColor(.white)
                 }
                 Text(title)
-                    .font(.system(size: 11))
+                    .font(.appSystem(size: 11))
                     .foregroundColor(.secondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(12)
-        .background(isHovered ? color.opacity(0.08) : Color(red: 0.12, green: 0.12, blue: 0.12).opacity(0.5))
+        .background(isHovered ? color.opacity(0.08) : Color.platformCardBackground)
         .cornerRadius(10)
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(isHovered ? color.opacity(0.4) : Color.white.opacity(0.06), lineWidth: 1.0)
+                .stroke(isHovered ? color.opacity(0.4) : Color.platformCardBorder, lineWidth: 1.0)
         )
         .shadow(color: color.opacity(isHovered ? 0.18 : 0.0), radius: 8, x: 0, y: 3)
         .scaleEffect(isHovered ? 1.02 : 1.0)
@@ -1221,7 +1369,7 @@ struct EventKindBreakdownView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(red: 0.08, green: 0.08, blue: 0.1).ignoresSafeArea()
+                Color.platformWindowBackground.ignoresSafeArea()
 
                 if isLoading {
                     VStack(spacing: 16) {
@@ -1229,7 +1377,7 @@ struct EventKindBreakdownView: View {
                             .controlSize(.large)
                             .tint(Color.havenPurple)
                         Text("Counting events by kind…")
-                            .font(.system(size: 13))
+                            .font(.appSystem(size: 13))
                             .foregroundColor(.secondary)
                     }
                 } else {
@@ -1238,10 +1386,10 @@ struct EventKindBreakdownView: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text("\(total)")
-                                        .font(.system(size: 28, weight: .bold, design: .monospaced))
+                                        .font(.appSystem(size: 28, weight: .bold, design: .monospaced))
                                         .foregroundColor(.white)
                                     Text("Total Events")
-                                        .font(.system(size: 12))
+                                        .font(.appSystem(size: 12))
                                         .foregroundColor(.secondary)
                                 }
                                 Spacer()
@@ -1346,7 +1494,7 @@ struct BlossomBreakdownView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(red: 0.08, green: 0.08, blue: 0.1).ignoresSafeArea()
+                Color.platformWindowBackground.ignoresSafeArea()
 
                 if isLoading {
                     VStack(spacing: 16) {
@@ -1354,7 +1502,7 @@ struct BlossomBreakdownView: View {
                             .controlSize(.large)
                             .tint(Color.havenPurple)
                         Text("Counting blobs…")
-                            .font(.system(size: 13))
+                            .font(.appSystem(size: 13))
                             .foregroundColor(.secondary)
                     }
                 } else {
@@ -1363,19 +1511,19 @@ struct BlossomBreakdownView: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text("\(totalCount)")
-                                        .font(.system(size: 28, weight: .bold, design: .monospaced))
+                                        .font(.appSystem(size: 28, weight: .bold, design: .monospaced))
                                         .foregroundColor(.white)
                                     Text("Total Blobs")
-                                        .font(.system(size: 12))
+                                        .font(.appSystem(size: 12))
                                         .foregroundColor(.secondary)
                                 }
                                 Spacer()
                                 VStack(alignment: .trailing, spacing: 4) {
                                     Text(ByteCountFormatter.string(fromByteCount: Int64(totalSize), countStyle: .file))
-                                        .font(.system(size: 28, weight: .bold, design: .monospaced))
+                                        .font(.appSystem(size: 28, weight: .bold, design: .monospaced))
                                         .foregroundColor(.white)
                                     Text("Total Size")
-                                        .font(.system(size: 12))
+                                        .font(.appSystem(size: 12))
                                         .foregroundColor(.secondary)
                                 }
                             }
@@ -1473,7 +1621,7 @@ struct MediaCacheBreakdownView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(red: 0.08, green: 0.08, blue: 0.1).ignoresSafeArea()
+                Color.platformWindowBackground.ignoresSafeArea()
 
                 if isLoading {
                     VStack(spacing: 16) {
@@ -1481,7 +1629,7 @@ struct MediaCacheBreakdownView: View {
                             .controlSize(.large)
                             .tint(Color.havenPurple)
                         Text("Scanning cache\u{2026}")
-                            .font(.system(size: 13))
+                            .font(.appSystem(size: 13))
                             .foregroundColor(.secondary)
                     }
                 } else {
@@ -1490,19 +1638,19 @@ struct MediaCacheBreakdownView: View {
                             HStack {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text("\(totalCount)")
-                                        .font(.system(size: 28, weight: .bold, design: .monospaced))
+                                        .font(.appSystem(size: 28, weight: .bold, design: .monospaced))
                                         .foregroundColor(.white)
                                     Text("Cached Files")
-                                        .font(.system(size: 12))
+                                        .font(.appSystem(size: 12))
                                         .foregroundColor(.secondary)
                                 }
                                 Spacer()
                                 VStack(alignment: .trailing, spacing: 4) {
                                     Text(ByteCountFormatter.string(fromByteCount: totalSize, countStyle: .file))
-                                        .font(.system(size: 28, weight: .bold, design: .monospaced))
+                                        .font(.appSystem(size: 28, weight: .bold, design: .monospaced))
                                         .foregroundColor(.white)
                                     Text("Total Size")
-                                        .font(.system(size: 12))
+                                        .font(.appSystem(size: 12))
                                         .foregroundColor(.secondary)
                                 }
                             }
@@ -1532,32 +1680,32 @@ struct MediaCacheBreakdownView: View {
                                 VStack(spacing: 6) {
                                     HStack(spacing: 8) {
                                         Image(systemName: "clock.fill")
-                                            .font(.system(size: 12))
+                                            .font(.appSystem(size: 12))
                                             .foregroundColor(.secondary)
                                         Text("TTL: \(ttlDays > 0 ? "\(ttlDays) day\(ttlDays == 1 ? "" : "s")" : "Never expires")")
-                                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                            .font(.appSystem(size: 12, weight: .medium, design: .monospaced))
                                             .foregroundColor(.secondary)
                                         Spacer()
                                     }
                                     if let oldest = b.oldestFile {
                                         HStack(spacing: 8) {
                                             Image(systemName: "calendar")
-                                                .font(.system(size: 12))
+                                                .font(.appSystem(size: 12))
                                                 .foregroundColor(.secondary)
                                             Text("Oldest: \(Self.relativeDate(oldest))")
-                                                .font(.system(size: 12, design: .monospaced))
+                                                .font(.appSystem(size: 12, design: .monospaced))
                                                 .foregroundColor(.secondary)
                                             Spacer()
                                             if let newest = b.newestFile {
                                                 Text("Newest: \(Self.relativeDate(newest))")
-                                                    .font(.system(size: 12, design: .monospaced))
+                                                    .font(.appSystem(size: 12, design: .monospaced))
                                                     .foregroundColor(.secondary)
                                             }
                                         }
                                     }
                                 }
                                 .padding(12)
-                                .background(Color(red: 0.12, green: 0.12, blue: 0.12).opacity(0.6))
+                                .background(Color.platformCardBackground)
                                 .cornerRadius(8)
                                 .padding(.horizontal)
                                 .padding(.top, 4)
@@ -1573,7 +1721,7 @@ struct MediaCacheBreakdownView: View {
                                     }
                                     Text("Clear Cache")
                                 }
-                                .font(.system(size: 14, weight: .semibold))
+                                .font(.appSystem(size: 14, weight: .semibold))
                                 .foregroundColor(.red)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 12)
@@ -1661,16 +1809,16 @@ struct BlobTypeRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.appSystem(size: 16, weight: .semibold))
                 .foregroundColor(color)
                 .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(label)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.appSystem(size: 14, weight: .semibold))
                     .foregroundColor(.white)
                 Text("\(count) \(count == 1 ? "blob" : "blobs")")
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.appSystem(size: 10, design: .monospaced))
                     .foregroundColor(.secondary)
             }
 
@@ -1678,19 +1826,19 @@ struct BlobTypeRow: View {
 
             VStack(alignment: .trailing, spacing: 2) {
                 Text(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
-                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                    .font(.appSystem(size: 14, weight: .semibold, design: .monospaced))
                     .foregroundColor(color)
                 Text(String(format: "%.1f%%", sizePercent * 100))
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.appSystem(size: 10, design: .monospaced))
                     .foregroundColor(.secondary)
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color(red: 0.12, green: 0.12, blue: 0.12).opacity(0.6))
+        .background(Color.platformCardBackground)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.white.opacity(0.04), lineWidth: 0.5)
+                .stroke(Color.platformCardBorder, lineWidth: 0.5)
         )
         .cornerRadius(8)
     }
@@ -1720,17 +1868,17 @@ struct StorageBreakdownView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color(red: 0.08, green: 0.08, blue: 0.1).ignoresSafeArea()
+                Color.platformWindowBackground.ignoresSafeArea()
 
                 ScrollView {
                     VStack(spacing: 8) {
                         HStack {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(ByteCountFormatter.string(fromByteCount: statsService.storageSize, countStyle: .file))
-                                    .font(.system(size: 28, weight: .bold, design: .monospaced))
+                                    .font(.appSystem(size: 28, weight: .bold, design: .monospaced))
                                     .foregroundColor(.white)
                                 Text("Total Storage Used")
-                                    .font(.system(size: 12))
+                                    .font(.appSystem(size: 12))
                                     .foregroundColor(.secondary)
                             }
                             Spacer()
@@ -1793,31 +1941,31 @@ private struct StorageRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.appSystem(size: 16, weight: .semibold))
                 .foregroundColor(color)
                 .frame(width: 24)
 
             Text(label)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.appSystem(size: 14, weight: .semibold))
                 .foregroundColor(.white)
 
             Spacer()
 
             VStack(alignment: .trailing, spacing: 2) {
                 Text(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
-                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                    .font(.appSystem(size: 14, weight: .semibold, design: .monospaced))
                     .foregroundColor(color)
                 Text(String(format: "%.1f%%", sizePercent * 100))
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.appSystem(size: 10, design: .monospaced))
                     .foregroundColor(.secondary)
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color(red: 0.12, green: 0.12, blue: 0.12).opacity(0.6))
+        .background(Color.platformCardBackground)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.white.opacity(0.04), lineWidth: 0.5)
+                .stroke(Color.platformCardBorder, lineWidth: 0.5)
         )
         .cornerRadius(8)
     }
@@ -1838,10 +1986,10 @@ private struct KindRow: View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(name)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.appSystem(size: 14, weight: .semibold))
                     .foregroundColor(.white)
                 Text(kind >= 0 ? "kind \(kind)" : "—")
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.appSystem(size: 10, design: .monospaced))
                     .foregroundColor(.secondary)
             }
 
@@ -1849,19 +1997,19 @@ private struct KindRow: View {
 
             VStack(alignment: .trailing, spacing: 2) {
                 Text("\(count)")
-                    .font(.system(size: 15, weight: .bold, design: .monospaced))
+                    .font(.appSystem(size: 15, weight: .bold, design: .monospaced))
                     .foregroundColor(Color.havenPurple)
                 Text(String(format: "%.1f%%", percent * 100))
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.appSystem(size: 10, design: .monospaced))
                     .foregroundColor(.secondary)
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color(red: 0.12, green: 0.12, blue: 0.12).opacity(0.6))
+        .background(Color.platformCardBackground)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.white.opacity(0.04), lineWidth: 0.5)
+                .stroke(Color.platformCardBorder, lineWidth: 0.5)
         )
         .cornerRadius(8)
     }

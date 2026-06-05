@@ -6,3 +6,24 @@
 /build
 /build_data
 *.build
+
+# Xcode user state
+*.xcuserstate
+
+# macOS
+.DS_Store
+
+# Planning docs
+FIPS_FFI_PLAN.md
+FIPS_INTEGRATION_ROADMAP.md
+RENAME_PLAN.md
+DM_PLAN.md
+
+# Build artifacts
+/HavenApp/SilentPaymentsKit/build/
+
+# Go vendor (managed by go modules)
+/haven-go/vendor/
+
+# Environment secrets
+push-server/.env

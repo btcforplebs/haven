@@ -1,5 +1,4 @@
 {
-  "originHash" : "938f49402126226241033130cdcb0a63497615a1399e30cbeb60344ee260608a",
   "pins" : [
     {
       "identity" : "swift-secp256k1",
@@ -11,5 +10,5 @@
       }
     }
   ],
-  "version" : 3
+  "version" : 2
 }

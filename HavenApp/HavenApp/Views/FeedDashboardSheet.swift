@@ -1,12 +1,5 @@
 import SwiftUI
 
-#if os(macOS)
-extension Notification.Name {
-    static let havenOpenFeedRelaySettings = Notification.Name("com.haven.openFeedRelaySettings")
-    static let havenOpenSettings = Notification.Name("com.haven.openSettings")
-}
-#endif
-
 // MARK: - Feed Dashboard Sheet
 
 struct FeedDashboardSheet: View {
@@ -44,13 +37,13 @@ struct FeedDashboardSheet: View {
             // macOS header with dismiss
             HStack {
                 Text("Feed Dashboard")
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.appSystem(size: 16, weight: .bold))
                     .foregroundColor(.white)
                 Spacer()
                 Button(action: { performDismiss() }) {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundColor(.secondary)
-                        .font(.system(size: 16))
+                        .font(.appSystem(size: 16))
                 }
                 .buttonStyle(.plain)
             }
@@ -82,7 +75,7 @@ struct FeedDashboardSheet: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
-        .background(Color(red: 0.08, green: 0.08, blue: 0.1).ignoresSafeArea())
+        .background(Color.platformWindowBackground.ignoresSafeArea())
     }
 
     // MARK: - Content Filters
@@ -90,7 +83,7 @@ struct FeedDashboardSheet: View {
     private var contentFilters: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("CONTENT FILTERS")
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .font(.appSystem(size: 10, weight: .bold, design: .monospaced))
                 .foregroundColor(.secondary.opacity(0.8))
 
             VStack(spacing: 1) {
@@ -147,20 +140,20 @@ struct FeedDashboardSheet: View {
 
         return VStack(alignment: .leading, spacing: 8) {
             Text("NOISE FILTERING")
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .font(.appSystem(size: 10, weight: .bold, design: .monospaced))
                 .foregroundColor(.secondary.opacity(0.8))
 
             HStack(spacing: 12) {
                 HStack(spacing: 8) {
                     Image(systemName: "person.slash.fill")
-                        .font(.system(size: 14))
+                        .font(.appSystem(size: 14))
                         .foregroundColor(.orange)
                     VStack(alignment: .leading, spacing: 1) {
                         Text("\(blockedCount)")
-                            .font(.system(size: 16, weight: .bold, design: .monospaced))
+                            .font(.appSystem(size: 16, weight: .bold, design: .monospaced))
                             .foregroundColor(.white)
                         Text("Blocked")
-                            .font(.system(size: 10))
+                            .font(.appSystem(size: 10))
                             .foregroundColor(.secondary)
                     }
                 }
@@ -169,14 +162,14 @@ struct FeedDashboardSheet: View {
 
                 HStack(spacing: 8) {
                     Image(systemName: "xmark.shield.fill")
-                        .font(.system(size: 14))
+                        .font(.appSystem(size: 14))
                         .foregroundColor(.red.opacity(0.8))
                     VStack(alignment: .leading, spacing: 1) {
                         Text("\(blacklistCount)")
-                            .font(.system(size: 16, weight: .bold, design: .monospaced))
+                            .font(.appSystem(size: 16, weight: .bold, design: .monospaced))
                             .foregroundColor(.white)
                         Text("Blacklisted")
-                            .font(.system(size: 10))
+                            .font(.appSystem(size: 10))
                             .foregroundColor(.secondary)
                     }
                 }
@@ -185,20 +178,20 @@ struct FeedDashboardSheet: View {
 
                 HStack(spacing: 8) {
                     Image(systemName: "shield.checkered")
-                        .font(.system(size: 14))
+                        .font(.appSystem(size: 14))
                         .foregroundColor(.green)
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Active")
-                            .font(.system(size: 16, weight: .bold, design: .monospaced))
+                            .font(.appSystem(size: 16, weight: .bold, design: .monospaced))
                             .foregroundColor(.white)
                         Text("Spam Filter")
-                            .font(.system(size: 10))
+                            .font(.appSystem(size: 10))
                             .foregroundColor(.secondary)
                     }
                 }
             }
             .padding(12)
-            .background(Color(red: 0.12, green: 0.12, blue: 0.12).opacity(0.5))
+            .background(Color.platformCardBackground)
             .cornerRadius(10)
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
@@ -206,7 +199,7 @@ struct FeedDashboardSheet: View {
             )
 
             Text("Blocked users' content is hidden from your feed. Spam and noise are filtered automatically.")
-                .font(.system(size: 10, weight: .medium))
+                .font(.appSystem(size: 10, weight: .medium))
                 .foregroundColor(.secondary.opacity(0.5))
                 .italic()
         }
@@ -220,15 +213,15 @@ struct FeedDashboardSheet: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("FEED RELAYS")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .font(.appSystem(size: 10, weight: .bold, design: .monospaced))
                     .foregroundColor(.secondary.opacity(0.8))
                 Spacer()
                 HStack(spacing: 4) {
                     Text("Edit")
-                        .font(.system(size: 10, weight: .medium))
+                        .font(.appSystem(size: 10, weight: .medium))
                         .foregroundColor(Color.havenPurple)
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 8, weight: .semibold))
+                        .font(.appSystem(size: 8, weight: .semibold))
                         .foregroundColor(Color.havenPurple.opacity(0.7))
                 }
             }
@@ -275,72 +268,7 @@ struct FeedDashboardSheet: View {
 
     #if os(iOS)
     private var macRelaySyncSection: some View {
-        let macURL = configService.config.macRelayURL
-
-        return Group {
-            if !macURL.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("MAC RELAY SYNC")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundColor(.secondary.opacity(0.8))
-
-                    VStack(spacing: 1) {
-                        // Status row
-                        SyncStatusRow(
-                            icon: "desktopcomputer",
-                            title: "Mac Relay",
-                            statusText: MacRelaySyncService.shared.isSyncing ? "Syncing..." : (MacRelaySyncService.shared.syncStatus.isEmpty ? "Idle" : MacRelaySyncService.shared.syncStatus),
-                            statusColor: MacRelaySyncService.shared.isSyncing ? Color.havenPurple : (MacRelaySyncService.shared.lastSyncDate != nil ? .green : .secondary),
-                            lastDate: MacRelaySyncService.shared.lastSyncDate,
-                            lastDateLabel: "Last sync"
-                        )
-
-                        // Action row
-                        HStack(spacing: 12) {
-                            Button {
-                                MacRelaySyncService.shared.forceSync()
-                            } label: {
-                                HStack(spacing: 6) {
-                                    if MacRelaySyncService.shared.isSyncing {
-                                        ProgressView().controlSize(.small).tint(.white)
-                                    } else {
-                                        Image(systemName: "arrow.clockwise")
-                                    }
-                                    Text("Sync Now")
-                                }
-                                .font(.system(size: 12, weight: .bold))
-                                .padding(.vertical, 8)
-                                .padding(.horizontal, 16)
-                                .background(Color.havenPurple)
-                                .foregroundColor(.white)
-                                .cornerRadius(8)
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(MacRelaySyncService.shared.isSyncing)
-
-                            Button {
-                                MacRelaySyncService.shared.resetSync()
-                            } label: {
-                                Text("Reset")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .padding(.vertical, 8)
-                                    .padding(.horizontal, 16)
-                                    .background(Color.secondary.opacity(0.1))
-                                    .foregroundColor(.secondary)
-                                    .cornerRadius(8)
-                            }
-                            .buttonStyle(.plain)
-
-                            Spacer()
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 10)
-                        .background(Color(red: 0.12, green: 0.12, blue: 0.12).opacity(0.5))
-                    }
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                }
-            }
-        }
+        EmptyView()
     }
     #endif
 
@@ -355,7 +283,7 @@ struct FeedDashboardSheet: View {
 
         return VStack(alignment: .leading, spacing: 8) {
             Text("ACTIONS")
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                .font(.appSystem(size: 10, weight: .bold, design: .monospaced))
                 .foregroundColor(.secondary.opacity(0.8))
 
             LazyVGrid(columns: columns, spacing: 10) {
@@ -404,16 +332,16 @@ private struct FilterToggleRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 15, weight: .medium))
+                .font(.appSystem(size: 15, weight: .medium))
                 .foregroundColor(isOn ? Color.havenPurple : .secondary)
                 .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.appSystem(size: 13, weight: .semibold))
                     .foregroundColor(.white)
                 Text(subtitle)
-                    .font(.system(size: 10))
+                    .font(.appSystem(size: 10))
                     .foregroundColor(.secondary.opacity(0.7))
                     .lineLimit(1)
             }
@@ -427,7 +355,7 @@ private struct FilterToggleRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color(red: 0.12, green: 0.12, blue: 0.12).opacity(0.5))
+        .background(Color.platformCardBackground)
         .overlay(
             Rectangle()
                 .fill(Color.white.opacity(0.03))
@@ -453,25 +381,25 @@ private struct FeedRelayRow: View {
 
             if isLocal {
                 Image(systemName: "server.rack")
-                    .font(.system(size: 12))
+                    .font(.appSystem(size: 12))
                     .foregroundColor(Color.havenPurple)
                     .frame(width: 16)
             }
 
             Text(url)
-                .font(.system(size: 11, weight: isLocal ? .semibold : .regular, design: .monospaced))
+                .font(.appSystem(size: 11, weight: isLocal ? .semibold : .regular, design: .monospaced))
                 .foregroundColor(isLocal ? .white : .secondary.opacity(0.8))
                 .lineLimit(1)
 
             Spacer()
 
             Text(isBooting ? "Booting" : (isConnected ? "Connected" : "Offline"))
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .font(.appSystem(size: 9, weight: .medium, design: .monospaced))
                 .foregroundColor(isBooting ? .yellow : (isConnected ? .green.opacity(0.7) : .red.opacity(0.5)))
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color(red: 0.12, green: 0.12, blue: 0.12).opacity(0.5))
+        .background(Color.platformCardBackground)
         .overlay(
             Rectangle()
                 .fill(Color.white.opacity(0.03))
@@ -494,17 +422,17 @@ private struct SyncStatusRow: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 14, weight: .medium))
+                .font(.appSystem(size: 14, weight: .medium))
                 .foregroundColor(Color.havenPurple)
                 .frame(width: 24)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.appSystem(size: 13, weight: .semibold))
                     .foregroundColor(.white)
                 if let date = lastDate {
                     Text("\(lastDateLabel): \(date.formatted(date: .abbreviated, time: .shortened))")
-                        .font(.system(size: 10))
+                        .font(.appSystem(size: 10))
                         .foregroundColor(.secondary.opacity(0.7))
                         .lineLimit(1)
                 }
@@ -517,14 +445,14 @@ private struct SyncStatusRow: View {
                     .fill(statusColor)
                     .frame(width: 6, height: 6)
                 Text(statusText)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(.appSystem(size: 10, weight: .medium, design: .monospaced))
                     .foregroundColor(.secondary.opacity(0.8))
                     .lineLimit(1)
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color(red: 0.12, green: 0.12, blue: 0.12).opacity(0.5))
+        .background(Color.platformCardBackground)
         .overlay(
             Rectangle()
                 .fill(Color.white.opacity(0.03))

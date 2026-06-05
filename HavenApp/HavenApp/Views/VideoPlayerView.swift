@@ -151,12 +151,12 @@ struct VideoPlayerView: View {
     private var errorContent: some View {
         VStack(spacing: 16) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 40))
+                .font(.appSystem(size: 40))
                 .foregroundColor(.orange)
             Text("Failed to load video")
-                .font(.headline)
+                .font(.appHeadline)
             Text(loadError ?? "Unknown error")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
@@ -178,14 +178,35 @@ struct VideoPlayerView: View {
     }
     
     private func setupPlayer() {
+        Task {
+            // For extensionless remote URLs (e.g. Blossom hashes), detect content type first
+            var detectedMIME: String? = mimeType
+            if url.pathExtension.isEmpty && !url.isFileURL {
+                detectedMIME = await MediaTypeDetector.shared.detectContentTypeAsync(for: url) ?? mimeType
+                #if DEBUG
+                if let detected = detectedMIME {
+                    print("VideoPlayerView: Detected MIME type '\(detected)' for \(url.lastPathComponent)")
+                } else {
+                    print("VideoPlayerView: Failed to detect MIME type for \(url.lastPathComponent), will use fallback")
+                }
+                #endif
+            }
+
+            await MainActor.run {
+                setupPlayerWithMIME(detectedMIME)
+            }
+        }
+    }
+
+    private func setupPlayerWithMIME(_ detectedMIME: String?) {
         // Use the new helper to get a guaranteed playable URL (with extension)
-        let finalURL = MediaCacheService.shared.preparePlayableURL(for: url) ?? url
-        
+        let finalURL = MediaCacheService.shared.preparePlayableURL(for: url, extensionHint: detectedMIME) ?? url
+
         // Safety check for local files
         if finalURL.isFileURL {
             // Start by checking the file at the path (resolving symlinks if needed)
             let actualPath = finalURL.resolvingSymlinksInPath().path
-            
+
             if !FileManager.default.fileExists(atPath: actualPath) {
                 #if DEBUG
                 print("VideoPlayerView: Local file missing at \(actualPath)")
@@ -193,7 +214,7 @@ struct VideoPlayerView: View {
                 loadError = "Local file not found."
                 return
             }
-            
+
             if let attr = try? FileManager.default.attributesOfItem(atPath: actualPath),
                let size = attr[.size] as? UInt64, size < 200 {
                 #if DEBUG
@@ -203,9 +224,9 @@ struct VideoPlayerView: View {
                 return
             }
         }
-        
-        // Strict Constraint Safety: 
-        // AVPlayerViewController (AppKit backend) throws constraint exceptions if initialized 
+
+        // Strict Constraint Safety:
+        // AVPlayerViewController (AppKit backend) throws constraint exceptions if initialized
         // with near-zero frames. We must ensure we are ready.
         if viewSize.width < 100 || viewSize.height < 100 {
             #if DEBUG
@@ -213,18 +234,19 @@ struct VideoPlayerView: View {
             #endif
             return
         }
-        
+
         #if DEBUG
         print("VideoPlayerView: Setting up player for \(finalURL.lastPathComponent)")
         #endif
-        
+
         // For extensionless remote URLs (e.g. Blossom hashes), AVFoundation can't infer the
         // content type from the URL alone. We must provide an explicit MIME type hint via
         // AVURLAssetOverrideMIMETypeKey so AVPlayer knows how to demux the stream.
         var assetOptions: [String: Any] = [:]
         if finalURL.pathExtension.isEmpty {
-            // Prefer caller-supplied mime, then the detector cache, fall back to video/mp4
-            let resolved = mimeType
+            // Prefer detected MIME, then caller-supplied mime, then the detector cache, fall back to video/mp4
+            let resolved = detectedMIME
+                ?? mimeType
                 ?? MediaTypeDetector.shared.getCachedContentType(for: url)
                 ?? "video/mp4"
             assetOptions[AVURLAssetOverrideMIMETypeKey] = resolved
@@ -232,14 +254,14 @@ struct VideoPlayerView: View {
             print("VideoPlayerView: Using MIME override '\(resolved)' for extensionless URL")
             #endif
         }
-        
+
         let asset = AVURLAsset(url: finalURL, options: assetOptions)
         let playerItem = AVPlayerItem(asset: asset)
-        
+
         // Initialize immediately - removing the async delay which caused race conditions
         let newPlayer = AVPlayer(playerItem: playerItem)
         self.player = newPlayer
-        
+
         // Watch for failures
         NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
@@ -354,7 +376,7 @@ struct InlineFeedVideoPlayer: View {
                             .frame(width: geo.size.width, height: geo.size.height)
                     }
                     Image(systemName: "play.circle.fill")
-                        .font(.system(size: 36))
+                        .font(.appSystem(size: 36))
                         .foregroundColor(.white.opacity(0.85))
                         .shadow(color: .black.opacity(0.5), radius: 4)
                 } else if let player = player {
@@ -420,7 +442,7 @@ struct InlineFeedVideoPlayer: View {
                         Spacer()
                         Button(action: toggleMute) {
                             Image(systemName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                                .font(.system(size: 14, weight: .medium))
+                                .font(.appSystem(size: 14, weight: .medium))
                                 .foregroundColor(.white)
                                 .padding(8)
                                 .background(Circle().fill(Color.black.opacity(0.6)))
@@ -481,6 +503,20 @@ struct InlineFeedVideoPlayer: View {
     }
 
     private func setupPlayer() {
+        // For extensionless remote URLs, detect content type first to ensure proper playback
+        if url.pathExtension.isEmpty && !url.isFileURL {
+            Task {
+                _ = await MediaTypeDetector.shared.detectContentTypeAsync(for: url)
+                await MainActor.run {
+                    initializePlayer()
+                }
+            }
+        } else {
+            initializePlayer()
+        }
+    }
+
+    private func initializePlayer() {
         let cachedPlayer = VideoPlayerCache.shared.player(for: url)
         cachedPlayer.isMuted = isMuted
         self.player = cachedPlayer
@@ -634,10 +670,10 @@ struct FullScreenVideoPlayer: View {
             if let _ = loadError {
                 VStack(spacing: 16) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 40))
+                        .font(.appSystem(size: 40))
                         .foregroundColor(.orange)
                     Text("Failed to load video")
-                        .font(.headline)
+                        .font(.appHeadline)
                         .foregroundColor(.white)
                 }
             } else if let player = player {
@@ -670,6 +706,20 @@ struct FullScreenVideoPlayer: View {
     }
 
     private func setupPlayer() {
+        // For extensionless remote URLs, detect content type first
+        if url.pathExtension.isEmpty && !url.isFileURL {
+            Task {
+                _ = await MediaTypeDetector.shared.detectContentTypeAsync(for: url)
+                await MainActor.run {
+                    initializePlayer()
+                }
+            }
+        } else {
+            initializePlayer()
+        }
+    }
+
+    private func initializePlayer() {
         let cachedPlayer = VideoPlayerCache.shared.player(for: url)
         cachedPlayer.isMuted = false
         self.player = cachedPlayer

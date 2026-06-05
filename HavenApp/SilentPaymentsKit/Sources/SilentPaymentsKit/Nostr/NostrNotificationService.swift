@@ -283,7 +283,7 @@ private enum NIP44 {
         let mac = hmacAA(key: keys.macKey, nonce: nonce, ciphertext: ciphertext)
 
         // Encode: version(1) || nonce(32) || ciphertext || mac(32) → base64
-        var payload = Data([0x02]) + nonce + ciphertext + mac
+        let payload = Data([0x02]) + nonce + ciphertext + mac
         return payload.base64EncodedString()
     }
 
@@ -345,7 +345,7 @@ private enum NIP44 {
         var T = Data()
         var i: UInt8 = 1
         while result.count < length {
-            var input = T + info + Data([i])
+            let input = T + info + Data([i])
             let key   = SymmetricKey(data: prk)
             T = Data(HMAC<SHA256>.authenticationCode(for: input, using: key))
             result.append(T)

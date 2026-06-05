@@ -122,7 +122,7 @@ struct FloatingArrowView: View {
     var body: some View {
         VStack(spacing: 6) {
             Image(systemName: "arrow.up")
-                .font(.system(size: 52, weight: .bold))
+                .font(.appSystem(size: 52, weight: .bold))
                 .foregroundStyle(
                     LinearGradient(
                         colors: [.havenPurpleLight, .havenPurple],
@@ -134,7 +134,7 @@ struct FloatingArrowView: View {
                 .offset(y: floating ? -6 : 6)
 
             Text("Your relay lives here")
-                .font(.system(size: 11, weight: .bold, design: .rounded))
+                .font(.appSystem(size: 11, weight: .bold, design: .rounded))
                 .foregroundColor(.white)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 5)

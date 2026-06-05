@@ -18,8 +18,6 @@ struct ContentView: View {
     init() {
         let appearance = UINavigationBarAppearance()
         appearance.configureWithTransparentBackground()
-        appearance.backgroundEffect = UIBlurEffect(style: .systemUltraThinMaterial)
-        appearance.backgroundColor = UIColor.black.withAlphaComponent(0.12)
         appearance.titleTextAttributes = [.foregroundColor: UIColor.white]
         appearance.largeTitleTextAttributes = [.foregroundColor: UIColor.white]
         UINavigationBar.appearance().standardAppearance = appearance
@@ -111,8 +109,21 @@ struct iPadSidebarView: View {
     @StateObject private var nostrService = NostrService.shared
     @StateObject private var feedService = FeedService.shared
     @StateObject private var dmService = DMService.shared
+    @State private var showingAccountSwitcher = false
+    @State private var searchPath = NavigationPath()
+    @State private var profilePath = NavigationPath()
+    @State private var mediaPath = NavigationPath()
+    @State private var relayPath = NavigationPath()
 
     private var activeHex: String { configService.activeAccountHexPubkey }
+
+    private var isOwner: Bool {
+        configService.config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var hasMultipleAccounts: Bool {
+        configService.allAccountNpubs.count > 1
+    }
 
     var body: some View {
         NavigationSplitView {
@@ -120,35 +131,84 @@ struct iPadSidebarView: View {
                 get: { selectedTab },
                 set: { if let val = $0 { selectedTab = val } }
             )) {
-                NavigationLink(value: 0) {
-                    Label("Feed", systemImage: "person.2.wave.2")
-                }
-                NavigationLink(value: 1) {
-                    Label("Search", systemImage: "magnifyingglass")
-                }
-                NavigationLink(value: 2) {
-                    HStack {
-                        Label("Profile", systemImage: "person.crop.circle")
-                        Spacer()
-                        if dmService.totalUnreadCount > 0 {
-                            Circle()
-                                .fill(.red)
-                                .frame(width: 8, height: 8)
+                // Account switcher section
+                Section {
+                    Button {
+                        if hasMultipleAccounts {
+                            showingAccountSwitcher.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 12) {
+                            AvatarView(
+                                url: nostrService.profiles[activeHex]?.pictureURL,
+                                pubkey: activeHex
+                            )
+                            .id(activeHex)
+                            .frame(width: 32, height: 32)
+                            .overlay(
+                                Circle()
+                                    .stroke(
+                                        isOwner ? Color.havenPurple.opacity(0.4) : Color.orange.opacity(0.8),
+                                        lineWidth: isOwner ? 1.5 : 2
+                                    )
+                            )
+
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(nostrService.profiles[activeHex]?.bestName ?? (isOwner ? "Owner" : "User"))
+                                    .font(.appSystem(size: 13, weight: .semibold))
+                                    .lineLimit(1)
+                                Text(isOwner ? "Owner Key" : "Whitelisted")
+                                    .font(.appSystem(size: 10))
+                                    .foregroundColor(.secondary)
+                            }
+
+                            Spacer()
+
+                            if hasMultipleAccounts {
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.appSystem(size: 10))
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
+                    .buttonStyle(.plain)
                 }
-                NavigationLink(value: 3) {
-                    Label("Media", systemImage: "photo.on.rectangle")
-                }
-                NavigationLink(value: 4) {
-                    HStack {
-                        Label("Relay", systemImage: "doc.text.image")
-                        Spacer()
-                        if relayManager.hasNewRelayActivity {
-                            Circle()
-                                .fill(.red)
-                                .frame(width: 8, height: 8)
+
+                // Navigation tabs
+                Section {
+                    NavigationLink(value: 0) {
+                        Label("Feed", systemImage: "person.2.wave.2")
+                    }
+                    NavigationLink(value: 1) {
+                        Label("Search", systemImage: "magnifyingglass")
+                    }
+                    NavigationLink(value: 2) {
+                        HStack {
+                            Label("Profile", systemImage: "person.crop.circle")
+                            Spacer()
+                            if dmService.totalUnreadCount > 0 {
+                                Circle()
+                                    .fill(.red)
+                                    .frame(width: 8, height: 8)
+                            }
                         }
+                    }
+                    NavigationLink(value: 3) {
+                        Label("Media", systemImage: "photo.on.rectangle")
+                    }
+                    NavigationLink(value: 4) {
+                        HStack {
+                            Label("Relay", systemImage: "doc.text.image")
+                            Spacer()
+                            if relayManager.hasNewRelayActivity {
+                                Circle()
+                                    .fill(.red)
+                                    .frame(width: 8, height: 8)
+                            }
+                        }
+                    }
+                    NavigationLink(value: 5) {
+                        Label("Settings", systemImage: "gearshape")
                     }
                 }
             }
@@ -158,41 +218,51 @@ struct iPadSidebarView: View {
             case 0:
                 FeedView()
             case 1:
-                NavigationStack {
+                NavigationStack(path: $searchPath) {
                     SearchView()
                         .navigationTitle("Search")
                         .navigationBarTitleDisplayMode(.inline)
+                        .toolbarBackground(.hidden, for: .navigationBar)
                         .navigationDestination(for: FeedNote.self) { note in
                             NoteDetailView(note: note)
                         }
                 }
             case 2:
-                NavigationStack {
+                NavigationStack(path: $profilePath) {
                     ProfileView(pubkey: activeHex, embeddedInNavigation: false)
                         .navigationTitle("Profile")
                         .navigationBarTitleDisplayMode(.inline)
+                        .toolbarBackground(.hidden, for: .navigationBar)
                         .navigationDestination(for: FeedNote.self) { note in
                             NoteDetailView(note: note)
                         }
                 }
                 .id(activeHex)
             case 3:
-                NavigationStack {
+                NavigationStack(path: $mediaPath) {
                     MediaTabView()
-                        .navigationTitle("Media")
+                        .navigationTitle("")
                         .navigationBarTitleDisplayMode(.inline)
+                        .toolbarBackground(.hidden, for: .navigationBar)
                         .navigationDestination(for: FeedNote.self) { note in
                             NoteDetailView(note: note)
                         }
                 }
             case 4:
-                NavigationStack {
+                NavigationStack(path: $relayPath) {
                     ViewerView()
-                        .navigationTitle("Relay")
+                        .navigationTitle("")
                         .navigationBarTitleDisplayMode(.inline)
+                        .toolbarBackground(.hidden, for: .navigationBar)
                         .navigationDestination(for: FeedNote.self) { note in
                             NoteDetailView(note: note)
                         }
+                }
+            case 5:
+                NavigationStack {
+                    SettingsView(isEmbedded: true)
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbarBackground(.hidden, for: .navigationBar)
                 }
             default:
                 FeedView()
@@ -213,10 +283,14 @@ struct iPadSidebarView: View {
                 ZapNotificationBanner()
                 FollowNotificationBanner()
                 MediaUploadNotificationBanner()
+                ActionToastBanner()
                 ErrorNotificationBanner()
             }
             .padding(.top, 4)
             .allowsHitTesting(true)
+        }
+        .sheet(isPresented: $showingAccountSwitcher) {
+            AccountSwitcherView(configService: configService)
         }
     }
 }
@@ -248,6 +322,7 @@ struct iPhoneTabView: View {
                 SearchView()
                     .navigationTitle("Search")
                     .navigationBarTitleDisplayMode(.inline)
+                    .toolbarBackground(.hidden, for: .navigationBar)
                     .navigationDestination(for: FeedNote.self) { note in
                         NoteDetailView(note: note)
                     }
@@ -259,6 +334,7 @@ struct iPhoneTabView: View {
                 ProfileView(pubkey: activeHex, embeddedInNavigation: false)
                     .navigationTitle("Profile")
                     .navigationBarTitleDisplayMode(.inline)
+                    .toolbarBackground(.hidden, for: .navigationBar)
                     .navigationDestination(for: FeedNote.self) { note in
                         NoteDetailView(note: note)
                     }
@@ -269,8 +345,9 @@ struct iPhoneTabView: View {
 
             NavigationStack(path: $mediaPath) {
                 MediaTabView()
-                    .navigationTitle("Media")
+                    .navigationTitle("")
                     .navigationBarTitleDisplayMode(.inline)
+                    .toolbarBackground(.hidden, for: .navigationBar)
                     .navigationDestination(for: FeedNote.self) { note in
                         NoteDetailView(note: note)
                     }
@@ -280,8 +357,9 @@ struct iPhoneTabView: View {
 
             NavigationStack(path: $relayPath) {
                 ViewerView()
-                    .navigationTitle("Relay")
+                    .navigationTitle("")
                     .navigationBarTitleDisplayMode(.inline)
+                    .toolbarBackground(.hidden, for: .navigationBar)
                     .navigationDestination(for: FeedNote.self) { note in
                         NoteDetailView(note: note)
                     }
@@ -301,7 +379,8 @@ struct iPhoneTabView: View {
                 configService: configService,
                 relayManager: relayManager,
                 nostrService: nostrService,
-                dmService: dmService
+                dmService: dmService,
+                feedService: feedService
             )
         }
         .overlay(alignment: .top) {
@@ -310,6 +389,7 @@ struct iPhoneTabView: View {
                 ZapNotificationBanner()
                 FollowNotificationBanner()
                 MediaUploadNotificationBanner()
+                ActionToastBanner()
                 ErrorNotificationBanner()
             }
             .padding(.top, 4)
@@ -340,48 +420,176 @@ struct BottomTabBar: View {
     @ObservedObject var relayManager: RelayProcessManager
     @ObservedObject var nostrService: NostrService
     @ObservedObject var dmService: DMService
+    @ObservedObject var feedService: FeedService
+
+    @State private var isCollapsed: Bool = false
 
     private var activeHex: String { configService.activeAccountHexPubkey }
 
+    private var relayStatusColor: Color {
+        if relayManager.isBooting {
+            return .yellow
+        } else if relayManager.isRunning && relayManager.isWotSyncing {
+            return .orange
+        } else if relayManager.isRunning {
+            return .green
+        } else {
+            return .red
+        }
+    }
+
     var body: some View {
         HStack(spacing: 0) {
-            tabItem(index: 0, title: "Feed", icon: "person.2.wave.2") {
-                NotificationCenter.default.post(name: NSNotification.Name("FeedTabReselected"), object: nil)
-            }
-
-            tabItem(index: 1, title: "Search", icon: "magnifyingglass") {
-                if !searchPath.isEmpty {
-                    searchPath = NavigationPath()
-                } else {
-                    NotificationCenter.default.post(name: NSNotification.Name("SearchScrollToTop"), object: nil)
-                }
-            }
-
-            profileTabItem
-
-            tabItem(index: 3, title: "Media", icon: "photo.on.rectangle") {
-                if !mediaPath.isEmpty {
-                    mediaPath = NavigationPath()
-                } else {
-                    NotificationCenter.default.post(name: NSNotification.Name("MediaScrollToTop"), object: nil)
-                }
-            }
-
-            tabItem(index: 4, title: "Relay", icon: "doc.text.image", hasRedBadge: relayManager.hasNewRelayActivity) {
-                if !relayPath.isEmpty {
-                    relayPath = NavigationPath()
-                } else {
-                    relayManager.markRelayViewed()
-                    NotificationCenter.default.post(name: NSNotification.Name("RelayScrollToTop"), object: nil)
-                }
+            if isCollapsed {
+                collapsedContent
+            } else {
+                expandedContent
             }
         }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 8)
+        .padding(.vertical, isCollapsed ? 6 : 10)
+        .padding(.horizontal, isCollapsed ? 6 : 8)
         .applyGlassCapsule()
-        .padding(.horizontal, 16)
-        .padding(.bottom, 8) // Sits visually balanced above system home indicator bar on all devices
+        .padding(.horizontal, isCollapsed ? 0 : 16)
+        .padding(.bottom, 0)
+        .frame(maxWidth: .infinity, alignment: .center)
+        .animation(.spring(response: 0.5, dampingFraction: 0.82), value: isCollapsed)
+        .onChange(of: feedService.feedScrollingDown) { _, scrollingDown in
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.82)) {
+                isCollapsed = scrollingDown
+            }
+        }
+        .onChange(of: selectedTab) { _, _ in
+            // Reset scroll state when switching tabs so bar starts expanded
+            feedService.feedScrollingDown = false
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.82)) {
+                isCollapsed = false
+            }
+        }
     }
+
+    // MARK: - Expanded Content
+
+    @ViewBuilder
+    private var expandedContent: some View {
+        tabItem(index: 0, title: "Feed", icon: "person.2.wave.2") {
+            NotificationCenter.default.post(name: NSNotification.Name("FeedTabReselected"), object: nil)
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.85)))
+
+        tabItem(index: 1, title: "Search", icon: "magnifyingglass") {
+            if !searchPath.isEmpty {
+                searchPath = NavigationPath()
+            } else {
+                NotificationCenter.default.post(name: NSNotification.Name("SearchScrollToTop"), object: nil)
+            }
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.85)))
+
+        expandedProfileTabItem
+            .transition(.opacity.combined(with: .scale(scale: 0.85)))
+
+        tabItem(index: 3, title: "Media", icon: "photo.on.rectangle") {
+            if !mediaPath.isEmpty {
+                mediaPath = NavigationPath()
+            } else {
+                NotificationCenter.default.post(name: NSNotification.Name("MediaScrollToTop"), object: nil)
+            }
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.85)))
+
+        tabItem(index: 4, title: "Relay", icon: "doc.text.image", hasRedBadge: relayManager.hasNewRelayActivity) {
+            if !relayPath.isEmpty {
+                relayPath = NavigationPath()
+            } else {
+                relayManager.markRelayViewed()
+                NotificationCenter.default.post(name: NSNotification.Name("RelayScrollToTop"), object: nil)
+            }
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.85)))
+    }
+
+    // MARK: - Collapsed Content
+
+    private var collapsedFABIcon: String {
+        selectedTab <= 2 ? "square.and.pencil" : "antenna.radiowaves.left.and.right"
+    }
+
+    private var collapsedFABColor: Color {
+        selectedTab <= 2 ? Color.havenPurple : relayStatusColor
+    }
+
+    @ViewBuilder
+    private var collapsedContent: some View {
+        HStack(spacing: 16) {
+            // Profile avatar — tap to expand tab bar
+            Button {
+                feedService.feedScrollingDown = false
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
+                    isCollapsed = false
+                }
+            } label: {
+                AvatarView(url: nostrService.profiles[activeHex]?.pictureURL, pubkey: activeHex, size: 36)
+                    .overlay(
+                        Circle()
+                            .stroke(Color.havenPurple.opacity(0.6), lineWidth: 2)
+                    )
+                    .overlay(alignment: .topTrailing) {
+                        if dmService.totalUnreadCount > 0 || relayManager.hasNewRelayActivity {
+                            Circle()
+                                .fill(Color.red)
+                                .frame(width: 10, height: 10)
+                                .offset(x: 2, y: -2)
+                        }
+                    }
+            }
+            .buttonStyle(.plain)
+            .contextMenu {
+                if configService.allAccountNpubs.count > 1 {
+                    ForEach(configService.allAccountNpubs, id: \.self) { npub in
+                        let isOwner = npub == configService.config.ownerNpub
+                        let currentNpub = configService.config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let isCurrent = currentNpub.isEmpty ? isOwner : npub == currentNpub
+                        let hex = Bech32.decode(npub)?.hexString ?? ""
+                        let name = nostrService.profiles[hex]?.bestName ?? (isOwner ? "Owner" : String(npub.prefix(8)))
+
+                        Button {
+                            configService.switchActiveAccount(to: npub)
+                        } label: {
+                            if isCurrent {
+                                Label(name, systemImage: "checkmark")
+                            } else {
+                                Text(name)
+                            }
+                        }
+                    }
+                } else {
+                    Text("No other accounts")
+                }
+            }
+
+            // Contextual FAB icon — triggers compose or relay dashboard
+            Button {
+                if selectedTab <= 2 {
+                    NotificationCenter.default.post(name: .composeFromTabBar, object: selectedTab)
+                } else {
+                    NotificationCenter.default.post(name: .openRelayDashboard, object: selectedTab)
+                }
+            } label: {
+                ZStack {
+                    Circle()
+                        .fill(collapsedFABColor.opacity(0.15))
+                        .frame(width: 36, height: 36)
+                    Image(systemName: collapsedFABIcon)
+                        .font(.appSystem(size: 15, weight: .bold))
+                        .foregroundColor(collapsedFABColor)
+                }
+            }
+            .buttonStyle(.plain)
+        }
+        .transition(.scale(scale: 0.9).combined(with: .opacity))
+    }
+
+    // MARK: - Tab Item
 
     private func tabItem(index: Int, title: String, icon: String, hasRedBadge: Bool = false, onReselect: @escaping () -> Void) -> some View {
         let selected = selectedTab == index
@@ -394,7 +602,7 @@ struct BottomTabBar: View {
         } label: {
             VStack(spacing: 4) {
                 Image(systemName: icon)
-                    .font(.system(size: 20, weight: selected ? .semibold : .regular))
+                    .font(.appSystem(size: 20, weight: selected ? .semibold : .regular))
                     .foregroundStyle(selected ? Color.havenPurple : .white.opacity(0.5))
                     .frame(height: 24)
                     .overlay(alignment: .topTrailing) {
@@ -406,16 +614,18 @@ struct BottomTabBar: View {
                         }
                     }
                 Text(title)
-                    .font(.system(size: 10, weight: selected ? .semibold : .regular))
+                    .font(.appSystem(size: 10, weight: selected ? .semibold : .regular))
                     .foregroundStyle(selected ? Color.havenPurple : .white.opacity(0.5))
             }
             .frame(maxWidth: .infinity)
-            .contentShape(Rectangle()) // Fully fills column width for tap actions
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
-    private var profileTabItem: some View {
+    // MARK: - Expanded Profile Tab Item
+
+    private var expandedProfileTabItem: some View {
         let selected = selectedTab == 2
         return Button {
             if selectedTab == 2 {
@@ -444,11 +654,11 @@ struct BottomTabBar: View {
                         }
                     }
                 Text("Profile")
-                    .font(.system(size: 10, weight: selected ? .semibold : .regular))
+                    .font(.appSystem(size: 10, weight: selected ? .semibold : .regular))
                     .foregroundStyle(selected ? Color.havenPurple : .white.opacity(0.5))
             }
             .frame(maxWidth: .infinity)
-            .contentShape(Rectangle()) // Fully fills column width for tap actions
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .id(activeHex)

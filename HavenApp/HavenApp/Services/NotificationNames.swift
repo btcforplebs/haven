@@ -21,4 +21,10 @@ extension Notification.Name {
     static let havenOpenFeedRelaySettings = Notification.Name("com.haven.openFeedRelaySettings")
     /// Posted to open the Settings view from any context (e.g. profile toolbar, footer gear).
     static let havenOpenSettings = Notification.Name("com.haven.openSettings")
+    /// Posted by FeedView when scroll direction changes — object is Bool (true = scrolling down = collapse tab bar).
+    static let feedScrollDirectionChanged = Notification.Name("com.haven.feedScrollDirectionChanged")
+    /// Posted by the collapsed tab bar to trigger compose in the active tab.
+    static let composeFromTabBar = Notification.Name("com.haven.composeFromTabBar")
+    /// Posted by the collapsed tab bar (or menu bar) to open the relay dashboard.
+    static let openRelayDashboard = Notification.Name("com.haven.openRelayDashboard")
 }

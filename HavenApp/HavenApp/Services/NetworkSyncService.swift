@@ -24,6 +24,11 @@ class NetworkSyncService {
     private var reconnectAttempts: [String: Int] = [:]
     private var isStarted = false
 
+    /// Tracks event IDs already injected into the local relay to prevent
+    /// feedback loops (event blasted → received back → re-injected → re-blasted).
+    private var injectedEventIds = Set<String>()
+    private let maxInjectedIds = 10_000
+
     var lastSyncTimestamp: Int64 {
         get { Int64(UserDefaults.standard.integer(forKey: lastSyncKey)) }
         set { UserDefaults.standard.set(Int(newValue), forKey: lastSyncKey) }
@@ -47,6 +52,7 @@ class NetworkSyncService {
         clients.values.forEach { $0.disconnect() }
         clients.removeAll()
         cancellables.removeAll()
+        injectedEventIds.removeAll()
         logger.info("NetworkSyncService stopped")
     }
 
@@ -61,7 +67,7 @@ class NetworkSyncService {
 
     private func connectAll() {
         let config = ConfigService.shared.config
-        let relayStrings = Array(Set(config.feedRelays + config.importSeedRelays))
+        let relayStrings = Array(Set(config.activeFeedRelays + config.activeImportSeedRelays))
         for urlStr in relayStrings {
             guard URL(string: urlStr) != nil else { continue }
             connect(to: urlStr)
@@ -166,6 +172,20 @@ class NetworkSyncService {
     // MARK: - Inject
 
     private func injectEvent(_ eventDict: [String: Any]) {
+        // Skip injection when FeedService is actively injecting — avoids duplicate writes
+        guard !FeedService.shared.isInjecting else { return }
+
+        // Dedup: skip events we've already injected to prevent blast feedback loops
+        if let eventId = eventDict["id"] as? String {
+            if injectedEventIds.contains(eventId) { return }
+            injectedEventIds.insert(eventId)
+            // Prevent unbounded growth — clear and let it rebuild naturally
+            if injectedEventIds.count > maxInjectedIds {
+                injectedEventIds.removeAll(keepingCapacity: true)
+                injectedEventIds.insert(eventId)
+            }
+        }
+
         let config = ConfigService.shared.config
         let ownerHex = Bech32.decode(config.ownerNpub)?.hexString ?? ""
         let whitelisted = ConfigService.shared.whitelistedHexPubkeys

@@ -124,8 +124,8 @@ class PendingPostManager: ObservableObject {
             let embedded = FeedService.shared.rawEventCache[originalId] ?? ""
 
             // NIP-18: e tag MUST include a relay URL as its third entry.
-            let relayHint = ConfigService.shared.config.feedRelays.first
-                ?? ConfigService.shared.config.blastrRelays.first
+            let relayHint = ConfigService.shared.config.activeFeedRelays.first
+                ?? ConfigService.shared.config.activeBlastrRelays.first
                 ?? ConfigService.shared.config.nostrURL
 
             Task {

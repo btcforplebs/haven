@@ -67,9 +67,9 @@ struct ErrorPill: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: notification.icon)
-                .font(.system(size: 12, weight: .bold))
+                .font(.appSystem(size: 12, weight: .bold))
             Text(notification.message)
-                .font(.system(size: 13, weight: .bold))
+                .font(.appSystem(size: 13, weight: .bold))
                 .lineLimit(2)
         }
         .padding(.vertical, 10)

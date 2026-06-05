@@ -75,7 +75,7 @@ public struct SilentPaymentReceiver {
             let labelScalar = TaggedHash.labelHash(preimage)
             // Generate label_point = labelScalar · G  (G = pubkey of privkey 1)
             let G           = try Secp256k1.publicKey(from: generatorScalar)
-            let labelPoint  = try Secp256k1.addTweakToPubKey(G, tweak: labelScalar)
+            _ = try Secp256k1.addTweakToPubKey(G, tweak: labelScalar)
             // Actually: labelScalar·G directly = pubkey of labelScalar
             let labelPointDirect = try Secp256k1.publicKey(from: labelScalar)
             labelLookup[Secp256k1.xOnlyKey(labelPointDirect)] = m

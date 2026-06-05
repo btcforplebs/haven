@@ -7,6 +7,7 @@ public struct NostrContentFormatter {
     private static let nprofileRegex = try! NSRegularExpression(pattern: "nostr:(nprofile1[a-z0-9]+)")
     private static let noteRegex = try! NSRegularExpression(pattern: "nostr:(note1[a-z0-9]+)")
     private static let neventRegex = try! NSRegularExpression(pattern: "nostr:(nevent1[a-z0-9]+)")
+    private static let naddrRegex = try! NSRegularExpression(pattern: "nostr:(naddr1[a-z0-9]+)")
     /// Matches bare HTTP(S) URLs that are NOT already inside markdown link syntax.
     private static let httpURLRegex = try! NSRegularExpression(pattern: #"(?<![(\[])https?://[^\s<>\")\]]*[^\s<>\")\].,;:!?'\"]"#, options: .caseInsensitive)
 
@@ -44,13 +45,15 @@ public struct NostrContentFormatter {
         text = replaceWithLinks(in: text, regex: npubRegex, template: "nostr:$1")
         text = replaceWithLinks(in: text, regex: nprofileRegex, template: "nostr:$1")
 
-        // Resolve nostr:note and nostr:nevent
+        // Resolve nostr:note, nostr:nevent, and nostr:naddr
         if hideQuotes {
             text = noteRegex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "")
             text = neventRegex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "")
+            text = naddrRegex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "")
         } else {
             text = replaceWithLinks(in: text, regex: noteRegex, template: "nostr:$1", label: "Quote")
             text = replaceWithLinks(in: text, regex: neventRegex, template: "nostr:$1", label: "Quote")
+            text = replaceWithLinks(in: text, regex: naddrRegex, template: "nostr:$1", label: "Quote")
         }
 
         // Convert bare HTTP(S) URLs to clickable markdown links

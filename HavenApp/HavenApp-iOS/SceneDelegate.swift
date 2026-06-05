@@ -81,6 +81,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             }
             NostrService.shared.fetchNotes(from: urls)
 
+            // Rescan blossom directory for media that arrived while backgrounded
+            NotificationCenter.default.post(name: .blossomDirectoryChanged, object: nil)
+
             // Refresh DM inbox to pick up messages received while backgrounded
             DMService.shared.refresh()
 
@@ -91,10 +94,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             FeedService.shared.resumeFeed()
         }
         
-        // Sync missed notes from Mac relay (if configured)
-        // Delay slightly longer to ensure local relay is fully ready
+        // Sync DMs from external relays on foreground
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-            MacRelaySyncService.shared.syncIfConfigured()
+            DMService.shared.syncOnForeground()
         }
     }
 

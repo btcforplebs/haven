@@ -33,6 +33,14 @@ class AppDelegate: NSObject, ObservableObject {
                 if ConfigService.shared.config.activeSigningMode() == "nip46" {
                     NIP46Service.shared.connectFromConfig()
                 }
+
+                // Publish NIP-65 relay lists for accounts with the setting enabled
+                try? await Task.sleep(for: .seconds(5))
+                NostrService.shared.publishRelayListsForEnabledAccounts()
+
+                // Start profile picture prefetch service (runs once per day on Wi-Fi)
+                try? await Task.sleep(for: .seconds(5))
+                ProfilePicturePrefetchService.shared.start()
             }
         }
         #endif
@@ -41,13 +49,23 @@ class AppDelegate: NSObject, ObservableObject {
     #if os(macOS)
     @MainActor
     func applicationWillTerminate(_ notification: Notification) {
-        // Ensure child processes are killed cleanly
         #if DEBUG
         print("Application terminating, stopping relay...")
         #endif
-        RelayProcessManager.shared.stopRelay()
-        // Give it time to SIGTERM -> wait -> SIGKILL if needed
-        Thread.sleep(forTimeInterval: 1.0)
+        // Stop background services before relay shutdown
+        NetworkSyncService.shared.stop()
+        NIP46Service.shared.disconnect()
+
+        // Stop the relay — StopRelayC() runs on a background thread inside
+        // stopRelay(), but we must block here briefly so the process doesn't
+        // exit before the Go side has time to flush databases.
+        let semaphore = DispatchSemaphore(value: 0)
+        RelayProcessManager.shared.stopRelay {
+            semaphore.signal()
+        }
+        // Wait up to 3 seconds for a clean shutdown; if it takes longer the
+        // OS will SIGKILL us anyway.
+        _ = semaphore.wait(timeout: .now() + 3.0)
     }
     
     func openWelcomeWindow() {

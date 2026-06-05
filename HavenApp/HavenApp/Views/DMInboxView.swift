@@ -27,7 +27,7 @@ struct DMInboxView: View {
                                         .fill(Color.havenPurple.opacity(0.05))
                                         .frame(width: 130, height: 130)
                                     Image(systemName: "bubble.left.and.bubble.right")
-                                        .font(.system(size: 36, weight: .light))
+                                        .font(.appSystem(size: 36, weight: .light))
                                         .foregroundStyle(
                                             LinearGradient(
                                                 colors: [.havenPurple, .havenPurpleLight],
@@ -39,10 +39,10 @@ struct DMInboxView: View {
 
                                 VStack(spacing: 8) {
                                     Text(String(localized: "dm.inbox.empty.title"))
-                                        .font(.system(size: 18, weight: .semibold))
+                                        .font(.appSystem(size: 18, weight: .semibold))
                                         .foregroundColor(.primary)
                                     Text(String(localized: "dm.inbox.empty.subtitle"))
-                                        .font(.system(size: 14))
+                                        .font(.appSystem(size: 14))
                                         .foregroundColor(.secondary)
                                         .multilineTextAlignment(.center)
                                         .lineSpacing(2)
@@ -56,7 +56,7 @@ struct DMInboxView: View {
                             dmService.refresh()
                         }
                     }
-                    .background(Color(red: 0.08, green: 0.08, blue: 0.1).ignoresSafeArea())
+                    .background(Color.platformWindowBackground.ignoresSafeArea())
                 } else {
                     List {
                         ForEach(dmService.conversations) { conversation in
@@ -72,7 +72,7 @@ struct DMInboxView: View {
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
-                    .background(Color(red: 0.08, green: 0.08, blue: 0.1).ignoresSafeArea())
+                    .background(Color.platformWindowBackground.ignoresSafeArea())
                     .refreshable {
                         dmService.refresh()
                     }
@@ -91,14 +91,14 @@ struct DMInboxView: View {
                     HStack(spacing: 16) {
                         Button(action: { dmService.markAllAsRead() }) {
                             Image(systemName: "checkmark.circle")
-                                .font(.system(size: 16, weight: .semibold))
+                                .font(.appSystem(size: 16, weight: .semibold))
                                 .foregroundColor(.havenPurple)
                         }
                         .help(String(localized: "dm.inbox.markAllRead"))
 
                         Button(action: { showingCompose = true }) {
                             Image(systemName: "square.and.pencil")
-                                .font(.system(size: 16, weight: .semibold))
+                                .font(.appSystem(size: 16, weight: .semibold))
                                 .foregroundColor(.havenPurple)
                         }
                     }
@@ -115,14 +115,14 @@ struct DMInboxView: View {
                     HStack(spacing: 12) {
                         Button(action: { dmService.markAllAsRead() }) {
                             Image(systemName: "checkmark.circle")
-                                .font(.system(size: 15, weight: .semibold))
+                                .font(.appSystem(size: 15, weight: .semibold))
                                 .foregroundColor(.havenPurple)
                         }
                         .help(String(localized: "dm.inbox.markAllRead"))
 
                         Button(action: { showingCompose = true }) {
                             Image(systemName: "square.and.pencil")
-                                .font(.system(size: 15, weight: .semibold))
+                                .font(.appSystem(size: 15, weight: .semibold))
                                 .foregroundColor(.havenPurple)
                         }
                         .help(String(localized: "dm.inbox.newMessage"))
@@ -175,7 +175,7 @@ struct MacComposeView: View {
             // Header
             HStack {
                 Text(String(localized: "dm.compose.title"))
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.appSystem(size: 15, weight: .semibold))
                 Spacer()
                 Button(String(localized: "dm.compose.cancel")) { dismiss() }
                     .foregroundColor(.havenPurple)
@@ -188,12 +188,12 @@ struct MacComposeView: View {
             if let recipient = selectedRecipient {
                 HStack(spacing: 10) {
                     Text(String(localized: "dm.compose.to"))
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.appSystem(size: 12, weight: .semibold))
                         .foregroundColor(.secondary)
                     AvatarView(url: nostrService.profiles[recipient]?.pictureURL, pubkey: recipient)
                         .frame(width: 24, height: 24)
                     Text(nostrService.profiles[recipient]?.bestName ?? String(recipient.prefix(8)) + "...")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.appSystem(size: 13, weight: .medium))
                     Spacer()
                     Button(action: { selectedRecipient = nil; searchText = "" }) {
                         Image(systemName: "xmark.circle.fill")
@@ -220,7 +220,7 @@ struct MacComposeView: View {
                                             AvatarView(url: nostrService.profiles[pubkey]?.pictureURL, pubkey: pubkey)
                                                 .frame(width: 28, height: 28)
                                             Text(nostrService.profiles[pubkey]?.bestName ?? String(pubkey.prefix(8)))
-                                                .font(.system(size: 13))
+                                                .font(.appSystem(size: 13))
                                                 .foregroundColor(.primary)
                                             Spacer()
                                         }
@@ -242,7 +242,7 @@ struct MacComposeView: View {
 
             // Message
             TextEditor(text: $messageText)
-                .font(.system(size: 13))
+                .font(.appSystem(size: 13))
                 .scrollContentBackground(.hidden)
                 .padding(12)
                 .frame(minHeight: 100)
@@ -350,7 +350,7 @@ struct ConversationRow: View {
                         .frame(width: 14, height: 14)
                         .overlay(
                             Circle()
-                                .stroke(Color(red: 0.12, green: 0.12, blue: 0.16), lineWidth: 2)
+                                .stroke(Color.platformSecondaryGroupedBackground, lineWidth: 2)
                         )
                         .offset(x: 2, y: -1)
                 }
@@ -359,20 +359,20 @@ struct ConversationRow: View {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
                     Text(counterpartyName)
-                        .font(.system(size: 15, weight: hasUnread ? .bold : .semibold))
+                        .font(.appSystem(size: 15, weight: hasUnread ? .bold : .semibold))
                         .foregroundColor(.primary)
                         .lineLimit(1)
 
                     Spacer(minLength: 0)
 
                     Text(lastMessageTime)
-                        .font(.system(size: 12, weight: .regular))
+                        .font(.appSystem(size: 12, weight: .regular))
                         .foregroundColor(hasUnread ? .havenPurple : .secondary)
                 }
 
                 HStack(spacing: 8) {
                     Text(lastMessagePreview)
-                        .font(.system(size: 13, weight: hasUnread ? .medium : .regular))
+                        .font(.appSystem(size: 13, weight: hasUnread ? .medium : .regular))
                         .foregroundColor(hasUnread ? .primary.opacity(0.8) : .secondary)
                         .lineLimit(2)
 
@@ -380,7 +380,7 @@ struct ConversationRow: View {
                         Spacer(minLength: 0)
 
                         Text("\(conversation.unreadCount)")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.appSystem(size: 11, weight: .bold))
                             .foregroundColor(.white)
                             .padding(.horizontal, 7)
                             .padding(.vertical, 2)

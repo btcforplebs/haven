@@ -56,6 +56,26 @@ class NostrService: ObservableObject {
     private var profileFetchQueue = Set<String>()
     private var profileFlushCancellable: AnyCancellable?
 
+    /// Pause the profile-fetch timer when the UI is hidden to avoid
+    /// unnecessary network requests and CPU usage in the background.
+    func enterBackground() {
+        profileFlushCancellable?.cancel()
+        profileFlushCancellable = nil
+        #if DEBUG
+        print("NostrService: entering background mode — profile timer paused")
+        #endif
+    }
+
+    /// Resume the profile-fetch timer when the UI becomes visible.
+    func enterForeground() {
+        if !profileFetchQueue.isEmpty && profileFlushCancellable == nil {
+            setupMetadataFlusher()
+        }
+        #if DEBUG
+        print("NostrService: entering foreground mode — profile timer resumed")
+        #endif
+    }
+
     // Used to distinguish live incoming events from historical backfill on startup.
     // Only events newer than this date fire push notifications.
     // Reset each time the app wakes from a silent push so fresh events are "new".
@@ -147,7 +167,7 @@ class NostrService: ObservableObject {
         profileFetchQueue.removeAll()
 
         // Use blastr relays or defaults if empty
-        var relays = ConfigService.shared.config.blastrRelays
+        var relays = ConfigService.shared.config.activeBlastrRelays
         if relays.isEmpty {
             relays = ["wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"]
         }
@@ -189,7 +209,7 @@ class NostrService: ObservableObject {
     }
 
     private func loadProfiles() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
         let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
         let profileURL = havenDir.appendingPathComponent("profiles.json")
 
@@ -252,7 +272,7 @@ class NostrService: ObservableObject {
     private func saveRelayLists() {
         let listsCopy = relayLists
         DispatchQueue.global(qos: .utility).async {
-            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
             let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
             let relayListsURL = havenDir.appendingPathComponent("relay_lists.json")
 
@@ -265,7 +285,7 @@ class NostrService: ObservableObject {
     private func saveDMRelayLists() {
         let listsCopy = dmRelayLists
         DispatchQueue.global(qos: .utility).async {
-            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
             let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
             let dmRelayListsURL = havenDir.appendingPathComponent("dm_relay_lists.json")
 
@@ -278,7 +298,7 @@ class NostrService: ObservableObject {
     private func saveServerLists() {
         let listsCopy = serverLists
         DispatchQueue.global(qos: .utility).async {
-            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
             let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
             let serverListsURL = havenDir.appendingPathComponent("server_lists.json")
 
@@ -292,7 +312,7 @@ class NostrService: ObservableObject {
 
         let profilesCopy = profiles
         DispatchQueue.global(qos: .utility).async {
-            let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
             let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
 
             // Ensure directory exists
@@ -343,7 +363,7 @@ class NostrService: ObservableObject {
         relaysInFlight.insert(pubkey)
 
         // Use blastr relays or defaults if empty
-        var relays = ConfigService.shared.config.blastrRelays
+        var relays = ConfigService.shared.config.activeBlastrRelays
         if relays.isEmpty {
             relays = ["wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"]
         }
@@ -646,18 +666,22 @@ class NostrService: ObservableObject {
             }
 
             do {
-                print("NostrService: NIP-46 signing kind \(kind) event, sending to bunker…")
+                print("NostrService: NIP-46 signing kind \(kind) event (tags=\(finalTags.map { $0.first ?? "?" })), sending to bunker…")
+                print("NostrService: NIP-46 outgoing event JSON: \(jsonStr.prefix(500))")
                 let signedJSON = try await NIP46Service.shared.signEvent(eventJSON: jsonStr)
-                print("NostrService: NIP-46 bunker returned \(signedJSON.prefix(200))")
+                print("NostrService: NIP-46 bunker returned \(signedJSON.prefix(300))")
                 guard let signedData = signedJSON.data(using: .utf8) else {
                     print("NostrService: NIP-46 sign failed - response not valid UTF-8")
                     return nil
                 }
                 let event = try JSONDecoder().decode(NostrEvent.self, from: signedData)
-                print("NostrService: NIP-46 signed event id=\(event.id.prefix(8)) sig=\(event.sig.prefix(8))")
+                print("NostrService: NIP-46 signed event id=\(event.id.prefix(8)) pubkey=\(event.pubkey.prefix(8)) sig=\(event.sig.prefix(8))")
                 return event
             } catch {
-                print("NostrService: NIP-46 sign failed: \(error)")
+                print("NostrService: NIP-46 sign FAILED for kind \(kind): \(error)")
+                if kind == 24242 {
+                    print("NostrService: Blossom auth (kind 24242) signing failed — remote signer may not support this event kind or may require manual approval")
+                }
                 return nil
             }
         } else {
@@ -757,6 +781,77 @@ class NostrService: ObservableObject {
         }
     }
 
+    /// NIP-65: Publishes a Kind 10002 (Relay List Metadata) event advertising this relay
+    /// as the account's inbox. Call when the user enables the toggle or on app launch.
+    @MainActor
+    func publishRelayList(forNpub accountNpub: String) {
+        let config = ConfigService.shared.config
+        guard !config.isLocal else {
+            #if DEBUG
+            print("NostrService: Relay is local-only, skipping Kind 10002 publish")
+            #endif
+            return
+        }
+
+        let publicURL = "wss://\(config.sanitizedRelayURL)"
+
+        // Build NIP-65 tags: no marker means both read and write
+        var tags: [[String]] = [["r", publicURL]]
+
+        // Include the Mac relay in the relay list if configured (both platforms)
+        let macRelay = config.macRelayWssURL
+        if !macRelay.isEmpty {
+            tags.append(["r", macRelay])
+        }
+
+        // Temporarily switch signing context to the target account
+        let originalActive = ConfigService.shared.config.activeAccountNpub
+
+        Task {
+            ConfigService.shared.config.activeAccountNpub = (accountNpub == config.ownerNpub) ? "" : accountNpub
+            ConfigService.shared.refreshActiveAccountHex()
+            defer {
+                ConfigService.shared.config.activeAccountNpub = originalActive
+                ConfigService.shared.refreshActiveAccountHex()
+            }
+
+            if let event = await signEventAsync(kind: 10002, content: "", tags: tags) {
+                postEvent(event)
+                #if DEBUG
+                print("NostrService: Published Kind 10002 relay list for \(accountNpub.prefix(8)) with \(tags.count) relays")
+                #endif
+            } else {
+                #if DEBUG
+                print("NostrService: Failed to sign Kind 10002 relay list for \(accountNpub.prefix(8))")
+                #endif
+            }
+        }
+    }
+
+    /// Publishes Kind 10002 relay list for all accounts that have the setting enabled.
+    @MainActor
+    func publishRelayListsForEnabledAccounts() {
+        let config = ConfigService.shared.config
+        guard !config.isLocal else { return }
+
+        let enabledAccounts = config.publishRelayListPerAccount.filter { $0.value }.map { $0.key }
+        guard !enabledAccounts.isEmpty else { return }
+
+        Task {
+            for npub in enabledAccounts {
+                // Verify the account can sign
+                let isOwner = npub == config.ownerNpub
+                let canSign = isOwner
+                    ? (!config.ownerNcryptsec.isEmpty || config.ownerHexKey != nil || ConfigService.shared.hasBunkerConfig(forNpub: npub))
+                    : (ConfigService.shared.hasCredential(forNpub: npub) || ConfigService.shared.hasBunkerConfig(forNpub: npub))
+                guard canSign else { continue }
+
+                publishRelayList(forNpub: npub)
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
+    }
+
     /// Posts an event to the local relay and broadcasts to configured relays
     func postEvent(_ event: NostrEvent) {
         print("NostrService: postEvent called – id=\(event.id.prefix(8)) kind=\(event.kind) sig=\(event.sig.prefix(8))")
@@ -799,53 +894,31 @@ class NostrService: ObservableObject {
         guard let data = try? JSONSerialization.data(withJSONObject: msg),
               let str = String(data: data, encoding: .utf8) else { return }
 
-        // 1. Post to local relay
-        guard let localURL = URL(string: ConfigService.shared.config.nostrURL) else { return }
-        let localClient = WebSocketClient()
-        localClient.isTemporary = true
+        // 1. Post to local relay (blastr broadcasting is triggered by the Go relay's
+        // StoreEvent handler, so the event must reach the local relay to be blasted)
+        let relayReady = RelayProcessManager.shared.isRunning && !RelayProcessManager.shared.isBooting
+        if relayReady, let localURL = URL(string: ConfigService.shared.config.nostrURL) {
+            let localClient = WebSocketClient()
+            localClient.isTemporary = true
 
-        localClient.$connectionState
-            .receive(on: DispatchQueue.main)
-            .sink { state in
-                if state == .connected {
-                    localClient.send(text: str)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                        localClient.disconnect()
-                    }
-                }
-            }
-            .store(in: &cancellables)
-
-        localClient.connect(url: localURL)
-
-        // 2. Broadcast to Blastr relays
-        let blastrRelays = ConfigService.shared.config.blastrRelays
-        if !blastrRelays.isEmpty {
-            for relayURLString in blastrRelays {
-                guard let url = URL(string: relayURLString) else { continue }
-                let broadcastClient = WebSocketClient()
-                broadcastClient.isTemporary = true
-
-                broadcastClient.$connectionState
-                    .receive(on: DispatchQueue.main)
-                    .sink { state in
-                        if state == .connected {
-                            #if DEBUG
-                            print("NostrService: Broadcasting event \(event.id.prefix(8)) to \(relayURLString)")
-                            #endif
-                            broadcastClient.send(text: str)
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                broadcastClient.disconnect()
-                            }
+            localClient.$connectionState
+                .receive(on: DispatchQueue.main)
+                .sink { state in
+                    if state == .connected {
+                        localClient.send(text: str)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                            localClient.disconnect()
                         }
                     }
-                    .store(in: &cancellables)
+                }
+                .store(in: &cancellables)
 
-                broadcastClient.connect(url: url)
-            }
+            localClient.connect(url: localURL)
+        } else {
+            print("NostrService: ⚠️ Local relay not ready — event \(event.id.prefix(8)) will only reach smart broadcast relays")
         }
 
-        // 3. Smart Broadcast: Send to author's inbox relays if it's a reply or reaction
+        // 2. Smart Broadcast: Send to author's inbox relays if it's a reply or reaction
         if event.kind == 1 || event.kind == 6 || event.kind == 7 {
             // Find target author's pubkey from 'p' tags (skipping own pubkey)
             let targetPubkey = event.tags.first { $0.count >= 2 && $0[0] == "p" && $0[1] != activeHexPubkey }?[1]
@@ -855,8 +928,9 @@ class NostrService: ObservableObject {
                 print("NostrService: Smart broadcast event \(event.id.prefix(8)) to \(targetPubkey.prefix(8))'s inbox relays: \(targetRelays)")
                 #endif
 
+                let blastrRelays = ConfigService.shared.config.activeBlastrRelays
                 for relayURLString in targetRelays {
-                    // Skip if already sent to this relay via blastr
+                    // Skip relays that the Go relay will blast to
                     if blastrRelays.contains(relayURLString) { continue }
 
                     guard let url = URL(string: relayURLString) else { continue }
@@ -893,12 +967,13 @@ class NostrService: ObservableObject {
 
     /// Broadcasts a raw signed event dict (including sig) to configured Blastr relays.
     /// Use this to re-broadcast an existing event without re-signing it.
-    func broadcastRawEvent(_ eventDict: [String: Any]) {
+    /// If `onRelayResult` is provided, it's called for each relay with (relayURL, success, message).
+    func broadcastRawEvent(_ eventDict: [String: Any], onRelayResult: ((String, Bool, String) -> Void)? = nil) {
         let msg = ["EVENT", eventDict] as [Any]
         guard let data = try? JSONSerialization.data(withJSONObject: msg),
               let str = String(data: data, encoding: .utf8) else { return }
 
-        var relays = ConfigService.shared.config.blastrRelays
+        var relays = ConfigService.shared.config.activeBlastrRelays
         if relays.isEmpty {
             relays = ["wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"]
         }
@@ -907,17 +982,44 @@ class NostrService: ObservableObject {
             guard let url = URL(string: urlStr) else { continue }
             let client = WebSocketClient()
             client.isTemporary = true
+            var hasReported = false
+
+            client.messageSubject
+                .receive(on: DispatchQueue.main)
+                .sink { message in
+                    guard !hasReported,
+                          let msgData = message.data(using: .utf8),
+                          let json = try? JSONSerialization.jsonObject(with: msgData) as? [Any],
+                          let type = json[0] as? String,
+                          type == "OK", json.count >= 3 else { return }
+                    hasReported = true
+                    let success = json[2] as? Bool ?? false
+                    let relayMsg = json.count >= 4 ? (json[3] as? String ?? "") : ""
+                    onRelayResult?(urlStr, success, relayMsg)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        client.disconnect()
+                    }
+                }
+                .store(in: &cancellables)
+
             client.$connectionState
                 .receive(on: DispatchQueue.main)
                 .sink { state in
                     if state == .connected {
                         client.send(text: str)
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 10) {
+                            guard !hasReported else { return }
+                            hasReported = true
+                            onRelayResult?(urlStr, false, "timeout")
                             client.disconnect()
                         }
+                    } else if state == .error && !hasReported {
+                        hasReported = true
+                        onRelayResult?(urlStr, false, "connection failed")
                     }
                 }
                 .store(in: &cancellables)
+
             client.connect(url: url)
         }
     }
@@ -1876,26 +1978,7 @@ class NostrService: ObservableObject {
     }
 
     static func mimeFromExtension(_ url: URL) -> String? {
-        let ext = url.pathExtension.lowercased()
-        switch ext {
-        case "jpg", "jpeg": return "image/jpeg"
-        case "png": return "image/png"
-        case "gif": return "image/gif"
-        case "webp": return "image/webp"
-        case "heic": return "image/heic"
-        case "tiff", "tif": return "image/tiff"
-        case "svg": return "image/svg+xml"
-        case "mp4": return "video/mp4"
-        case "hevc", "h265": return "video/mp4"
-        case "mov": return "video/quicktime"
-        case "webm": return "video/webm"
-        case "mp3": return "audio/mpeg"
-        case "wav": return "audio/wav"
-        case "m4a", "aac": return "audio/mp4"
-        case "flac": return "audio/flac"
-        case "ogg": return "audio/ogg"
-        default: return nil
-        }
+        SupportedMediaFormats.mime(forExtension: url.pathExtension)
     }
 
     nonisolated static func mediaTypeFromMime(_ mime: String?, url: URL) -> MediaItem.MediaType {
@@ -1945,9 +2028,7 @@ class NostrService: ObservableObject {
     }
 
     func extractMediaURLs(from content: String) -> [URL] {
-        let pattern = #"(https?://\S+?\.(?:jpg|jpeg|png|gif|webp|mp4|mov|webm|heic|tiff|hevc|h265)(?:\?\S+)?)|(https?://\S+?/blossom/[a-f0-9]{64})|(https?://\S+?/[a-f0-9]{64})"#
-
-        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return [] }
+        guard let regex = SupportedMediaFormats.mediaURLRegex else { return [] }
         let nsString = content as NSString
         let results = regex.matches(in: content, options: [], range: NSRange(location: 0, length: nsString.length))
 

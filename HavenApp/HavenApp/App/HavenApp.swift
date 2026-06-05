@@ -2,15 +2,20 @@ import SwiftUI
 
 @main
 struct HavenApp: App {
+    #if os(macOS)
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    
+    #else
+    @UIApplicationDelegateAdaptor(iOSAppDelegate.self) var appDelegate
+    #endif
+
     // Use shared instances directly, but observe them if needed for top-level updates.
     // However, ObservableObjects in environment usually suffice.
     @StateObject private var configService = ConfigService.shared
     @StateObject private var relayManager = RelayProcessManager.shared
     @StateObject private var nostrService = NostrService.shared
     @StateObject private var statsService = StatsService.shared
-    
+    @StateObject private var draftService = DraftService.shared
+
     var body: some Scene {
         #if os(macOS)
         MenuBarExtra("Nostr Vault", systemImage: "server.rack") {
@@ -84,7 +89,7 @@ struct MenuBarContent: View {
     @ObservedObject var configService: ConfigService
     @ObservedObject var relayManager: RelayProcessManager
     @Environment(\.openWindow) var openWindow
-    
+
     @State private var isVisible = false
     
     var body: some View {
@@ -94,7 +99,7 @@ struct MenuBarContent: View {
                 if !configService.config.hasCompletedSetup {
                     VStack(spacing: 24) {
                         Image(systemName: "server.rack")
-                            .font(.system(size: 56, weight: .light))
+                            .font(.appSystem(size: 56, weight: .light))
                             .foregroundColor(.havenPurple)
                             .offset(y: isVisible ? 0 : 20)
                             .opacity(isVisible ? 1 : 0)
@@ -108,7 +113,7 @@ struct MenuBarContent: View {
                                 .animation(.spring(response: 0.6, dampingFraction: 0.7).delay(0.2), value: isVisible)
                             
                             Text("Please complete the setup to start your relay.")
-                                .font(.subheadline)
+                                .font(.appSubheadline)
                                 .foregroundColor(.secondary)
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal)
@@ -138,7 +143,7 @@ struct MenuBarContent: View {
                         }
                         .buttonStyle(.plain)
                         .foregroundColor(.secondary)
-                        .font(.caption)
+                        .font(.appCaption)
                         .opacity(isVisible ? 1 : 0)
                         .animation(.easeIn(duration: 0.3).delay(0.6), value: isVisible)
                     }
@@ -173,12 +178,12 @@ struct MenuBarContent: View {
 
                 VStack(spacing: 20) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 48))
+                        .font(.appSystem(size: 48))
                         .foregroundColor(.orange)
 
                     VStack(spacing: 6) {
                         Text("Startup Error")
-                            .font(.title2.bold())
+                            .font(.appTitle2.bold())
                             .foregroundColor(.white)
 
                         Text("A previous Nostr Vault process is still running. Run the following command in Terminal to stop it, then relaunch the app.")
@@ -189,7 +194,7 @@ struct MenuBarContent: View {
 
                     HStack(spacing: 8) {
                         Text("pkill -9 haven")
-                            .font(.system(size: 14, weight: .medium, design: .monospaced))
+                            .font(.appSystem(size: 14, weight: .medium, design: .monospaced))
                             .foregroundColor(.white)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
@@ -206,7 +211,7 @@ struct MenuBarContent: View {
                             #endif
                         }) {
                             Image(systemName: "doc.on.doc")
-                                .font(.system(size: 14))
+                                .font(.appSystem(size: 14))
                                 .foregroundColor(.white)
                                 .frame(width: 36, height: 36)
                                 .background(Color.orange)

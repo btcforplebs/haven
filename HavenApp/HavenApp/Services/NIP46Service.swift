@@ -95,15 +95,19 @@ class NIP46Service: ObservableObject {
 
     // MARK: - Connection Management
 
-    func connect() async throws {
+    @discardableResult
+    func connect() async throws -> String {
         let config = ConfigService.shared.config
+        print("[NIP46] connect() called — activeSigningMode=\(config.activeSigningMode()) bunkerURI=\(!config.nip46BunkerURI.isEmpty) signerPK=\(!config.nip46SignerPubkey.isEmpty)")
         guard config.activeSigningMode() == "nip46",
               !config.nip46BunkerURI.isEmpty || (!config.nip46SignerPubkey.isEmpty && !config.nip46RelayURL.isEmpty) else {
+            print("[NIP46] connect() FAILED guard — activeSigningMode=\(config.activeSigningMode()) bunkerURI.isEmpty=\(config.nip46BunkerURI.isEmpty) signerPK.isEmpty=\(config.nip46SignerPubkey.isEmpty) relayURL.isEmpty=\(config.nip46RelayURL.isEmpty)")
             throw NIP46Error.invalidBunkerURI
         }
 
         // Generate client keypair if not yet created
         if config.nip46ClientSecretKey.isEmpty {
+            print("[NIP46] Generating client keypair...")
             guard let keyPairCStr = GenerateKeyPairC() else {
                 throw NIP46Error.signingFailed
             }
@@ -116,6 +120,9 @@ class NIP46Service: ObservableObject {
             ConfigService.shared.config.nip46ClientSecretKey = String(parts[0])
             ConfigService.shared.config.nip46ClientPubkey = String(parts[1])
             ConfigService.shared.save()
+            print("[NIP46] Client keypair generated: \(String(parts[1]).prefix(8))...")
+        } else {
+            print("[NIP46] Client keypair already exists: \(config.nip46ClientPubkey.prefix(8))...")
         }
 
         connectionState = .connecting
@@ -134,6 +141,7 @@ class NIP46Service: ObservableObject {
         }
 
         let clientSK = ConfigService.shared.config.nip46ClientSecretKey
+        print("[NIP46] Calling NIP46ConnectC with bunkerURL=\(bunkerURL.prefix(40))...")
 
         // Start auth URL polling during connect (ConnectBunker blocks)
         startAuthURLPoller()
@@ -144,22 +152,55 @@ class NIP46Service: ObservableObject {
             guard let result = NIP46ConnectC(
                 UnsafeMutablePointer(mutating: (clientSK as NSString).utf8String),
                 UnsafeMutablePointer(mutating: (bunkerURL as NSString).utf8String)
-            ) else { return nil as String? }
+            ) else {
+                print("[NIP46] NIP46ConnectC returned nil")
+                return nil as String?
+            }
             let str = String(cString: result)
             free(result)
+            print("[NIP46] NIP46ConnectC returned pubkey=\(str.prefix(8))...")
             return str
         }.value
 
         guard let pubkey = signerPubkey, !pubkey.isEmpty else {
             connectionState = .error
             checkPendingAuthURL()
+            print("[NIP46] connect() FAILED — NIP46ConnectC returned nil")
             throw NIP46Error.notConnected
         }
 
         connectionState = .connected
         startPingLoop()
 
+        // Clear the bunker secret after successful pairing — it's one-time-use
+        // and must not be re-sent on reconnection attempts. The signer already
+        // paired our client pubkey; future connects work without a secret.
+        if !ConfigService.shared.config.nip46Secret.isEmpty {
+            print("[NIP46] Clearing consumed bunker secret from config")
+            ConfigService.shared.config.nip46Secret = ""
+            // Strip secret from the stored bunker URI so reconnection doesn't re-send it
+            if var components = URLComponents(string: ConfigService.shared.config.nip46BunkerURI) {
+                components.queryItems = components.queryItems?.filter { $0.name != "secret" }
+                if components.queryItems?.isEmpty == true { components.queryItems = nil }
+                if let stripped = components.url?.absoluteString {
+                    ConfigService.shared.config.nip46BunkerURI = stripped
+                }
+            }
+            // Also clear secret in the per-account bunker config
+            let activeNpub = ConfigService.shared.config.activeAccountNpub.isEmpty
+                ? ConfigService.shared.config.ownerNpub
+                : ConfigService.shared.config.activeAccountNpub
+            if var bunkerCfg = ConfigService.shared.config.accountBunkerConfigs[activeNpub] {
+                bunkerCfg.secret = ""
+                bunkerCfg.bunkerURI = ConfigService.shared.config.nip46BunkerURI
+                ConfigService.shared.config.accountBunkerConfigs[activeNpub] = bunkerCfg
+            }
+            ConfigService.shared.save()
+        }
+
+        print("[NIP46] connect() SUCCESS — pubkey=\(pubkey.prefix(8))...")
         RelayProcessManager.shared.addLog("NIP-46: Connected to signer \(pubkey.prefix(8))...", level: "INFO")
+        return pubkey
     }
 
     private var connectTask: Task<Void, Never>?
@@ -174,6 +215,10 @@ class NIP46Service: ObservableObject {
             return
         }
 
+        // Set connecting state synchronously so ensureConnected() callers
+        // see it immediately, even before the Task starts executing.
+        connectionState = .connecting
+
         connectTask?.cancel()
         connectTask = Task {
             do {
@@ -186,6 +231,8 @@ class NIP46Service: ObservableObject {
     }
 
     func disconnect() {
+        connectTask?.cancel()
+        connectTask = nil
         reconnectTask?.cancel()
         reconnectTask = nil
         pingTask?.cancel()
@@ -257,6 +304,22 @@ class NIP46Service: ObservableObject {
     /// Ensures the NIP-46 connection is active, reconnecting if it dropped.
     private func ensureConnected() async throws {
         if connectionState == .connected { return }
+
+        // If a connection is already in progress, wait for it to complete
+        // rather than starting a redundant connect() that will tear down
+        // the in-progress Go session behind the NIP-46 mutex.
+        if connectionState == .connecting {
+            for _ in 0..<60 {  // up to 30 seconds
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                if connectionState == .connected { return }
+                if connectionState != .connecting { break }
+            }
+            guard connectionState == .connected else {
+                throw NIP46Error.notConnected
+            }
+            return
+        }
+
         print("NIP46Service: ensureConnected – state=\(connectionState.rawValue), attempting reconnect…")
         do {
             try await connect()

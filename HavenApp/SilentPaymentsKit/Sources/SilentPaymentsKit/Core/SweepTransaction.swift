@@ -414,7 +414,7 @@ public enum AddressDecoder {
         guard let sepIdx = address.lastIndex(of: "1") else {
             throw SweepError.invalidDestinationAddress(address)
         }
-        let hrp      = String(address[..<sepIdx])
+        _            = String(address[..<sepIdx])
         let dataPart = String(address[address.index(after: sepIdx)...])
 
         // Decode bech32/bech32m charset
@@ -498,7 +498,6 @@ public enum AddressDecoder {
 
     private static func base58Decode(_ s: String) -> Data? {
         let alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-        var result = [UInt8](repeating: 0, count: 32)  // max size
         var bytes  = [UInt8]()
         var leadingZeros = 0
 

@@ -124,7 +124,7 @@ public struct AppleCryptoBackend: Secp256k1Backend {
             d = (Self.n.value - d) % Self.n.value
         }
         // k = H_BIP340/nonce(bytes(d) || m)
-        var nonceInput = padTo32(d) + message
+        let nonceInput = padTo32(d) + message
         let kHash = Data(SHA256.hash(data: nonceInput))   // simplified; BIP-340 uses tagged hash
         var k = BigUInt(kHash.map { $0 }) % Self.n.value
         let R = try Self.G.multiply(k)

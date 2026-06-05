@@ -71,13 +71,13 @@ struct WalletLightningTab: View {
     private var nwcNotConfiguredCard: some View {
         VStack(spacing: 12) {
             Image(systemName: "bolt.slash.fill")
-                .font(.system(size: 32))
+                .font(.appSystem(size: 32))
                 .foregroundColor(.secondary)
             Text("No Wallet Connected")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.appSystem(size: 16, weight: .semibold))
                 .foregroundColor(.primary)
             Text("Add a Nostr Wallet Connect URI in Settings to enable Lightning payments.")
-                .font(.system(size: 13))
+                .font(.appSystem(size: 13))
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
         }
@@ -98,10 +98,10 @@ struct WalletLightningTab: View {
         VStack(spacing: 8) {
             HStack {
                 Image(systemName: "bolt.fill")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.appSystem(size: 14, weight: .semibold))
                     .foregroundColor(.orange)
                 Text("LIGHTNING BALANCE")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.appSystem(size: 12, weight: .bold))
                     .foregroundColor(.secondary)
                 Spacer()
                 if isLoadingBalance {
@@ -110,7 +110,7 @@ struct WalletLightningTab: View {
                 } else {
                     Button(action: { fetchBalance() }) {
                         Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.appSystem(size: 12, weight: .semibold))
                             .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
@@ -119,22 +119,22 @@ struct WalletLightningTab: View {
 
             if let error = balanceError {
                 Text(error)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.red)
             } else if let balance = balanceSats {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(formatSats(balance))
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .font(.appSystem(size: 28, weight: .bold, design: .rounded))
                         .foregroundColor(.primary)
                     Text("sats")
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.appSystem(size: 14, weight: .medium))
                         .foregroundColor(.secondary)
                     Spacer()
                 }
             } else if !isLoadingBalance {
                 HStack {
                     Text("--")
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .font(.appSystem(size: 28, weight: .bold, design: .rounded))
                         .foregroundColor(.secondary)
                     Spacer()
                 }
@@ -155,7 +155,7 @@ struct WalletLightningTab: View {
     private func lightningAddressCard(_ address: String) -> some View {
         HStack(spacing: 12) {
             Image(systemName: "bolt.fill")
-                .font(.system(size: 14, weight: .semibold))
+                .font(.appSystem(size: 14, weight: .semibold))
                 .foregroundColor(.orange)
             Text(address)
                 .font(.system(.caption, design: .monospaced))
@@ -168,7 +168,7 @@ struct WalletLightningTab: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { copiedLnAddress = false }
             }) {
                 Image(systemName: copiedLnAddress ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.appSystem(size: 12, weight: .semibold))
                     .foregroundColor(copiedLnAddress ? .green : .secondary)
             }
             .buttonStyle(.plain)
@@ -189,24 +189,24 @@ struct WalletLightningTab: View {
         VStack(spacing: 12) {
             HStack {
                 Image(systemName: "arrow.down.circle.fill")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.appSystem(size: 14, weight: .semibold))
                     .foregroundColor(.green)
                 Text("RECEIVE")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.appSystem(size: 12, weight: .bold))
                     .foregroundColor(.secondary)
                 Spacer()
             }
 
             HStack(spacing: 8) {
                 TextField("Amount (sats)", text: $receiveAmountSats)
-                    .font(.system(size: 14, design: .monospaced))
+                    .font(.appSystem(size: 14, design: .monospaced))
                     #if os(iOS)
                     .keyboardType(.numberPad)
                     #endif
                     .textFieldStyle(.roundedBorder)
 
                 TextField("Description (optional)", text: $receiveDescription)
-                    .font(.system(size: 14))
+                    .font(.appSystem(size: 14))
                     .textFieldStyle(.roundedBorder)
             }
 
@@ -217,7 +217,7 @@ struct WalletLightningTab: View {
                             .controlSize(.small)
                     }
                     Text("Create Invoice")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.appSystem(size: 14, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
@@ -228,7 +228,7 @@ struct WalletLightningTab: View {
 
             if let error = receiveError {
                 Text(error)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.red)
             }
 
@@ -264,7 +264,7 @@ struct WalletLightningTab: View {
             }
 
             Text(invoice)
-                .font(.system(size: 10, design: .monospaced))
+                .font(.appSystem(size: 10, design: .monospaced))
                 .foregroundColor(.secondary)
                 .lineLimit(4)
                 .textSelection(.enabled)
@@ -278,7 +278,7 @@ struct WalletLightningTab: View {
                     copiedInvoice ? "Copied!" : "Copy Invoice",
                     systemImage: copiedInvoice ? "checkmark" : "doc.on.doc"
                 )
-                .font(.system(size: 13, weight: .medium))
+                .font(.appSystem(size: 13, weight: .medium))
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
@@ -293,16 +293,16 @@ struct WalletLightningTab: View {
         VStack(spacing: 12) {
             HStack {
                 Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.appSystem(size: 14, weight: .semibold))
                     .foregroundColor(.orange)
                 Text("SEND")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.appSystem(size: 12, weight: .bold))
                     .foregroundColor(.secondary)
                 Spacer()
             }
 
             TextField("Paste bolt11 invoice...", text: $invoiceToPay)
-                .font(.system(size: 13, design: .monospaced))
+                .font(.appSystem(size: 13, design: .monospaced))
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(3)
 
@@ -313,7 +313,7 @@ struct WalletLightningTab: View {
                             .controlSize(.small)
                     }
                     Text("Pay Invoice")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.appSystem(size: 14, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
@@ -324,7 +324,7 @@ struct WalletLightningTab: View {
 
             if let error = sendError {
                 Text(error)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.red)
             }
 
@@ -333,7 +333,7 @@ struct WalletLightningTab: View {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(.green)
                     Text(result)
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.green)
                 }
             }

@@ -6,8 +6,7 @@ import UIKit
 
 /// Service that mirrors owner media from external Blossom servers to local storage.
 ///
-/// Follows the same singleton pattern as MacRelaySyncService. Provides published
-/// state for UI observation in RelayStatusSheet and SettingsView.
+/// Provides published state for UI observation in RelayStatusSheet and SettingsView.
 @MainActor
 class MirrorService: ObservableObject {
     static let shared = MirrorService()

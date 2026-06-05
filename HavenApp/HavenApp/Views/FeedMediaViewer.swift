@@ -149,9 +149,9 @@ struct FeedMediaViewer: View {
                                 HStack(spacing: 8) {
                                     HStack(spacing: 6) {
                                         Image(systemName: "checkmark.circle.fill")
-                                            .font(.system(size: 16, weight: .semibold))
+                                            .font(.appSystem(size: 16, weight: .semibold))
                                         Text("Mirrored to Blossom")
-                                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                                            .font(.appSystem(size: 12, weight: .bold, design: .rounded))
                                     }
                                     .foregroundColor(.white.opacity(0.95))
                                     .padding(.vertical, 8)
@@ -179,9 +179,9 @@ struct FeedMediaViewer: View {
                                     }) {
                                         HStack(spacing: 6) {
                                             Image(systemName: isCopied ? "checkmark.circle.fill" : "doc.on.doc.fill")
-                                                .font(.system(size: 14, weight: .semibold))
+                                                .font(.appSystem(size: 14, weight: .semibold))
                                             Text(isCopied ? "Copied!" : "Copy Link")
-                                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                                .font(.appSystem(size: 12, weight: .bold, design: .rounded))
                                         }
                                         .foregroundColor(.white.opacity(0.95))
                                         .padding(.vertical, 8)
@@ -205,9 +205,9 @@ struct FeedMediaViewer: View {
                                 } label: {
                                     HStack(spacing: 6) {
                                         Image(systemName: "arrow.down.circle.fill")
-                                            .font(.system(size: 16, weight: .semibold))
+                                            .font(.appSystem(size: 16, weight: .semibold))
                                         Text("Mirror to Blossom")
-                                            .font(.system(size: 12, weight: .bold, design: .rounded))
+                                            .font(.appSystem(size: 12, weight: .bold, design: .rounded))
                                     }
                                     .foregroundColor(.white.opacity(0.95))
                                     .padding(.vertical, 8)
@@ -232,7 +232,7 @@ struct FeedMediaViewer: View {
                         performDismiss()
                     } label: {
                         Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 32))
+                            .font(.appSystem(size: 32))
                             .foregroundColor(.white.opacity(0.8))
                             .padding(20)
                             .shadow(radius: 4)
@@ -308,13 +308,13 @@ struct FeedMediaViewer: View {
     
     private func detectType() {
         let ext = url.pathExtension.lowercased()
-        if ["mp4", "mov", "webm", "m4v", "hevc", "h265"].contains(ext) {
+        if SupportedMediaFormats.videoExtensions.contains(ext) {
             isVideo = true
             isLoadingType = false
         } else if ext == "gif" {
             isGIF = true
             isLoadingType = false
-        } else if ["jpg", "jpeg", "png", "webp", "avif", "heic"].contains(ext) {
+        } else if SupportedMediaFormats.imageExtensions.contains(ext) {
             isVideo = false
             isGIF = false
             isLoadingType = false
@@ -340,14 +340,14 @@ struct FeedMediaViewer: View {
     private var failureView: some View {
         VStack(spacing: 12) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 40))
+                .font(.appSystem(size: 40))
                 .foregroundColor(.orange)
             Text("Failed to load image")
                 .foregroundColor(.white)
-                .font(.headline)
+                .font(.appHeadline)
             Text(url.absoluteString)
                 .foregroundColor(.secondary)
-                .font(.caption)
+                .font(.appCaption)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
         }
@@ -567,29 +567,14 @@ struct FeedMediaViewer: View {
     }
 
     private func determineContentType() -> String {
-        if isVideo {
-            let ext = url.pathExtension.lowercased()
-            switch ext {
-            case "mp4": return "video/mp4"
-            case "mov": return "video/quicktime"
-            case "webm": return "video/webm"
-            case "m4v": return "video/mp4"
-            case "hevc", "h265": return "video/hevc"
-            default: return "video/mp4"
-            }
-        } else if isGIF {
-            return "image/gif"
-        } else {
-            let ext = url.pathExtension.lowercased()
-            switch ext {
-            case "jpg", "jpeg": return "image/jpeg"
-            case "png": return "image/png"
-            case "webp": return "image/webp"
-            case "avif": return "image/avif"
-            case "heic": return "image/heic"
-            default: return "image/jpeg"
-            }
+        let ext = url.pathExtension.lowercased()
+        if let mime = SupportedMediaFormats.mime(forExtension: ext) {
+            return mime
         }
+        // Fallback defaults
+        if isVideo { return "video/mp4" }
+        if isGIF   { return "image/gif" }
+        return "image/jpeg"
     }
 
     @ViewBuilder
@@ -601,7 +586,7 @@ struct FeedMediaViewer: View {
                     ProgressView()
                         .tint(.white)
                     Text("Mirroring to Blossom...")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.appSystem(size: 14, weight: .semibold))
                 }
                 .padding(.vertical, 12)
                 .padding(.horizontal, 16)
@@ -611,9 +596,9 @@ struct FeedMediaViewer: View {
             case .success:
                 HStack(spacing: 8) {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.appSystem(size: 14, weight: .semibold))
                     Text("Mirrored to Blossom")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.appSystem(size: 14, weight: .semibold))
                 }
                 .padding(.vertical, 12)
                 .padding(.horizontal, 16)
@@ -623,9 +608,9 @@ struct FeedMediaViewer: View {
             case .failed(let message):
                 HStack(spacing: 8) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.appSystem(size: 14, weight: .semibold))
                     Text(message)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.appSystem(size: 13, weight: .semibold))
                         .lineLimit(2)
                 }
                 .padding(.vertical, 12)
@@ -650,7 +635,7 @@ struct FeedMediaViewer: View {
                     ProgressView()
                         .tint(.white)
                     Text("Deleting...")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.appSystem(size: 14, weight: .semibold))
                 }
                 .padding(.vertical, 12)
                 .padding(.horizontal, 16)
@@ -660,9 +645,9 @@ struct FeedMediaViewer: View {
             case .success:
                 HStack(spacing: 8) {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.appSystem(size: 14, weight: .semibold))
                     Text("Deleted")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.appSystem(size: 14, weight: .semibold))
                 }
                 .padding(.vertical, 12)
                 .padding(.horizontal, 16)
@@ -672,9 +657,9 @@ struct FeedMediaViewer: View {
             case .failed(let message):
                 HStack(spacing: 8) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.appSystem(size: 14, weight: .semibold))
                     Text(message)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.appSystem(size: 13, weight: .semibold))
                         .lineLimit(2)
                 }
                 .padding(.vertical, 12)
@@ -709,14 +694,14 @@ struct MediaViewerPhoto: View {
             } else if loadFailed {
                 VStack(spacing: 12) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 40))
+                        .font(.appSystem(size: 40))
                         .foregroundColor(.orange)
                     Text("Failed to load image")
                         .foregroundColor(.white)
-                        .font(.headline)
+                        .font(.appHeadline)
                     Text(url.absoluteString)
                         .foregroundColor(.secondary)
-                        .font(.caption)
+                        .font(.appCaption)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
                 }

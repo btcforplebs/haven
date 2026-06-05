@@ -24,13 +24,13 @@ struct AudioPlayerView: View {
             // Audio info
             VStack(spacing: 4) {
                 Text(url.lastPathComponent)
-                    .font(.headline)
+                    .font(.appHeadline)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .padding(.horizontal)
                 
                 Text(url.pathExtension.isEmpty ? "Audio File" : url.pathExtension.uppercased())
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
             }
             
@@ -49,7 +49,7 @@ struct AudioPlayerView: View {
                     Spacer()
                     Text(formatTime(duration))
                 }
-                .font(.caption2.monospacedDigit())
+                .font(.appCaption2.monospacedDigit())
                 .foregroundColor(.secondary)
             }
             .padding(.horizontal, 40)
@@ -60,13 +60,13 @@ struct AudioPlayerView: View {
                     seek(seconds: -15)
                 }) {
                     Image(systemName: "gobackward.15")
-                        .font(.system(size: 24))
+                        .font(.appSystem(size: 24))
                 }
                 .buttonStyle(.plain)
                 
                 Button(action: togglePlayPause) {
                     Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.system(size: 60))
+                        .font(.appSystem(size: 60))
                         .foregroundColor(.havenPurple)
                 }
                 .buttonStyle(.plain)
@@ -75,7 +75,7 @@ struct AudioPlayerView: View {
                     seek(seconds: 15)
                 }) {
                     Image(systemName: "goforward.15")
-                        .font(.system(size: 24))
+                        .font(.appSystem(size: 24))
                 }
                 .buttonStyle(.plain)
             }

@@ -37,9 +37,9 @@ struct DMThreadView: View {
                 if hasNIP04Messages {
                     HStack(spacing: 8) {
                         Image(systemName: "exclamationmark.shield")
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.appSystem(size: 11, weight: .semibold))
                         Text("Some messages use NIP-04 (legacy encryption). New messages default to NIP-17.")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.appSystem(size: 11, weight: .medium))
                         Spacer()
                     }
                     .foregroundColor(.orange.opacity(0.9))
@@ -87,18 +87,18 @@ struct DMThreadView: View {
                     // Protocol selector (compact inline)
                     HStack(spacing: 6) {
                         Image(systemName: useNIP04 ? "lock.open" : "lock.fill")
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.appSystem(size: 10, weight: .medium))
                             .foregroundColor(useNIP04 ? .orange.opacity(0.8) : .havenPurple.opacity(0.7))
 
                         Text(useNIP04 ? "NIP-04 (legacy)" : "NIP-17 (encrypted)")
-                            .font(.system(size: 11, weight: .medium))
+                            .font(.appSystem(size: 11, weight: .medium))
                             .foregroundColor(.secondary.opacity(0.8))
 
                         Spacer()
 
                         Button(action: { withAnimation(.easeInOut(duration: 0.2)) { useNIP04.toggle() } }) {
                             Text("Switch")
-                                .font(.system(size: 11, weight: .medium))
+                                .font(.appSystem(size: 11, weight: .medium))
                                 .foregroundColor(.havenPurple)
                         }
                         .buttonStyle(.plain)
@@ -112,10 +112,10 @@ struct DMThreadView: View {
                         TextField("Message...", text: $messageInput, axis: .vertical)
                             .textFieldStyle(.plain)
                             .lineLimit(1...5)
-                            .font(.system(size: 15))
+                            .font(.appSystem(size: 15))
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
-                            .background(Color(red: 0.14, green: 0.14, blue: 0.18))
+                            .background(Color.platformSecondaryGroupedBackground)
                             .clipShape(RoundedRectangle(cornerRadius: 22))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 22)
@@ -128,7 +128,7 @@ struct DMThreadView: View {
                                     .frame(width: 34, height: 34)
                             } else {
                                 Image(systemName: "arrow.up")
-                                    .font(.system(size: 15, weight: .bold))
+                                    .font(.appSystem(size: 15, weight: .bold))
                                     .foregroundColor(.white)
                                     .frame(width: 34, height: 34)
                                     .background(
@@ -149,10 +149,10 @@ struct DMThreadView: View {
                 #if os(macOS)
                 .background(Color(nsColor: .controlBackgroundColor))
                 #else
-                .background(Color(red: 0.08, green: 0.08, blue: 0.1))
+                .background(Color.platformWindowBackground)
                 #endif
             }
-            .background(Color(red: 0.08, green: 0.08, blue: 0.1).ignoresSafeArea())
+            .background(Color.platformWindowBackground.ignoresSafeArea())
             .navigationTitle(counterpartyProfile?.bestName ?? "DM")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -247,7 +247,7 @@ struct MessageBubbleView: View {
             VStack(alignment: message.isFromMe ? .trailing : .leading, spacing: 3) {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(message.content)
-                        .font(.system(size: 15))
+                        .font(.appSystem(size: 15))
                         .foregroundColor(message.isFromMe ? .white : .primary)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 10)
@@ -256,9 +256,9 @@ struct MessageBubbleView: View {
                     if message.isNIP04 {
                         HStack(spacing: 3) {
                             Image(systemName: "lock.open")
-                                .font(.system(size: 8, weight: .medium))
+                                .font(.appSystem(size: 8, weight: .medium))
                             Text("NIP-04")
-                                .font(.system(size: 9, weight: .medium))
+                                .font(.appSystem(size: 9, weight: .medium))
                         }
                         .foregroundColor(message.isFromMe ? .white.opacity(0.6) : .orange.opacity(0.8))
                         .padding(.horizontal, 14)
@@ -274,14 +274,22 @@ struct MessageBubbleView: View {
                                 endPoint: .bottomTrailing
                             )
                         } else {
-                            Color(red: 0.16, green: 0.16, blue: 0.20)
+                            ConfigService.shared.config.useOLED ? Color(red: 0.08, green: 0.08, blue: 0.10) : Color(red: 0.16, green: 0.16, blue: 0.20)
                         }
                     }
                 )
                 .clipShape(message.isFromMe ? AnyShape(sentCorners) : AnyShape(receivedCorners))
+                .overlay(
+                    Group {
+                        if !message.isFromMe && ConfigService.shared.config.useOLED {
+                            receivedCorners
+                                .stroke(Color.platformSeparator, lineWidth: 0.8)
+                        }
+                    }
+                )
 
                 Text(message.timestamp.formatted(.relative(presentation: .numeric)))
-                    .font(.system(size: 11))
+                    .font(.appSystem(size: 11))
                     .foregroundColor(.secondary.opacity(0.7))
                     .padding(.horizontal, 6)
             }

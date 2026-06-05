@@ -52,7 +52,7 @@ struct MessageComposerView: View {
                 if recipientPubkey == nil {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("To:")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.appSystem(size: 12, weight: .semibold))
                             .foregroundColor(.secondary)
                             .padding(.horizontal, 16)
 
@@ -76,10 +76,10 @@ struct MessageComposerView: View {
 
                                                     VStack(alignment: .leading, spacing: 2) {
                                                         Text(nostrService.profiles[pubkey]?.bestName ?? String(Array(pubkey.prefix(8))))
-                                                            .font(.system(size: 13, weight: .semibold))
+                                                            .font(.appSystem(size: 13, weight: .semibold))
                                                             .foregroundColor(.primary)
                                                         Text(String(Array(pubkey.prefix(12))) + "…")
-                                                            .font(.system(size: 11, design: .monospaced))
+                                                            .font(.appSystem(size: 11, design: .monospaced))
                                                             .foregroundColor(.secondary)
                                                     }
 
@@ -113,7 +113,7 @@ struct MessageComposerView: View {
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(profile.bestName)
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(.appSystem(size: 13, weight: .semibold))
                                 .foregroundColor(.primary)
                         }
 
@@ -145,13 +145,13 @@ struct MessageComposerView: View {
                         ZStack(alignment: .topLeading) {
                             TextEditor(text: $messageText)
                                 .textEditorStyle(.plain)
-                                .font(.system(size: 15))
+                                .font(.appSystem(size: 15))
                                 .scrollContentBackground(.hidden)
                                 .frame(minHeight: 120)
 
                             if messageText.isEmpty {
                                 Text("Write a message...")
-                                    .font(.system(size: 15))
+                                    .font(.appSystem(size: 15))
                                     .foregroundColor(.secondary.opacity(0.5))
                                     .padding(.horizontal, 5)
                                     .padding(.vertical, 8)
@@ -174,7 +174,7 @@ struct MessageComposerView: View {
                                     selectedImageData = nil
                                 }) {
                                     Image(systemName: "xmark.circle.fill")
-                                        .font(.system(size: 22))
+                                        .font(.appSystem(size: 22))
                                         .foregroundColor(.white)
                                         .shadow(radius: 2)
                                 }
@@ -202,9 +202,9 @@ struct MessageComposerView: View {
                         Button(action: sendMessage) {
                             HStack(spacing: 6) {
                                 Text("Send")
-                                    .font(.system(size: 14, weight: .semibold))
+                                    .font(.appSystem(size: 14, weight: .semibold))
                                 Image(systemName: "paperplane.fill")
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(.appSystem(size: 12, weight: .semibold))
                             }
                             .foregroundColor(.white)
                             .padding(.horizontal, 18)
@@ -219,7 +219,7 @@ struct MessageComposerView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
             }
-            .background(Color(red: 0.08, green: 0.08, blue: 0.1).ignoresSafeArea())
+            .background(Color.platformWindowBackground.ignoresSafeArea())
             .navigationTitle("New Message")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

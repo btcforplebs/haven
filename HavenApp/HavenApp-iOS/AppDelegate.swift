@@ -146,8 +146,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             let countBefore = FeedService.shared.notes.count
             FeedService.shared.refresh()
 
-            // Also sync from Mac relay if configured
-            MacRelaySyncService.shared.syncIfConfigured()
+            // Sync DMs from external relays
+            DMService.shared.syncOnForeground()
 
             // Give it up to 25s to connect to relays and receive events
             try? await Task.sleep(nanoseconds: 25_000_000_000)

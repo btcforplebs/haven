@@ -19,6 +19,12 @@
     "·" : {
 
     },
+    "· %@" : {
+
+    },
+    "(%@)" : {
+
+    },
     "(Tap to copy)" : {
 
     },
@@ -48,6 +54,9 @@
         }
       }
     },
+    "%@ configured" : {
+
+    },
     "%@ following" : {
 
     },
@@ -63,6 +72,16 @@
     },
     "%@ New Posts" : {
 
+    },
+    "%@ of %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ of %2$@"
+          }
+        }
+      }
     },
     "%@ reposted" : {
 
@@ -103,7 +122,20 @@
         }
       }
     },
+    "%@/%@ mirrors" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@/%2$@ mirrors"
+          }
+        }
+      }
+    },
     "%@%%" : {
+
+    },
+    "%@ms" : {
 
     },
     "•" : {
@@ -142,13 +174,13 @@
     "14 days" : {
 
     },
-    "14d" : {
-
-    },
     "24 Hours" : {
 
     },
     "30 days" : {
+
+    },
+    "A" : {
 
     },
     "A previous Nostr Vault process is still running. Run the following command in Terminal to stop it, then relaunch the app." : {
@@ -202,6 +234,12 @@
     "Additional details (optional)" : {
 
     },
+    "Adjust the size of text across the app — feeds, note details, profiles, DM inbox, message threads, and compose editors." : {
+
+    },
+    "All media is already backed up!" : {
+
+    },
     "Amount: %@ sats" : {
 
     },
@@ -220,7 +258,13 @@
     "Automatically download your media from mirrors when the relay starts" : {
 
     },
+    "Available" : {
+
+    },
     "Available balance" : {
+
+    },
+    "Backup All (%@)" : {
 
     },
     "Balance" : {
@@ -244,6 +288,9 @@
     "Blastr Configuration" : {
 
     },
+    "Blastr Relays" : {
+
+    },
     "Block Profile" : {
 
     },
@@ -253,7 +300,13 @@
     "Blocked users' content is hidden from your feed. Spam and noise are filtered automatically." : {
 
     },
+    "Blossom" : {
+
+    },
     "Blossom Import" : {
+
+    },
+    "Blossom Mirror" : {
 
     },
     "Blossom Path" : {
@@ -269,6 +322,9 @@
 
     },
     "Bunker URI" : {
+
+    },
+    "Cache" : {
 
     },
     "Cached Files" : {
@@ -295,6 +351,9 @@
     "Choose an accent color for the Nostr Vault interface. This will change the primary color and gradients across the application." : {
 
     },
+    "Choose your default reaction emoji. This emoji will be used when you tap the heart button on a note." : {
+
+    },
     "Clear Cache" : {
 
     },
@@ -310,6 +369,9 @@
     "Cloudflare Tunnel Setup" : {
 
     },
+    "Configure Blossom mirrors in Settings to enable external backup" : {
+
+    },
     "Configure your Mac relay in the 'Mac Relay' tab to automatically apply it here." : {
 
     },
@@ -320,6 +382,9 @@
 
     },
     "Connecting..." : {
+
+    },
+    "CONSOLE" : {
 
     },
     "CONTENT FILTERS" : {
@@ -341,6 +406,9 @@
 
     },
     "Danger Zone" : {
+
+    },
+    "Dark Mode Options" : {
 
     },
     "Database" : {
@@ -583,6 +651,9 @@
 
     },
     "EVENT ID" : {
+
+    },
+    "Events" : {
 
     },
     "Events will be signed by the remote signer (NIP-46)." : {
@@ -1113,10 +1184,16 @@
     "Go Back" : {
 
     },
+    "Hash" : {
+
+    },
     "Hashtags" : {
 
     },
     "Haven manages your Nostr identity, relay, and payments in one place. Ecash completes a three-layer payment stack — each layer suited for different use cases:" : {
+
+    },
+    "How It Works" : {
 
     },
     "https://%@" : {
@@ -1149,19 +1226,13 @@
     "Import Progress" : {
 
     },
+    "Import Relays" : {
+
+    },
     "Important Security Warning" : {
 
     },
     "Importing Notes" : {
-
-    },
-    "Include as Blossom Mirror" : {
-
-    },
-    "Include in Blastr" : {
-
-    },
-    "Include in Import" : {
 
     },
     "Info" : {
@@ -1176,9 +1247,6 @@
     "Key imported successfully!" : {
 
     },
-    "Last sync %@ ago" : {
-
-    },
     "LIGHTNING BALANCE" : {
 
     },
@@ -1189,6 +1257,9 @@
 
     },
     "Links" : {
+
+    },
+    "Loading drafts..." : {
 
     },
     "Loading likes..." : {
@@ -1206,10 +1277,13 @@
     "Loading video..." : {
 
     },
+    "Loading your media..." : {
+
+    },
     "Loading zaps..." : {
 
     },
-    "LOCAL GATEWAY RELAYS" : {
+    "Local" : {
 
     },
     "Local Key" : {
@@ -1224,9 +1298,6 @@
     "Looking up note..." : {
 
     },
-    "MAC RELAY SYNC" : {
-
-    },
     "Mac Relay Sync Server" : {
 
     },
@@ -1235,6 +1306,16 @@
     },
     "Magic Paste" : {
 
+    },
+    "Max %@ post%@ visible" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Max %1$@ post%2$@ visible"
+          }
+        }
+      }
     },
     "Media" : {
 
@@ -1296,6 +1377,9 @@
     "No blocked accounts." : {
 
     },
+    "No drafts" : {
+
+    },
     "No ecash tokens stored on relay." : {
 
     },
@@ -1326,6 +1410,9 @@
     "No profiles found" : {
 
     },
+    "No recent activity" : {
+
+    },
     "No replies yet" : {
 
     },
@@ -1333,6 +1420,9 @@
 
     },
     "No signing key" : {
+
+    },
+    "No slowed-down accounts." : {
 
     },
     "No Wallet Connected" : {
@@ -1359,7 +1449,13 @@
     "NOT an exchange." : {
 
     },
+    "Not Found" : {
+
+    },
     "Notes" : {
+
+    },
+    "NOTES" : {
 
     },
     "Notes (JSONL)" : {
@@ -1419,6 +1515,9 @@
     "pkill -9 haven" : {
 
     },
+    "Please complete the setup to start your relay." : {
+
+    },
     "Please keep the app open." : {
 
     },
@@ -1443,6 +1542,12 @@
     "Profile" : {
 
     },
+    "Publishes this relay as the account's inbox so other clients know where to send events." : {
+
+    },
+    "Pull from Notes" : {
+
+    },
     "Push Server" : {
 
     },
@@ -1462,6 +1567,9 @@
 
     },
     "React with Emoji" : {
+
+    },
+    "Reactions" : {
 
     },
     "RECEIVE" : {
@@ -1491,10 +1599,13 @@
     "Relay Domain" : {
 
     },
+    "Relay List (NIP-65)" : {
+
+    },
     "RELAY STATUS" : {
 
     },
-    "Relays" : {
+    "Remote" : {
 
     },
     "Remote Signer" : {
@@ -1531,9 +1642,6 @@
 
     },
     "Request deletion of this post? Not all relays honor NIP-09 deletion requests." : {
-
-    },
-    "Reset" : {
 
     },
     "Restart Required" : {
@@ -1810,6 +1918,7 @@
       }
     },
     "setup.identity.bunkerConnected" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2220,6 +2329,7 @@
       }
     },
     "setup.media.label.blossomURL" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -2792,6 +2902,12 @@
     "Show more" : {
 
     },
+    "Slowed Down" : {
+
+    },
+    "Slowed-down accounts have a limit on how many of their posts appear in your feed at once. Tap a username in the feed to slow someone down." : {
+
+    },
     "Snapshots are saved automatically when your following list changes. Up to 50 are kept." : {
 
     },
@@ -2808,6 +2924,9 @@
 
     },
     "Statistics" : {
+
+    },
+    "Storage" : {
 
     },
     "Summary" : {
@@ -2831,15 +2950,6 @@
     "Switch" : {
 
     },
-    "Sync" : {
-
-    },
-    "Sync Now" : {
-
-    },
-    "Sync Now fetches notes missed since the last sync. Full Resync resets the timestamp and re-fetches everything from the beginning." : {
-
-    },
     "System Logs" : {
 
     },
@@ -2850,6 +2960,12 @@
 
     },
     "Tap to complete setup and start your relay." : {
+
+    },
+    "Text Accessibility" : {
+
+    },
+    "Text Size" : {
 
     },
     "The Cashu protocol uses Blind Diffie-Hellman key exchange (BDHKE) so the mint signs your tokens without seeing them:" : {
@@ -2962,7 +3078,13 @@
     "Upload" : {
 
     },
+    "Upload media to your Blossom server or pull from notes to get started" : {
+
+    },
     "URL of the push notification server. Only change this if you self-host your own push server." : {
+
+    },
+    "Use pure black backgrounds to save power on OLED screens." : {
 
     },
     "Users" : {
@@ -2974,6 +3096,9 @@
     "Video" : {
 
     },
+    "View All" : {
+
+    },
     "View on mempool" : {
 
     },
@@ -2983,19 +3108,13 @@
     "Warning" : {
 
     },
-    "WebSocket Sync" : {
-
-    },
-    "WebSocket sync runs automatically whenever the app is foregrounded. Enabling Import, Blastr, or Blossom Mirror adds your Mac relay to those lists so outbound traffic also reaches your personal relay." : {
-
-    },
     "Welcome to Nostr Vault" : {
 
     },
     "What's happening?" : {
 
     },
-    "When autoplay is off, videos show a thumbnail until tapped. Cache TTL controls how long downloaded media is kept before automatic cleanup. Clearing the cache will remove downloaded remote images but won't touch your local Blossom data." : {
+    "When autoplay is off, videos show a thumbnail until tapped. Cache TTL controls how long downloaded media is kept before automatic cleanup. Clearing the cache will remove downloaded remote images but won't touch your local Blossom data. Profile picture prefetching downloads avatars for all followed accounts once per day over Wi-Fi only." : {
 
     },
     "Why are you reporting this?" : {
@@ -3014,6 +3133,9 @@
 
     },
     "Your ecash tokens are stored encrypted on your Haven private relay using NIP-60. Unlike other wallets that depend on third-party relays, your tokens live on infrastructure you control:" : {
+
+    },
+    "Your Mac relay is automatically included in all relay lists. Events sync continuously via standard Nostr subscriptions." : {
 
     },
     "Your Nostr key is a valid Bitcoin Taproot key. This address is derived deterministically from your npub via BIP-341 — no separate seed phrase needed." : {

@@ -141,13 +141,13 @@ struct UnlikePill: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "heart.slash.fill")
-                .font(.system(size: 12, weight: .bold))
+                .font(.appSystem(size: 12, weight: .bold))
 
             Text("Unliking in \(max(1, Int(ceil(timeRemaining))))s")
-                .font(.system(size: 13, weight: .bold))
+                .font(.appSystem(size: 13, weight: .bold))
 
             Button("Undo") { onUndo() }
-                .font(.system(size: 12, weight: .bold))
+                .font(.appSystem(size: 12, weight: .bold))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
                 .background(Color.white.opacity(0.25))
@@ -179,11 +179,11 @@ struct ZapPill: View {
 
             // Label
             Text(pillLabel)
-                .font(.system(size: 13, weight: .bold))
+                .font(.appSystem(size: 13, weight: .bold))
 
             // Sats amount
             Text("\(notification.amountSats) sats")
-                .font(.system(size: 13, weight: .bold, design: .monospaced))
+                .font(.appSystem(size: 13, weight: .bold, design: .monospaced))
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 20)
@@ -202,7 +202,7 @@ struct ZapPill: View {
         switch notification.status {
         case .sending:
             Image(systemName: "bolt.fill")
-                .font(.system(size: 12, weight: .bold))
+                .font(.appSystem(size: 12, weight: .bold))
                 .opacity(pulseOpacity)
                 .onAppear {
                     withAnimation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true)) {
@@ -211,10 +211,10 @@ struct ZapPill: View {
                 }
         case .success:
             Image(systemName: "bolt.fill")
-                .font(.system(size: 12, weight: .bold))
+                .font(.appSystem(size: 12, weight: .bold))
         case .failed:
             Image(systemName: "xmark")
-                .font(.system(size: 12, weight: .bold))
+                .font(.appSystem(size: 12, weight: .bold))
         }
     }
 
@@ -303,10 +303,10 @@ struct FollowPill: View {
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: iconName)
-                .font(.system(size: 12, weight: .bold))
+                .font(.appSystem(size: 12, weight: .bold))
 
             Text(label)
-                .font(.system(size: 13, weight: .bold))
+                .font(.appSystem(size: 13, weight: .bold))
                 .lineLimit(1)
         }
         .padding(.vertical, 10)
@@ -473,10 +473,10 @@ struct PostActionPill: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: actionType.icon)
-                .font(.system(size: 14, weight: .bold))
+                .font(.appSystem(size: 14, weight: .bold))
 
             Text("\(actionType.label) in \(max(1, Int(ceil(timeRemaining))))s")
-                .font(.system(size: 14, weight: .bold))
+                .font(.appSystem(size: 14, weight: .bold))
 
             // Progress bar
             GeometryReader { geo in
@@ -492,7 +492,7 @@ struct PostActionPill: View {
 
             if let onEdit {
                 Button("Edit") { onEdit() }
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.appSystem(size: 13, weight: .bold))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
                     .background(Color.white.opacity(0.25))
@@ -500,7 +500,7 @@ struct PostActionPill: View {
             }
 
             Button("Undo") { onUndo() }
-                .font(.system(size: 13, weight: .bold))
+                .font(.appSystem(size: 13, weight: .bold))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 5)
                 .background(Color.white.opacity(0.25))
@@ -532,12 +532,12 @@ struct UploadPill: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(label)
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.appSystem(size: 13, weight: .bold))
                     .lineLimit(1)
                 
                 if notification.status == .uploading {
                     Text("\(Int(notification.progress * 100))%")
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .font(.appSystem(size: 10, weight: .bold, design: .monospaced))
                         .foregroundColor(.white.opacity(0.8))
                 }
             }
@@ -567,10 +567,10 @@ struct UploadPill: View {
                 .tint(.white)
         case .success:
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 14, weight: .bold))
+                .font(.appSystem(size: 14, weight: .bold))
         case .failed:
             Image(systemName: "exclamationmark.circle.fill")
-                .font(.system(size: 14, weight: .bold))
+                .font(.appSystem(size: 14, weight: .bold))
         }
     }
 
@@ -594,6 +594,68 @@ struct UploadPill: View {
         case .failed:
             return [Color.red.opacity(0.85), Color.red.opacity(0.6)]
         }
+    }
+}
+
+// MARK: - Action Toast Manager
+
+@MainActor
+class ActionToastManager: ObservableObject {
+    static let shared = ActionToastManager()
+
+    struct Toast: Identifiable {
+        let id = UUID()
+        let icon: String
+        let message: String
+        let color: Color
+    }
+
+    @Published var notifications: [Toast] = []
+
+    func show(icon: String, message: String, color: Color? = nil) {
+        let toast = Toast(icon: icon, message: message, color: color ?? Color.havenPurple)
+        notifications.append(toast)
+
+        Task {
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            withAnimation(.easeOut(duration: 0.3)) {
+                notifications.removeAll { $0.id == toast.id }
+            }
+        }
+    }
+}
+
+// MARK: - Action Toast Banner
+
+struct ActionToastBanner: View {
+    @ObservedObject private var manager = ActionToastManager.shared
+
+    var body: some View {
+        VStack(spacing: 6) {
+            ForEach(manager.notifications) { toast in
+                HStack(spacing: 6) {
+                    Image(systemName: toast.icon)
+                        .font(.appSystem(size: 12, weight: .bold))
+                    Text(toast.message)
+                        .font(.appSystem(size: 13, weight: .bold))
+                        .lineLimit(1)
+                }
+                .padding(.vertical, 10)
+                .padding(.horizontal, 20)
+                .background(
+                    Capsule()
+                        .fill(toast.color)
+                        .shadow(color: Color.black.opacity(0.4), radius: 8, x: 0, y: 4)
+                )
+                .foregroundColor(.white)
+                .transition(.asymmetric(
+                    insertion: .move(edge: .top).combined(with: .opacity),
+                    removal: .opacity.combined(with: .scale(scale: 0.8))
+                ))
+            }
+        }
+        .padding(.top, 12)
+        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: manager.notifications.map(\.id))
     }
 }
 

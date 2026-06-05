@@ -45,6 +45,20 @@ fi
 
 cd "$GO_SRC_ROOT"
 
+# ── Source-change detection ──────────────────────────────────────────
+# Hash all Go source files + go.mod/go.sum to detect changes.
+# If nothing changed since the last successful build, skip recompilation.
+CHECKSUM_FILE="${PROJECT_DIR}/build/.libhaven_checksum"
+CURRENT_CHECKSUM=$(find . -name '*.go' -o -name 'go.mod' -o -name 'go.sum' | sort | xargs cat | shasum -a 256 | awk '{print $1}')
+
+if [ -f "$HAVEN_LIB_PATH" ] && [ -f "$CHECKSUM_FILE" ]; then
+    PREVIOUS_CHECKSUM=$(cat "$CHECKSUM_FILE")
+    if [ "$CURRENT_CHECKSUM" = "$PREVIOUS_CHECKSUM" ]; then
+        echo "✅ Go source unchanged — skipping rebuild."
+        exit 0
+    fi
+fi
+
 # Determine which architectures to build
 # ARCHS may contain "arm64", "x86_64", or "arm64 x86_64"
 NEED_ARM64=false
@@ -96,3 +110,6 @@ else
     build_for_arch amd64 x86_64 "$HAVEN_LIB_PATH"
     echo "✅ Successfully built libhaven.a for x86_64."
 fi
+
+# Persist checksum so the next build can skip if unchanged
+echo "$CURRENT_CHECKSUM" > "$CHECKSUM_FILE"

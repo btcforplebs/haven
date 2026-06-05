@@ -83,7 +83,7 @@ struct EmojiPickerView: View {
             // Header
             HStack {
                 Text("React with Emoji")
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .font(.appSystem(size: 16, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
                 
                 Spacer()
@@ -92,7 +92,7 @@ struct EmojiPickerView: View {
                     presentationMode.wrappedValue.dismiss()
                 }) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 20))
+                        .font(.appSystem(size: 20))
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -110,7 +110,7 @@ struct EmojiPickerView: View {
                     // Quick Reactions Section
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Quick Reactions")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .font(.appSystem(size: 11, weight: .semibold, design: .monospaced))
                             .foregroundColor(.secondary)
                             .tracking(0.5)
                         
@@ -120,7 +120,7 @@ struct EmojiPickerView: View {
                                     selectEmoji(emoji)
                                 }) {
                                     Text(emoji)
-                                        .font(.system(size: 26))
+                                        .font(.appSystem(size: 26))
                                         .frame(width: 38, height: 38)
                                         .background(Color.platformTertiaryGroupedBackground)
                                         .cornerRadius(10)
@@ -142,7 +142,7 @@ struct EmojiPickerView: View {
                     // Custom Input Section
                     VStack(alignment: .leading, spacing: 8) {
                         Text("React with Custom Emoji")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .font(.appSystem(size: 11, weight: .semibold, design: .monospaced))
                             .foregroundColor(.secondary)
                             .tracking(0.5)
                         
@@ -165,7 +165,7 @@ struct EmojiPickerView: View {
                                 }
                             }) {
                                 Text("React")
-                                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                                    .font(.appSystem(size: 13, weight: .bold, design: .rounded))
                                     .foregroundColor(.white)
                                     .padding(.horizontal, 16)
                                     .padding(.vertical, 10)
@@ -189,7 +189,7 @@ struct EmojiPickerView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 8) {
                             Image(systemName: "magnifyingglass")
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(.appSystem(size: 13, weight: .semibold))
                                 .foregroundColor(.secondary)
                             
                             TextField("Search emojis...", text: $searchText)
@@ -228,9 +228,9 @@ struct EmojiPickerView: View {
                                     }) {
                                         HStack(spacing: 6) {
                                             Image(systemName: category.icon)
-                                                .font(.system(size: 11))
+                                                .font(.appSystem(size: 11))
                                             Text(category.name)
-                                                .font(.system(size: 12, weight: .semibold))
+                                                .font(.appSystem(size: 12, weight: .semibold))
                                         }
                                         .padding(.horizontal, 12)
                                         .padding(.vertical, 8)
@@ -252,7 +252,7 @@ struct EmojiPickerView: View {
                     // Emojis Grid
                     VStack(alignment: .leading, spacing: 8) {
                         Text(searchText.isEmpty ? selectedCategory : "Search Results (\(filteredEmojis.count))")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .font(.appSystem(size: 11, weight: .semibold, design: .monospaced))
                             .foregroundColor(.secondary)
                             .tracking(0.5)
                             .padding(.horizontal, 16)
@@ -260,9 +260,9 @@ struct EmojiPickerView: View {
                         if filteredEmojis.isEmpty {
                             VStack(spacing: 8) {
                                 Text("😕")
-                                    .font(.system(size: 32))
+                                    .font(.appSystem(size: 32))
                                 Text("No matching emojis found")
-                                    .font(.system(size: 13, weight: .medium))
+                                    .font(.appSystem(size: 13, weight: .medium))
                                     .foregroundColor(.secondary)
                             }
                             .frame(maxWidth: .infinity, minHeight: 120)
@@ -274,7 +274,7 @@ struct EmojiPickerView: View {
                                         selectEmoji(emoji)
                                     }) {
                                         Text(emoji)
-                                            .font(.system(size: 24))
+                                            .font(.appSystem(size: 24))
                                             .frame(width: 40, height: 40)
                                             .background(Color.clear)
                                             .cornerRadius(8)

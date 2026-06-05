@@ -5,6 +5,84 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] - 2026-06-05
+
+### Removed
+- **Apple Sign In Identity Backup (Experimental)**: Removed incomplete Apple Sign In integration that was developed as a proof-of-concept for NIP-OAUTH-IDENTITY-BACKUP. Deleted `AppleSignInManager.swift`, `BackupCryptoService.swift`, and `iCloudKeychainService.swift` from codebase. NIP specification and reference implementation preserved in `/nips/` directory for future consideration pending community adoption. Feature was never released to users.
+
+## [2.5.1 (6) macOS / 1.1.1 (6) iOS] - 2026-06-04
+
+> **iOS Polish, Account Switching & Reliability Release**: Collapsible iOS tab bar with dynamic FAB, multi-account switcher, push notification settings UI, pure-Swift NIP-46 fallback, DM relay routing, macOS graceful shutdown, and font system standardization.
+
+### Added
+- **Collapsible iOS Tab Bar**: Bottom tab bar dynamically collapses when scrolling down the feed and expands when idle. A contextual floating action button appears in the collapsed state — compose button on the feed tab, relay dashboard on the relay tab. Tap the profile avatar to expand or access the account switcher. Smooth spring animations throughout.
+- **iOS Account Switcher**: Multi-account management sheet accessible from the collapsed tab bar or iPad sidebar. Shows avatar, display name, and account type (Owner/Whitelisted) with colored rings. Tap to switch between accounts.
+- **Push Notification Settings View**: New per-account notification preferences screen with toggles for global push notifications and granular per-account controls for mentions, replies, DMs, zaps, reactions, and reposts. Accessible from Settings.
+- **Swift NIP-46 Handshake Fallback**: Pure-Swift NIP-46 connection path (`SwiftNIP46Handshake`) for iOS setup wizard when the Go-based relay pool subscription fails. Performs direct WebSocket handshake with `connect` + `get_public_key` RPC exchange, NIP-44 encryption, and 45-second timeout.
+- **DM Relay Configuration**: Go backend now accepts a `DmRelays` field for DM-specific relay routing separate from note import relays. Subscriptions deduplicate across import and DM relay sets.
+- **iOS Background Processing**: Added `processing` background mode so the relay stays alive when the app is backgrounded. `iOSAppDelegate` registers background tasks and restarts the relay on foreground if it crashed.
+- **Settings Tab in iOS Sidebar**: New dedicated Settings tab (index 5) in the iPad sidebar navigation with embedded `SettingsView` in a navigation stack.
+
+### Changed
+- **Mac Relay Auto-Inclusion**: When a Mac relay is configured, it is now automatically included in feed relays, blastr relays, import relays, and Blossom mirrors. Previously, Import, Blastr, and Blossom Mirror required manual opt-in toggles; feed relays had no Mac relay integration at all. The Settings UI now shows all derived addresses as always-on indicators instead of toggles.
+- **macOS Graceful Shutdown**: `AppDelegate.applicationWillTerminate()` now stops `NetworkSyncService` and `NIP46Service` before relay shutdown, and uses a semaphore to block app termination until the Go relay flushes databases (3-second timeout). Prevents data corruption from premature process exit.
+- **NIP-46 Timeout Extensions**: Connect RPC timeout increased from 30s to 60s for slow networks. Added 30-second `GetPublicKey` timeout to prevent indefinite hangs. Enhanced logging with signer pubkey prefixes, request details, and success confirmation.
+- **Font System Standardization**: New `.appSystem(size:weight:design:)` factory and convenience properties (`.appHeadline`, `.appSubheadline`, `.appCaption`, `.appCaption2`, `.appTitle2`) in `Theming.swift`. Replaces hardcoded `.system()` calls across MenuBarView, iOS tab bar, DraftPickerView, and other views, enabling text scale support via `config.textSizeScale`.
+- **iOS Navigation Bar Cleanup**: Added `.toolbarBackground(.hidden, for: .navigationBar)` to SearchView, ProfileView, MediaTabView, and ViewerView in iPad sidebar for a seamless navigation experience.
+- **DM Foreground Sync**: Replaced `MacRelaySyncService.syncIfConfigured()` with `DMService.syncOnForeground()` for targeted DM-only sync on iOS foreground transitions.
+- **64-bit Only iOS**: Changed `UIRequiredDeviceCapabilities` from `armv7` to `arm64`, dropping 32-bit device support.
+- **Legacy NIP-49 Logging**: Downgraded NIP-49 decryption errors from `.error` to `.debug` level, preventing spurious log noise during account import when testing legacy credentials.
+- **NIP-46 Config Fallback**: When no `activeAccountNpub` exists (initial setup), NIP-46 detection now falls back to flat `signingMode`, `nip46SignerPubkey`, and `nip46BunkerURI` config fields.
+
+### Fixed
+- **NIP-46 Initial Account Setup**: Config fallback for NIP-46 detection when no active account exists prevents setup wizard failures during first account creation via bunker URI.
+
+### Removed
+- **MacRelaySyncService**: Dedicated Mac relay sync service deleted; functionality consolidated into `DMService.syncOnForeground()`.
+
+## [2.5.1 (4) macOS / 1.1.1 (4) iOS] - 2026-06-02
+
+> **Theme, Accessibility & Drafts Release**: Adds OLED dark theme with semantic color system overhaul, scalable text sizing, auto-saving compose drafts to the local relay, NIP-65 relay list publishing, profile picture prefetching, and multiple crash/race condition fixes.
+
+### Added
+- **Draft Auto-Save**: Compose content is automatically saved to the local relay as kind 31234 (NIP-37) parameterized replaceable events with a 1.5-second debounce. Drafts survive app crashes, accidental dismissals, and app restarts. A draft picker badge appears next to the Cancel button in the compose toolbar (iOS and macOS) when drafts exist, showing draft count and allowing tap-to-restore. Drafts preserve full reply/quote context (NIP-10 e-tags, q-tags, p-tags) and are deleted automatically when the post is published. New `DraftService` singleton handles save/fetch/delete operations on the `/private` relay endpoint.
+- **NIP-65 Relay List Publishing**: New `publishRelayList(forNpub:)` method signs and posts kind 10002 events advertising the local relay as the account's inbox. On iOS, the Mac relay URL is also included. Per-account "Publish Inbox Relay" toggle in Settings under a new "Relay List (NIP-65)" section. Relay lists are automatically published for all enabled accounts on app launch.
+- **OLED Dark Theme**: New `useOLED` config option with "OLED Dark Theme" toggle in Settings > Appearance. When enabled, all semantic platform colors (`platformWindowBackground`, `platformControlBackground`, `platformSecondaryGroupedBackground`, `platformTertiaryGroupedBackground`, `platformSeparator`) return pure black or near-black variants. Three new semantic colors added: `platformCardBackground`, `platformCardBorder`, `platformConsoleHeaderBackground`. DM bubbles adapt with darker fills and subtle border strokes.
+- **Text Size Accessibility**: New `textSizeScale` config option (0.8x–1.6x) with a slider in Settings. `Font.appSystem(size:weight:design:)` factory in `Theming.swift` scales all text sizes by the configured factor. Applied across ComposeView, DMInboxView, DMThreadView, FeedView, MessageComposerView, NoteDetailView, and ProfileView.
+- **Profile Picture Prefetch Service**: Background service that downloads profile pictures for all followed accounts once per day over Wi-Fi. Configurable via "Prefetch Profile Pictures" toggle in Settings > Advanced > Media.
+- **Centralized Media Format Definitions**: New `SupportedMediaFormats.swift` provides a single source of truth for all supported media extensions, MIME-to-extension and extension-to-MIME lookup, and precompiled regex patterns. Replaces scattered inline definitions across AnimatedImage, FeedMediaView, FeedMediaViewer, MediaItem, NostrEvent, NostrService, and ComposeView.
+- **iOS App Delegate**: New `iOSAppDelegate.swift` for push notification registration and lifecycle events. `HavenApp.swift` now conditionally uses `@UIApplicationDelegateAdaptor` on iOS.
+- **Blossom Directory Watcher**: `BlossomDirectoryWatcher` uses `DispatchSource` to monitor the Blossom directory for filesystem changes (e.g., iPhone uploads to Mac relay), posting debounced `blossomDirectoryChanged` notifications for UI refresh.
+- **MacOS "Notes" Sidebar Tab**: New sidebar tab showing `ViewerView` for browsing notes and media, separating it from the "Relay" tab which now shows `DashboardView`.
+
+### Changed
+- **Semantic Color System Overhaul**: Replaced 20+ hardcoded color values (`Color(red: 0.08, green: 0.08, blue: 0.1)`, `Color(red: 0.12, ...)`, `Color.white.opacity(0.04)`, etc.) with semantic platform color constants from `PlatformCompat.swift` across DashboardView, FeedView, FeedDashboardSheet, DMInboxView, DMThreadView, ProfileView, MessageComposerView, MenuBarView, CustomZapSheet, NoteDetailView, and SettingsView. All colors now support OLED mode.
+- **WoT Cache-Aware Startup**: `LoadFromCache()` now returns a boolean indicating success. When the WoT cache is valid, `MarkReady()` is called immediately and the full network rebuild is skipped, making relay startup near-instant with a warm cache.
+- **Blastr Broadcasting Moved Server-Side**: `postEvent()` no longer manually connects to each Blastr relay from Swift. The Go relay's `StoreEvent` handler triggers its own blast distribution, eliminating duplicate connections.
+- **Event Broadcast Sheet Per-Relay Status**: Each relay in the broadcast sheet now shows a live status indicator — spinner while pending, green checkmark on success, red X on failure — with a summary showing "Broadcast to X/Y relays".
+- **Build Script Source Change Detection**: Both `build_haven.sh` and `build_haven_ios.sh` now compute a SHA-256 checksum of Go source files; if unchanged, compilation is skipped entirely. The iOS script also factors in `PLATFORM_NAME` to rebuild when switching between simulator and device.
+- **Video Attachment Loading**: `loadVideoItem()` rewritten from callback-based to `async/await`. Added a fallback path: if `ImportedVideoFile` transfer fails (HEVC transcoding, iCloud items), falls back to raw `Data` transfer written to a temp file. Video detection now scans all `supportedContentTypes` instead of just `.first`.
+- **Blossom Upload Reliability**: Added `saveToLocalRelay(fileURL:...)` file-based variant for streaming large video uploads. Both upload paths now call `ensureRelayReady()` before uploading and include explicit `Content-Length` headers for BUD-02 compliance.
+- **NoteDetailView Thread Navigation**: `focusedNote` falls back to `parentNotesCache` when the feed service doesn't have the note. Parent notes are cached so navigation within deeply nested threads works correctly.
+- **MacOS Sidebar Reorganization**: Settings promoted to a proper sidebar tab (replacing gear icon button). Relay status indicator shows "Syncing" state during WoT sync.
+- **SilentPaymentsKit Compiler Warnings**: Fixed 7 instances of `var` → `let` for immutable values, marked `ctx` as `nonisolated(unsafe)`, and suppressed unused variable warnings across 7 files.
+- **`broadcastRawEvent()` Callbacks**: Now accepts an optional `onRelayResult` callback reporting per-relay success/failure with OK message parsing. Timeout increased from 2s to 10s.
+
+### Fixed
+- **NIP-46 Connection Race Condition**: `connect()` now sets `.connecting` state synchronously before the async task. `ensureConnected()` waits up to 30 seconds for an in-progress connection instead of starting a redundant one that tears down the active Go session.
+- **NetworkSync Feedback Loops**: Events are deduplicated by ID (up to 10,000 entries) before injection into the local relay, preventing blast-back cycles.
+- **StatsService Double-Resume Crash**: All Combine async continuations are guarded against double invocation with `guard !resumed` checks. Cancellable references are explicitly cancelled after use.
+- **Relay Boot State Stuck on "Booting"**: `RelayProcessManager` now explicitly transitions to `.running` state when boot completes.
+- **HEVC/iCloud Video Attachment Failures**: Videos that fail the `ImportedVideoFile` transfer path now fall back to a `Data`-based path, preventing silent attachment failures.
+- **Blossom Uploads Before Relay Ready**: Upload functions now wait for the relay to be ready via `ensureRelayReady()`, preventing silent failures during startup.
+- **Thread Navigation Losing Focus**: Clicking into parent notes in deeply nested threads no longer shows "note not found" — parent notes are cached and fallback resolution is used.
+
+### Removed
+- **EmojiPickerView**: Removed the custom emoji picker component (356 lines) with categories, search, and curated emoji lists.
+- **Hardcoded Color Values**: All inline RGB color definitions throughout the codebase replaced by semantic platform color constants.
+- **Swift-Side Blastr Broadcasting**: Manual WebSocket connections to Blastr relays from `NostrService.postEvent()` removed; the Go relay now handles distribution.
+- **DM_PLAN.md**: Planning document removed (implementation complete).
+
 ## [2.5.1 (3) macOS / 1.1.1 (3) iOS] - 2026-06-02
 
 > **Network Performance Release**: Reduces simultaneous TCP/WebSocket connections on app reopen from 12-15 to 2-3 in the first 500ms, targeting 5G/cellular usability.

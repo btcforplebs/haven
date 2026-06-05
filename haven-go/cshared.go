@@ -124,11 +124,16 @@ func StartRelayC(importMode bool) {
 		)
 
 		// Try to load from cache first - instant startup
-		// Initialize asynchronously to avoid blocking relay startup
-		wotModel.LoadFromCache()
+		// Only run full network rebuild if cache is missing or expired
+		cacheLoaded := wotModel.LoadFromCache()
 		wot.ResetReady()
-		go wot.Initialize(csharedCtx, wotModel)
-		log.Println("  ✓ Web of Trust initializing")
+		if cacheLoaded {
+			wot.MarkReady(wotModel)
+			log.Println("  ✓ Web of Trust loaded from cache, skipping rebuild")
+		} else {
+			go wot.Initialize(csharedCtx, wotModel)
+			log.Println("  ✓ Web of Trust initializing from network")
+		}
 
 		go subscribeInboxAndChat(csharedCtx)
 		go startPeriodicCloudBackups(csharedCtx)
@@ -625,13 +630,13 @@ func DecryptNIP49C(ncryptsec *C.char, password *C.char) *C.char {
 
 	// NIP-49 payload: version(1) + logN(1) + salt(16) + nonce(24) + ciphertext(48)
 	if len(payload) < 1+1+16+24+32+16 {
-		slog.Error("DecryptNIP49C: payload too short", "len", len(payload))
+		slog.Debug("DecryptNIP49C: payload too short (likely legacy format)", "len", len(payload))
 		return nil
 	}
 
 	version := payload[0]
 	if version != 0x02 {
-		slog.Error("DecryptNIP49C: unsupported version", "version", version)
+		slog.Debug("DecryptNIP49C: unsupported version (likely legacy format)", "version", version)
 		return nil
 	}
 
@@ -757,7 +762,8 @@ func NIP46ConnectC(clientSK *C.char, bunkerURL *C.char) *C.char {
 
 	// The connect RPC itself gets a timeout so we don't block forever when
 	// the signer is offline.
-	connectCtx, connectCancel := context.WithTimeout(nip46Ctx, 30*time.Second)
+	log.Printf("NIP46ConnectC: sending connect RPC to %s via %v (secret=%d chars)", targetPubkey[:8], relays, len(secret))
+	connectCtx, connectCancel := context.WithTimeout(nip46Ctx, 60*time.Second)
 	defer connectCancel()
 
 	if _, err := bunker.RPC(connectCtx, "connect", []string{targetPubkey, secret}); err != nil {
@@ -768,9 +774,14 @@ func NIP46ConnectC(clientSK *C.char, bunkerURL *C.char) *C.char {
 		return nil
 	}
 
+	log.Printf("NIP46ConnectC: connect RPC succeeded, requesting public key...")
 	nip46Client = bunker
 
-	pubkey, err := bunker.GetPublicKey(nip46Ctx)
+	// GetPublicKey also gets a timeout to prevent hanging indefinitely
+	pkCtx, pkCancel := context.WithTimeout(nip46Ctx, 30*time.Second)
+	defer pkCancel()
+
+	pubkey, err := bunker.GetPublicKey(pkCtx)
 	if err != nil {
 		slog.Error("NIP46ConnectC: GetPublicKey failed", "error", err)
 		return nil
@@ -812,18 +823,22 @@ func NIP46SignEventC(eventJSON *C.char) *C.char {
 		return nil
 	}
 
-	log.Printf("NIP46SignEventC: sending sign_event to bunker kind=%d pubkey=%s", event.Kind, event.PubKey[:8])
+	pubPrefix := event.PubKey
+	if len(pubPrefix) > 8 {
+		pubPrefix = pubPrefix[:8]
+	}
+	log.Printf("NIP46SignEventC: sending sign_event to bunker kind=%d pubkey=%s tags=%v", event.Kind, pubPrefix, event.Tags)
 
 	ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
 	defer cancel()
 
 	if err := client.SignEvent(ctx, &event); err != nil {
-		slog.Error("NIP46SignEventC: SignEvent failed", "error", err)
+		slog.Error("NIP46SignEventC: SignEvent failed", "kind", event.Kind, "error", err)
 		return nil
 	}
 
 	res, _ := easyjson.Marshal(event)
-	log.Printf("NIP46SignEventC: signed ok – id=%s kind=%d", event.ID[:8], event.Kind)
+	log.Printf("NIP46SignEventC: signed ok – id=%s kind=%d pubkey=%s", event.ID[:8], event.Kind, event.PubKey[:8])
 	return C.CString(string(res))
 }
 

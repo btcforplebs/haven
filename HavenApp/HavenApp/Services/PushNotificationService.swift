@@ -13,6 +13,8 @@ import UIKit
 class PushNotificationService: ObservableObject {
     static let shared = PushNotificationService()
 
+    nonisolated private static let pushAPIKey = "d7f837ddc6d52817f4eead434a4a7786582595735ae7db817720af4c8404e397"
+
     @Published var isRegistered: Bool = false
     @Published var isRegisteredWithRemoteServer: Bool = false
     @Published var deviceToken: String?
@@ -50,7 +52,7 @@ class PushNotificationService: ObservableObject {
     /// One-time migration: seed owner account prefs from old global notification_prefs.json if it exists.
     private func migrateOldPreferences() {
         guard ConfigService.shared.config.notificationPrefsPerAccount.isEmpty else { return }
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
         let prefsURL = appSupport.appendingPathComponent("Haven/notification_prefs.json")
         guard let data = try? Data(contentsOf: prefsURL),
               let oldPrefs = try? JSONDecoder().decode(NotificationPreferences.self, from: data) else { return }
@@ -191,6 +193,7 @@ class PushNotificationService: ObservableObject {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(Self.pushAPIKey, forHTTPHeaderField: "X-API-Key")
             request.httpBody = try JSONSerialization.data(withJSONObject: payload)
             request.timeoutInterval = 10
 
@@ -256,6 +259,7 @@ class PushNotificationService: ObservableObject {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(Self.pushAPIKey, forHTTPHeaderField: "X-API-Key")
             request.httpBody = try JSONSerialization.data(withJSONObject: payload)
             request.timeoutInterval = 10
 
@@ -299,6 +303,7 @@ class PushNotificationService: ObservableObject {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(PushNotificationService.pushAPIKey, forHTTPHeaderField: "X-API-Key")
             request.httpBody = try? JSONSerialization.data(withJSONObject: ["device_token": token])
             request.timeoutInterval = 10
             _ = try? await URLSession.shared.data(for: request)

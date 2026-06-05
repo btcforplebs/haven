@@ -59,23 +59,23 @@ struct BitcoinSweepDisclaimerView: View {
 
             VStack(spacing: 24) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 48))
+                    .font(.appSystem(size: 48))
                     .foregroundColor(.red)
 
                 VStack(spacing: 16) {
                     Text("Do not send to a hardware wallet.")
-                        .font(.system(size: 22, weight: .heavy))
+                        .font(.appSystem(size: 22, weight: .heavy))
                         .foregroundColor(.white)
                         .multilineTextAlignment(.center)
 
                     Text("Do not send to an exchange.")
-                        .font(.system(size: 22, weight: .heavy))
+                        .font(.appSystem(size: 22, weight: .heavy))
                         .foregroundColor(.white)
                         .multilineTextAlignment(.center)
                 }
 
                 Text("Sweeping to a hardware wallet or exchange creates a permanent on-chain link between your Bitcoin and your Nostr identity. This cannot be undone.")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.appSystem(size: 15, weight: .medium))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
                     .lineSpacing(3)
@@ -88,7 +88,7 @@ struct BitcoinSweepDisclaimerView: View {
             VStack(spacing: 12) {
                 Button(action: { performDismiss() }) {
                     Text("Cancel")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.appSystem(size: 16, weight: .semibold))
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
@@ -99,7 +99,7 @@ struct BitcoinSweepDisclaimerView: View {
 
                 Button(action: { currentStep = 1 }) {
                     Text("I understand, continue")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.appSystem(size: 16, weight: .semibold))
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
@@ -120,23 +120,23 @@ struct BitcoinSweepDisclaimerView: View {
 
             VStack(spacing: 28) {
                 Image(systemName: "xmark.shield.fill")
-                    .font(.system(size: 64))
+                    .font(.appSystem(size: 64))
                     .foregroundColor(.red)
 
                 VStack(spacing: 20) {
                     Text("NOT a hardware wallet.")
-                        .font(.system(size: 32, weight: .black))
+                        .font(.appSystem(size: 32, weight: .black))
                         .foregroundColor(.red)
                         .multilineTextAlignment(.center)
 
                     Text("NOT an exchange.")
-                        .font(.system(size: 32, weight: .black))
+                        .font(.appSystem(size: 32, weight: .black))
                         .foregroundColor(.red)
                         .multilineTextAlignment(.center)
                 }
 
                 Text("If you sweep to a Ledger, Trezor, Coldcard, Coinbase, Kraken, or ANY custodial service, your Nostr npub is permanently tied to that wallet on the public blockchain. There is no way to reverse this.")
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.appSystem(size: 16, weight: .semibold))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
                     .lineSpacing(4)
@@ -149,7 +149,7 @@ struct BitcoinSweepDisclaimerView: View {
             VStack(spacing: 12) {
                 Button(action: { currentStep = 0 }) {
                     Text("Go Back")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.appSystem(size: 16, weight: .semibold))
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
@@ -160,7 +160,7 @@ struct BitcoinSweepDisclaimerView: View {
 
                 Button(action: { currentStep = 2 }) {
                     Text("I will NOT send to a hardware wallet or exchange")
-                        .font(.system(size: 14, weight: .bold))
+                        .font(.appSystem(size: 14, weight: .bold))
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
@@ -183,16 +183,16 @@ struct BitcoinSweepDisclaimerView: View {
                         // Header with warning icon
                         VStack(spacing: 16) {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.system(size: 56))
+                                .font(.appSystem(size: 56))
                                 .foregroundColor(.orange)
 
                             VStack(spacing: 8) {
                                 Text("Important Security Warning")
-                                    .font(.system(size: 24, weight: .bold))
+                                    .font(.appSystem(size: 24, weight: .bold))
                                     .foregroundColor(.white)
 
                                 Text("Sweeping your wallet requires careful consideration")
-                                    .font(.system(size: 14))
+                                    .font(.appSystem(size: 14))
                                     .foregroundColor(.secondary)
                                     .multilineTextAlignment(.center)
                             }
@@ -263,7 +263,7 @@ struct BitcoinSweepDisclaimerView: View {
                     // Cancel Button
                     Button(action: { currentStep = 1 }) {
                         Text("Go Back")
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(.appSystem(size: 16, weight: .semibold))
                             .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 14)
@@ -277,7 +277,7 @@ struct BitcoinSweepDisclaimerView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "bitcoinsign.circle.fill")
                             Text(isLoadingBalance ? "Loading Balance..." : "I Understand - Proceed to Sweep")
-                                .font(.system(size: 16, weight: .semibold))
+                                .font(.appSystem(size: 16, weight: .semibold))
                         }
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
@@ -306,11 +306,11 @@ struct BitcoinSweepDisclaimerView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
-                .font(.system(size: 15, weight: .bold))
+                .font(.appSystem(size: 15, weight: .bold))
                 .foregroundColor(.white)
 
             Text(description)
-                .font(.system(size: 13))
+                .font(.appSystem(size: 13))
                 .foregroundColor(.secondary)
                 .lineSpacing(2)
 
@@ -320,10 +320,10 @@ struct BitcoinSweepDisclaimerView: View {
                         HStack(alignment: .top, spacing: 8) {
                             Text("•")
                                 .foregroundColor(.secondary)
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.appSystem(size: 12, weight: .semibold))
 
                             Text(highlight)
-                                .font(.system(size: 12))
+                                .font(.appSystem(size: 12))
                                 .foregroundColor(.secondary)
                                 .lineSpacing(1.5)
                         }

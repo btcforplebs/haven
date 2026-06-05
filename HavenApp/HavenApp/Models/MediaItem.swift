@@ -35,27 +35,12 @@ extension MediaItem {
         
         var ext: String? = nil
         if let mime = mimeType?.lowercased() {
-            if mime == "image/jpeg" || mime == "image/jpg" {
-                ext = "jpg"
-            } else if mime == "image/png" {
-                ext = "png"
-            } else if mime == "image/gif" {
-                ext = "gif"
-            } else if mime == "image/webp" {
-                ext = "webp"
-            } else if mime == "video/mp4" {
-                ext = "mp4"
-            } else if mime == "video/quicktime" || mime == "video/mov" {
-                ext = "mov"
-            } else if mime == "video/webm" {
-                ext = "webm"
-            } else if mime.hasPrefix("image/") {
-                ext = String(mime.dropFirst(6))
-            } else if mime.hasPrefix("video/") {
-                ext = String(mime.dropFirst(6))
-            } else if mime.hasPrefix("audio/") {
-                ext = String(mime.dropFirst(6))
-                if ext == "mpeg" { ext = "mp3" }
+            ext = SupportedMediaFormats.extension(forMime: mime)
+            // Fallback: strip prefix for unknown subtypes
+            if ext == nil {
+                if mime.hasPrefix("image/") { ext = String(mime.dropFirst(6)) }
+                else if mime.hasPrefix("video/") { ext = String(mime.dropFirst(6)) }
+                else if mime.hasPrefix("audio/") { ext = String(mime.dropFirst(6)) }
             }
         }
         

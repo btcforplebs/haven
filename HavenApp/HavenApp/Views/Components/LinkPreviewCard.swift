@@ -38,7 +38,7 @@ struct LinkPreviewCard: View {
                     // Site name
                     if let siteName = meta.siteName, !siteName.isEmpty {
                         Text(siteName)
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.appSystem(size: 10, weight: .medium))
                             .foregroundColor(.secondary.opacity(0.7))
                             .lineLimit(1)
                     }
@@ -46,7 +46,7 @@ struct LinkPreviewCard: View {
                     // Title
                     if let title = meta.title {
                         Text(title)
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.appSystem(size: 13, weight: .semibold))
                             .foregroundColor(.primary)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
@@ -55,7 +55,7 @@ struct LinkPreviewCard: View {
                     // Description
                     if let desc = meta.description, !desc.isEmpty {
                         Text(desc)
-                            .font(.system(size: 12, weight: .regular))
+                            .font(.appSystem(size: 12, weight: .regular))
                             .foregroundColor(.secondary)
                             .lineLimit(2)
                             .multilineTextAlignment(.leading)
@@ -63,7 +63,7 @@ struct LinkPreviewCard: View {
 
                     // Domain
                     Text(displayDomain)
-                        .font(.system(size: 10, weight: .regular))
+                        .font(.appSystem(size: 10, weight: .regular))
                         .foregroundColor(.secondary.opacity(0.6))
                         .lineLimit(1)
                 }

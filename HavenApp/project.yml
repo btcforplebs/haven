@@ -36,6 +36,11 @@ settings:
     GCC_WARN_UNUSED_FUNCTION: YES
     GCC_WARN_UNUSED_VARIABLE: YES
     MTL_FAST_MATH: YES
+    EXCLUDED_ARCHS: x86_64
+
+packages:
+  SilentPaymentsKit:
+    path: SilentPaymentsKit
 
 targets:
 
@@ -82,7 +87,7 @@ targets:
         "CODE_SIGN_IDENTITY[sdk=macosx*]": "Apple Development"
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         CURRENT_PROJECT_VERSION: "1"
-        MARKETING_VERSION: "2.4.0"
+        MARKETING_VERSION: "2.5.1"
 
     preBuildScripts:
       - name: Build Go Library (macOS)
@@ -95,6 +100,7 @@ targets:
       - sdk: build/libhaven.a
         embed: false
         implicit: true
+      - package: SilentPaymentsKit
 
   # ── iOS Target ────────────────────────────────────────────
   HavenApp-iOS:
@@ -132,7 +138,7 @@ targets:
         HEADER_SEARCH_PATHS: ["$(inherited)", "$(SRCROOT)/build", "$(SRCROOT)/build/ios"]
         TARGETED_DEVICE_FAMILY: "1,2"
         CURRENT_PROJECT_VERSION: "1"
-        MARKETING_VERSION: "1.0"
+        MARKETING_VERSION: "1.1.1"
 
     preBuildScripts:
       - name: Build Go Library (iOS)
@@ -142,9 +148,10 @@ targets:
           - $(PROJECT_DIR)/build/ios/libhaven_ios.a
 
     dependencies:
-      - sdk: build/ios/libhaven_ios.a
+      - framework: build/ios/libhaven_ios.a
         embed: false
         implicit: true
+      - package: SilentPaymentsKit
 
 schemes:
   HavenApp:

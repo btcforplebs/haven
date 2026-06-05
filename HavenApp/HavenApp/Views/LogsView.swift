@@ -22,7 +22,7 @@ struct LogsView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Text(log.level)
-                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .font(.appSystem(size: 10, weight: .bold, design: .monospaced))
                             .padding(.horizontal, 4)
                             .padding(.vertical, 2)
                             .background(colorFor(level: log.level).opacity(0.2))
@@ -30,14 +30,14 @@ struct LogsView: View {
                             .cornerRadius(4)
 
                         Text(log.timestamp, style: .time)
-                            .font(.system(size: 10, design: .monospaced))
+                            .font(.appSystem(size: 10, design: .monospaced))
                             .foregroundColor(.secondary)
 
                         Spacer()
                     }
 
                     Text(log.message)
-                        .font(.system(size: 13, design: .monospaced))
+                        .font(.appSystem(size: 13, design: .monospaced))
                         .textSelection(.enabled)
                 }
                 .id(log.id)
@@ -79,7 +79,7 @@ struct LogsView: View {
                 // Header
                 HStack {
                     Text("System Logs")
-                        .font(.headline)
+                        .font(.appHeadline)
                         .foregroundColor(.secondary)
 
                     Spacer()
@@ -105,18 +105,18 @@ struct LogsView: View {
                 List(logStore.logs) { log in
                     HStack(alignment: .top) {
                         Text(log.timestamp, style: .time)
-                            .font(.caption2)
+                            .font(.appCaption2)
                             .foregroundColor(.secondary)
                             .frame(width: 60, alignment: .leading)
 
                         Text(log.level)
-                            .font(.caption2)
+                            .font(.appCaption2)
                             .fontWeight(.bold)
                             .foregroundColor(colorFor(level: log.level))
                             .frame(width: 50, alignment: .leading)
 
                         Text(log.message)
-                            .font(.callout.monospaced())
+                            .font(.appCallout.monospaced())
                     }
                     .id(log.id)
                 }

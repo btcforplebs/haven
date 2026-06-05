@@ -11,6 +11,9 @@ struct EventBroadcastSheet: View {
     @State private var isFetchingEvent = true
     @State private var isBroadcasting = false
     @State private var broadcastResult: String?
+    @State private var pendingRelays = Set<String>()
+    @State private var succeededRelays = Set<String>()
+    @State private var failedRelays: [String: String] = [:]
     @State private var cancellables = Set<AnyCancellable>()
 
     private var eventJSON: String {
@@ -61,7 +64,7 @@ struct EventBroadcastSheet: View {
     private var eventIdSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("EVENT ID")
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .font(.appSystem(size: 11, weight: .semibold, design: .monospaced))
                 .foregroundColor(.secondary)
                 .tracking(0.5)
 
@@ -76,7 +79,7 @@ struct EventBroadcastSheet: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("RAW EVENT")
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .font(.appSystem(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundColor(.secondary)
                     .tracking(0.5)
 
@@ -91,7 +94,7 @@ struct EventBroadcastSheet: View {
                         copyToClipboard(eventJSON)
                     } label: {
                         Label("Copy", systemImage: "doc.on.doc")
-                            .font(.system(size: 12, weight: .medium))
+                            .font(.appSystem(size: 12, weight: .medium))
                             .foregroundColor(Color.havenPurple)
                     }
                     .buttonStyle(.plain)
@@ -99,7 +102,7 @@ struct EventBroadcastSheet: View {
             }
 
             Text(eventJSON)
-                .font(.system(size: 11, design: .monospaced))
+                .font(.appSystem(size: 11, design: .monospaced))
                 .foregroundColor(.primary.opacity(0.85))
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -112,33 +115,47 @@ struct EventBroadcastSheet: View {
     private var broadcastSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("BROADCAST")
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .font(.appSystem(size: 11, weight: .semibold, design: .monospaced))
                 .foregroundColor(.secondary)
                 .tracking(0.5)
 
-            let blastrRelays = configService.config.blastrRelays.isEmpty
+            let blastrRelays = configService.config.activeBlastrRelays.isEmpty
                 ? ["wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"]
-                : configService.config.blastrRelays
+                : configService.config.activeBlastrRelays
 
             VStack(alignment: .leading, spacing: 6) {
                 Text("Broadcasting to \(blastrRelays.count) relay(s):")
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(.appSystem(size: 12, design: .monospaced))
                     .foregroundColor(.secondary)
 
                 ForEach(blastrRelays.prefix(6), id: \.self) { relay in
                     HStack(spacing: 6) {
-                        Circle()
-                            .fill(Color.havenPurple.opacity(0.5))
-                            .frame(width: 4, height: 4)
+                        Group {
+                            if succeededRelays.contains(relay) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
+                            } else if failedRelays[relay] != nil {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.red)
+                            } else if pendingRelays.contains(relay) {
+                                ProgressView()
+                                    .scaleEffect(0.5)
+                            } else {
+                                Circle()
+                                    .fill(Color.havenPurple.opacity(0.5))
+                                    .frame(width: 6, height: 6)
+                            }
+                        }
+                        .frame(width: 12, height: 12)
                         Text(relay)
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(.appSystem(size: 11, design: .monospaced))
                             .foregroundColor(.secondary.opacity(0.8))
                             .lineLimit(1)
                     }
                 }
                 if blastrRelays.count > 6 {
                     Text("+ \(blastrRelays.count - 6) more")
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(.appSystem(size: 11, design: .monospaced))
                         .foregroundColor(.secondary.opacity(0.6))
                 }
             }
@@ -148,11 +165,11 @@ struct EventBroadcastSheet: View {
 
             if let result = broadcastResult {
                 HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(.green)
+                    Image(systemName: failedRelays.isEmpty ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundColor(failedRelays.isEmpty ? .green : .orange)
                     Text(result)
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundColor(.green)
+                        .font(.appSystem(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundColor(failedRelays.isEmpty ? .green : .orange)
                 }
             }
 
@@ -169,7 +186,7 @@ struct EventBroadcastSheet: View {
                     }
                     Text(isBroadcasting ? "Broadcasting..." : "Re-Broadcast Event")
                 }
-                .font(.system(size: 14, weight: .semibold))
+                .font(.appSystem(size: 14, weight: .semibold))
                 .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
@@ -231,10 +248,32 @@ struct EventBroadcastSheet: View {
         guard let eventDict = fullEventDict else { return }
         isBroadcasting = true
         broadcastResult = nil
-        nostrService.broadcastRawEvent(eventDict)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            isBroadcasting = false
-            broadcastResult = "Broadcast sent to relays"
+        succeededRelays.removeAll()
+        failedRelays.removeAll()
+
+        let relays = configService.config.activeBlastrRelays.isEmpty
+            ? ["wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"]
+            : configService.config.activeBlastrRelays
+        pendingRelays = Set(relays)
+        let totalCount = relays.count
+
+        nostrService.broadcastRawEvent(eventDict) { relay, success, message in
+            pendingRelays.remove(relay)
+            if success {
+                succeededRelays.insert(relay)
+            } else {
+                failedRelays[relay] = message.isEmpty ? "failed" : message
+            }
+
+            if pendingRelays.isEmpty {
+                isBroadcasting = false
+                let count = succeededRelays.count
+                if count == totalCount {
+                    broadcastResult = "Broadcast to all \(count) relays"
+                } else {
+                    broadcastResult = "Broadcast to \(count)/\(totalCount) relays"
+                }
+            }
         }
     }
 
@@ -257,10 +296,10 @@ struct CopyableRow: View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(label)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(.appSystem(size: 10, weight: .medium, design: .monospaced))
                     .foregroundColor(.secondary)
                 Text(value)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.appSystem(size: 11, design: .monospaced))
                     .foregroundColor(.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -275,7 +314,7 @@ struct CopyableRow: View {
                 }
             } label: {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 13))
+                    .font(.appSystem(size: 13))
                     .foregroundColor(copied ? .green : Color.havenPurple)
                     .frame(width: 32, height: 32)
             }

@@ -12,7 +12,7 @@ struct WelcomeWindowView: View {
             VStack(spacing: 24) {
                 // Icon
                 Image(systemName: "server.rack")
-                    .font(.system(size: 72))
+                    .font(.appSystem(size: 72))
                     .foregroundStyle(
                         LinearGradient(
                             colors: [.havenPurple, .havenPurpleLight],
@@ -25,11 +25,11 @@ struct WelcomeWindowView: View {
                 // Welcome Text
                 VStack(spacing: 12) {
                     Text("Welcome to Nostr Vault")
-                        .font(.system(size: 32, weight: .bold))
+                        .font(.appSystem(size: 32, weight: .bold))
                         .foregroundColor(.primary)
                     
                     Text("Your Personal Nostr Relay")
-                        .font(.system(size: 18, weight: .medium))
+                        .font(.appSystem(size: 18, weight: .medium))
                         .foregroundColor(.secondary)
                 }
                 
@@ -38,23 +38,23 @@ struct WelcomeWindowView: View {
                     #if os(macOS)
                     HStack(spacing: 12) {
                         Image(systemName: "menubar.rectangle")
-                            .font(.system(size: 24))
+                            .font(.appSystem(size: 24))
                             .foregroundColor(.havenPurple)
                             .frame(width: 32)
                         
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Nostr Vault lives in your menu bar")
-                                .font(.system(size: 15, weight: .semibold))
+                                .font(.appSystem(size: 15, weight: .semibold))
                             
                             Text("Look for the")
-                                .font(.system(size: 13))
+                                .font(.appSystem(size: 13))
                                 .foregroundColor(.secondary)
                             + Text(" ")
                             + Text(Image(systemName: "server.rack"))
-                                .font(.system(size: 13, weight: .bold))
+                                .font(.appSystem(size: 13, weight: .bold))
                                 .foregroundColor(.havenPurple)
                             + Text(" icon in the top-right corner of your screen")
-                                .font(.system(size: 13))
+                                .font(.appSystem(size: 13))
                                 .foregroundColor(.secondary)
                         }
                         .fixedSize(horizontal: false, vertical: true)
@@ -66,16 +66,16 @@ struct WelcomeWindowView: View {
                     
                     HStack(spacing: 12) {
                         Image(systemName: "hand.tap.fill")
-                            .font(.system(size: 24))
+                            .font(.appSystem(size: 24))
                             .foregroundColor(.havenPurple)
                             .frame(width: 32)
                         
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Click the icon to get started")
-                                .font(.system(size: 15, weight: .semibold))
+                                .font(.appSystem(size: 15, weight: .semibold))
                             
                             Text("Set up your relay and start storing your Nostr notes locally")
-                                .font(.system(size: 13))
+                                .font(.appSystem(size: 13))
                                 .foregroundColor(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -104,7 +104,7 @@ struct WelcomeWindowView: View {
                 }) {
                     HStack {
                         Text("Get Started")
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(.appSystem(size: 16, weight: .semibold))
                         Image(systemName: "arrow.right")
                     }
                     .foregroundColor(.white)

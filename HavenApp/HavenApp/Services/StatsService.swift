@@ -22,6 +22,10 @@ class StatsService: ObservableObject {
     /// Prevents the observer from overwriting the UserDefaults-loaded count
     /// before `refreshStats` has fetched the real DB count at least once.
     private var hasEstablishedBaseline: Bool = false
+    /// Counts consecutive refreshes where the confirmed DB count was lower than
+    /// the persisted floor. After enough consistent reads the floor is assumed
+    /// stale (e.g. after a database prune) and is replaced with the real count.
+    private var consecutiveLowerCount: Int = 0
     
     init() {
         // Observe RelayProcessManager for new incoming events (real-time updates)
@@ -47,8 +51,8 @@ class StatsService: ObservableObject {
             }
             .store(in: &cancellables)
         
-        // Refresh counts from database when iOS sync completes
-        NotificationCenter.default.publisher(for: .macRelaySyncComplete)
+        // Refresh counts from database when feed injection completes
+        NotificationCenter.default.publisher(for: .feedInjectionComplete)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 guard let self = self else { return }
@@ -139,10 +143,24 @@ class StatsService: ObservableObject {
                     
                     // Guard: Only update events if we have a valid non-zero count, or if our current count is 0
                     if let confirmedCount = count, (confirmedCount > 0 || self.loadedEventsCount == 0) {
-                        // Use a floor: never let a refresh decrease the displayed count.
-                        // Events are rarely deleted, so a lower count almost always means
-                        // an incomplete or stale response from the relay.
-                        let effectiveCount = max(confirmedCount, self.loadedEventsCount)
+                        let effectiveCount: Int
+                        if confirmedCount >= self.loadedEventsCount {
+                            // Normal case: count grew or stayed the same
+                            effectiveCount = confirmedCount
+                            self.consecutiveLowerCount = 0
+                        } else {
+                            // Confirmed count is lower than persisted floor.
+                            // A single low read is likely a stale/incomplete relay
+                            // response, but 3+ consecutive low reads means the
+                            // floor itself is stale (e.g. after a database prune).
+                            self.consecutiveLowerCount += 1
+                            if self.consecutiveLowerCount >= 3 {
+                                effectiveCount = confirmedCount
+                                self.consecutiveLowerCount = 0
+                            } else {
+                                effectiveCount = self.loadedEventsCount
+                            }
+                        }
                         #if DEBUG
                         print("StatsService: ✨ Total aggregated events count: \(confirmedCount)" +
                               (effectiveCount != confirmedCount ? " (floored to \(effectiveCount))" : ""))
@@ -254,15 +272,17 @@ class StatsService: ObservableObject {
                 .first(where: { $0 == .connected || $0 == .error })
                 .timeout(.seconds(5), scheduler: DispatchQueue.main)
                 .sink { completion in
-                    if !resumed { resumed = true
-                        if case .failure = completion { cont.resume(returning: false) }
-                        else { cont.resume(returning: false) }
-                    }
+                    guard !resumed else { return }
+                    resumed = true
+                    // Timeout or upstream completion without value = failure
+                    cont.resume(returning: false)
                 } receiveValue: { state in
-                    if !resumed { resumed = true; cont.resume(returning: state == .connected) }
+                    guard !resumed else { return }
+                    resumed = true
+                    cont.resume(returning: state == .connected)
                 }
         }
-        _ = connectCancellable
+        connectCancellable?.cancel()
         guard didConnect else {
             await MainActor.run { client.disconnect() }
             return nil
@@ -289,7 +309,10 @@ class StatsService: ObservableObject {
                 .receive(on: DispatchQueue.main)
                 .timeout(.seconds(20), scheduler: DispatchQueue.main)
                 .sink { _ in
-                    if !resumed { resumed = true; cont.resume() }
+                    // Timeout or upstream completion
+                    guard !resumed else { return }
+                    resumed = true
+                    cont.resume()
                 } receiveValue: { msg in
                     guard let data = msg.data(using: .utf8),
                           let json = try? JSONSerialization.jsonObject(with: data) as? [Any],
@@ -310,7 +333,13 @@ class StatsService: ObservableObject {
 
                     results[kind] = extracted
                     pending.remove(subId)
-                    if pending.isEmpty, !resumed { resumed = true; cont.resume() }
+
+                    // Only resume once all responses received
+                    if pending.isEmpty {
+                        guard !resumed else { return }
+                        resumed = true
+                        cont.resume()
+                    }
                 }
 
             // Fire all COUNT requests
@@ -330,7 +359,7 @@ class StatsService: ObservableObject {
                 }
             }
         }
-        _ = messageCancellable
+        messageCancellable?.cancel()
 
         await MainActor.run { client.disconnect() }
         return results

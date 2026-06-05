@@ -136,14 +136,14 @@ struct SettingsView: View {
             
             // CONTENT VIEW DETAIL PANEL
             ZStack {
-                Color(red: 0.08, green: 0.08, blue: 0.1)
+                Color.platformWindowBackground
                     .ignoresSafeArea()
                 
                 VStack(alignment: .leading, spacing: 0) {
                     // Header of active settings panel
                     HStack {
                         Text(selectedTab.title)
-                            .font(.title2.bold())
+                            .font(.appTitle2.bold())
                             .foregroundColor(.white)
                         Spacer()
                     }
@@ -171,10 +171,10 @@ struct SettingsView: View {
             // Header inside settings sidebar
             HStack(spacing: 8) {
                 Image(systemName: "gearshape.fill")
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.appSystem(size: 16, weight: .bold))
                     .foregroundColor(.havenPurple)
                 Text("Settings")
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.appSystem(size: 16, weight: .bold))
                     .foregroundColor(.white)
                 Spacer()
             }
@@ -193,19 +193,19 @@ struct SettingsView: View {
                 }) {
                     HStack(spacing: 10) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 14))
+                            .font(.appSystem(size: 14))
                             .foregroundColor(.yellow)
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Setup Incomplete")
-                                .font(.system(size: 12, weight: .bold))
+                                .font(.appSystem(size: 12, weight: .bold))
                                 .foregroundColor(.white)
                             Text("Tap to complete setup")
-                                .font(.system(size: 10))
+                                .font(.appSystem(size: 10))
                                 .foregroundColor(.white.opacity(0.7))
                         }
                         Spacer()
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.appSystem(size: 10, weight: .bold))
                             .foregroundColor(.white.opacity(0.5))
                     }
                     .padding(10)
@@ -246,7 +246,7 @@ struct SettingsView: View {
                 } else {
                     Button(action: restartRelay) {
                         Text("Save & Restart Relay")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.appSystem(size: 11, weight: .bold))
                             .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 8)
@@ -259,10 +259,10 @@ struct SettingsView: View {
                 
                 VStack(spacing: 2) {
                     Text("Nostr Vault v\(appVersion)")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.appSystem(size: 9, weight: .bold))
                         .foregroundColor(.secondary)
                     Text("Abuse Reporting: npub1vxlh...g0nvx")
-                        .font(.system(size: 8, design: .monospaced))
+                        .font(.appSystem(size: 8, design: .monospaced))
                         .foregroundColor(.secondary.opacity(0.8))
                         .onTapGesture {
                             PlatformClipboard.copy("npub1vxlhjzeqjjhmqdy4e8sndt8kzklqlnxzew2mtt8mtakvalsckp3qa0gnvx")
@@ -280,7 +280,7 @@ struct SettingsView: View {
     private func settingsSidebarSection(_ title: String, items: [SettingsTab]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(title.uppercased())
-                .font(.system(size: 9, weight: .bold))
+                .font(.appSystem(size: 9, weight: .bold))
                 .foregroundColor(.secondary.opacity(0.7))
                 .padding(.horizontal, 8)
                 .padding(.bottom, 2)
@@ -297,12 +297,12 @@ struct SettingsView: View {
                                 .fill(iconBackgroundColor(for: item))
                                 .frame(width: 20, height: 20)
                             Image(systemName: item.icon)
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(.appSystem(size: 11, weight: .semibold))
                                 .foregroundColor(.white)
                         }
                         
                         Text(item.title)
-                            .font(.system(size: 12, weight: selectedTab == item ? .semibold : .medium))
+                            .font(.appSystem(size: 12, weight: selectedTab == item ? .semibold : .medium))
                             .foregroundColor(selectedTab == item ? .white : .secondary)
                         
                         Spacer()
@@ -332,19 +332,19 @@ struct SettingsView: View {
                     Button(action: { showingSetupWizard = true }) {
                         HStack(spacing: 12) {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.title2)
+                                .font(.appTitle2)
                                 .foregroundColor(.yellow)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("Setup Incomplete")
-                                    .font(.headline)
+                                    .font(.appHeadline)
                                     .foregroundColor(.white)
                                 Text("Tap to complete setup and start your relay.")
-                                    .font(.caption)
+                                    .font(.appCaption)
                                     .foregroundColor(.white.opacity(0.8))
                             }
                             Spacer()
                             Image(systemName: "chevron.right")
-                                .font(.caption.bold())
+                                .font(.appCaption.bold())
                                 .foregroundColor(.white.opacity(0.5))
                         }
                         .padding()
@@ -398,9 +398,9 @@ struct SettingsView: View {
             Section("About") {
                 VStack(spacing: 4) {
                     Text("Nostr Vault")
-                        .font(.headline)
+                        .font(.appHeadline)
                     Text("Version \(appVersion)")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                     
                     Divider()
@@ -408,15 +408,15 @@ struct SettingsView: View {
                     
                     VStack(spacing: 8) {
                         Text("Support & Abuse Reporting")
-                            .font(.subheadline.bold())
+                            .font(.appSubheadline.bold())
                         
                         Text("To report objectionable content or abusive users, contact the developer via Nostr")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
                         
                         Text("npub1vxlhjzeqjjhmqdy4e8sndt8kzklqlnxzew2mtt8mtakvalsckp3qa0gnvx")
-                            .font(.system(size: 10, design: .monospaced))
+                            .font(.appSystem(size: 10, design: .monospaced))
                             .padding(8)
                             .background(Color.platformControlBackground)
                             .cornerRadius(4)
@@ -425,14 +425,14 @@ struct SettingsView: View {
                             }
                         
                         Text("(Tap to copy)")
-                            .font(.system(size: 8))
+                            .font(.appSystem(size: 8))
                             .foregroundColor(.secondary)
                             
                         Divider()
                             .padding(.vertical, 8)
                             
                         Link("Privacy Policy", destination: URL(string: "https://nostrvault.app/privacy.html")!)
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.havenPurple)
                     }
                 }
@@ -466,14 +466,14 @@ struct SettingsView: View {
         NavigationLink(destination: destinationFor(tab)) {
             Label {
                 Text(tab.title)
-                    .font(.body)
+                    .font(.appBody)
             } icon: {
                 ZStack {
                     RoundedRectangle(cornerRadius: 6)
                         .fill(iconBackgroundColor(for: tab))
                         .frame(width: 28, height: 28)
                     Image(systemName: tab.icon)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.appSystem(size: 14, weight: .semibold))
                         .foregroundColor(.white)
                 }
             }
@@ -552,7 +552,7 @@ struct SettingsView: View {
                 } else {
                     Button(action: restartRelay) {
                         Text("Save & Restart Relay")
-                            .font(.headline)
+                            .font(.appHeadline)
                             .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 10)
@@ -573,15 +573,15 @@ struct SettingsView: View {
             // About Section for macOS
             VStack(spacing: 4) {
                 Text("Nostr Vault v\(appVersion)")
-                    .font(.caption.bold())
+                    .font(.appCaption.bold())
                 Text("Abuse Reporting: npub1vxlh...g0nvx")
-                    .font(.system(size: 9, design: .monospaced))
+                    .font(.appSystem(size: 9, design: .monospaced))
                     .foregroundColor(.secondary)
                     .onTapGesture {
                         PlatformClipboard.copy("npub1vxlhjzeqjjhmqdy4e8sndt8kzklqlnxzew2mtt8mtakvalsckp3qa0gnvx")
                     }
                 Link("Privacy Policy", destination: URL(string: "https://nostrvault.app/privacy.html")!)
-                    .font(.system(size: 10))
+                    .font(.appSystem(size: 10))
                     .foregroundColor(.havenPurple)
                     .padding(.top, 2)
             }
@@ -599,15 +599,15 @@ struct RestartBanner: View {
         Button(action: action) {
             HStack(spacing: 12) {
                 Image(systemName: "arrow.clockwise.circle.fill")
-                    .font(.title2)
+                    .font(.appTitle2)
                     .foregroundColor(.white)
                 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Restart Required")
-                        .font(.headline)
+                        .font(.appHeadline)
                         .foregroundColor(.white)
                     Text("Some changes require a relay restart to take effect.")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.white.opacity(0.8))
                 }
                 
@@ -618,7 +618,7 @@ struct RestartBanner: View {
                         .tint(.white)
                 } else {
                     Image(systemName: "chevron.right")
-                        .font(.caption.bold())
+                        .font(.appCaption.bold())
                         .foregroundColor(.white.opacity(0.5))
                 }
             }
@@ -779,7 +779,7 @@ struct AccountsSettingsView: View {
                     Text(displayName).fontWeight(.semibold)
                     if isOwner {
                         Text("Owner")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.appSystem(size: 10, weight: .bold))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(Color.havenPurple.opacity(0.2))
@@ -792,7 +792,7 @@ struct AccountsSettingsView: View {
                 HStack(spacing: 4) {
                     if hasBunker && signingMode == "nip46" {
                         Image(systemName: "link")
-                            .font(.system(size: 9))
+                            .font(.appSystem(size: 9))
                         Text("Remote Signer")
                         if isActive {
                             Circle()
@@ -801,16 +801,16 @@ struct AccountsSettingsView: View {
                         }
                     } else if hasLocalKey {
                         Image(systemName: "key.fill")
-                            .font(.system(size: 9))
+                            .font(.appSystem(size: 9))
                             .foregroundColor(.orange)
                         Text("Local Key")
                     } else {
                         Image(systemName: "exclamationmark.triangle")
-                            .font(.system(size: 9))
+                            .font(.appSystem(size: 9))
                         Text("No signing key")
                     }
                 }
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundColor(.secondary)
             }
 
@@ -822,7 +822,7 @@ struct AccountsSettingsView: View {
             }
 
             Image(systemName: "chevron.right")
-                .font(.caption)
+                .font(.appCaption)
                 .foregroundColor(.secondary)
         }
         .padding(.vertical, 4)
@@ -917,7 +917,7 @@ struct AccountDetailView: View {
                             if !hasBunker {
                                 // Only show active badge when there's no choice
                                 Text("Active")
-                                    .font(.caption)
+                                    .font(.appCaption)
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
                                     .background(Color.green.opacity(0.2))
@@ -972,7 +972,7 @@ struct AccountDetailView: View {
                                     .fill(nip46Service.isConnected ? Color.green : Color.red)
                                     .frame(width: 8, height: 8)
                                 Text(nip46Service.isConnected ? "Connected" : "Disconnected")
-                                    .font(.caption)
+                                    .font(.appCaption)
                                     .foregroundColor(.secondary)
                             }
                         }
@@ -998,6 +998,26 @@ struct AccountDetailView: View {
                     }
                 } header: {
                     Text("Remote Signer (NIP-46)")
+                }
+
+                // NIP-65 Relay List Publishing
+                if (hasLocalKey || hasBunker) && !configService.config.isLocal {
+                    Section {
+                        Toggle("Publish Inbox Relay", isOn: Binding(
+                            get: { configService.config.publishRelayListPerAccount[npub] ?? false },
+                            set: { enabled in
+                                configService.config.publishRelayListPerAccount[npub] = enabled
+                                configService.save()
+                                if enabled {
+                                    NostrService.shared.publishRelayList(forNpub: npub)
+                                }
+                            }
+                        ))
+                    } header: {
+                        Text("Relay List (NIP-65)")
+                    } footer: {
+                        Text("Publishes this relay as the account's inbox so other clients know where to send events.")
+                    }
                 }
 
                 // Remove account (non-owner only)
@@ -1063,7 +1083,7 @@ struct AccountDetailView: View {
                     Text(displayName).fontWeight(.semibold)
                     if isOwner {
                         Text("Owner")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.appSystem(size: 10, weight: .bold))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(Color.havenPurple.opacity(0.2))
@@ -1072,7 +1092,7 @@ struct AccountDetailView: View {
                     }
                     if isActive {
                         Text("Active")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.appSystem(size: 10, weight: .bold))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(Color.green.opacity(0.2))
@@ -1081,7 +1101,7 @@ struct AccountDetailView: View {
                     }
                 }
                 Text(npub)
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.appSystem(size: 10, design: .monospaced))
                     .foregroundColor(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -1111,7 +1131,7 @@ struct ConnectSignerSheetView: View {
                     .foregroundColor(.secondary)
                 Spacer()
                 Text("Connect Remote Signer")
-                    .font(.headline)
+                    .font(.appHeadline)
                 Spacer()
                 Button("Connect") { connectBunker() }
                     .buttonStyle(.borderedProminent)
@@ -1124,7 +1144,7 @@ struct ConnectSignerSheetView: View {
 
             VStack(alignment: .leading, spacing: 12) {
                 Text("Paste the bunker:// URI from your remote signer app to connect it to this account.")
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.secondary)
 
                 TextField("bunker://...", text: $bunkerURI)
@@ -1133,14 +1153,14 @@ struct ConnectSignerSheetView: View {
 
                 if let error = errorMessage {
                     Label(error, systemImage: "exclamationmark.triangle")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.red)
                 }
 
                 if isConnecting {
                     HStack {
                         ProgressView().controlSize(.small)
-                        Text("Connecting...").font(.caption).foregroundColor(.secondary)
+                        Text("Connecting...").font(.appCaption).foregroundColor(.secondary)
                     }
                 }
             }
@@ -1163,7 +1183,7 @@ struct ConnectSignerSheetView: View {
                 if let error = errorMessage {
                     Section {
                         Label(error, systemImage: "exclamationmark.triangle")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.red)
                     }
                 }
@@ -1264,7 +1284,7 @@ struct AddAccountSheetView: View {
                 Spacer()
                 
                 Text("Add Account")
-                    .font(.headline)
+                    .font(.appHeadline)
                 
                 Spacer()
                 
@@ -1280,7 +1300,7 @@ struct AddAccountSheetView: View {
             
             VStack(alignment: .leading, spacing: 12) {
                 Text("Npub")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.appSystem(size: 13, weight: .semibold))
                     .foregroundColor(.secondary)
                 
                 TextEditor(text: $addInput)
@@ -1297,7 +1317,7 @@ struct AddAccountSheetView: View {
                 if let error = addError {
                     Text(error)
                         .foregroundColor(.red)
-                        .font(.caption)
+                        .font(.appCaption)
                 }
             }
             .padding(20)
@@ -1370,7 +1390,7 @@ struct ImportKeySheetView: View {
                 Spacer()
                 
                 Text("Import Key")
-                    .font(.headline)
+                    .font(.appHeadline)
                 
                 Spacer()
                 
@@ -1388,7 +1408,7 @@ struct ImportKeySheetView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Private Key (nsec)")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.appSystem(size: 13, weight: .semibold))
                             .foregroundColor(.secondary)
                         
                         TextEditor(text: $importNsec)
@@ -1405,7 +1425,7 @@ struct ImportKeySheetView: View {
                     
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Encrypt with Password")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.appSystem(size: 13, weight: .semibold))
                             .foregroundColor(.secondary)
 
                         // Hidden username field anchors AutoFill to the npub
@@ -1420,18 +1440,18 @@ struct ImportKeySheetView: View {
                         SecureField("Password", text: $importPassword)
                             .textFieldStyle(.roundedBorder)
                             .textContentType(.newPassword)
-                            .font(.body)
+                            .font(.appBody)
 
                         SecureField("Confirm Password", text: $importConfirm)
                             .textFieldStyle(.roundedBorder)
                             .textContentType(.newPassword)
-                            .font(.body)
+                            .font(.appBody)
                     }
                     
                     if let error = importError {
                         Text(error)
                             .foregroundColor(.red)
-                            .font(.caption)
+                            .font(.appCaption)
                     }
                 }
                 .padding(20)
@@ -1524,7 +1544,7 @@ struct RevealKeySheetView: View {
                 Spacer()
 
                 Text("Reveal Private Key")
-                    .font(.headline)
+                    .font(.appHeadline)
 
                 Spacer()
 
@@ -1573,7 +1593,7 @@ struct RevealKeySheetView: View {
                             .onSubmit { decryptKey() }
                     }
                     if let error = errorMessage {
-                        Text(error).foregroundColor(.red).font(.caption)
+                        Text(error).foregroundColor(.red).font(.appCaption)
                     }
                 }
             }
@@ -1599,20 +1619,20 @@ struct RevealKeySheetView: View {
     private func passwordEntryContent() -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Enter Password")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.appSystem(size: 13, weight: .semibold))
                 .foregroundColor(.secondary)
 
             SecureField("NIP-49 Password", text: $password)
                 .textFieldStyle(.roundedBorder)
                 .textContentType(.password)
-                .font(.body)
+                .font(.appBody)
                 .onSubmit { decryptKey() }
         }
 
         if let error = errorMessage {
             Text(error)
                 .foregroundColor(.red)
-                .font(.caption)
+                .font(.appCaption)
         }
     }
 
@@ -1620,7 +1640,7 @@ struct RevealKeySheetView: View {
     private func revealedKeyContent(nsec: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Your Private Key (nsec)")
-                .font(.system(size: 13, weight: .semibold))
+                .font(.appSystem(size: 13, weight: .semibold))
                 .foregroundColor(.secondary)
 
             Text(nsec)
@@ -1650,7 +1670,7 @@ struct RevealKeySheetView: View {
             .buttonStyle(.bordered)
 
             Text("Keep this key safe. Anyone with your nsec has full control of your Nostr identity.")
-                .font(.caption2)
+                .font(.appCaption2)
                 .foregroundColor(.orange)
         }
     }
@@ -1709,9 +1729,19 @@ struct BlockedSettingsView: View {
     @State private var isSearching = false
     
     var blockedNpubs: [String] {
-        configService.config.blockedNpubsPerAccount[configService.config.activeAccountNpub] ?? []
+        let active = configService.config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetNpub = active.isEmpty ? configService.config.ownerNpub : active
+        return configService.config.blockedNpubsPerAccount[targetNpub] ?? []
     }
-    
+
+    var throttledAccounts: [(npub: String, maxPosts: Int)] {
+        let active = configService.config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetNpub = active.isEmpty ? configService.config.ownerNpub : active
+        let dict = configService.config.throttledAccountsPerAccount[targetNpub] ?? [:]
+        return dict.map { (npub: $0.key, maxPosts: $0.value) }
+            .sorted { $0.npub < $1.npub }
+    }
+
     var body: some View {
         Form {
             Section {
@@ -1733,7 +1763,7 @@ struct BlockedSettingsView: View {
             } footer: {
                 Text("Enter an npub to block it. Blocked profiles cannot interact with you.")
             }
-            
+
             Section("Blocked Accounts") {
                 if blockedNpubs.isEmpty {
                     Text("No blocked accounts.").foregroundColor(.secondary)
@@ -1742,13 +1772,13 @@ struct BlockedSettingsView: View {
                         let hex = Bech32.decode(npub)?.hexString ?? ""
                         let profile = nostrService.profiles[hex]
                         let displayName = profile?.bestName ?? String(npub.prefix(12)) + "..."
-                        
+
                         HStack {
                             AvatarView(url: profile?.pictureURL, pubkey: hex)
                                 .frame(width: 32, height: 32)
                             VStack(alignment: .leading) {
                                 Text(displayName).fontWeight(.semibold)
-                                Text(npub).font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
+                                Text(npub).font(.appSystem(size: 10, design: .monospaced)).foregroundColor(.secondary).lineLimit(1).truncationMode(.middle)
                             }
                             Spacer()
                             Button("Unblock") {
@@ -1757,6 +1787,47 @@ struct BlockedSettingsView: View {
                         }
                     }
                 }
+            }
+
+            Section {
+                if throttledAccounts.isEmpty {
+                    Text("No slowed-down accounts.").foregroundColor(.secondary)
+                } else {
+                    ForEach(throttledAccounts, id: \.npub) { entry in
+                        let hex = Bech32.decode(entry.npub)?.hexString ?? ""
+                        let profile = nostrService.profiles[hex]
+                        let displayName = profile?.bestName ?? String(entry.npub.prefix(12)) + "..."
+
+                        HStack {
+                            AvatarView(url: profile?.pictureURL, pubkey: hex)
+                                .frame(width: 32, height: 32)
+                            VStack(alignment: .leading) {
+                                Text(displayName).fontWeight(.semibold)
+                                Text("Max \(entry.maxPosts) post\(entry.maxPosts == 1 ? "" : "s") visible")
+                                    .font(.appCaption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                            Stepper("", value: Binding(
+                                get: { entry.maxPosts },
+                                set: { configService.throttleProfile(entry.npub, maxPosts: $0) }
+                            ), in: 1...20)
+                            .labelsHidden()
+                            .frame(width: 100)
+                            Button {
+                                configService.unthrottleProfile(entry.npub)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.red)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            } header: {
+                Text("Slowed Down")
+            } footer: {
+                Text("Slowed-down accounts have a limit on how many of their posts appear in your feed at once. Tap a username in the feed to slow someone down.")
             }
         }
         .groupedFormStyleCompat()
@@ -1820,6 +1891,7 @@ struct AdvancedSettingsView: View {
             Section {
                 Toggle("Autoplay Videos", isOn: $configService.config.autoplayVideos)
                 Toggle("Disable Media Cache", isOn: $configService.config.disableMediaCache)
+                Toggle("Prefetch Profile Pictures", isOn: $configService.config.prefetchProfilePictures)
 
                 Picker("Cache TTL", selection: $configService.config.cacheTTLDays) {
                     Text("1 day").tag(1)
@@ -1838,7 +1910,7 @@ struct AdvancedSettingsView: View {
             } header: {
                 Text("Media")
             } footer: {
-                Text("When autoplay is off, videos show a thumbnail until tapped. Cache TTL controls how long downloaded media is kept before automatic cleanup. Clearing the cache will remove downloaded remote images but won't touch your local Blossom data.")
+                Text("When autoplay is off, videos show a thumbnail until tapped. Cache TTL controls how long downloaded media is kept before automatic cleanup. Clearing the cache will remove downloaded remote images but won't touch your local Blossom data. Profile picture prefetching downloads avatars for all followed accounts once per day over Wi-Fi only.")
             }
 
             Section {
@@ -1975,9 +2047,9 @@ struct BackupSettingsView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Export Notes")
-                            .font(.body)
+                            .font(.appBody)
                         Text("Save all notes and metadata as a JSONL backup")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.secondary)
                     }
                     Spacer()
@@ -1998,9 +2070,9 @@ struct BackupSettingsView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Import Notes")
-                            .font(.body)
+                            .font(.appBody)
                         Text("Restore notes from a Nostr Vault JSONL backup (.zip)")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.secondary)
                     }
                     Spacer()
@@ -2027,9 +2099,9 @@ struct BackupSettingsView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Export Media")
-                            .font(.body)
+                            .font(.appBody)
                         Text("Save all Blossom media files as a backup")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.secondary)
                     }
                     Spacer()
@@ -2050,9 +2122,9 @@ struct BackupSettingsView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Import Media")
-                            .font(.body)
+                            .font(.appBody)
                         Text("Restore media from a Blossom backup (.zip)")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.secondary)
                     }
                     Spacer()
@@ -2081,7 +2153,7 @@ struct BackupSettingsView: View {
                         Image(systemName: statusMessage.contains("failed") || statusMessage.contains("Error") ? "xmark.circle.fill" : "checkmark.circle.fill")
                             .foregroundColor(statusMessage.contains("failed") || statusMessage.contains("Error") ? .red : .green)
                         Text(statusMessage)
-                            .font(.callout)
+                            .font(.appCallout)
                             .foregroundColor(.secondary)
                     }
                 }
@@ -2375,7 +2447,7 @@ struct DMSettingsView: View {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundColor(.green)
                         Text("DM relay preferences published to network")
-                            .font(.caption)
+                            .font(.appCaption)
                     }
                 }
                 .transition(.opacity)
@@ -2523,7 +2595,7 @@ struct WalletSettingsView: View {
                         } else if let error = balanceError {
                             Text(error)
                                 .foregroundColor(.red)
-                                .font(.caption)
+                                .font(.appCaption)
                         } else {
                             Text("Unknown")
                                 .foregroundColor(.secondary)
@@ -2632,7 +2704,7 @@ struct WalletSettingsView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "arrow.up.right.circle.fill")
                             Text("Sweep Wallet")
-                                .font(.system(size: 15, weight: .semibold))
+                                .font(.appSystem(size: 15, weight: .semibold))
                         }
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
@@ -2735,7 +2807,8 @@ struct WalletSettingsView: View {
 
 struct AppearanceSettingsView: View {
     @EnvironmentObject var configService: ConfigService
-    
+    @State private var showEmojiPicker = false
+
     var body: some View {
         Form {
             Section {
@@ -2749,8 +2822,81 @@ struct AppearanceSettingsView: View {
             } footer: {
                 Text("Choose an accent color for the Nostr Vault interface. This will change the primary color and gradients across the application.")
             }
+
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Text Size")
+                        Spacer()
+                        Text(String(format: "%.0f%%", configService.config.textSizeScale * 100))
+                            .foregroundColor(.secondary)
+                    }
+                    
+                    Slider(
+                        value: $configService.config.textSizeScale,
+                        in: 0.8...1.6,
+                        step: 0.1
+                    ) {
+                        Text("Text Size")
+                    } minimumValueLabel: {
+                        Text("A").font(.appSystem(size: 12))
+                    } maximumValueLabel: {
+                        Text("A").font(.appSystem(size: 20))
+                    }
+                    .onChange(of: configService.config.textSizeScale) { _, _ in
+                        configService.save()
+                    }
+                }
+                .padding(.vertical, 4)
+            } header: {
+                Text("Text Accessibility")
+            } footer: {
+                Text("Adjust the size of text across the app — feeds, note details, profiles, DM inbox, message threads, and compose editors.")
+            }
+
+            Section {
+                Toggle(isOn: $configService.config.useOLED) {
+                    Label("OLED Dark Theme", systemImage: "moon.stars.fill")
+                }
+                .onChange(of: configService.config.useOLED) { _, _ in
+                    configService.save()
+                }
+            } header: {
+                Text("Dark Mode Options")
+            } footer: {
+                Text("Use pure black backgrounds to save power on OLED screens.")
+            }
+
+            Section {
+                Button(action: {
+                    showEmojiPicker = true
+                }) {
+                    HStack {
+                        Label("Default Reaction", systemImage: "heart.fill")
+                            .foregroundColor(.primary)
+                        Spacer()
+                        Text(configService.config.defaultReactionEmoji)
+                            .font(.appSystem(size: 24))
+                        Image(systemName: "chevron.right")
+                            .font(.appSystem(size: 12))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+            } header: {
+                Text("Reactions")
+            } footer: {
+                Text("Choose your default reaction emoji. This emoji will be used when you tap the heart button on a note.")
+            }
         }
         .groupedFormStyleCompat()
+        .sheet(isPresented: $showEmojiPicker) {
+            EmojiPickerView { emoji in
+                configService.config.defaultReactionEmoji = emoji
+                configService.save()
+                showEmojiPicker = false
+            }
+        }
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
@@ -2825,13 +2971,13 @@ struct ThemeCard: View {
                     
                     if isSelected {
                         Image(systemName: "checkmark")
-                            .font(.system(size: 14, weight: .bold))
+                            .font(.appSystem(size: 14, weight: .bold))
                             .foregroundColor(.white)
                     }
                 }
                 
                 Text(theme.displayName)
-                    .font(.subheadline)
+                    .font(.appSubheadline)
                     .fontWeight(isSelected ? .bold : .regular)
                     .foregroundColor(.primary)
             }
@@ -2875,18 +3021,18 @@ struct MacRelayDomainSettingsView: View {
                         HStack(spacing: 8) {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundColor(.green)
-                                .font(.caption)
+                                .font(.appCaption)
                             Text("wss://\(configService.config.sanitizedRelayURL)")
-                                .font(.system(size: 12, design: .monospaced))
+                                .font(.appSystem(size: 12, design: .monospaced))
                                 .foregroundColor(.secondary)
                                 .textSelection(.enabled)
                         }
                         HStack(spacing: 8) {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundColor(.green)
-                                .font(.caption)
+                                .font(.appCaption)
                             Text("https://\(configService.config.sanitizedRelayURL)")
-                                .font(.system(size: 12, design: .monospaced))
+                                .font(.appSystem(size: 12, design: .monospaced))
                                 .foregroundColor(.secondary)
                                 .textSelection(.enabled)
                         }
@@ -2942,10 +3088,10 @@ struct MacRelayDomainSettingsView: View {
     private func instructionStep(_ number: Int, _ title: String, _ command: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("\(number). \(title)")
-                .font(.subheadline.bold())
+                .font(.appSubheadline.bold())
             HStack {
                 Text(command)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.appSystem(size: 11, design: .monospaced))
                     .foregroundColor(.secondary)
                     .textSelection(.enabled)
                     .padding(6)
@@ -2957,7 +3103,7 @@ struct MacRelayDomainSettingsView: View {
                     NSPasteboard.general.setString(command, forType: .string)
                 } label: {
                     Image(systemName: "doc.on.doc")
-                        .font(.system(size: 11))
+                        .font(.appSystem(size: 11))
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -2974,7 +3120,6 @@ struct MacRelayDomainSettingsView: View {
 /// populates Import relays, Blastr relays, and Blossom mirrors automatically.
 struct MacRelaySettingsView: View {
     @EnvironmentObject var configService: ConfigService
-    @StateObject private var macSyncService = MacRelaySyncService.shared
 
     /// Track computed URLs from the previous save so we can migrate array entries on URL change.
     @State private var prevWssURL: String = ""
@@ -2999,7 +3144,7 @@ struct MacRelaySettingsView: View {
                         )
 
                     Text("Enter your Mac relay in any format — https://, wss://, or bare domain. All derived addresses below are computed automatically.")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                 }
                 .padding(.vertical, 4)
@@ -3016,132 +3161,73 @@ struct MacRelaySettingsView: View {
 
             if !wssURL.isEmpty {
                 Section {
-                    // Always-on: WebSocket sync
+                    // Always-on: Feed Relays
                     HStack(spacing: 12) {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundColor(.green)
-                            .font(.body)
+                            .font(.appBody)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("WebSocket Sync")
-                                .font(.subheadline.bold())
+                            Text("Feed Relays")
+                                .font(.appSubheadline.bold())
                             Text(wssURL)
-                                .font(.system(size: 12, design: .monospaced))
+                                .font(.appSystem(size: 12, design: .monospaced))
                                 .foregroundColor(.secondary)
                                 .lineLimit(1)
                         }
                     }
                     .padding(.vertical, 2)
 
-                    // Include in Import
-                    let inImport = configService.config.importSeedRelays.contains(wssURL)
-                    Toggle(isOn: Binding(
-                        get: { inImport },
-                        set: { include in syncImportRelay(wssURL: wssURL, include: include) }
-                    )) {
+                    // Always-on: Import Relays
+                    HStack(spacing: 12) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                            .font(.appBody)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Include in Import")
-                                .font(.body)
+                            Text("Import Relays")
+                                .font(.appSubheadline.bold())
                             Text(wssURL)
-                                .font(.system(size: 11, design: .monospaced))
+                                .font(.appSystem(size: 12, design: .monospaced))
                                 .foregroundColor(.secondary)
                                 .lineLimit(1)
                         }
                     }
+                    .padding(.vertical, 2)
 
-                    // Include in Blastr
-                    let inBlastr = configService.config.blastrRelays.contains(wssURL)
-                    Toggle(isOn: Binding(
-                        get: { inBlastr },
-                        set: { include in syncBlastrRelay(wssURL: wssURL, include: include) }
-                    )) {
+                    // Always-on: Blastr Relays
+                    HStack(spacing: 12) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                            .font(.appBody)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Include in Blastr")
-                                .font(.body)
+                            Text("Blastr Relays")
+                                .font(.appSubheadline.bold())
                             Text(wssURL)
-                                .font(.system(size: 11, design: .monospaced))
+                                .font(.appSystem(size: 12, design: .monospaced))
                                 .foregroundColor(.secondary)
                                 .lineLimit(1)
                         }
                     }
+                    .padding(.vertical, 2)
 
-                    // Include as Blossom Mirror
-                    let inMirror = configService.config.blossomMirrors.contains(httpsURL)
-                    Toggle(isOn: Binding(
-                        get: { inMirror },
-                        set: { include in syncMirror(httpsURL: httpsURL, include: include) }
-                    )) {
+                    // Always-on: Blossom Mirror
+                    HStack(spacing: 12) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.green)
+                            .font(.appBody)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Include as Blossom Mirror")
-                                .font(.body)
+                            Text("Blossom Mirror")
+                                .font(.appSubheadline.bold())
                             Text(httpsURL)
-                                .font(.system(size: 11, design: .monospaced))
+                                .font(.appSystem(size: 12, design: .monospaced))
                                 .foregroundColor(.secondary)
                                 .lineLimit(1)
                         }
                     }
+                    .padding(.vertical, 2)
                 } header: {
                     Text("Derived Addresses")
                 } footer: {
-                    Text("WebSocket sync runs automatically whenever the app is foregrounded. Enabling Import, Blastr, or Blossom Mirror adds your Mac relay to those lists so outbound traffic also reaches your personal relay.")
-                }
-
-                // ── Sync Controls ──────────────────────────────────────
-                Section {
-                    if macSyncService.isSyncing {
-                        HStack(spacing: 8) {
-                            ProgressView().controlSize(.small)
-                            Text(macSyncService.syncStatus)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    } else if !macSyncService.syncStatus.isEmpty {
-                        HStack(spacing: 6) {
-                            Image(systemName: macSyncService.notesSynced > 0 ? "checkmark.circle.fill" : "info.circle.fill")
-                                .foregroundColor(macSyncService.notesSynced > 0 ? .green : .blue)
-                                .font(.caption)
-                            Text(macSyncService.syncStatus)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-
-                    if let lastSync = macSyncService.lastSyncDate {
-                        HStack(spacing: 6) {
-                            Image(systemName: "clock")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Text("Last sync \(lastSync, style: .relative) ago")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-
-                    HStack(spacing: 12) {
-                        Button(action: { macSyncService.forceSync() }) {
-                            Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(Color.havenPurple)
-                        .disabled(macSyncService.isSyncing)
-
-                        Button(action: {
-                            macSyncService.resetSync()
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                macSyncService.forceSync()
-                            }
-                        }) {
-                            Label("Full Resync", systemImage: "arrow.clockwise")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                        .tint(Color.havenPurple)
-                        .disabled(macSyncService.isSyncing)
-                    }
-                } header: {
-                    Text("Sync")
-                } footer: {
-                    Text("Sync Now fetches notes missed since the last sync. Full Resync resets the timestamp and re-fetches everything from the beginning.")
+                    Text("Your Mac relay is automatically included in all relay lists. Events sync continuously via standard Nostr subscriptions.")
                 }
             }
         }
@@ -3156,51 +3242,18 @@ struct MacRelaySettingsView: View {
         }
     }
 
-    // MARK: - Toggle helpers
-
-    private func syncImportRelay(wssURL: String, include: Bool) {
-        if include {
-            if !configService.config.importSeedRelays.contains(wssURL) {
-                configService.config.importSeedRelays.append(wssURL)
-            }
-        } else {
-            configService.config.importSeedRelays.removeAll { $0 == wssURL }
-        }
-        configService.save()
-    }
-
-    private func syncBlastrRelay(wssURL: String, include: Bool) {
-        if include {
-            if !configService.config.blastrRelays.contains(wssURL) {
-                configService.config.blastrRelays.append(wssURL)
-            }
-        } else {
-            configService.config.blastrRelays.removeAll { $0 == wssURL }
-        }
-        configService.save()
-    }
-
-    private func syncMirror(httpsURL: String, include: Bool) {
-        if include {
-            if !configService.config.blossomMirrors.contains(httpsURL) {
-                configService.config.blossomMirrors.append(httpsURL)
-            }
-        } else {
-            configService.config.blossomMirrors.removeAll { $0 == httpsURL }
-        }
-        configService.save()
-        NostrService.shared.publishServerList()
-    }
-
     // MARK: - URL change migration
 
     /// When the Mac relay URL changes, update any array entries that were derived from the old URL
-    /// so Import relays, Blastr relays, and Blossom Mirrors stay in sync automatically.
+    /// so Feed relays, Import relays, Blastr relays, and Blossom Mirrors stay in sync automatically.
     private func migrateRelayURLs() {
         let newWss = configService.config.macRelayWssURL
         let newHttps = configService.config.macRelayHttpsURL
 
         if !prevWssURL.isEmpty && prevWssURL != newWss {
+            configService.config.feedRelays = configService.config.feedRelays
+                .map { $0 == prevWssURL ? newWss : $0 }
+                .filter { !$0.isEmpty }
             configService.config.importSeedRelays = configService.config.importSeedRelays
                 .map { $0 == prevWssURL ? newWss : $0 }
                 .filter { !$0.isEmpty }
@@ -3236,18 +3289,18 @@ struct BlossomSettingsView: View {
                 if !macHttps.isEmpty {
                     HStack(spacing: 12) {
                         Image(systemName: "desktopcomputer")
-                            .font(.system(size: 18))
+                            .font(.appSystem(size: 18))
                             .foregroundColor(.green)
                             .frame(width: 24, height: 24)
                         
                         VStack(alignment: .leading, spacing: 2) {
                             HStack(spacing: 8) {
                                 Text("Mac Relay Sync Server")
-                                    .font(.subheadline.bold())
+                                    .font(.appSubheadline.bold())
                                     .foregroundColor(.white)
                                 
                                 Text("Active")
-                                    .font(.system(size: 9, weight: .bold))
+                                    .font(.appSystem(size: 9, weight: .bold))
                                     .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
                                     .background(Color.green.opacity(0.15))
@@ -3259,7 +3312,7 @@ struct BlossomSettingsView: View {
                                     )
                             }
                             Text(macHttps)
-                                .font(.system(size: 11, design: .monospaced))
+                                .font(.appSystem(size: 11, design: .monospaced))
                                 .foregroundColor(.secondary)
                                 .lineLimit(1)
                         }
@@ -3269,16 +3322,16 @@ struct BlossomSettingsView: View {
                 } else {
                     HStack(spacing: 12) {
                         Image(systemName: "desktopcomputer.badge.warning")
-                            .font(.system(size: 18))
+                            .font(.appSystem(size: 18))
                             .foregroundColor(.secondary)
                             .frame(width: 24, height: 24)
                         
                         VStack(alignment: .leading, spacing: 2) {
                             Text("No Mac Sync Relay Configured")
-                                .font(.subheadline.bold())
+                                .font(.appSubheadline.bold())
                                 .foregroundColor(.secondary)
                             Text("Configure your Mac relay in the 'Mac Relay' tab to automatically apply it here.")
-                                .font(.caption)
+                                .font(.appCaption)
                                 .foregroundColor(.secondary.opacity(0.7))
                         }
                         Spacer()
@@ -3297,16 +3350,16 @@ struct BlossomSettingsView: View {
                 if mirrors.isEmpty {
                     Text("No additional Blossom servers configured.")
                         .foregroundColor(.secondary)
-                        .font(.subheadline)
+                        .font(.appSubheadline)
                         .padding(.vertical, 4)
                 } else {
                     ForEach(mirrors, id: \.self) { url in
                         HStack {
                             Image(systemName: "server.rack")
-                                .font(.system(size: 14))
+                                .font(.appSystem(size: 14))
                                 .foregroundColor(.havenPurple)
                             Text(url)
-                                .font(.system(size: 12, design: .monospaced))
+                                .font(.appSystem(size: 12, design: .monospaced))
                                 .foregroundColor(.white)
                             Spacer()
                             Button(action: {
@@ -3339,7 +3392,7 @@ struct BlossomSettingsView: View {
                     Button(action: addMirror) {
                         Image(systemName: "plus.circle.fill")
                             .foregroundColor(.green)
-                            .font(.title3)
+                            .font(.appTitle3)
                     }
                     .buttonStyle(.plain)
                     .disabled(newMirrorURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -3356,10 +3409,10 @@ struct BlossomSettingsView: View {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Mirror from Servers")
-                            .font(.body)
+                            .font(.appBody)
                             .foregroundColor(.white)
                         Text("Download your media from external Blossom mirrors to local storage")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.secondary)
                     }
                     Spacer()
@@ -3398,10 +3451,10 @@ struct BlossomSettingsView: View {
                 )) {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Auto-Mirror Media")
-                            .font(.body)
+                            .font(.appBody)
                             .foregroundColor(.white)
                         Text("Automatically download your media from mirrors when the relay starts")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.secondary)
                     }
                 }

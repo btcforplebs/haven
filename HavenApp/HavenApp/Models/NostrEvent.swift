@@ -40,6 +40,7 @@ struct NostrEvent: Codable, Identifiable {
         case 22242: return "Client Auth"
         case 30023: return "Long-form Post"
         case 30024: return "Draft Long-form"
+        case 31234: return "Draft"
         case 31922: return "Date-based Event"
         case 31923: return "Time-based Event"
         case 31924: return "Calendar"
@@ -73,9 +74,7 @@ struct NostrEvent: Codable, Identifiable {
 
     // MARK: - URL Extraction
 
-    private static let mediaRegex: NSRegularExpression? = {
-        try? NSRegularExpression(pattern: #"https?://\S+?\.(?:jpg|jpeg|png|gif|webp|avif|tiff|mp4|mov|webm|m4v|heic|hevc|h265)(?:\?\S+)?"#, options: .caseInsensitive)
-    }()
+    private static let mediaRegex: NSRegularExpression? = SupportedMediaFormats.mediaExtensionRegex
 
     private static let blossomRegex: NSRegularExpression? = {
         try? NSRegularExpression(pattern: #"https?://\S+/[a-f0-9]{64}(?=\s|$)"#, options: .caseInsensitive)

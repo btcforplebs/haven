@@ -52,6 +52,17 @@ struct ComposeView: View {
     @State private var mentionResults: [FeedProfile] = []
     @State private var taggedPubkeys: [String] = []         // hex pubkeys of tagged users
 
+    // Draft auto-save state
+    @State private var draftId: String? = nil
+    @State private var autoSaveTask: Task<Void, Never>? = nil
+    @State private var lastSavedContent: String = ""
+    @State private var showingDraftPicker = false
+    @StateObject private var draftService = DraftService.shared
+
+    // Draft-loaded reply/quote context (overrides init-provided values)
+    @State private var draftReplyTo: FeedNote? = nil
+    @State private var draftQuoteTo: FeedNote? = nil
+
     private var blossomService: BlossomService {
         BlossomService(configService: configService, nostrService: nostrService)
     }
@@ -60,8 +71,15 @@ struct ComposeView: View {
     var replyTo: FeedNote?
     // Optional: for quote posts
     var quoteTo: FeedNote?
+
+    /// Effective reply target: draft-loaded value takes precedence over init-provided value.
+    private var effectiveReplyTo: FeedNote? { draftReplyTo ?? replyTo }
+    /// Effective quote target: draft-loaded value takes precedence over init-provided value.
+    private var effectiveQuoteTo: FeedNote? { draftQuoteTo ?? quoteTo }
     // Optional: pre-filled content (used when editing a pending post)
     var initialContent: String = ""
+    // Optional: draft ID when restoring a saved draft
+    var restoredDraftId: String? = nil
     
     struct Attachment: Identifiable {
         let id = UUID()
@@ -96,7 +114,7 @@ struct ComposeView: View {
 
             ScrollView {
                 VStack(spacing: 16) {
-                    if let parent = replyTo {
+                    if let parent = effectiveReplyTo {
                         replyHeader(parent: parent)
                     }
 
@@ -140,12 +158,13 @@ struct ComposeView: View {
 
                             TextEditor(text: $content)
                                 .focused($isTextEditorFocused)
-                                .font(.system(size: 16))
+                                .font(.appSystem(size: 16))
                                 .frame(minHeight: 200)
                                 .scrollContentBackground(.hidden)
                                 .accessibilityLabel("Post content")
                                 .onChange(of: content) { _, newValue in
                                     updateMentionQuery(in: newValue)
+                                    scheduleAutoSave(newValue)
                                 }
                         }
                     }
@@ -154,7 +173,7 @@ struct ComposeView: View {
                         attachmentGrid
                     }
 
-                    if let quoted = quoteTo {
+                    if let quoted = effectiveQuoteTo {
                         QuotedNoteView(note: quoted)
                             .environmentObject(nostrService)
                     }
@@ -170,14 +189,34 @@ struct ComposeView: View {
             footer
         }
             .background(Color.platformSecondaryGroupedBackground)
-            .navigationTitle(replyTo != nil ? "Reply" : quoteTo != nil ? "Quote" : "New Note")
+            .navigationTitle(effectiveReplyTo != nil ? "Reply" : effectiveQuoteTo != nil ? "Quote" : "New Note")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
                 #if os(iOS)
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { performDismiss() }
+                    HStack(spacing: 8) {
+                        Button("Cancel") { performDismiss() }
+
+                        if !draftService.draftsForActiveAccount.isEmpty && draftId == nil {
+                            Button {
+                                showingDraftPicker = true
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "doc.text")
+                                        .font(.appSystem(size: 12))
+                                    Text("\(draftService.draftsForActiveAccount.count)")
+                                        .font(.appCaption2.bold())
+                                }
+                                .foregroundColor(.havenPurple)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.havenPurple.opacity(0.12))
+                                .clipShape(Capsule())
+                            }
+                        }
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Post") { postNote() }
@@ -201,11 +240,17 @@ struct ComposeView: View {
                     content = initialContent
                     extractMentionsFromContent(initialContent)
                 }
+                if let restored = restoredDraftId {
+                    draftId = restored
+                    lastSavedContent = initialContent.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                Task { await draftService.fetchDrafts() }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                     isTextEditorFocused = true
                 }
             }
             .onDisappear {
+                // performDismiss already handles auto-save cancellation and final save.
                 cleanupAttachmentTempFiles()
             }
             .sheet(isPresented: $showBlossomPicker) {
@@ -224,6 +269,16 @@ struct ComposeView: View {
                     onAppearLoad: { loadBlossomMedia() }
                 )
             }
+            .sheet(isPresented: $showingDraftPicker) {
+                DraftPickerView(
+                    onSelect: { draft in
+                        loadDraft(draft)
+                    },
+                    onDelete: { draft in
+                        Task { await DraftService.shared.deleteDraft(id: draft.id) }
+                    }
+                )
+            }
 
     }
 
@@ -239,11 +294,11 @@ struct ComposeView: View {
                         AvatarView(url: profile.pictureURL, pubkey: profile.pubkey, size: 36)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(profile.bestName)
-                                .font(.system(size: 14, weight: .semibold))
+                                .font(.appSystem(size: 14, weight: .semibold))
                                 .foregroundColor(.primary)
                             if let nip05 = profile.nip05, !nip05.isEmpty {
                                 Text(nip05)
-                                    .font(.system(size: 12))
+                                    .font(.appSystem(size: 12))
                                     .foregroundColor(.secondary)
                             }
                         }
@@ -303,7 +358,7 @@ struct ComposeView: View {
 
         // Include thread participants when replying so mentions work for
         // people in the conversation even if you don't follow them.
-        if let parent = replyTo {
+        if let parent = effectiveReplyTo {
             candidatePubkeys.insert(parent.pubkey)
             for tag in parent.tags where tag.count >= 2 && tag[0] == "p" {
                 candidatePubkeys.insert(tag[1])
@@ -318,7 +373,7 @@ struct ComposeView: View {
         if query.isEmpty {
             // Show first 5 profiles when query is empty (just typed @)
             // Prioritize thread participants for replies
-            if let parent = replyTo {
+            if let parent = effectiveReplyTo {
                 var threadPubkeys: [String] = [parent.pubkey]
                 for tag in parent.tags where tag.count >= 2 && tag[0] == "p" {
                     if !threadPubkeys.contains(tag[1]) {
@@ -418,11 +473,30 @@ struct ComposeView: View {
             Button("Cancel") { performDismiss() }
                 .buttonStyle(.plain)
                 .foregroundColor(.secondary)
-            
+
+            if !draftService.draftsForActiveAccount.isEmpty && draftId == nil {
+                Button {
+                    showingDraftPicker = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "doc.text")
+                            .font(.appSystem(size: 12))
+                        Text("\(draftService.draftsForActiveAccount.count)")
+                            .font(.appCaption2.bold())
+                    }
+                    .foregroundColor(.havenPurple)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.havenPurple.opacity(0.12))
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+
             Spacer()
-            
-            Text(replyTo != nil ? "Reply" : quoteTo != nil ? "Quote" : "New Note")
-                .font(.headline)
+
+            Text(effectiveReplyTo != nil ? "Reply" : effectiveQuoteTo != nil ? "Quote" : "New Note")
+                .font(.appHeadline)
             
             Spacer()
             
@@ -438,20 +512,21 @@ struct ComposeView: View {
 
     private var footer: some View {
         let purple = Color.havenPurple
+        let title3 = Font.appTitle3
         return HStack(spacing: 12) {
             PhotosPicker(selection: $selectedItems, maxSelectionCount: max(1, 4 - attachments.count), matching: .images) {
                 Image(systemName: "photo.on.rectangle.angled")
-                    .font(.title3)
+                    .font(title3)
                     .foregroundColor(purple)
                     .padding(10)
                     .background(purple.opacity(0.1))
                     .clipShape(Circle())
             }
             .buttonStyle(.plain)
-            
+
             PhotosPicker(selection: $selectedItems, maxSelectionCount: max(1, 4 - attachments.count), matching: .videos) {
                 Image(systemName: "video.fill")
-                    .font(.title3)
+                    .font(title3)
                     .foregroundColor(purple)
                     .padding(10)
                     .background(purple.opacity(0.1))
@@ -461,7 +536,7 @@ struct ComposeView: View {
 
             Button(action: handlePasteFromClipboard) {
                 Image(systemName: "wand.and.stars")
-                    .font(.title3)
+                    .font(.appTitle3)
                     .foregroundColor(attachments.count >= 4 ? purple.opacity(0.3) : purple)
                     .padding(10)
                     .background(purple.opacity(0.1))
@@ -474,13 +549,13 @@ struct ComposeView: View {
             
             if isUploading, let msg = uploadInfoProvider.uploadMessage {
                 Text(msg)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.appSystem(size: 13, weight: .medium))
                     .foregroundColor(.secondary)
                     .padding(.trailing, 8)
                 ProgressView().controlSize(.small).padding(.trailing, 8)
             } else if isPosting {
                 Text("Posting note...")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.appSystem(size: 13, weight: .medium))
                     .foregroundColor(.secondary)
                     .padding(.trailing, 8)
                 ProgressView().controlSize(.small).padding(.trailing, 8)
@@ -488,7 +563,7 @@ struct ComposeView: View {
             
             Button(action: { showBlossomPicker = true }) {
                 Image(systemName: "camera.macro")
-                    .font(.title3)
+                    .font(.appTitle3)
                     .foregroundColor(purple)
                     .padding(10)
                     .background(purple.opacity(0.1))
@@ -515,11 +590,11 @@ struct ComposeView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Replying to \(nostrService.profiles[parent.pubkey]?.bestName ?? String(parent.pubkey.prefix(8)))...")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(.appSystem(size: 13, weight: .bold))
                     .foregroundColor(.secondary)
                 
                 Text(parent.content)
-                    .font(.system(size: 13, weight: .regular))
+                    .font(.appSystem(size: 13, weight: .regular))
                     .foregroundColor(.secondary.opacity(0.7))
                     .lineLimit(3)
                     .padding(.bottom, 4)
@@ -557,7 +632,7 @@ struct ComposeView: View {
                                 ZStack {
                                     Color.platformSecondaryGroupedBackground
                                     Image(systemName: attachment.type.conforms(to: .movie) || attachment.type.conforms(to: .video) ? "video.fill" : "doc.fill")
-                                        .font(.title)
+                                        .font(.appTitle)
                                         .foregroundColor(Color.havenPurple.opacity(0.8))
                                 }
                                 .frame(width: 100, height: 100)
@@ -576,7 +651,7 @@ struct ComposeView: View {
                                     .frame(width: 32, height: 32)
                                 
                                 Image(systemName: "play.fill")
-                                    .font(.system(size: 14, weight: .bold))
+                                    .font(.appSystem(size: 14, weight: .bold))
                                     .foregroundColor(.white)
                                     .offset(x: 1)
                             }
@@ -604,9 +679,10 @@ struct ComposeView: View {
     
     private func loadSelectedItems() {
         for item in selectedItems {
-            // Get the specific content type
+            // Check ALL supported content types — .first can be a non-video type
+            // even for videos (e.g. HEVC, iCloud items, combined pickers).
+            let isVideo = item.supportedContentTypes.contains { $0.conforms(to: .movie) || $0.conforms(to: .video) }
             let contentType = item.supportedContentTypes.first ?? .image
-            let isVideo = contentType.conforms(to: .movie) || contentType.conforms(to: .video)
 
             if isVideo {
                 loadVideoItem(item, contentType: contentType)
@@ -618,16 +694,14 @@ struct ComposeView: View {
     }
 
     private func loadVideoItem(_ item: PhotosPickerItem, contentType: UTType) {
-        item.loadTransferable(type: ImportedVideoFile.self) { result in
-            switch result {
-            case .success(let video):
-                guard let video = video else { return }
-                // Prefer the actual file extension's UTType (e.g. .mpeg4Movie)
-                // so preferredMIMEType yields the right Content-Type on upload.
+        Task {
+            // Try file-based ImportedVideoFile first, fall back to Data if the system
+            // can't provide a .movie file representation (HEVC transcoding, iCloud, etc.).
+            if let video = try? await item.loadTransferable(type: ImportedVideoFile.self) {
                 let derivedType = UTType(filenameExtension: video.url.pathExtension) ?? contentType
                 let videoURL = video.url
-                Task { @MainActor in
-                    let thumbnail = await self.generateVideoThumbnail(url: videoURL)
+                let thumbnail = await self.generateVideoThumbnail(url: videoURL)
+                await MainActor.run {
                     self.attachments.append(Attachment(
                         data: nil,
                         fileURL: videoURL,
@@ -635,12 +709,33 @@ struct ComposeView: View {
                         thumbnail: thumbnail
                     ))
                 }
-            case .failure(let error):
-                #if DEBUG
-                print("Failed to load video: \(error)")
-                #endif
-                DispatchQueue.main.async {
-                    self.error = "Failed to load video: \(error.localizedDescription)"
+            } else if let data = try? await item.loadTransferable(type: Data.self) {
+                // Fallback: write bytes to temp file so the upload can stream from disk.
+                let videoType = item.supportedContentTypes.first { $0.conforms(to: .movie) || $0.conforms(to: .video) } ?? contentType
+                let ext = videoType.preferredFilenameExtension ?? "mp4"
+                let dest = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("haven-upload-\(UUID().uuidString)")
+                    .appendingPathExtension(ext)
+                do {
+                    try data.write(to: dest)
+                    let derivedType = UTType(filenameExtension: ext) ?? videoType
+                    let thumbnail = await self.generateVideoThumbnail(url: dest)
+                    await MainActor.run {
+                        self.attachments.append(Attachment(
+                            data: nil,
+                            fileURL: dest,
+                            type: derivedType,
+                            thumbnail: thumbnail
+                        ))
+                    }
+                } catch {
+                    await MainActor.run {
+                        self.error = "Failed to load video: \(error.localizedDescription)"
+                    }
+                }
+            } else {
+                await MainActor.run {
+                    self.error = "Failed to load video file."
                 }
             }
         }
@@ -772,11 +867,10 @@ struct ComposeView: View {
             ))
         } else if let clipboardString = PlatformClipboard.getString() {
             let trimmed = clipboardString.trimmingCharacters(in: .whitespacesAndNewlines)
-            let knownExts = ["jpg", "jpeg", "png", "gif", "webp", "mp4", "mov", "webm"]
             if let url = URL(string: trimmed),
                (url.scheme == "http" || url.scheme == "https") {
                 let ext = url.pathExtension.lowercased()
-                let hasKnownExt = knownExts.contains(ext)
+                let hasKnownExt = SupportedMediaFormats.allExtensions.contains(ext)
                 // Media URL — download and add as attachment
                 Task {
                     guard let (data, response) = try? await URLSession.shared.data(from: url) else {
@@ -789,18 +883,8 @@ struct ComposeView: View {
                     let resolvedExt: String
                     if hasKnownExt {
                         resolvedExt = ext
-                    } else if contentType.hasPrefix("image/gif") {
-                        resolvedExt = "gif"
-                    } else if contentType.hasPrefix("image/png") {
-                        resolvedExt = "png"
-                    } else if contentType.hasPrefix("image/jpeg") {
-                        resolvedExt = "jpeg"
-                    } else if contentType.hasPrefix("image/webp") {
-                        resolvedExt = "webp"
-                    } else if contentType.hasPrefix("video/mp4") {
-                        resolvedExt = "mp4"
-                    } else if contentType.hasPrefix("video/webm") {
-                        resolvedExt = "webm"
+                    } else if let mimeExt = SupportedMediaFormats.extension(forMime: contentType) {
+                        resolvedExt = mimeExt
                     } else if !hasKnownExt {
                         // Not a recognized media URL
                         await MainActor.run { error = "Clipboard does not contain an image or media URL" }
@@ -808,7 +892,7 @@ struct ComposeView: View {
                     } else {
                         resolvedExt = ext
                     }
-                    let isVideo = ["mp4", "mov", "webm"].contains(resolvedExt)
+                    let isVideo = SupportedMediaFormats.videoExtensions.contains(resolvedExt)
                     if isVideo {
                         let tempURL = FileManager.default.temporaryDirectory
                             .appendingPathComponent("haven-paste-\(UUID().uuidString)")
@@ -845,6 +929,8 @@ struct ComposeView: View {
 
     private func postNote() {
         isPosting = true
+        autoSaveTask?.cancel()
+        autoSaveTask = nil
         uploadInfoProvider.startUpload(totalCount: attachments.count)
 
         Task {
@@ -910,7 +996,7 @@ struct ComposeView: View {
             var tags: [[String]] = []
             let relayHint = ConfigService.shared.config.nostrURL
 
-            if let parent = replyTo {
+            if let parent = effectiveReplyTo {
                 // NIP-10 tags — for reposts (kind 6), reply to the original note, not the repost
                 let effectiveParentId: String
                 let effectiveParentPubkey: String
@@ -978,7 +1064,7 @@ struct ComposeView: View {
             }
 
             // Quote post: append nevent reference and q tag (NIP-18)
-            if let quoted = quoteTo {
+            if let quoted = effectiveQuoteTo {
                 finalContent += "\nnostr:\(quoted.nevent)"
                 tags.append(["q", quoted.id, relayHint, quoted.pubkey])
                 if !tags.contains(where: { $0.count >= 2 && $0[0] == "p" && $0[1] == quoted.pubkey }) {
@@ -987,7 +1073,7 @@ struct ComposeView: View {
             }
 
             // 3. Sign
-            let isReply = replyTo != nil
+            let isReply = effectiveReplyTo != nil
             print("ComposeView: signing \(isReply ? "reply" : "post") – mode=\(configService.config.activeSigningMode()) nip46connected=\(NIP46Service.shared.isConnected) tags=\(tags.count)")
             guard let event = await nostrService.signEventAsync(kind: 1, content: finalContent, tags: tags) else {
                 await MainActor.run {
@@ -1025,10 +1111,18 @@ struct ComposeView: View {
                 PendingPostManager.shared.startPost(
                     event: event,
                     content: finalContent,
-                    replyTo: self.replyTo,
-                    quoteTo: self.quoteTo,
+                    replyTo: self.effectiveReplyTo,
+                    quoteTo: self.effectiveQuoteTo,
                     nostrService: self.nostrService
                 )
+
+                // Clean up the draft now that the post is going out
+                if let draftId = self.draftId {
+                    Task { await DraftService.shared.deleteDraft(id: draftId) }
+                }
+
+                // Mark content as "saved" so performDismiss won't re-save the draft
+                self.lastSavedContent = self.content.trimmingCharacters(in: .whitespacesAndNewlines)
 
                 isPosting = false
                 performDismiss()
@@ -1086,10 +1180,91 @@ struct ComposeView: View {
     }
 
     private func performDismiss() {
+        autoSaveTask?.cancel()
+
+        // Final save to local cache if content changed since last save
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty
+            && (trimmed.contains(" ") || trimmed.count > 10)
+            && trimmed != lastSavedContent {
+            let id = draftId ?? UUID().uuidString
+            if draftId == nil { draftId = id }
+
+            // Fire off save — local disk write happens immediately inside saveDraft,
+            // relay sync is best-effort and queued if unavailable
+            Task {
+                await DraftService.shared.saveDraft(
+                    draftId: id,
+                    content: content,
+                    replyTo: effectiveReplyTo,
+                    quoteTo: effectiveQuoteTo,
+                    taggedPubkeys: taggedPubkeys
+                )
+            }
+        }
+
         if let onDismiss = onDismiss {
             onDismiss()
         } else {
             dismiss()
+        }
+    }
+
+    // MARK: - Draft Auto-Save
+
+    private func scheduleAutoSave(_ text: String) {
+        autoSaveTask?.cancel()
+
+        // Don't schedule saves while a post is in progress
+        guard !isPosting else { return }
+
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Don't save empty content or very short fragments
+        guard !trimmed.isEmpty, trimmed.contains(" ") || trimmed.count > 10 else { return }
+        // Don't save if nothing changed since last save
+        guard trimmed != lastSavedContent else { return }
+
+        autoSaveTask = Task {
+            try? await Task.sleep(nanoseconds: 1_500_000_000) // 1.5s debounce
+            guard !Task.isCancelled else { return }
+            // Re-check after waking — a post may have started during the debounce
+            guard !isPosting else { return }
+
+            let id = draftId ?? UUID().uuidString
+            if draftId == nil {
+                await MainActor.run { draftId = id }
+            }
+
+            await DraftService.shared.saveDraft(
+                draftId: id,
+                content: content,
+                replyTo: effectiveReplyTo,
+                quoteTo: effectiveQuoteTo,
+                taggedPubkeys: taggedPubkeys
+            )
+            await MainActor.run { lastSavedContent = trimmed }
+        }
+    }
+
+    private func loadDraft(_ draft: Draft) {
+        draftId = draft.id
+        content = draft.content
+        lastSavedContent = draft.content.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Restore reply context from saved draft
+        if let replyId = draft.replyToId {
+            draftReplyTo = FeedService.shared.notes.first(where: { $0.id == replyId })
+                ?? FeedService.shared.parentNotesCache[replyId]
+        } else {
+            draftReplyTo = nil
+        }
+
+        // Restore quote context from saved draft
+        if let quoteId = draft.quoteId {
+            draftQuoteTo = FeedService.shared.notes.first(where: { $0.id == quoteId })
+                ?? FeedService.shared.parentNotesCache[quoteId]
+        } else {
+            draftQuoteTo = nil
         }
     }
 }
@@ -1172,17 +1347,17 @@ struct BlossomMediaPickerSheet: View {
                             .controlSize(.large)
                             .tint(Color.havenPurple)
                         Text("Loading media...")
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.appSystem(size: 14, weight: .medium))
                             .foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if blossomMedia.isEmpty {
                     VStack(spacing: 16) {
                         Image(systemName: "camera.macro")
-                            .font(.system(size: 48, weight: .thin))
+                            .font(.appSystem(size: 48, weight: .thin))
                             .foregroundColor(Color.havenPurple.opacity(0.6))
                         Text("No media on Blossom")
-                            .font(.system(size: 16, weight: .medium))
+                            .font(.appSystem(size: 16, weight: .medium))
                             .foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1227,7 +1402,7 @@ private struct BlossomPickerGridItem: View {
                         ZStack {
                             Color(red: 0.1, green: 0.1, blue: 0.14)
                             Image(systemName: "waveform")
-                                .font(.system(size: 28))
+                                .font(.appSystem(size: 28))
                                 .foregroundColor(.havenPurple)
                         }
                     } else if item.isAnimatedGIF {

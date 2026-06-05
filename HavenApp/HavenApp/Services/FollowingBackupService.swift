@@ -41,7 +41,9 @@ class FollowingBackupService: ObservableObject {
     }
 
     private static func fileURL(forAccountKey key: String) -> URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("Haven")
+        }
         let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
         try? FileManager.default.createDirectory(at: havenDir, withIntermediateDirectories: true)
         let safeKey = key.isEmpty ? "owner" : key.replacingOccurrences(of: "/", with: "_")

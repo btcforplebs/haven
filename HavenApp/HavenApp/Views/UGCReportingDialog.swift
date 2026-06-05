@@ -37,7 +37,7 @@ public struct UGCReportingDialog: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     Text("Why are you reporting this?")
-                        .font(.headline)
+                        .font(.appHeadline)
                         .padding(.top)
                     
                     VStack(spacing: 8) {
@@ -48,7 +48,7 @@ public struct UGCReportingDialog: View {
                     
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Additional details (optional)")
-                            .font(.subheadline)
+                            .font(.appSubheadline)
                             .foregroundColor(.secondary)
                         
                         TextEditor(text: $description)
@@ -64,7 +64,7 @@ public struct UGCReportingDialog: View {
                             Image(systemName: "hand.raised.fill")
                                 .foregroundColor(.orange)
                             Text("Reporting will also automatically block this user for you.")
-                                .font(.footnote)
+                                .font(.appFootnote)
                                 .foregroundColor(.secondary)
                         }
                         .padding(.vertical, 8)
@@ -82,12 +82,12 @@ public struct UGCReportingDialog: View {
     private var header: some View {
         HStack {
             Text("Report Content")
-                .font(.system(size: 18, weight: .bold))
+                .font(.appSystem(size: 18, weight: .bold))
             Spacer()
             Button(action: { performDismiss() }) {
                 Image(systemName: "xmark.circle.fill")
                     .foregroundColor(.secondary)
-                    .font(.title2)
+                    .font(.appTitle2)
             }
             .buttonStyle(.plain)
         }

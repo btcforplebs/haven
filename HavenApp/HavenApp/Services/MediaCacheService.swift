@@ -70,7 +70,9 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
 
 
     private init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            fatalError("Application Support directory unavailable")
+        }
         let havenAppSupport = appSupport.appendingPathComponent("Haven", isDirectory: true)
         let dbDir = havenAppSupport.appendingPathComponent("haven_database", isDirectory: true)
         self.cacheDirectory = dbDir.appendingPathComponent("cache")
@@ -254,6 +256,12 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
         guard !filename.isEmpty, filename != ".", filename != ".." else { return nil }
         let fileURL = blossomDirectory.appendingPathComponent(filename)
         return FileManager.default.fileExists(atPath: fileURL.path) ? fileURL : nil
+    }
+
+    /// Returns true if a file with the given SHA256 hash exists in the local blossom directory.
+    func isInLocalBlossom(hash: String) -> Bool {
+        guard hash.count == 64, hash.allSatisfy({ $0.isHexDigit }) else { return false }
+        return blossomFile(forHash: hash, extensionHint: "") != nil
     }
 
     private func blossomFile(forHash hash: String, extensionHint: String) -> URL? {

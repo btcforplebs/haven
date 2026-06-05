@@ -26,6 +26,7 @@ struct HavenConfig: Codable, Equatable {
     var disableMediaCache: Bool = false
     var autoplayVideos: Bool = true
     var cacheTTLDays: Int = 7
+    var prefetchProfilePictures: Bool = false
     var allowNetworkAccess: Bool = false // Bind to 0.0.0.0 instead of 127.0.0.1 (for Tailscale, etc.)
     var ownerNcryptsec: String = "" // NIP-49 encrypted private key
     var ownerNsec: String = "" // Deprecated: kept for migration purposes only
@@ -33,7 +34,11 @@ struct HavenConfig: Codable, Equatable {
     var themeColor: String = "orange"
     var autoLoadNewPosts: Bool = false
     var showReposts: Bool = true
-    
+    var useOLED: Bool = false
+    var textSizeScale: Double = 1.0
+    var useFeedCompactMode: Bool = true // Compact Reddit-style feed view
+    var defaultReactionEmoji: String = "❤️" // Default emoji for quick reactions
+
     // Mac Relay Sync (iOS only)
     var macRelayURL: String = "" // wss:// URL to a remote Mac Haven relay to sync missed notes
     
@@ -57,7 +62,7 @@ struct HavenConfig: Codable, Equatable {
     var nip46ClientPubkey: String = "" // Client keypair hex pubkey
 
     // Push Notifications
-    var pushServerURL: String = ""
+    var pushServerURL: String = "https://push.nostrvault.app"
     var enableRemotePushServer: Bool = false // Kept for migration only
     var enablePushNotifications: Bool = false
     var notificationPrefsPerAccount: [String: NotificationPreferences] = [:]
@@ -97,7 +102,8 @@ struct HavenConfig: Codable, Equatable {
         "wss://relay.primal.net",
         "wss://relay.snort.social",
         "wss://relay.nos.social",
-        "wss://relay.btcforplebs.com"
+        "wss://relay.btcforplebs.com",
+        "wss://nostr.land"
     ]
     var importOwnerNotesFetchTimeoutSeconds: Int = 60
     var importTaggedNotesFetchTimeoutSeconds: Int = 120
@@ -150,6 +156,10 @@ struct HavenConfig: Codable, Equatable {
     // When set, overrides auto-detection. Allows accounts to hold both a local key and a bunker.
     var accountSigningModes: [String: String] = [:]
 
+    // Per-account NIP-65 relay list publishing: [npub: enabled]
+    // When true, publishes Kind 10002 advertising this relay as the account's inbox.
+    var publishRelayListPerAccount: [String: Bool] = [:]
+
     // Blacklisted Npubs
     var blacklistedNpubs: [String] = []
     var blacklistedNpubsFile: String = "blacklisted_npubs.json"
@@ -159,6 +169,8 @@ struct HavenConfig: Codable, Equatable {
     // Last processed/published Kind 10000 event timestamp per account (npub: created_at)
     var blockedNpubsLastSyncTimestamp: [String: Int64] = [:]
 
+    // Per-account throttled list (dictionary of account npub: {throttled npub: max visible posts})
+    var throttledAccountsPerAccount: [String: [String: Int]] = [:]
 
     // Backup
     var backupProvider: String = "none" // none, s3
@@ -177,7 +189,8 @@ struct HavenConfig: Codable, Equatable {
     
     enum CodingKeys: String, CodingKey {
         case ownerNpub, relayURL, relayPort, dbEngine, blossomPath, logLevel
-        case launchAtLogin, autoStartRelay, hasCompletedSetup, hasSeenWelcome, hasAcceptedToS, setupMode, disableMediaCache, autoplayVideos, cacheTTLDays, allowNetworkAccess, ownerNcryptsec, ownerNsec, showReplies, nwcURI, defaultZapAmount, themeColor, autoLoadNewPosts, showReposts, showBitcoinWallet, cashuMintURL
+        case launchAtLogin, autoStartRelay, hasCompletedSetup, hasSeenWelcome, hasAcceptedToS, setupMode, disableMediaCache, autoplayVideos, cacheTTLDays, prefetchProfilePictures, allowNetworkAccess, ownerNcryptsec, ownerNsec, showReplies, nwcURI, defaultZapAmount, themeColor, autoLoadNewPosts, showReposts, showBitcoinWallet, cashuMintURL
+        case useOLED, textSizeScale, useFeedCompactMode, defaultReactionEmoji
         case signingMode, nip46BunkerURI, nip46SignerPubkey, nip46RelayURL, nip46Secret, nip46ClientSecretKey, nip46ClientPubkey
         case pushServerURL, enableRemotePushServer, enablePushNotifications, notificationPrefsPerAccount
         case macRelayURL
@@ -193,10 +206,12 @@ struct HavenConfig: Codable, Equatable {
         case blacklistedNpubs, blacklistedNpubsFile
         case blockedNpubsPerAccount
         case blockedNpubsLastSyncTimestamp
+        case throttledAccountsPerAccount
         case activeAccountNpub
         case accountCredentials
         case accountBunkerConfigs
         case accountSigningModes
+        case publishRelayListPerAccount
         case backupProvider, backupIntervalHours
         case s3AccessKeyId, s3SecretKey, s3Endpoint, s3Region, s3BucketName
     }
@@ -222,6 +237,7 @@ struct HavenConfig: Codable, Equatable {
         disableMediaCache = try container.decodeIfPresent(Bool.self, forKey: .disableMediaCache) ?? defaults.disableMediaCache
         autoplayVideos = try container.decodeIfPresent(Bool.self, forKey: .autoplayVideos) ?? defaults.autoplayVideos
         cacheTTLDays = try container.decodeIfPresent(Int.self, forKey: .cacheTTLDays) ?? defaults.cacheTTLDays
+        prefetchProfilePictures = try container.decodeIfPresent(Bool.self, forKey: .prefetchProfilePictures) ?? defaults.prefetchProfilePictures
         allowNetworkAccess = try container.decodeIfPresent(Bool.self, forKey: .allowNetworkAccess) ?? defaults.allowNetworkAccess
         ownerNcryptsec = try container.decodeIfPresent(String.self, forKey: .ownerNcryptsec) ?? defaults.ownerNcryptsec
         ownerNsec = try container.decodeIfPresent(String.self, forKey: .ownerNsec) ?? defaults.ownerNsec
@@ -234,6 +250,10 @@ struct HavenConfig: Codable, Equatable {
         showReposts = try container.decodeIfPresent(Bool.self, forKey: .showReposts) ?? defaults.showReposts
         showBitcoinWallet = try container.decodeIfPresent(Bool.self, forKey: .showBitcoinWallet) ?? defaults.showBitcoinWallet
         cashuMintURL = try container.decodeIfPresent(String.self, forKey: .cashuMintURL) ?? defaults.cashuMintURL
+        useOLED = try container.decodeIfPresent(Bool.self, forKey: .useOLED) ?? defaults.useOLED
+        textSizeScale = try container.decodeIfPresent(Double.self, forKey: .textSizeScale) ?? defaults.textSizeScale
+        useFeedCompactMode = try container.decodeIfPresent(Bool.self, forKey: .useFeedCompactMode) ?? defaults.useFeedCompactMode
+        defaultReactionEmoji = try container.decodeIfPresent(String.self, forKey: .defaultReactionEmoji) ?? defaults.defaultReactionEmoji
 
         signingMode = try container.decodeIfPresent(String.self, forKey: .signingMode) ?? defaults.signingMode
         nip46BunkerURI = try container.decodeIfPresent(String.self, forKey: .nip46BunkerURI) ?? defaults.nip46BunkerURI
@@ -299,11 +319,13 @@ struct HavenConfig: Codable, Equatable {
         
         blockedNpubsPerAccount = try container.decodeIfPresent([String: [String]].self, forKey: .blockedNpubsPerAccount) ?? defaults.blockedNpubsPerAccount
         blockedNpubsLastSyncTimestamp = try container.decodeIfPresent([String: Int64].self, forKey: .blockedNpubsLastSyncTimestamp) ?? defaults.blockedNpubsLastSyncTimestamp
-        
+        throttledAccountsPerAccount = try container.decodeIfPresent([String: [String: Int]].self, forKey: .throttledAccountsPerAccount) ?? defaults.throttledAccountsPerAccount
+
         activeAccountNpub = try container.decodeIfPresent(String.self, forKey: .activeAccountNpub) ?? defaults.activeAccountNpub
         accountCredentials = try container.decodeIfPresent([String: String].self, forKey: .accountCredentials) ?? defaults.accountCredentials
         accountBunkerConfigs = try container.decodeIfPresent([String: AccountBunkerConfig].self, forKey: .accountBunkerConfigs) ?? defaults.accountBunkerConfigs
         accountSigningModes = try container.decodeIfPresent([String: String].self, forKey: .accountSigningModes) ?? defaults.accountSigningModes
+        publishRelayListPerAccount = try container.decodeIfPresent([String: Bool].self, forKey: .publishRelayListPerAccount) ?? defaults.publishRelayListPerAccount
 
         // Migration: move global NIP-46 config into per-account dict
         if signingMode == "nip46" && accountBunkerConfigs.isEmpty && !ownerNpub.isEmpty {
@@ -352,6 +374,12 @@ struct HavenConfig: Codable, Equatable {
         if let cfg = accountBunkerConfigs[activeNpub], !cfg.bunkerURI.isEmpty || !cfg.signerPubkey.isEmpty {
             return "nip46"
         }
+
+        // Fallback for initial setup: no npub exists yet, check flat config fields
+        if activeNpub.isEmpty && signingMode == "nip46" && (!nip46SignerPubkey.isEmpty || !nip46BunkerURI.isEmpty) {
+            return "nip46"
+        }
+
         return "local"
     }
 
@@ -394,6 +422,42 @@ struct HavenConfig: Codable, Equatable {
             }
         }
         return mirrors
+    }
+
+    /// Active feed relays, including the Mac relay if configured.
+    var activeFeedRelays: [String] {
+        var relays = feedRelays
+        let macWss = macRelayWssURL
+        if !macWss.isEmpty {
+            if !relays.contains(macWss) {
+                relays.insert(macWss, at: 0)
+            }
+        }
+        return relays
+    }
+
+    /// Active blastr relays, including the Mac relay if configured.
+    var activeBlastrRelays: [String] {
+        var relays = blastrRelays
+        let macWss = macRelayWssURL
+        if !macWss.isEmpty {
+            if !relays.contains(macWss) {
+                relays.insert(macWss, at: 0)
+            }
+        }
+        return relays
+    }
+
+    /// Active import seed relays, including the Mac relay if configured.
+    var activeImportSeedRelays: [String] {
+        var relays = importSeedRelays
+        let macWss = macRelayWssURL
+        if !macWss.isEmpty {
+            if !relays.contains(macWss) {
+                relays.insert(macWss, at: 0)
+            }
+        }
+        return relays
     }
 
     // MARK: - Protocol Selection Logic

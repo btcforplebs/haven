@@ -108,7 +108,7 @@ public enum Bech32m {
     }
 
     private static func createChecksum(hrp: String, data: [UInt8]) -> [UInt8] {
-        var values = hrpExpand(hrp) + data + [0, 0, 0, 0, 0, 0]
+        let values = hrpExpand(hrp) + data + [0, 0, 0, 0, 0, 0]
         let polymod = self.polymod(values) ^ bech32mConst
         return (0..<6).map { UInt8((polymod >> (5 * (5 - $0))) & 31) }
     }

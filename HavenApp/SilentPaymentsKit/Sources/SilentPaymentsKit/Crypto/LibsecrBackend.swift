@@ -20,13 +20,13 @@ import libsecp256k1
 
 public struct LibsecrBackend: Secp256k1Backend {
 
-    private let ctx: OpaquePointer
+    private nonisolated(unsafe) let ctx: OpaquePointer
 
     public init() {
         // SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY
         ctx = secp256k1_context_create(UInt32(SECP256K1_CONTEXT_SIGN | SECP256K1_CONTEXT_VERIFY))!
         // Randomise context to protect against side-channel attacks
-        var seed = Data.randomBytes(count: 32)
+        let seed = Data.randomBytes(count: 32)
         seed.withUnsafeBytes { _ = secp256k1_context_randomize(ctx, $0.bindMemory(to: UInt8.self).baseAddress!) }
     }
 

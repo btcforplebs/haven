@@ -14,16 +14,10 @@ enum FeedMediaType {
     /// Fast classification from file extension alone — no network needed.
     static func fromExtension(_ url: URL) -> FeedMediaType? {
         let ext = url.pathExtension.lowercased()
-        switch ext {
-        case "jpg", "jpeg", "png", "webp", "heic", "avif", "tiff":
-            return .photo
-        case "gif":
-            return .gif
-        case "mp4", "mov", "webm", "m4v", "hevc", "h265":
-            return .video
-        default:
-            return ext.isEmpty ? nil : nil // Unknown extension — need HEAD
-        }
+        if ext == "gif" { return .gif }
+        if SupportedMediaFormats.imageExtensions.contains(ext) { return .photo }
+        if SupportedMediaFormats.videoExtensions.contains(ext) { return .video }
+        return ext.isEmpty ? nil : nil // Unknown extension — need HEAD
     }
 
     /// Classification from a MIME content-type string.
@@ -355,7 +349,7 @@ private struct FeedVideoThumbnailView: View {
 
             if showPlayOverlay {
                 Image(systemName: "play.circle.fill")
-                    .font(.system(size: 44))
+                    .font(.appSystem(size: 44))
                     .foregroundColor(.white.opacity(0.85))
                     .shadow(color: .black.opacity(0.5), radius: 4)
             }

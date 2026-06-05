@@ -26,7 +26,9 @@ class ConfigService: ObservableObject {
     
     init() {
         // Store config in Application Support
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            fatalError("Application Support directory unavailable")
+        }
         let havenAppSupport = appSupport.appendingPathComponent("Haven", isDirectory: true)
         
         // Create config directory if needed
@@ -709,6 +711,49 @@ class ConfigService: ObservableObject {
             // Publish updated mute list back to Nostr
             NostrService.shared.publishMuteList(for: targetNpub, blockedNpubs: current)
         }
+    }
+
+    // MARK: - Throttle (Slow Down)
+
+    /// Returns the active browsing account's throttled hex pubkeys and their max visible post limits.
+    var activeAccountThrottledHexPubkeys: [String: Int] {
+        let active = config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetNpub = active.isEmpty ? config.ownerNpub : active
+        let throttled = config.throttledAccountsPerAccount[targetNpub] ?? [:]
+
+        var hexMap: [String: Int] = [:]
+        for (npub, limit) in throttled {
+            let clean = npub.trimmingCharacters(in: .whitespacesAndNewlines)
+            if clean.isEmpty { continue }
+            if let decoded = Bech32.decode(clean) {
+                hexMap[decoded.hexString] = limit
+            }
+        }
+        return hexMap
+    }
+
+    func throttleProfile(_ npub: String, maxPosts: Int) {
+        let active = config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetNpub = active.isEmpty ? config.ownerNpub : active
+
+        var current = config.throttledAccountsPerAccount[targetNpub] ?? [:]
+        current[npub] = maxPosts
+        config.throttledAccountsPerAccount[targetNpub] = current
+        save()
+
+        NotificationCenter.default.post(name: NSNotification.Name("BlockedAccountsUpdated"), object: nil)
+    }
+
+    func unthrottleProfile(_ npub: String) {
+        let active = config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetNpub = active.isEmpty ? config.ownerNpub : active
+
+        var current = config.throttledAccountsPerAccount[targetNpub] ?? [:]
+        current.removeValue(forKey: npub)
+        config.throttledAccountsPerAccount[targetNpub] = current
+        save()
+
+        NotificationCenter.default.post(name: NSNotification.Name("BlockedAccountsUpdated"), object: nil)
     }
 
     /// Whether a local URL can be rewritten to an external share link.

@@ -41,6 +41,18 @@ func ResetReady() {
 	readyCh = make(chan struct{})
 }
 
+// MarkReady signals WoT is ready without running Initialize().
+// Used when a valid cache was loaded and full rebuild is unnecessary.
+func MarkReady(model Model) {
+	wotInstance.Store(model)
+	select {
+	case <-readyCh:
+		// already closed
+	default:
+		close(readyCh)
+	}
+}
+
 // WaitReady blocks until Initialize() has completed.
 func WaitReady(ctx context.Context) {
 	select {

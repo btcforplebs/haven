@@ -268,35 +268,5 @@ struct AnimatedImage: UIViewRepresentable {
 }
 #endif
 
-// Helper to determine if a URL represents a GIF
-extension URL {
-    var isGIF: Bool {
-        return self.pathExtension.lowercased() == "gif"
-    }
-    
-    var isVideo: Bool {
-        let ext = self.pathExtension.lowercased()
-        return ["mov", "mp4", "webm", "m4v", "hevc", "h265"].contains(ext)
-    }
-    
-    var isWebP: Bool {
-        return self.pathExtension.lowercased() == "webp"
-    }
-    
-    var isAudio: Bool {
-        let ext = self.pathExtension.lowercased()
-        return ["mp3", "wav", "m4a", "aac", "flac", "ogg"].contains(ext)
-    }
-    
-    var isImage: Bool {
-        let ext = self.pathExtension.lowercased()
-        if ["jpg", "jpeg", "png", "gif", "webp", "heic", "tiff"].contains(ext) { return true }
-        if ext.isEmpty {
-            let last = self.lastPathComponent
-            let pattern = "^[a-f0-9]{64}$"
-            return last.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
-        }
-        return false
-    }
-}
+// URL media type helpers are now in SupportedMediaFormats.swift
 

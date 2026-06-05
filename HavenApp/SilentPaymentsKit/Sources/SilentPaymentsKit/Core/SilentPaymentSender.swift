@@ -52,7 +52,7 @@ public struct SilentPaymentSender {
         guard let smallestOutpoint = sortedOutpoints.first else {
             throw SilentPaymentError.noEligibleInputs
         }
-        var inputHashPreimage = smallestOutpoint + A
+        let inputHashPreimage = smallestOutpoint + A
         let inputHash = TaggedHash.inputsHash(inputHashPreimage)
 
         // ── Step 4: ECDH shared secret = input_hash · a · Bscan ──

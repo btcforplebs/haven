@@ -5,6 +5,7 @@ struct ComposeContext: Identifiable {
     let replyTo: FeedNote?
     let quoteTo: FeedNote?
     var initialContent: String = ""
+    var draftId: String? = nil
 }
 
 enum NoteLayoutMode {
@@ -39,6 +40,15 @@ struct FeedActions {
     var fetchMissingProfiles: ([String]) -> Void = { _ in }
     var findNote: (String) -> FeedNote? = { _ in nil }
 
+    // User moderation
+    var blockUser: (String) -> Void = { _ in }
+    var followUser: (String) -> Void = { _ in }
+    var unfollowUser: (String) -> Void = { _ in }
+    var throttleUser: (String, Int) -> Void = { _, _ in }
+
+    // DM
+    var dmUser: (String) -> Void = { _ in }
+
     // The active user's hex pubkey (for "delete" context menu visibility)
     var activeHexPubkey: String = ""
 
@@ -57,7 +67,7 @@ struct FeedActions {
                 feedService.saveInteractionState()
                 let relayHint = ConfigService.shared.config.nostrURL
                 Task {
-                    guard let signed = await nostrService.signEventAsync(kind: 7, content: "+",
+                    guard let signed = await nostrService.signEventAsync(kind: 7, content: ConfigService.shared.config.defaultReactionEmoji,
                         tags: [["e", noteId, relayHint], ["p", note.pubkey], ["k", String(note.kind)]]) else {
                         // Rollback optimistic update on signing failure
                         await MainActor.run {
@@ -148,6 +158,29 @@ struct FeedActions {
             fetchMissingNote: { id in feedService.fetchMissingNote(id: id) },
             fetchMissingProfiles: { pks in nostrService.fetchMissingProfiles(for: pks) },
             findNote: { id in feedService.findNote(id: id) },
+            blockUser: { hexPubkey in
+                guard let data = Bech32.hexToData(hexPubkey),
+                      let npub = Bech32.encode(hrp: "npub", data: data) else { return }
+                ConfigService.shared.blockProfile(npub)
+            },
+            followUser: { hexPubkey in
+                let _ = feedService.followUser(hexPubkey)
+            },
+            unfollowUser: { hexPubkey in
+                let _ = feedService.unfollowUser(hexPubkey)
+            },
+            throttleUser: { hexPubkey, maxPosts in
+                guard let data = Bech32.hexToData(hexPubkey),
+                      let npub = Bech32.encode(hrp: "npub", data: data) else { return }
+                ConfigService.shared.throttleProfile(npub, maxPosts: maxPosts)
+            },
+            dmUser: { hexPubkey in
+                NotificationCenter.default.post(
+                    name: Notification.Name("OpenDMThread"),
+                    object: nil,
+                    userInfo: ["pubkey": hexPubkey]
+                )
+            },
             activeHexPubkey: nostrService.activeHexPubkey
         )
     }
@@ -184,6 +217,8 @@ struct FeedNoteRowData: Equatable {
     let reposterName: String?
     let replyToName: String?
     let isOwnNote: Bool
+    let isFollowed: Bool
+    let isParentFollowed: Bool
 
     /// Convenience factory to avoid duplicating resolution logic across call sites
     /// (FeedView, NoteDetailView, ProfileView, MenuBarView).
@@ -226,7 +261,9 @@ struct FeedNoteRowData: Equatable {
             resolvedOriginal: resolvedOriginal,
             reposterName: note.repostedBy.flatMap { nostrService.profiles[$0]?.bestName },
             replyToName: note.replyToPubkey.flatMap { nostrService.profiles[$0]?.bestName },
-            isOwnNote: note.pubkey == nostrService.activeHexPubkey
+            isOwnNote: note.pubkey == nostrService.activeHexPubkey,
+            isFollowed: feedService.followedPubkeys.contains(displayPubkey),
+            isParentFollowed: parentNote.map { feedService.followedPubkeys.contains($0.pubkey) } ?? false
         )
     }
 }

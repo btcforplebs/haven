@@ -99,6 +99,24 @@ struct ProfileView: View {
         feedService.followedPubkeys.contains(pubkey)
     }
 
+    private var isBlocked: Bool {
+        guard let data = Data(hex: pubkey),
+              let npub = Bech32.encode(hrp: "npub", data: data) else { return false }
+        let active = configService.config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetNpub = active.isEmpty ? configService.config.ownerNpub : active
+        let blockedList = configService.config.blockedNpubsPerAccount[targetNpub] ?? []
+        return blockedList.contains(npub)
+    }
+
+    private var isThrottled: Bool {
+        guard let data = Data(hex: pubkey),
+              let npub = Bech32.encode(hrp: "npub", data: data) else { return false }
+        let active = configService.config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetNpub = active.isEmpty ? configService.config.ownerNpub : active
+        let throttledList = configService.config.throttledAccountsPerAccount[targetNpub] ?? [:]
+        return throttledList[npub] != nil
+    }
+
     private var profile: FeedProfile? {
         nostrService.profiles[pubkey]
     }
@@ -194,7 +212,6 @@ struct ProfileView: View {
                 }
                 divider
                 statsBlock
-                activityRow
                 divider
                 identityBlock
                 divider
@@ -206,11 +223,14 @@ struct ProfileView: View {
             .frame(maxWidth: 720)
             .frame(maxWidth: .infinity)
         }
-        .refreshable {
-            await refreshProfile()
+        .scrollDirectionTracking(feedService: feedService)
+        .if(isOwnProfile) { view in
+            view.refreshable {
+                await refreshProfile()
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(red: 0.08, green: 0.08, blue: 0.1).ignoresSafeArea())
+        .background(Color.platformWindowBackground.ignoresSafeArea())
         .onAppear {
             nostrService.fetchMissingProfiles(for: [pubkey])
             fetchAuthorNotes()
@@ -292,7 +312,7 @@ struct ProfileView: View {
                 .environmentObject(configService)
         }
         .sheet(item: $composeContext) { ctx in
-            ComposeView(onDismiss: { composeContext = nil }, replyTo: ctx.replyTo, quoteTo: ctx.quoteTo, initialContent: ctx.initialContent)
+            ComposeView(onDismiss: { composeContext = nil }, replyTo: ctx.replyTo, quoteTo: ctx.quoteTo, initialContent: ctx.initialContent, restoredDraftId: ctx.draftId)
                 .environmentObject(nostrService)
                 .environmentObject(configService)
         }
@@ -304,14 +324,14 @@ struct ProfileView: View {
                         if isOwnerProfile {
                             Button(action: { showingLightning = true }) {
                                 Image(systemName: "bolt.fill")
-                                    .font(.system(size: 16, weight: .semibold))
+                                    .font(.appSystem(size: 16, weight: .semibold))
                                     .foregroundColor(.havenPurple)
                             }
                             .buttonStyle(.plain)
                         }
                         Button(action: { showingCashu = true }) {
                             Image(systemName: "banknote.fill")
-                                .font(.system(size: 16, weight: .semibold))
+                                .font(.appSystem(size: 16, weight: .semibold))
                                 .foregroundColor(.havenPurple)
                         }
                         .buttonStyle(.plain)
@@ -323,7 +343,7 @@ struct ProfileView: View {
                     HStack(spacing: 16) {
                         Button(action: { showingDMInbox = true }) {
                             Image(systemName: "bubble.right.fill")
-                                .font(.system(size: 16, weight: .semibold))
+                                .font(.appSystem(size: 16, weight: .semibold))
                                 .foregroundColor(.havenPurple)
                                 .overlay(alignment: .topTrailing) {
                                     if dmService.totalUnreadCount > 0 {
@@ -338,7 +358,7 @@ struct ProfileView: View {
 
                         Button(action: { showingSettings = true }) {
                             Image(systemName: "gearshape.fill")
-                                .font(.system(size: 16, weight: .semibold))
+                                .font(.appSystem(size: 16, weight: .semibold))
                                 .foregroundColor(.secondary)
                         }
                         .buttonStyle(.plain)
@@ -346,7 +366,7 @@ struct ProfileView: View {
                 } else {
                     Button(action: { showingMessageComposer = true }) {
                         Image(systemName: "message.fill")
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(.appSystem(size: 16, weight: .semibold))
                             .foregroundColor(.havenPurple)
                     }
                     .buttonStyle(.plain)
@@ -456,13 +476,13 @@ struct ProfileView: View {
         }
         #if os(iOS)
         .overlay(alignment: .bottomTrailing) {
-            if isOwnProfile {
+            if isOwnProfile && !feedService.feedScrollingDown {
                 Button(action: { showingCompose = true }) {
                     HStack(spacing: 6) {
                         Image(systemName: "square.and.pencil")
-                            .font(.system(size: 15, weight: .bold))
+                            .font(.appSystem(size: 15, weight: .bold))
                         Text("Post")
-                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                            .font(.appSystem(size: 14, weight: .bold, design: .rounded))
                     }
                     .foregroundColor(.white)
                     .frame(height: 48)
@@ -482,7 +502,13 @@ struct ProfileView: View {
                 .padding(.trailing, 20)
                 .padding(.bottom, 90)
                 .hoverEffect(.lift)
+                .transition(.scale(scale: 0.5).combined(with: .opacity))
             }
+        }
+        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: feedService.feedScrollingDown)
+        .onReceive(NotificationCenter.default.publisher(for: .composeFromTabBar)) { note in
+            guard (note.object as? Int) == 2 else { return }
+            showingCompose = true
         }
         .fullScreenCover(isPresented: isPresentingViewer) {
             if let item = selectedMedia {
@@ -501,7 +527,7 @@ struct ProfileView: View {
             #if os(iOS)
             .presentationDetents([.height(380), .medium])
             .presentationDragIndicator(.visible)
-            .presentationBackground(Color(red: 0.08, green: 0.08, blue: 0.1))
+            .presentationBackground(Color.platformWindowBackground)
             #endif
         }
     }
@@ -513,7 +539,7 @@ struct ProfileView: View {
             Spacer()
             Button(action: { performDismiss() }) {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 22))
+                    .font(.appSystem(size: 22))
                     .foregroundColor(.secondary.opacity(0.55))
             }
             .buttonStyle(.plain)
@@ -550,13 +576,13 @@ struct ProfileView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(profile?.bestName ?? shortPubkey)
-                        .font(.system(size: 20, weight: .bold))
+                        .font(.appSystem(size: 20, weight: .bold))
                         .foregroundColor(.primary)
                         .lineLimit(1)
 
                     if let nip05 = profile?.nip05, !nip05.isEmpty {
                         Image(systemName: "checkmark.seal.fill")
-                            .font(.system(size: 13))
+                            .font(.appSystem(size: 13))
                             .foregroundColor(Color(red: 0.2, green: 0.8, blue: 0.6))
                     }
 
@@ -567,7 +593,7 @@ struct ProfileView: View {
 
                 if let nip05 = profile?.nip05, !nip05.isEmpty {
                     Text(nip05)
-                        .font(.system(size: 12))
+                        .font(.appSystem(size: 12))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
@@ -575,10 +601,10 @@ struct ProfileView: View {
                 Button(action: copyNpub) {
                     HStack(spacing: 5) {
                         Text(formattedNpub)
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(.appSystem(size: 11, design: .monospaced))
                             .foregroundColor(.secondary)
                         Image(systemName: copiedNpub ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 9))
+                            .font(.appSystem(size: 9))
                             .foregroundColor(copiedNpub ? .green : .secondary.opacity(0.6))
                     }
                 }
@@ -594,7 +620,7 @@ struct ProfileView: View {
     private var statusBadge: some View {
         if isOwnProfile {
             Text("YOU")
-                .font(.system(size: 9, weight: .heavy))
+                .font(.appSystem(size: 9, weight: .heavy))
                 .tracking(0.8)
                 .foregroundColor(.havenPurple)
                 .padding(.horizontal, 6)
@@ -604,9 +630,9 @@ struct ProfileView: View {
         } else if isFollowing && followsMe {
             HStack(spacing: 3) {
                 Text("∞")
-                    .font(.system(size: 13, weight: .black))
+                    .font(.appSystem(size: 13, weight: .black))
                 Text("MUTUAL")
-                    .font(.system(size: 9, weight: .heavy))
+                    .font(.appSystem(size: 9, weight: .heavy))
                     .tracking(0.8)
             }
             .foregroundColor(Color(red: 0.2, green: 0.9, blue: 0.7))
@@ -618,7 +644,7 @@ struct ProfileView: View {
             HStack(spacing: 4) {
                 if isFollowing {
                     Text("FOLLOWING")
-                        .font(.system(size: 9, weight: .heavy))
+                        .font(.appSystem(size: 9, weight: .heavy))
                         .tracking(0.8)
                         .foregroundColor(.green)
                         .padding(.horizontal, 6)
@@ -628,7 +654,7 @@ struct ProfileView: View {
                 }
                 if followsMe {
                     Text("FOLLOWS YOU")
-                        .font(.system(size: 9, weight: .heavy))
+                        .font(.appSystem(size: 9, weight: .heavy))
                         .tracking(0.8)
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 6)
@@ -644,7 +670,7 @@ struct ProfileView: View {
 
     private func bioBlock(_ about: String) -> some View {
         Text(about)
-            .font(.system(size: 13))
+            .font(.appSystem(size: 13))
             .foregroundColor(.primary.opacity(0.85))
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
@@ -657,17 +683,18 @@ struct ProfileView: View {
 
     @ViewBuilder
     private var actionRow: some View {
-        HStack(spacing: 8) {
-            if isOwnProfile {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                if isOwnProfile {
                 Button(action: { showingCompose = true }) {
                     HStack(spacing: 6) {
                         Image(systemName: "pencil")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.appSystem(size: 12, weight: .semibold))
                         Text("Post")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.appSystem(size: 13, weight: .semibold))
                     }
                     .foregroundColor(.white)
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, 12)
                     .padding(.vertical, 7)
                     .background(Color.havenPurple)
                     .cornerRadius(6)
@@ -677,12 +704,12 @@ struct ProfileView: View {
                 Button(action: { showingEditProfile = true }) {
                     HStack(spacing: 6) {
                         Image(systemName: "person.crop.circle")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.appSystem(size: 12, weight: .semibold))
                         Text("Edit")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.appSystem(size: 13, weight: .semibold))
                     }
                     .foregroundColor(.havenPurple)
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, 12)
                     .padding(.vertical, 7)
                     .background(Color.havenPurple.opacity(0.12))
                     .cornerRadius(6)
@@ -692,12 +719,12 @@ struct ProfileView: View {
                 Button(action: toggleFollow) {
                     HStack(spacing: 6) {
                         Image(systemName: isFollowing ? "person.badge.minus" : "person.badge.plus")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.appSystem(size: 12, weight: .semibold))
                         Text(isFollowing ? "Unfollow" : "Follow")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.appSystem(size: 13, weight: .semibold))
                     }
                     .foregroundColor(isFollowing ? .white : .havenPurple)
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, 12)
                     .padding(.vertical, 7)
                     .background(isFollowing ? Color.havenPurple : Color.havenPurple.opacity(0.12))
                     .cornerRadius(6)
@@ -708,27 +735,59 @@ struct ProfileView: View {
                 Button(action: { showingMessageComposer = true }) {
                     HStack(spacing: 6) {
                         Image(systemName: "message.fill")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.appSystem(size: 12, weight: .semibold))
                         Text("Message")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.appSystem(size: 13, weight: .semibold))
                     }
                     .foregroundColor(.havenPurple)
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, 12)
                     .padding(.vertical, 7)
                     .background(Color.havenPurple.opacity(0.12))
                     .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
 
+                Button(action: toggleBlock) {
+                    HStack(spacing: 6) {
+                        Image(systemName: isBlocked ? "hand.raised.slash" : "hand.raised")
+                            .font(.appSystem(size: 12, weight: .semibold))
+                        Text(isBlocked ? "Unblock" : "Block")
+                            .font(.appSystem(size: 13, weight: .semibold))
+                    }
+                    .foregroundColor(isBlocked ? .orange : .red)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background((isBlocked ? Color.orange : Color.red).opacity(0.12))
+                    .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isBlocked ? "Unblock user" : "Block user")
+
+                Button(action: toggleThrottle) {
+                    HStack(spacing: 6) {
+                        Image(systemName: isThrottled ? "gauge.open.with.lines.needle.33percent" : "gauge")
+                            .font(.appSystem(size: 12, weight: .semibold))
+                        Text(isThrottled ? "Speed Up" : "Slow Down")
+                            .font(.appSystem(size: 13, weight: .semibold))
+                    }
+                    .foregroundColor(isThrottled ? .blue : .secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background((isThrottled ? Color.blue : Color.secondary).opacity(0.12))
+                    .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(isThrottled ? "Remove speed limit" : "Slow down posts")
+
                 if !ConfigService.shared.config.nwcURI.isEmpty, lightningAddress != nil {
                     HStack(spacing: 5) {
                         Image(systemName: "bolt.fill")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.appSystem(size: 12, weight: .semibold))
                         Text("Zap \(defaultZapSats)")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.appSystem(size: 13, weight: .semibold))
                     }
                     .foregroundColor(.orange)
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, 12)
                     .padding(.vertical, 7)
                     .background(Color.orange.opacity(0.15))
                     .cornerRadius(6)
@@ -746,10 +805,9 @@ struct ProfileView: View {
                     }
                 }
             }
-
-            Spacer()
         }
         .padding(.horizontal, 16)
+        }
     }
 
     // MARK: - Stats block
@@ -799,58 +857,17 @@ struct ProfileView: View {
     private func statCell(value: String, label: String, tint: Color = .primary) -> some View {
         VStack(spacing: 4) {
             Text(value)
-                .font(.system(size: 18, weight: .bold, design: .monospaced))
+                .font(.appSystem(size: 18, weight: .bold, design: .monospaced))
                 .foregroundColor(tint)
                 .minimumScaleFactor(0.7)
                 .lineLimit(1)
             Text(label)
-                .font(.system(size: 9, weight: .semibold))
+                .font(.appSystem(size: 9, weight: .semibold))
                 .tracking(0.6)
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
-    }
-
-    // MARK: - Activity sparkline
-
-    private var activityRow: some View {
-        let buckets = activityBuckets(days: 14)
-        let max = (buckets.max() ?? 1)
-        return HStack(alignment: .bottom, spacing: 3) {
-            ForEach(Array(buckets.enumerated()), id: \.offset) { _, count in
-                let ratio = max > 0 ? CGFloat(count) / CGFloat(max) : 0
-                RoundedRectangle(cornerRadius: 1)
-                    .fill(count > 0 ? Color.havenPurple.opacity(0.4 + 0.6 * ratio) : Color.platformSeparator.opacity(0.4))
-                    .frame(height: 4 + 22 * ratio)
-                    .frame(maxWidth: .infinity)
-            }
-
-            Text("14d")
-                .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                .foregroundColor(.secondary)
-                .padding(.leading, 6)
-                .frame(width: 24, alignment: .trailing)
-        }
-        .frame(height: 30)
-        .padding(.horizontal, 16)
-        .padding(.top, 4)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Posting activity, \(buckets.reduce(0, +)) posts in last 14 days")
-    }
-
-    private func activityBuckets(days: Int) -> [Int] {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: Date())
-        var buckets = Array(repeating: 0, count: days)
-        for note in profileNotes {
-            let day = calendar.startOfDay(for: note.createdAt)
-            let diff = calendar.dateComponents([.day], from: day, to: today).day ?? 0
-            if diff >= 0 && diff < days {
-                buckets[days - 1 - diff] += 1
-            }
-        }
-        return buckets
     }
 
     // MARK: - Identity block (table-style rows)
@@ -882,7 +899,7 @@ struct ProfileView: View {
                         copied: false,
                         trailing: AnyView(
                             Image(systemName: "arrow.up.right.square")
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(.appSystem(size: 13, weight: .semibold))
                                 .foregroundColor(.havenPurple)
                         )
                     )
@@ -904,7 +921,7 @@ struct ProfileView: View {
             if let bal = lightningBalanceSats {
                 return AnyView(
                     Text("\(shortSats(bal)) sats")
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .font(.appSystem(size: 12, weight: .semibold, design: .monospaced))
                         .foregroundColor(.orange)
                 )
             }
@@ -914,9 +931,9 @@ struct ProfileView: View {
         return AnyView(
             HStack(spacing: 3) {
                 Image(systemName: "bolt.fill")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.appSystem(size: 10, weight: .bold))
                 Text("\(defaultZapSats)")
-                    .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    .font(.appSystem(size: 11, weight: .bold, design: .monospaced))
             }
             .foregroundColor(.orange)
             .padding(.horizontal, 8)
@@ -946,17 +963,17 @@ struct ProfileView: View {
     private func identityRowContent(label: String, value: String, icon: String, tint: Color, copied: Bool, trailing: AnyView) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.appSystem(size: 13, weight: .semibold))
                 .foregroundColor(tint)
                 .frame(width: 18)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(label)
-                    .font(.system(size: 9, weight: .heavy))
+                    .font(.appSystem(size: 9, weight: .heavy))
                     .tracking(0.8)
                     .foregroundColor(.secondary)
                 Text(value)
-                    .font(.system(size: 13, design: .monospaced))
+                    .font(.appSystem(size: 13, design: .monospaced))
                     .foregroundColor(.primary)
                     .lineLimit(1)
             }
@@ -965,7 +982,7 @@ struct ProfileView: View {
 
             if copied {
                 Image(systemName: "checkmark")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.appSystem(size: 11, weight: .bold))
                     .foregroundColor(.green)
             }
 
@@ -988,10 +1005,10 @@ struct ProfileView: View {
                     VStack(spacing: 6) {
                         HStack(spacing: 5) {
                             Text(section.rawValue.uppercased())
-                                .font(.system(size: 11, weight: .heavy))
+                                .font(.appSystem(size: 11, weight: .heavy))
                                 .tracking(0.6)
                             Text(countLabel(for: section))
-                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                .font(.appSystem(size: 11, weight: .semibold, design: .monospaced))
                                 .foregroundColor(.secondary)
                         }
                         .foregroundColor(selectedSection == section ? .havenPurple : .secondary)
@@ -1031,10 +1048,10 @@ struct ProfileView: View {
         if notes.isEmpty {
             VStack(spacing: 10) {
                 Image(systemName: sectionEmptyIcon)
-                    .font(.system(size: 24, weight: .thin))
+                    .font(.appSystem(size: 24, weight: .thin))
                     .foregroundColor(.secondary.opacity(0.5))
                 Text(isLoadingNotes ? "Loading…" : "No \(selectedSection.rawValue.lowercased()) yet")
-                    .font(.system(size: 12))
+                    .font(.appSystem(size: 12))
                     .foregroundColor(.secondary)
                 if isLoadingNotes {
                     ProgressView()
@@ -1170,7 +1187,7 @@ struct ProfileView: View {
                                 PlatformClipboard.copy(item.shareURL(with: configService).absoluteString)
                             }) {
                                 Image(systemName: "doc.on.doc")
-                                    .font(.system(size: 16, weight: .semibold))
+                                    .font(.appSystem(size: 16, weight: .semibold))
                                     .padding(10)
                                     .background(Color.white.opacity(0.1))
                                     .cornerRadius(8)
@@ -1184,7 +1201,7 @@ struct ProfileView: View {
                                 saveMediaToPhotos(item: item)
                             }) {
                                 Image(systemName: "square.and.arrow.down")
-                                    .font(.system(size: 16, weight: .semibold))
+                                    .font(.appSystem(size: 16, weight: .semibold))
                                     .padding(10)
                                     .background(Color.white.opacity(0.1))
                                     .cornerRadius(8)
@@ -1204,7 +1221,7 @@ struct ProfileView: View {
                             }
                         }) {
                             Image(systemName: "xmark.circle.fill")
-                                .font(.title)
+                                .font(.appTitle)
                                 .foregroundColor(.white.opacity(0.6))
                         }
                         .buttonStyle(.plain)
@@ -1212,7 +1229,7 @@ struct ProfileView: View {
                     #if os(iOS)
                     if let message = saveToPhotosMessage {
                         Text(message)
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(message.contains("Saved") ? .green : .red)
                             .transition(.opacity)
                     }
@@ -1257,7 +1274,7 @@ struct ProfileView: View {
                 Spacer()
 
                 Text(item.shareURL(with: configService).absoluteString)
-                    .font(.caption.monospaced())
+                    .font(.appCaption.monospaced())
                     .foregroundColor(.secondary)
                     .padding(.bottom)
                     .opacity(max(0, 1.0 - (abs(dragOffset.height) / 100.0)))
@@ -1482,7 +1499,7 @@ struct ProfileView: View {
                 relayURLs.append(local)
             }
         }
-        let feedRelays = ConfigService.shared.config.feedRelays
+        let feedRelays = ConfigService.shared.config.activeFeedRelays
         let externalStrs = feedRelays.isEmpty ? [
             "wss://relay.damus.io",
             "wss://relay.primal.net",
@@ -1776,6 +1793,27 @@ struct ProfileView: View {
         }
     }
 
+    private func toggleBlock() {
+        guard let data = Data(hex: pubkey),
+              let npub = Bech32.encode(hrp: "npub", data: data) else { return }
+        if isBlocked {
+            configService.unblockProfile(npub)
+        } else {
+            configService.blockProfile(npub)
+        }
+    }
+
+    private func toggleThrottle() {
+        guard let data = Data(hex: pubkey),
+              let npub = Bech32.encode(hrp: "npub", data: data) else { return }
+        if isThrottled {
+            configService.unthrottleProfile(npub)
+        } else {
+            // Default to 5 posts visible when throttling
+            configService.throttleProfile(npub, maxPosts: 5)
+        }
+    }
+
     private func followErrorMessage(_ err: FeedService.FollowActionError) -> String {
         switch err {
         case .contactsNotLoaded: return "Contacts still loading"
@@ -1873,7 +1911,7 @@ struct ProfileEditView: View {
 
                         if let err = errorMessage {
                             Text(err)
-                                .font(.system(size: 12))
+                                .font(.appSystem(size: 12))
                                 .foregroundColor(.red)
                                 .padding(.horizontal, 16)
                                 .padding(.top, 16)
@@ -1908,7 +1946,7 @@ struct ProfileEditView: View {
             Spacer()
 
             Text("Edit Profile")
-                .font(.system(size: 15, weight: .semibold))
+                .font(.appSystem(size: 15, weight: .semibold))
 
             Spacer()
 
@@ -1919,7 +1957,7 @@ struct ProfileEditView: View {
                         .tint(Color.havenPurple)
                 } else {
                     Text("Save")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.appSystem(size: 13, weight: .semibold))
                         .foregroundColor(.havenPurple)
                 }
             }
@@ -1944,18 +1982,18 @@ struct ProfileEditView: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(displayName.isEmpty ? (name.isEmpty ? "Unnamed" : name) : displayName)
-                    .font(.system(size: 17, weight: .bold))
+                    .font(.appSystem(size: 17, weight: .bold))
                     .foregroundColor(.primary)
                     .lineLimit(1)
                 if !nip05.isEmpty {
                     Text(nip05)
-                        .font(.system(size: 12))
+                        .font(.appSystem(size: 12))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
                 if !about.isEmpty {
                     Text(about)
-                        .font(.system(size: 12))
+                        .font(.appSystem(size: 12))
                         .foregroundColor(.primary.opacity(0.75))
                         .lineLimit(2)
                 }
@@ -1984,7 +2022,7 @@ struct ProfileEditView: View {
     private func fieldGroup<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Text(title)
-                .font(.system(size: 10, weight: .heavy))
+                .font(.appSystem(size: 10, weight: .heavy))
                 .tracking(0.7)
                 .foregroundColor(.secondary)
                 .padding(.horizontal, 16)
@@ -1999,12 +2037,12 @@ struct ProfileEditView: View {
     private func field(label: String, text: Binding<String>, placeholder: String, keyboardKind: KeyboardKind = .default) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(label)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.appSystem(size: 11, weight: .semibold))
                 .foregroundColor(.secondary)
                 .frame(width: 100, alignment: .leading)
 
             TextField(placeholder, text: text)
-                .font(.system(size: 13))
+                .font(.appSystem(size: 13))
                 .textFieldStyle(.plain)
                 .modifier(KeyboardModifier(kind: keyboardKind))
         }
@@ -2016,25 +2054,25 @@ struct ProfileEditView: View {
     private func multilineField(label: String, text: Binding<String>, placeholder: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.appSystem(size: 11, weight: .semibold))
                 .foregroundColor(.secondary)
 
             ZStack(alignment: .topLeading) {
                 if text.wrappedValue.isEmpty {
                     Text(placeholder)
-                        .font(.system(size: 13))
+                        .font(.appSystem(size: 13))
                         .foregroundColor(.secondary.opacity(0.6))
                         .padding(.top, 8)
                         .padding(.leading, 6)
                 }
                 #if os(iOS)
                 TextEditor(text: text)
-                    .font(.system(size: 13))
+                    .font(.appSystem(size: 13))
                     .scrollContentBackground(.hidden)
                     .frame(minHeight: 90)
                 #else
                 TextEditor(text: text)
-                    .font(.system(size: 13))
+                    .font(.appSystem(size: 13))
                     .frame(minHeight: 90)
                 #endif
             }

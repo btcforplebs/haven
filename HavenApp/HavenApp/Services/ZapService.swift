@@ -58,9 +58,9 @@ class ZapService: ObservableObject {
             // 2. Build Zap Request (Kind 9734)
             // Include external relays so the provider can publish the receipt where it's queryable
             var relayList = [ConfigService.shared.config.nostrURL]
-            let externalRelays = ConfigService.shared.config.feedRelays.isEmpty
+            let externalRelays = ConfigService.shared.config.activeFeedRelays.isEmpty
                 ? ["wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"]
-                : ConfigService.shared.config.feedRelays
+                : ConfigService.shared.config.activeFeedRelays
             relayList.append(contentsOf: externalRelays)
 
             var tags: [[String]] = [

@@ -49,11 +49,11 @@ struct FollowingBackupSettingsView: View {
                             HStack(spacing: 10) {
                                 AvatarView(url: profile?.pictureURL, pubkey: hex, size: 30)
                                 Text(displayName)
-                                    .font(.subheadline)
+                                    .font(.appSubheadline)
                                     .lineLimit(1)
                                 if isOwner {
                                     Text("Owner")
-                                        .font(.caption2)
+                                        .font(.appCaption2)
                                         .fontWeight(.bold)
                                         .foregroundColor(.havenPurple)
                                         .padding(.horizontal, 5)
@@ -64,7 +64,7 @@ struct FollowingBackupSettingsView: View {
                                 Spacer()
                                 if isSelected {
                                     Image(systemName: "checkmark")
-                                        .font(.subheadline)
+                                        .font(.appSubheadline)
                                         .fontWeight(.semibold)
                                         .foregroundColor(.accentColor)
                                 }
@@ -83,7 +83,7 @@ struct FollowingBackupSettingsView: View {
                         ProgressView()
                             .controlSize(.small)
                         Text(queryStatus)
-                            .font(.subheadline)
+                            .font(.appSubheadline)
                             .foregroundColor(.secondary)
                     }
                     .padding(.vertical, 4)
@@ -91,7 +91,7 @@ struct FollowingBackupSettingsView: View {
 
                 if kind3Events.isEmpty && !isQuerying {
                     Text("Tap \"Scan Relays\" to search for historical contact lists.")
-                        .font(.subheadline)
+                        .font(.appSubheadline)
                         .foregroundColor(.secondary)
                         .padding(.vertical, 4)
                 }
@@ -175,16 +175,16 @@ struct FollowingBackupSettingsView: View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
                 Text(event.createdAt, style: .date)
-                    .font(.body)
+                    .font(.appBody)
                 HStack(spacing: 4) {
                     Text(event.createdAt, style: .time)
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                     Text("\u{00b7}")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                     Text("\(event.followCount) following")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                 }
             }
@@ -192,7 +192,7 @@ struct FollowingBackupSettingsView: View {
             if isViewingActiveAccount {
                 if Set(event.pubkeys) == Set(feedService.followedPubkeys) {
                     Text("Current")
-                        .font(.caption2)
+                        .font(.appCaption2)
                         .fontWeight(.semibold)
                         .foregroundColor(.green)
                         .padding(.horizontal, 8)
@@ -211,16 +211,16 @@ struct FollowingBackupSettingsView: View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
                 Text(snapshot.capturedAt, style: .date)
-                    .font(.body)
+                    .font(.appBody)
                 HStack(spacing: 4) {
                     Text(snapshot.capturedAt, style: .time)
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                     Text("\u{00b7}")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                     Text("\(snapshot.followCount) following")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                 }
             }
@@ -237,7 +237,7 @@ struct FollowingBackupSettingsView: View {
         return Group {
             if diff > 0 {
                 Text("+\(diff)")
-                    .font(.caption2)
+                    .font(.appCaption2)
                     .fontWeight(.semibold)
                     .foregroundColor(.green)
                     .padding(.horizontal, 6)
@@ -246,7 +246,7 @@ struct FollowingBackupSettingsView: View {
                     .clipShape(Capsule())
             } else if diff < 0 {
                 Text("\(diff)")
-                    .font(.caption2)
+                    .font(.appCaption2)
                     .fontWeight(.semibold)
                     .foregroundColor(.red)
                     .padding(.horizontal, 6)
@@ -281,7 +281,7 @@ struct FollowingBackupSettingsView: View {
            RelayProcessManager.shared.isRunning, !RelayProcessManager.shared.isBooting {
             relayURLs.append(localURL)
         }
-        let feedRelays = ConfigService.shared.config.feedRelays
+        let feedRelays = ConfigService.shared.config.activeFeedRelays
         let externalStrs = feedRelays.isEmpty ? [
             "wss://relay.damus.io",
             "wss://relay.primal.net",
@@ -457,7 +457,7 @@ struct Kind3EventDetailView: View {
                     ForEach(addedPubkeys, id: \.self) { pubkey in
                         profileRow(pubkey: pubkey, trailing: {
                             Text("New")
-                                .font(.caption2)
+                                .font(.appCaption2)
                                 .fontWeight(.semibold)
                                 .foregroundColor(.green)
                                 .padding(.horizontal, 6)
@@ -503,11 +503,11 @@ struct Kind3EventDetailView: View {
             AvatarView(url: profile?.pictureURL, pubkey: pubkey, size: 34)
             VStack(alignment: .leading, spacing: 1) {
                 Text(profile?.bestName ?? abbreviatedKey(pubkey))
-                    .font(.subheadline)
+                    .font(.appSubheadline)
                     .lineLimit(1)
                 if let nip05 = profile?.nip05, !nip05.isEmpty {
                     Text(nip05)
-                        .font(.caption2)
+                        .font(.appCaption2)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
@@ -596,7 +596,7 @@ struct SnapshotDetailView: View {
                     ForEach(addedPubkeys, id: \.self) { pubkey in
                         profileRow(pubkey: pubkey, trailing: {
                             Text("New")
-                                .font(.caption2)
+                                .font(.appCaption2)
                                 .fontWeight(.semibold)
                                 .foregroundColor(.green)
                                 .padding(.horizontal, 6)
@@ -641,11 +641,11 @@ struct SnapshotDetailView: View {
             AvatarView(url: profile?.pictureURL, pubkey: pubkey, size: 34)
             VStack(alignment: .leading, spacing: 1) {
                 Text(profile?.bestName ?? abbreviatedKey(pubkey))
-                    .font(.subheadline)
+                    .font(.appSubheadline)
                     .lineLimit(1)
                 if let nip05 = profile?.nip05, !nip05.isEmpty {
                     Text(nip05)
-                        .font(.caption2)
+                        .font(.appCaption2)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }

@@ -42,6 +42,9 @@ struct NoteDetailView: View {
 
     @State private var focusedNoteId: String = ""
 
+    // Compact mode for entire thread (parents, main note, and replies)
+    @State private var isCompactView = false
+
     private var threadRootId: String {
         let eTags = note.tags.filter { $0.count >= 2 && $0[0] == "e" }
         if let explicitRoot = eTags.first(where: { $0.count >= 4 && $0[3] == "root" }) {
@@ -54,7 +57,9 @@ struct NoteDetailView: View {
         if focusedNoteId.isEmpty {
             return note
         }
-        return feedService.findNote(id: focusedNoteId) ?? note
+        return feedService.findNote(id: focusedNoteId)
+            ?? parentNotes.first(where: { $0.id == focusedNoteId })
+            ?? note
     }
 
     private var dynamicParents: [FeedNote] {
@@ -108,7 +113,7 @@ struct NoteDetailView: View {
                                 .controlSize(.small)
                                 .tint(Color.havenPurple)
                             Text("Loading thread\u{2026}")
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .font(.appSystem(size: 12, weight: .medium, design: .monospaced))
                                 .foregroundColor(.secondary)
                         }
                         .frame(maxWidth: .infinity)
@@ -140,39 +145,59 @@ struct NoteDetailView: View {
             .onChange(of: focusedNoteId) { _, newId in
                 if !newId.isEmpty {
                     fetchEngagement(for: newId)
+                    fetchRepliesForNote(newId)
                 }
             }
         }
-        .background(Color(red: 0.08, green: 0.08, blue: 0.1))
+        .background(Color.platformWindowBackground)
         .refreshable {
-            #if os(iOS)
-            MacRelaySyncService.shared.syncIfConfigured()
-            #endif
             fetchParents()
             fetchReplies()
         }
-        .navigationTitle("Note")
+        .navigationTitle("")
         .environment(\.feedActions, noteDetailFeedActions)
 
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
         #endif
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 HStack(spacing: 8) {
-                    Button {
+                    // Compact mode toggle
+                    IconFilterButton(
+                        icon: isCompactView ? "rectangle.compress.vertical" : "rectangle.expand.vertical",
+                        tooltip: "Compact View",
+                        isSelected: isCompactView,
+                        color: .havenPurple
+                    ) {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                            isCompactView.toggle()
+                        }
+                    }
+
+                    // Stats toggle
+                    IconFilterButton(
+                        icon: expandedEngagement ? "chart.bar.fill" : "chart.bar",
+                        tooltip: "Thread Stats",
+                        isSelected: expandedEngagement,
+                        color: .havenPurple
+                    ) {
                         withAnimation(.easeInOut(duration: 0.25)) {
                             expandedEngagement.toggle()
                         }
                         if expandedEngagement {
                             fetchAllThreadEngagement()
                         }
-                    } label: {
-                        Image(systemName: expandedEngagement ? "chart.bar.fill" : "chart.bar")
-                            .foregroundColor(expandedEngagement ? Color.havenPurple : nil)
                     }
 
-                    Button {
+                    // Reply button
+                    IconFilterButton(
+                        icon: "arrowshape.turn.up.left.fill",
+                        tooltip: "Reply",
+                        isSelected: false,
+                        color: .havenPurple
+                    ) {
                         let replyTarget: FeedNote = {
                             if note.kind == 6, let refId = note.repostedEventId,
                                let original = feedService.findNote(id: refId) {
@@ -181,32 +206,6 @@ struct NoteDetailView: View {
                             return note
                         }()
                         composeContext = ComposeContext(replyTo: replyTarget, quoteTo: nil)
-                    } label: {
-                        Image(systemName: "arrowshape.turn.up.left.fill")
-                    }
-
-                    Menu {
-                        if note.pubkey == nostrService.activeHexPubkey {
-                            Button(role: .destructive, action: {
-                                showingDeleteConfirm = true
-                            }) {
-                                Label("Delete Post", systemImage: "trash")
-                            }
-                        }
-
-                        Button(action: {
-                            showingReportDialog = true
-                        }) {
-                            Label("Report Post", systemImage: "flag.fill")
-                        }
-
-                        Button(action: {
-                            blockUser(hexPubkey: note.pubkey)
-                        }) {
-                            Label("Block User", systemImage: "hand.raised.fill")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
                     }
                 }
             }
@@ -303,7 +302,29 @@ struct NoteDetailView: View {
         )
         let hasEngagement = !detailedReactions.isEmpty || !detailedZaps.isEmpty || !detailedReposts.isEmpty
 
-        return VStack(alignment: .leading, spacing: 0) {
+        return Group {
+            if isCompactView {
+                compactMainNoteLayout(profile: profile, hasEngagement: hasEngagement)
+                    .transition(.asymmetric(
+                        insertion: AnyTransition.opacity.combined(with: AnyTransition.scale(scale: 0.95)),
+                        removal: AnyTransition.opacity
+                    ))
+            } else {
+                fullMainNoteLayout(profile: profile, rowData: rowData, hasEngagement: hasEngagement)
+                    .transition(.asymmetric(
+                        insertion: AnyTransition.opacity.combined(with: AnyTransition.scale(scale: 0.95)),
+                        removal: AnyTransition.opacity
+                    ))
+            }
+        }
+        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isCompactView)
+        .id(focusedNote.id)
+        .padding(.horizontal, 16)
+    }
+
+    @ViewBuilder
+    private func fullMainNoteLayout(profile: FeedProfile?, rowData: FeedNoteRowData, hasEngagement: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
             FeedNoteRow(
                 note: focusedNote,
                 profile: profile,
@@ -351,55 +372,227 @@ struct NoteDetailView: View {
                 .stroke(Color.havenPurple, lineWidth: 2.0)
         )
         .shadow(color: Color.havenPurple.opacity(0.35), radius: 8)
-        .id(focusedNote.id)
-        .padding(.horizontal, 16)
+    }
+
+    @ViewBuilder
+    private func compactMainNoteLayout(profile: FeedProfile?, hasEngagement: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 8) {
+                // Avatar (32x32)
+                AvatarView(url: profile?.pictureURL, pubkey: focusedNote.pubkey)
+                    .frame(width: 32, height: 32)
+                    .onTapGesture {
+                        showingProfilePubkey = focusedNote.pubkey
+                    }
+
+                // Content (flexible)
+                VStack(alignment: .leading, spacing: 2) {
+                    // Header row
+                    HStack(spacing: 4) {
+                        Text(profile?.bestName ?? shortKey(focusedNote.pubkey))
+                            .font(.appSystem(size: 13, weight: .semibold))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+
+                        if let nip05 = profile?.nip05, !nip05.isEmpty {
+                            Image(systemName: "checkmark.seal.fill")
+                                .font(.appSystem(size: 9))
+                                .foregroundColor(Color(red: 0.2, green: 0.8, blue: 0.6))
+                        }
+
+                        Text("· \(relativeTime(focusedNote.createdAt))")
+                            .font(.appSystem(size: 11))
+                            .foregroundColor(.secondary)
+
+                        Spacer()
+
+                        // Reply/Repost indicators
+                        if focusedNote.isReply {
+                            Image(systemName: "arrowshape.turn.up.left.fill")
+                                .font(.appSystem(size: 10))
+                                .foregroundColor(Color.havenPurple.opacity(0.7))
+                        }
+                        if focusedNote.repostedBy != nil {
+                            Image(systemName: "arrow.2.squarepath")
+                                .font(.appSystem(size: 10))
+                                .foregroundColor(.green.opacity(0.7))
+                        }
+                    }
+
+                    // Truncated content (2 lines max)
+                    if !focusedNote.content.isEmpty {
+                        Text(focusedNote.content)
+                            .font(.appSystem(size: 14))
+                            .foregroundColor(.white)
+                            .lineLimit(2)
+                            .lineSpacing(1)
+                    }
+
+                    // Inline engagement stats
+                    if hasEngagement {
+                        HStack(spacing: 8) {
+                            // Reactions - compact
+                            if !groupedReactions.isEmpty {
+                                HStack(spacing: 2) {
+                                    ForEach(groupedReactions.prefix(3), id: \.emoji) { group in
+                                        HStack(spacing: 1) {
+                                            Text(group.emoji)
+                                                .font(.appSystem(size: 10))
+                                            Text("\(group.count)")
+                                                .font(.appSystem(size: 9, weight: .bold, design: .monospaced))
+                                                .foregroundColor(.secondary)
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Zaps - compact
+                            if !parsedZaps.isEmpty {
+                                HStack(spacing: 2) {
+                                    Image(systemName: "bolt.fill")
+                                        .font(.appSystem(size: 9, weight: .bold))
+                                        .foregroundColor(.orange)
+                                    Text("\(parsedZaps.count)")
+                                        .font(.appSystem(size: 9, weight: .semibold, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+
+                            // Reposts - compact
+                            if !detailedReposts.isEmpty {
+                                HStack(spacing: 2) {
+                                    Image(systemName: "arrow.2.squarepath")
+                                        .font(.appSystem(size: 9, weight: .bold))
+                                        .foregroundColor(.green)
+                                    Text("\(repostersMapped.count)")
+                                        .font(.appSystem(size: 9, weight: .semibold, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
+                }
+
+                Spacer(minLength: 8)
+
+                // Media thumbnail (60x60)
+                if let firstMedia = focusedNote.mediaURLs.first {
+                    ZStack(alignment: .bottomTrailing) {
+                        FeedMediaView(
+                            url: firstMedia,
+                            isThumbnail: true
+                        )
+                        .frame(width: 60, height: 60)
+                        .aspectRatio(1, contentMode: .fill)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .onTapGesture {
+                            showingMediaUrl = IdentifiableURL(url: firstMedia)
+                        }
+
+                        // Multi-media badge
+                        if focusedNote.mediaURLs.count > 1 {
+                            Text("+\(focusedNote.mediaURLs.count - 1)")
+                                .font(.appSystem(size: 10, weight: .bold))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(Color.black.opacity(0.7))
+                                .clipShape(Capsule())
+                                .padding(4)
+                        }
+                    }
+                }
+            }
+            .padding(12)
+        }
+        .background(
+            ZStack {
+                Color.platformSecondaryGroupedBackground
+                Color.havenPurple.opacity(0.015)
+            }
+        )
+        .cornerRadius(12)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.havenPurple, lineWidth: 2.0)
+        )
+        .shadow(color: Color.havenPurple.opacity(0.35), radius: 8)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                isCompactView = false
+            }
+        }
     }
     
     private func threadSection(proxy: ScrollViewProxy) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: isCompactView ? 4 : 12) {
             ForEach(dynamicParents) { parent in
                 let parentProfile = nostrService.profiles[parent.pubkey]
-                let rowData = FeedNoteRowData.resolve(
-                    for: parent,
-                    feedService: feedService,
-                    nostrService: nostrService
-                )
-                FeedNoteRow(
-                    note: parent,
-                    profile: parentProfile,
-                    rowData: rowData,
-                    onReply: {
-                        composeContext = ComposeContext(replyTo: parent, quoteTo: nil)
-                    },
-                    onQuote: {
-                        composeContext = ComposeContext(replyTo: nil, quoteTo: parent)
-                    },
-                    onProfile: { pubkey in
-                        showingProfilePubkey = pubkey
-                    },
-                    onMedia: { url in
-                        showingMediaUrl = IdentifiableURL(url: url)
-                    },
-                    showParent: false,
-                    layoutMode: .wide,
-                    isFocused: parent.id == focusedNoteId
-                )
-                .id(parent.id)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    selectAndScrollToNote(parent.id, proxy: proxy)
-                }
-                .padding(.horizontal, 16)
 
-                // Expanded engagement for parent notes
-                if expandedEngagement && parent.id != focusedNoteId {
-                    ThreadNoteEngagementRow(
-                        reactions: groupedReactionsForNote(parent.id),
-                        zapCount: zapTotalForNote(parent.id).count,
-                        zapSats: zapTotalForNote(parent.id).sats,
-                        repostCount: repostCountForNote(parent.id)
+                if isCompactView {
+                    compactParentNoteView(parent: parent, profile: parentProfile, proxy: proxy)
+                } else {
+                    let rowData = FeedNoteRowData.resolve(
+                        for: parent,
+                        feedService: feedService,
+                        nostrService: nostrService
                     )
-                    .padding(.horizontal, 20)
+
+                    // Check if this parent has engagement to show
+                    let hasEngagement = expandedEngagement && parent.id != focusedNoteId && (
+                        !groupedReactionsForNote(parent.id).isEmpty ||
+                        zapTotalForNote(parent.id).count > 0 ||
+                        repostCountForNote(parent.id) > 0
+                    )
+
+                    VStack(alignment: .leading, spacing: 0) {
+                        FeedNoteRow(
+                            note: parent,
+                            profile: parentProfile,
+                            rowData: rowData,
+                            onReply: {
+                                composeContext = ComposeContext(replyTo: parent, quoteTo: nil)
+                            },
+                            onQuote: {
+                                composeContext = ComposeContext(replyTo: nil, quoteTo: parent)
+                            },
+                            onProfile: { pubkey in
+                                showingProfilePubkey = pubkey
+                            },
+                            onMedia: { url in
+                                showingMediaUrl = IdentifiableURL(url: url)
+                            },
+                            showParent: false,
+                            layoutMode: .wide,
+                            isFocused: parent.id == focusedNoteId
+                        )
+
+                        // Expanded engagement for parent notes - inside the note box
+                        if hasEngagement {
+                            Rectangle()
+                                .fill(Color.secondary.opacity(0.1))
+                                .frame(height: 0.5)
+                                .padding(.horizontal, 12)
+                                .padding(.top, 8)
+
+                            ThreadNoteEngagementRow(
+                                reactions: groupedReactionsForNote(parent.id),
+                                zapCount: zapTotalForNote(parent.id).count,
+                                zapSats: zapTotalForNote(parent.id).sats,
+                                repostCount: repostCountForNote(parent.id)
+                            )
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 8)
+                        }
+                    }
+                    .id(parent.id)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        selectAndScrollToNote(parent.id, proxy: proxy)
+                    }
+                    .padding(.horizontal, 16)
                 }
             }
 
@@ -407,6 +600,58 @@ struct NoteDetailView: View {
                 FeedNoteSkeletonRow()
                     .padding(.horizontal, 16)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func compactParentNoteView(parent: FeedNote, profile: FeedProfile?, proxy: ScrollViewProxy) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            // Thread indicator
+            VStack(spacing: 0) {
+                Rectangle()
+                    .fill(Color.havenPurple.opacity(0.3))
+                    .frame(width: 2)
+                    .frame(maxHeight: .infinity)
+            }
+            .frame(width: 6)
+
+            // Avatar (24x24 for parents)
+            AvatarView(url: profile?.pictureURL, pubkey: parent.pubkey)
+                .frame(width: 24, height: 24)
+                .onTapGesture {
+                    showingProfilePubkey = parent.pubkey
+                }
+
+            // Content
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(profile?.bestName ?? shortKey(parent.pubkey))
+                        .font(.appSystem(size: 12, weight: .semibold))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+
+                    Text("· \(relativeTime(parent.createdAt))")
+                        .font(.appSystem(size: 10))
+                        .foregroundColor(.secondary.opacity(0.7))
+
+                    Spacer()
+                }
+
+                if !parent.content.isEmpty {
+                    Text(parent.content)
+                        .font(.appSystem(size: 12))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .id(parent.id)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 4)
+        .background(parent.id == focusedNoteId ? Color.havenPurple.opacity(0.08) : Color.clear)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            selectAndScrollToNote(parent.id, proxy: proxy)
         }
     }
 
@@ -421,7 +666,7 @@ struct NoteDetailView: View {
                         .controlSize(.small)
                         .tint(Color.havenPurple)
                     Text("Loading replies\u{2026}")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .font(.appSystem(size: 12, weight: .medium, design: .monospaced))
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity)
@@ -429,14 +674,14 @@ struct NoteDetailView: View {
                 .transition(.opacity)
             } else if currentReplies.isEmpty {
                 Text("No replies yet")
-                    .font(.system(size: 13, weight: .regular, design: .monospaced))
+                    .font(.appSystem(size: 13, weight: .regular, design: .monospaced))
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 24)
                     .transition(.opacity)
             } else {
                 Text("Replies")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.appSystem(size: 14, weight: .semibold))
                     .foregroundColor(.secondary)
                     .textCase(.uppercase)
                     .tracking(0.5)
@@ -448,6 +693,7 @@ struct NoteDetailView: View {
                         reply: reply,
                         allNotes: feedService.notes,
                         depth: 1,
+                        isCompactMode: isCompactView,
                         onReply: { target in
                             composeContext = ComposeContext(replyTo: target, quoteTo: nil)
                         },
@@ -510,11 +756,11 @@ struct NoteDetailView: View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Image(systemName: icon)
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.appSystem(size: 14, weight: .medium))
                     .foregroundColor(color)
                 if let count = count, count > 0 {
                     Text("\(count)")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(.appSystem(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundColor(color)
                 }
             }
@@ -533,11 +779,11 @@ struct NoteDetailView: View {
 
         // Try local relay AND external relays to find replies
         var relayURLs: [URL] = [configService.config.nostrURL].compactMap { URL(string: $0) }
-        let externalStrs = configService.config.feedRelays.isEmpty ? [
+        let externalStrs = configService.config.activeFeedRelays.isEmpty ? [
             "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
-        ] : configService.config.feedRelays
+        ] : configService.config.activeFeedRelays
         relayURLs.append(contentsOf: externalStrs.compactMap { URL(string: $0) })
 
         let subId = "replies-\(UUID().uuidString.prefix(8))"
@@ -687,6 +933,86 @@ struct NoteDetailView: View {
         }
     }
 
+    /// Fetch replies specifically for a given note ID (used when focus changes within the thread).
+    /// The initial fetchReplies() queries by thread root; this catches any replies that only
+    /// reference this specific note and not the root (e.g. legacy clients).
+    private func fetchRepliesForNote(_ noteId: String) {
+        var relayURLs: [URL] = [configService.config.nostrURL].compactMap { URL(string: $0) }
+        let externalStrs = configService.config.activeFeedRelays.isEmpty ? [
+            "wss://relay.damus.io",
+            "wss://relay.primal.net",
+            "wss://nos.lol",
+        ] : configService.config.activeFeedRelays
+        relayURLs.append(contentsOf: externalStrs.compactMap { URL(string: $0) })
+
+        let subId = "focus-replies-\(UUID().uuidString.prefix(8))"
+
+        for url in relayURLs {
+            let client = WebSocketClient()
+            client.isTemporary = true
+
+            client.messageSubject
+                .receive(on: DispatchQueue.main)
+                .sink { msg in
+                    guard let data = msg.data(using: .utf8),
+                          let json = try? JSONSerialization.jsonObject(with: data) as? [Any],
+                          let type = json[0] as? String else { return }
+
+                    if type == "EVENT", json.count >= 3,
+                       let ev = json[2] as? [String: Any],
+                       let id = ev["id"] as? String,
+                       let pubkey = ev["pubkey"] as? String,
+                       let content = ev["content"] as? String,
+                       let createdAt = ev["created_at"] as? Int64,
+                       let kind = ev["kind"] as? Int,
+                       let tags = ev["tags"] as? [[String]],
+                       kind == 1 {
+
+                        let reply = FeedNote(
+                            id: id,
+                            pubkey: pubkey,
+                            content: content,
+                            createdAt: Date(timeIntervalSince1970: TimeInterval(createdAt)),
+                            tags: tags,
+                            kind: kind
+                        )
+
+                        if !FeedNote.isNoiseOrSpam(content: content, tags: tags),
+                           self.feedService.findNote(id: id) == nil {
+                            self.feedService.addNote(reply)
+                        }
+
+                        if self.nostrService.profiles[pubkey] == nil {
+                            self.nostrService.fetchMissingProfiles(for: [pubkey])
+                        }
+                    } else if type == "EOSE" {
+                        client.disconnect()
+                    }
+                }
+                .store(in: &cancellables)
+
+            client.$connectionState
+                .receive(on: DispatchQueue.main)
+                .sink { state in
+                    if state == .connected {
+                        let filter: [String: Any] = ["kinds": [1], "#e": [noteId], "limit": 150]
+                        let req = ["REQ", subId, filter] as [Any]
+                        if let data = try? JSONSerialization.data(withJSONObject: req),
+                           let str = String(data: data, encoding: .utf8) {
+                            client.send(text: str)
+                        }
+                    }
+                }
+                .store(in: &cancellables)
+
+            client.connect(url: url)
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) {
+                client.disconnect()
+            }
+        }
+    }
+
     private func fetchEngagement(for eventId: String) {
         // Clear previous reactions to prevent flash of wrong data
         detailedReactions.removeAll()
@@ -694,11 +1020,11 @@ struct NoteDetailView: View {
         detailedZaps.removeAll()
 
         var relayURLs: [URL] = [configService.config.nostrURL].compactMap { URL(string: $0) }
-        let externalStrs = configService.config.feedRelays.isEmpty ? [
+        let externalStrs = configService.config.activeFeedRelays.isEmpty ? [
             "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
-        ] : configService.config.feedRelays
+        ] : configService.config.activeFeedRelays
         relayURLs.append(contentsOf: externalStrs.compactMap { URL(string: $0) })
 
         let subId = "eng-\(eventId.prefix(6))-\(UUID().uuidString.prefix(4))"
@@ -762,11 +1088,11 @@ struct NoteDetailView: View {
         isLoadingExpandedEngagement = true
 
         var relayURLs: [URL] = [configService.config.nostrURL].compactMap { URL(string: $0) }
-        let externalStrs = configService.config.feedRelays.isEmpty ? [
+        let externalStrs = configService.config.activeFeedRelays.isEmpty ? [
             "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
-        ] : configService.config.feedRelays
+        ] : configService.config.activeFeedRelays
         relayURLs.append(contentsOf: externalStrs.compactMap { URL(string: $0) })
 
         let subId = "thread-eng-\(UUID().uuidString.prefix(6))"
@@ -1000,11 +1326,11 @@ struct NoteDetailView: View {
         isLoadingParents = true
 
         var relayURLs: [URL] = [configService.config.nostrURL].compactMap { URL(string: $0) }
-        let externalStrs = configService.config.feedRelays.isEmpty ? [
+        let externalStrs = configService.config.activeFeedRelays.isEmpty ? [
             "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
-        ] : configService.config.feedRelays
+        ] : configService.config.activeFeedRelays
         relayURLs.append(contentsOf: externalStrs.compactMap { URL(string: $0) })
 
         let subId = "thread-\(UUID().uuidString.prefix(8))"
@@ -1076,6 +1402,11 @@ struct NoteDetailView: View {
                 parentNotes.sort { $0.createdAt < $1.createdAt }
             }
 
+            // Also store in feedService so focusedNote / dynamicReplies can resolve them
+            if feedService.findNote(id: id) == nil {
+                feedService.parentNotesCache[id] = parent
+            }
+
             if nostrService.profiles[pubkey] == nil {
                 nostrService.fetchMissingProfiles(for: [pubkey])
             }
@@ -1100,6 +1431,11 @@ struct NoteDetailView: View {
             fmt.dateFormat = "MMM d"
             return fmt.string(from: date)
         }
+    }
+
+    private func shortKey(_ key: String) -> String {
+        guard key.count >= 12 else { return key }
+        return "npub…" + String(key.suffix(6))
     }
 
     // MARK: - Rich Engagement Computations
@@ -1175,15 +1511,15 @@ struct NoteDetailView: View {
                         ForEach(groupedReactions.prefix(4), id: \.emoji) { group in
                             HStack(spacing: 2) {
                                 Text(group.emoji)
-                                    .font(.system(size: 12))
+                                    .font(.appSystem(size: 12))
                                 Text("\(group.count)")
-                                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                    .font(.appSystem(size: 10, weight: .bold, design: .monospaced))
                                     .foregroundColor(.secondary)
                             }
                         }
                         if groupedReactions.count > 4 {
                             Text("+\(groupedReactions.count - 4)")
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                .font(.appSystem(size: 10, weight: .bold, design: .monospaced))
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -1202,10 +1538,10 @@ struct NoteDetailView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "bolt.fill")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.appSystem(size: 10, weight: .bold))
                             .foregroundColor(.orange)
                         Text(compactZapText)
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .font(.appSystem(size: 11, weight: .semibold, design: .monospaced))
                             .foregroundColor(.secondary)
                     }
                     .padding(.horizontal, 8)
@@ -1223,10 +1559,10 @@ struct NoteDetailView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.2.squarepath")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.appSystem(size: 10, weight: .bold))
                             .foregroundColor(.green)
                         Text("\(repostersMapped.count)")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .font(.appSystem(size: 11, weight: .semibold, design: .monospaced))
                             .foregroundColor(.secondary)
                     }
                     .padding(.horizontal, 8)
@@ -1275,16 +1611,16 @@ struct ZappersListView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             HStack {
                                 Text(profile?.bestName ?? "npub…" + String(zap.zapperPubkey.suffix(6)))
-                                    .font(.system(size: 15, weight: .semibold))
+                                    .font(.appSystem(size: 15, weight: .semibold))
                                     .foregroundColor(.primary)
                                 Spacer()
                                 Text("\(zap.amountSats) sats")
-                                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                                    .font(.appSystem(size: 13, weight: .bold, design: .monospaced))
                                     .foregroundColor(.orange)
                             }
                             if !zap.comment.isEmpty {
                                 Text(zap.comment)
-                                    .font(.system(size: 13))
+                                    .font(.appSystem(size: 13))
                                     .foregroundColor(.secondary)
                                     .lineLimit(2)
                             }
@@ -1342,15 +1678,15 @@ struct ThreadNoteEngagementRow: View {
                     HStack(spacing: 3) {
                         ForEach(reactions.prefix(3), id: \.emoji) { group in
                             HStack(spacing: 1) {
-                                Text(group.emoji).font(.system(size: 11))
+                                Text(group.emoji).font(.appSystem(size: 11))
                                 Text("\(group.count)")
-                                    .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                    .font(.appSystem(size: 9, weight: .bold, design: .monospaced))
                                     .foregroundColor(.secondary)
                             }
                         }
                         if reactions.count > 3 {
                             Text("+\(reactions.count - 3)")
-                                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                                .font(.appSystem(size: 9, weight: .bold, design: .monospaced))
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -1363,10 +1699,10 @@ struct ThreadNoteEngagementRow: View {
                 if zapCount > 0 {
                     HStack(spacing: 2) {
                         Image(systemName: "bolt.fill")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.appSystem(size: 8, weight: .bold))
                             .foregroundColor(.orange)
                         Text(formatSats(zapSats))
-                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .font(.appSystem(size: 9, weight: .semibold, design: .monospaced))
                             .foregroundColor(.secondary)
                     }
                     .padding(.horizontal, 6)
@@ -1378,10 +1714,10 @@ struct ThreadNoteEngagementRow: View {
                 if repostCount > 0 {
                     HStack(spacing: 2) {
                         Image(systemName: "arrow.2.squarepath")
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.appSystem(size: 8, weight: .bold))
                             .foregroundColor(.green)
                         Text("\(repostCount)")
-                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .font(.appSystem(size: 9, weight: .semibold, design: .monospaced))
                             .foregroundColor(.secondary)
                     }
                     .padding(.horizontal, 6)
@@ -1409,6 +1745,7 @@ struct ThreadedReplyNode: View {
     let reply: FeedNote
     let allNotes: [FeedNote]
     let depth: Int
+    var isCompactMode: Bool = false
     var onReply: ((FeedNote) -> Void)? = nil
     var onQuote: ((FeedNote) -> Void)? = nil
     var onProfile: ((String) -> Void)? = nil
@@ -1431,47 +1768,15 @@ struct ThreadedReplyNode: View {
 
         let isCurrentFocused = reply.id == focusedNoteId
 
-        VStack(alignment: .leading, spacing: 8) {
-            let replyProfile = nostrService.profiles[reply.pubkey]
-            let rowData = FeedNoteRowData.resolve(
-                for: reply,
-                feedService: FeedService.shared,
-                nostrService: nostrService
-            )
-            FeedNoteRow(
-                note: reply,
-                profile: replyProfile,
-                rowData: rowData,
-                onReply: { onReply?(reply) },
-                onQuote: { onQuote?(reply) },
-                onProfile: onProfile,
-                onMedia: onMedia,
-                showParent: false,
-                layoutMode: .wide,
-                isFocused: isCurrentFocused
-            )
-            .id(reply.id)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
-                    focusedNoteId = reply.id
-                    proxy.scrollTo(reply.id, anchor: .center)
-                }
-            }
-
-            // Expanded engagement for this reply
-            if expandedEngagement && !isCurrentFocused {
-                ThreadNoteEngagementRow(
-                    reactions: groupedReactionsForReply(reply.id),
-                    zapCount: zapTotalForReply(reply.id).count,
-                    zapSats: zapTotalForReply(reply.id).sats,
-                    repostCount: repostCountForReply(reply.id)
-                )
-                .padding(.horizontal, 4)
+        VStack(alignment: .leading, spacing: isCompactMode ? 2 : 8) {
+            if isCompactMode {
+                compactReplyView(isCurrentFocused: isCurrentFocused, childReplies: childReplies)
+            } else {
+                fullReplyView(isCurrentFocused: isCurrentFocused)
             }
 
             if !childReplies.isEmpty {
-                if depth >= 3 {
+                if depth >= 3 && !isCompactMode {
                     // Prevent excessive indentation squishing on narrow mobile screens
                     Button {
                         withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
@@ -1481,9 +1786,9 @@ struct ThreadedReplyNode: View {
                     } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "arrow.turn.down.right")
-                                .font(.system(size: 11, weight: .bold))
+                                .font(.appSystem(size: 11, weight: .bold))
                             Text("Show \(childReplies.count) more \(childReplies.count == 1 ? "reply" : "replies")")
-                                .font(.system(size: 12, weight: .bold, design: .rounded))
+                                .font(.appSystem(size: 12, weight: .bold, design: .rounded))
                         }
                         .foregroundColor(Color.havenPurple)
                         .padding(.vertical, 6)
@@ -1493,7 +1798,7 @@ struct ThreadedReplyNode: View {
                         .padding(.leading, 8)
                     }
                     .buttonStyle(.plain)
-                } else {
+                } else if !isCompactMode {
                     HStack(alignment: .top, spacing: 0) {
                         // Thread vertical connecting line
                         Rectangle()
@@ -1509,6 +1814,7 @@ struct ThreadedReplyNode: View {
                                     reply: child,
                                     allNotes: allNotes,
                                     depth: depth + 1,
+                                    isCompactMode: isCompactMode,
                                     onReply: onReply,
                                     onQuote: onQuote,
                                     onProfile: onProfile,
@@ -1523,8 +1829,245 @@ struct ThreadedReplyNode: View {
                             }
                         }
                     }
+                } else {
+                    // Compact mode: show nested replies with visual depth indicators
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(childReplies) { child in
+                            ThreadedReplyNode(
+                                reply: child,
+                                allNotes: allNotes,
+                                depth: depth + 1,
+                                isCompactMode: isCompactMode,
+                                onReply: onReply,
+                                onQuote: onQuote,
+                                onProfile: onProfile,
+                                onMedia: onMedia,
+                                focusedNoteId: $focusedNoteId,
+                                proxy: proxy,
+                                expandedEngagement: expandedEngagement,
+                                perNoteReactions: perNoteReactions,
+                                perNoteReposts: perNoteReposts,
+                                perNoteZaps: perNoteZaps
+                            )
+                        }
+                    }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func fullReplyView(isCurrentFocused: Bool) -> some View {
+        let replyProfile = nostrService.profiles[reply.pubkey]
+        let rowData = FeedNoteRowData.resolve(
+            for: reply,
+            feedService: FeedService.shared,
+            nostrService: nostrService
+        )
+
+        // Check if this reply has engagement to show
+        let hasEngagement = expandedEngagement && !isCurrentFocused && (
+            !groupedReactionsForReply(reply.id).isEmpty ||
+            zapTotalForReply(reply.id).count > 0 ||
+            repostCountForReply(reply.id) > 0
+        )
+
+        VStack(alignment: .leading, spacing: 0) {
+            FeedNoteRow(
+                note: reply,
+                profile: replyProfile,
+                rowData: rowData,
+                onReply: { onReply?(reply) },
+                onQuote: { onQuote?(reply) },
+                onProfile: onProfile,
+                onMedia: onMedia,
+                showParent: false,
+                layoutMode: .wide,
+                isFocused: isCurrentFocused
+            )
+
+            // Expanded engagement for this reply - inside the note box
+            if hasEngagement {
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.1))
+                    .frame(height: 0.5)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+
+                ThreadNoteEngagementRow(
+                    reactions: groupedReactionsForReply(reply.id),
+                    zapCount: zapTotalForReply(reply.id).count,
+                    zapSats: zapTotalForReply(reply.id).sats,
+                    repostCount: repostCountForReply(reply.id)
+                )
+                .padding(.horizontal, 12)
+                .padding(.bottom, 8)
+            }
+        }
+        .id(reply.id)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
+                focusedNoteId = reply.id
+                proxy.scrollTo(reply.id, anchor: .center)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func compactReplyView(isCurrentFocused: Bool, childReplies: [FeedNote]) -> some View {
+        let replyProfile = nostrService.profiles[reply.pubkey]
+        let indentMultiplier = min(depth - 1, 5) // Cap indentation at depth 5
+        let indentWidth: CGFloat = CGFloat(indentMultiplier) * 12
+        let isOLED = ConfigService.shared.config.useOLED
+
+        HStack(alignment: .top, spacing: 8) {
+            // Simplified depth indicator - minimal thread line for nested replies
+            if depth > 1 {
+                Rectangle()
+                    .fill(Color.secondary.opacity(isOLED ? 0.15 : 0.2))
+                    .frame(width: 1)
+                    .padding(.leading, indentWidth)
+            }
+
+            // Avatar - smaller and cleaner for compact mode
+            AvatarView(url: replyProfile?.pictureURL, pubkey: reply.pubkey)
+                .frame(width: 16, height: 16)
+                .overlay(
+                    Circle()
+                        .stroke(Color.secondary.opacity(isOLED ? 0.12 : 0.08), lineWidth: 0.5)
+                )
+                .onTapGesture {
+                    onProfile?(reply.pubkey)
+                }
+
+            // Content
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 5) {
+                    Text(replyProfile?.bestName ?? "npub…" + String(reply.pubkey.suffix(6)))
+                        .font(.appSystem(size: 11.5, weight: .semibold))
+                        .foregroundColor(.white.opacity(isOLED ? 0.92 : 0.95))
+                        .lineLimit(1)
+
+                    if let nip05 = replyProfile?.nip05, !nip05.isEmpty {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.appSystem(size: 7.5))
+                            .foregroundColor(Color.havenPurple.opacity(0.8))
+                    }
+
+                    Text("· \(relativeTime(reply.createdAt))")
+                        .font(.appSystem(size: 10))
+                        .foregroundColor(.secondary.opacity(isOLED ? 0.7 : 0.8))
+
+                    Spacer()
+
+                    // Reply count badge - more subtle
+                    if !childReplies.isEmpty {
+                        HStack(spacing: 3) {
+                            Image(systemName: "text.bubble")
+                                .font(.appSystem(size: 8, weight: .medium))
+                            Text("\(childReplies.count)")
+                                .font(.appSystem(size: 9, weight: .semibold, design: .monospaced))
+                        }
+                        .foregroundColor(.secondary.opacity(isOLED ? 0.5 : 0.6))
+                    }
+                }
+
+                if !reply.content.isEmpty {
+                    Text(reply.content)
+                        .font(.appSystem(size: 11.5))
+                        .foregroundColor(.white.opacity(isOLED ? 0.8 : 0.85))
+                        .lineLimit(2)
+                        .lineSpacing(1.5)
+                        .padding(.top, 1)
+                }
+
+                // Compact engagement (only show if has engagement)
+                if expandedEngagement {
+                    let reactions = groupedReactionsForReply(reply.id)
+                    let zapInfo = zapTotalForReply(reply.id)
+                    let repostCount = repostCountForReply(reply.id)
+
+                    if !reactions.isEmpty || zapInfo.count > 0 || repostCount > 0 {
+                        HStack(spacing: 6) {
+                            if !reactions.isEmpty {
+                                HStack(spacing: 2) {
+                                    Text(reactions.first?.emoji ?? "")
+                                        .font(.appSystem(size: 9))
+                                    Text("\(reactions.reduce(0) { $0 + $1.count })")
+                                        .font(.appSystem(size: 8, weight: .semibold, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            if zapInfo.count > 0 {
+                                HStack(spacing: 1) {
+                                    Image(systemName: "bolt.fill")
+                                        .font(.appSystem(size: 7))
+                                        .foregroundColor(.orange)
+                                    Text("\(zapInfo.count)")
+                                        .font(.appSystem(size: 8, weight: .semibold, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                            if repostCount > 0 {
+                                HStack(spacing: 1) {
+                                    Image(systemName: "arrow.2.squarepath")
+                                        .font(.appSystem(size: 7))
+                                        .foregroundColor(.green)
+                                    Text("\(repostCount)")
+                                        .font(.appSystem(size: 8, weight: .semibold, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                        .padding(.top, 2)
+                    }
+                }
+            }
+        }
+        .id(reply.id)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(isCurrentFocused
+                    ? Color.havenPurple.opacity(isOLED ? 0.08 : 0.12)
+                    : (isOLED ? Color.white.opacity(0.02) : Color.clear))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(
+                    isCurrentFocused
+                        ? Color.havenPurple.opacity(isOLED ? 0.35 : 0.3)
+                        : Color.secondary.opacity(isOLED ? 0.1 : 0.06),
+                    lineWidth: isCurrentFocused ? 1 : 0.5
+                )
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
+                focusedNoteId = reply.id
+                proxy.scrollTo(reply.id, anchor: .center)
+            }
+        }
+    }
+
+    private func depthIndicatorColor(for depth: Int) -> Color {
+        // Simplified to use consistent theme color throughout
+        return Color.havenPurple.opacity(0.6)
+    }
+
+    private func relativeTime(_ date: Date) -> String {
+        let diff = Date().timeIntervalSince(date)
+        switch diff {
+        case ..<60:         return "now"
+        case ..<3600:       return "\(Int(diff / 60))m"
+        case ..<86400:      return "\(Int(diff / 3600))h"
+        case ..<604800:     return "\(Int(diff / 86400))d"
+        default:
+            let fmt = DateFormatter()
+            fmt.dateFormat = "MMM d"
+            return fmt.string(from: date)
         }
     }
 
@@ -1591,7 +2134,7 @@ struct NoteDetailViewWrapper: View {
                 } else if let error = error {
                     VStack {
                         Image(systemName: "exclamationmark.triangle")
-                            .font(.largeTitle)
+                            .font(.appLargeTitle)
                         Text(error)
                             .padding()
                     }
@@ -1621,13 +2164,49 @@ struct NoteDetailViewWrapper: View {
             return
         }
 
-        let hexId: String
-        if noteId.hasPrefix("note1") {
-            hexId = Bech32.decode(noteId)?.hexString ?? noteId
-        } else if noteId.hasPrefix("nevent1") {
-            hexId = noteId // Simplified
+        // Build the appropriate REQ filter based on identifier type
+        let filter: [String: Any]
+        if noteId.hasPrefix("naddr1") {
+            // NIP-19 naddr TLV: type 0 = d-tag, type 1 = relay, type 2 = pubkey, type 3 = kind
+            guard let decoded = Bech32.decode(noteId) else {
+                self.isLoading = false
+                self.error = "Invalid naddr identifier"
+                return
+            }
+            var data = decoded.data
+            var dTag: String?
+            var pubkey: String?
+            var kind: Int?
+            while data.count >= 2 {
+                let tlvType = data.removeFirst()
+                let length = Int(data.removeFirst())
+                guard data.count >= length else { break }
+                let value = data.prefix(length)
+                switch tlvType {
+                case 0: dTag = String(data: Data(value), encoding: .utf8)
+                case 2 where length == 32: pubkey = value.map { String(format: "%02x", $0) }.joined()
+                case 3 where length == 4:
+                    kind = Int(Data(value).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian })
+                default: break
+                }
+                data.removeFirst(length)
+            }
+            guard let k = kind, let p = pubkey else {
+                self.isLoading = false
+                self.error = "Could not decode naddr"
+                return
+            }
+            filter = ["kinds": [k], "authors": [p], "#d": [dTag ?? ""], "limit": 1]
         } else {
-            hexId = noteId
+            let hexId: String
+            if noteId.hasPrefix("note1") {
+                hexId = Bech32.decode(noteId)?.hexString ?? noteId
+            } else if noteId.hasPrefix("nevent1") {
+                hexId = noteId // Simplified
+            } else {
+                hexId = noteId
+            }
+            filter = ["ids": [hexId], "limit": 1]
         }
 
         let relays = [configService.config.nostrURL, "wss://relay.damus.io", "wss://relay.primal.net"].compactMap { URL(string: $0) }
@@ -1636,19 +2215,18 @@ struct NoteDetailViewWrapper: View {
         for url in relays {
             let client = WebSocketClient()
             client.isTemporary = true
-            
+
             client.messageSubject
                 .receive(on: DispatchQueue.main)
                 .sink { msg in
                     self.handleNoteMessage(msg, client: client)
                 }
                 .store(in: &cancellables)
-                
+
             client.$connectionState
                 .receive(on: DispatchQueue.main)
                 .sink { state in
                     if state == .connected {
-                        let filter: [String: Any] = ["ids": [hexId], "limit": 1]
                         let req = ["REQ", "load-\(UUID().uuidString.prefix(8))", filter] as [Any]
                         if let data = try? JSONSerialization.data(withJSONObject: req),
                            let str = String(data: data, encoding: .utf8) {
@@ -1657,7 +2235,7 @@ struct NoteDetailViewWrapper: View {
                     }
                 }
                 .store(in: &cancellables)
-            
+
             client.connect(url: url)
         }
 

@@ -47,7 +47,9 @@ class LinkPreviewService {
     )
 
     private init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            fatalError("Application Support directory unavailable")
+        }
         let dbDir = appSupport
             .appendingPathComponent("Haven", isDirectory: true)
             .appendingPathComponent("haven_database", isDirectory: true)

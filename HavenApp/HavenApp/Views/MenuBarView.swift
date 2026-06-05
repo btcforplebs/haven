@@ -12,6 +12,8 @@ struct MenuBarView: View {
     #if os(macOS)
     @Environment(\.openSettings) var openSettings
     @Environment(\.openWindow) var openWindow
+    #else
+    @Environment(\.horizontalSizeClass) var horizontalSizeClass
     #endif
     var isPoppedOut: Bool = false
     
@@ -20,9 +22,17 @@ struct MenuBarView: View {
     @State private var statusPulse = false
     @State private var showingOwnProfile = false
     @State private var showingAccountSwitcher = false
-    
+
     @State private var activeHex: String = ConfigService.shared.activeAccountHexPubkey
-    
+
+    private var usesSidebarLayout: Bool {
+        #if os(macOS)
+        return isPoppedOut
+        #else
+        return horizontalSizeClass == .regular
+        #endif
+    }
+
     private var isOwner: Bool {
         configService.config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -37,13 +47,14 @@ struct MenuBarView: View {
         case media
         case profile
         case relay
+        case notes
         case settings
     }
     
     var body: some View {
         ZStack {
             Group {
-                if isPoppedOut {
+                if isPoppedOut || usesSidebarLayout {
                     // MARK: - Premium Desktop Sidebar Layout
                     HStack(spacing: 0) {
                         // LEFT SIDEBAR
@@ -51,20 +62,20 @@ struct MenuBarView: View {
                             // Brand Header
                             HStack(spacing: 10) {
                                 Image(systemName: "server.rack")
-                                    .font(.system(size: 18, weight: .bold))
+                                    .font(.appSystem(size: 18, weight: .bold))
                                     .foregroundColor(.havenPurple)
                                 Text("Nostr Vault")
-                                    .font(.system(size: 18, weight: .bold))
+                                    .font(.appSystem(size: 18, weight: .bold))
                                     .foregroundColor(.white)
                                 Spacer()
                                 
                                 // Live status dot
                                 HStack(spacing: 4) {
                                     Circle()
-                                        .fill(relayManager.isBooting ? Color.yellow : (relayManager.isRunning ? Color.green : Color.red))
+                                        .fill(relayManager.isBooting ? Color.yellow : (relayManager.isRunning && relayManager.isWotSyncing ? Color.orange : (relayManager.isRunning ? Color.green : Color.red)))
                                         .frame(width: 8, height: 8)
-                                    Text(relayManager.isBooting ? "Booting" : (relayManager.isRunning ? "Online" : "Offline"))
-                                        .font(.system(size: 10, weight: .semibold))
+                                    Text(relayManager.isBooting ? "Booting" : (relayManager.isRunning && relayManager.isWotSyncing ? "Syncing" : (relayManager.isRunning ? "Online" : "Offline")))
+                                        .font(.appSystem(size: 10, weight: .semibold))
                                         .foregroundColor(.secondary)
                                 }
                             }
@@ -100,11 +111,11 @@ struct MenuBarView: View {
 
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(nostrService.profiles[activeHex]?.bestName ?? (isOwner ? "Owner" : "User"))
-                                            .font(.system(size: 13, weight: .semibold))
+                                            .font(.appSystem(size: 13, weight: .semibold))
                                             .foregroundColor(.white)
                                             .lineLimit(1)
                                         Text(isOwner ? "Owner Key" : "Whitelisted")
-                                            .font(.system(size: 10))
+                                            .font(.appSystem(size: 10))
                                             .foregroundColor(.secondary)
                                     }
                                     
@@ -112,7 +123,7 @@ struct MenuBarView: View {
                                     
                                     if hasMultipleAccounts {
                                         Image(systemName: "chevron.up.chevron.down")
-                                            .font(.system(size: 10))
+                                            .font(.appSystem(size: 10))
                                             .foregroundColor(.secondary)
                                     }
                                 }
@@ -137,7 +148,7 @@ struct MenuBarView: View {
                                         let isActive = activeNpub.isEmpty ? isOwner : npub == activeNpub
                                         let hex = Bech32.decode(npub)?.hexString ?? ""
                                         let name = nostrService.profiles[hex]?.bestName ?? (isOwner ? "Owner" : String(npub.prefix(8)))
-                                        
+
                                         Button {
                                             configService.switchActiveAccount(to: npub)
                                         } label: {
@@ -150,7 +161,7 @@ struct MenuBarView: View {
                                     }
                                 }
                             }
-                            
+
                             // Sidebar Tabs
                             VStack(spacing: 4) {
                                 SidebarTabButton(icon: "list.bullet.rectangle.portrait", title: "Feed", isSelected: selectedTab == .feed) {
@@ -173,7 +184,7 @@ struct MenuBarView: View {
                                             .frame(width: 20, height: 20)
 
                                         Text("My Profile")
-                                            .font(.system(size: 13, weight: selectedTab == .profile ? .semibold : .medium))
+                                            .font(.appSystem(size: 13, weight: selectedTab == .profile ? .semibold : .medium))
                                             .foregroundColor(selectedTab == .profile ? .white : .secondary)
 
                                         Spacer()
@@ -192,8 +203,16 @@ struct MenuBarView: View {
                                     selectedTab = .relay
                                 }
 
-                                SidebarTabButton(icon: "photo.on.rectangle", title: "Media", isSelected: selectedTab == .media) {
+                                SidebarTabButton(icon: "note.text", title: "Notes", isSelected: selectedTab == .notes) {
+                                    selectedTab = .notes
+                                }
+
+                                SidebarTabButton(icon: "photo.on.rectangle", title: "Blossom", isSelected: selectedTab == .media) {
                                     selectedTab = .media
+                                }
+
+                                SidebarTabButton(icon: "gearshape", title: "Settings", isSelected: selectedTab == .settings) {
+                                    selectedTab = .settings
                                 }
                             }
                             .padding(.horizontal, 8)
@@ -215,7 +234,7 @@ struct MenuBarView: View {
                                         Image(systemName: relayManager.isRunning ? "arrow.clockwise.circle.fill" : "play.circle.fill")
                                             .foregroundColor(relayManager.isRunning ? .orange : .green)
                                         Text(relayManager.isBooting ? "Booting..." : (relayManager.isRunning ? "Restart Relay" : "Start Relay"))
-                                            .font(.system(size: 13, weight: .semibold))
+                                            .font(.appSystem(size: 13, weight: .semibold))
                                         Spacer()
                                     }
                                     .padding(.horizontal, 12)
@@ -226,27 +245,15 @@ struct MenuBarView: View {
                                 .buttonStyle(.plain)
                                 .disabled(relayManager.isBooting)
                                 
-                                HStack {
-                                    Button("Quit Nostr Vault") {
-                                        #if os(macOS)
-                                        NSApp.terminate(nil)
-                                        #endif
-                                    }
-                                    .buttonStyle(.plain)
-                                    .foregroundColor(.secondary)
-                                    .font(.system(size: 12))
-
-                                    Spacer()
-
-                                    Button(action: { selectedTab = .settings }) {
-                                        Image(systemName: "gearshape.fill")
-                                            .font(.system(size: 14))
-                                            .foregroundColor(.secondary)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .help("Settings")
+                                #if os(macOS)
+                                Button("Quit Nostr Vault") {
+                                    NSApp.terminate(nil)
                                 }
+                                .buttonStyle(.plain)
+                                .foregroundColor(.secondary)
+                                .font(.appSystem(size: 12))
                                 .padding(.top, 4)
+                                #endif
                             }
                             .padding(16)
                         }
@@ -258,7 +265,7 @@ struct MenuBarView: View {
                         
                         // MAIN CONTENT AREA
                         ZStack {
-                            Color(red: 0.08, green: 0.08, blue: 0.1)
+                            Color.platformWindowBackground
                                 .ignoresSafeArea()
                             
                             switch selectedTab {
@@ -282,11 +289,17 @@ struct MenuBarView: View {
                                     .environmentObject(configService)
                                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
                             case .relay:
-                                ViewerView()
+                                DashboardView()
                                     .environmentObject(relayManager)
                                     .environmentObject(configService)
                                     .environmentObject(nostrService)
                                     .environmentObject(StatsService.shared)
+                                    .transition(.opacity)
+                            case .notes:
+                                ViewerView(embedded: true)
+                                    .environmentObject(configService)
+                                    .environmentObject(nostrService)
+                                    .environmentObject(relayManager)
                                     .transition(.opacity)
                             case .settings:
                                 SettingsView(isEmbedded: true)
@@ -307,14 +320,14 @@ struct MenuBarView: View {
                         // MARK: - Header
                         HStack {
                             Label("Nostr Vault", systemImage: "server.rack")
-                                .font(.system(size: 16, weight: .semibold))
+                                .font(.appSystem(size: 16, weight: .semibold))
                                 .foregroundColor(.havenPurple)
                             
                             Spacer()
                             
-                            if relayManager.isBooting {
+                            if relayManager.isBooting || relayManager.isWotSyncing {
                                 Text(relayManager.bootStatusMessage)
-                                    .font(.system(size: 11, weight: .medium))
+                                    .font(.appSystem(size: 11, weight: .medium))
                                     .foregroundColor(.secondary)
                                     .transition(.opacity)
                             }
@@ -331,7 +344,7 @@ struct MenuBarView: View {
                                     }
                                 }) {
                                     Image(systemName: relayManager.isRunning ? "arrow.clockwise.circle" : "play.circle")
-                                        .font(.system(size: 16, weight: .medium))
+                                        .font(.appSystem(size: 16, weight: .medium))
                                         .foregroundColor(relayManager.isBooting ? .orange : (relayManager.isRunning ? .orange.opacity(0.8) : .secondary))
                                         .frame(width: 28, height: 28)
                                         .contentShape(Rectangle())
@@ -344,15 +357,16 @@ struct MenuBarView: View {
                                 Button(action: {
                                     selectedTab = .relay
                                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                        NotificationCenter.default.post(name: NSNotification.Name("OpenRelayDashboard"), object: nil)
+                                        NotificationCenter.default.post(name: .openRelayDashboard, object: nil)
                                     }
                                 }) {
                                     ZStack(alignment: .topTrailing) {
                                         Image(systemName: "antenna.radiowaves.left.and.right")
-                                            .font(.system(size: 16, weight: .medium))
+                                            .font(.appSystem(size: 16, weight: .medium))
                                             .foregroundColor(
                                                 relayManager.isBooting ? .orange :
-                                                (relayManager.isRunning ? Color(red: 0.2, green: 0.85, blue: 0.5) : .secondary)
+                                                (relayManager.isRunning && relayManager.isWotSyncing ? .orange :
+                                                (relayManager.isRunning ? Color(red: 0.2, green: 0.85, blue: 0.5) : .secondary))
                                             )
                                             .scaleEffect(relayManager.isRunning && !relayManager.isBooting && statusPulse ? 1.08 : 1.0)
                                             .animation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true), value: statusPulse)
@@ -361,7 +375,7 @@ struct MenuBarView: View {
 
                                         // Tiny status dot overlay
                                         Circle()
-                                            .fill(relayManager.isBooting ? Color.orange : (relayManager.isRunning ? Color(red: 0.2, green: 0.85, blue: 0.5) : Color.red))
+                                            .fill(relayManager.isBooting ? Color.orange : (relayManager.isRunning && relayManager.isWotSyncing ? Color.orange : (relayManager.isRunning ? Color(red: 0.2, green: 0.85, blue: 0.5) : Color.red)))
                                             .frame(width: 5, height: 5)
                                             .offset(x: 2, y: -1)
                                     }
@@ -389,10 +403,10 @@ struct MenuBarView: View {
                                 VStack(spacing: 12) {
                                     Spacer()
                                     Image(systemName: "rectangle.expand.vertical")
-                                        .font(.system(size: 28, weight: .light))
+                                        .font(.appSystem(size: 28, weight: .light))
                                         .foregroundColor(.secondary.opacity(0.6))
                                     Text("Open the full window to view your feed")
-                                        .font(.system(size: 12, weight: .medium))
+                                        .font(.appSystem(size: 12, weight: .medium))
                                         .foregroundColor(.secondary)
                                         .multilineTextAlignment(.center)
                                     Button(action: {
@@ -404,7 +418,7 @@ struct MenuBarView: View {
                                         #endif
                                     }) {
                                         Text("Open Window")
-                                            .font(.system(size: 12, weight: .semibold))
+                                            .font(.appSystem(size: 12, weight: .semibold))
                                             .foregroundColor(.white)
                                             .padding(.horizontal, 16)
                                             .padding(.vertical, 6)
@@ -433,20 +447,26 @@ struct MenuBarView: View {
                                     .environmentObject(configService)
                                     .transition(.opacity.combined(with: .scale(scale: 0.98)))
                             case .relay:
-                                ViewerView()
+                                DashboardView()
                                     .environmentObject(relayManager)
                                     .environmentObject(configService)
                                     .environmentObject(nostrService)
                                     .environmentObject(StatsService.shared)
                                     .transition(.opacity)
+                            case .notes:
+                                ViewerView(embedded: true)
+                                    .environmentObject(configService)
+                                    .environmentObject(nostrService)
+                                    .environmentObject(relayManager)
+                                    .transition(.opacity)
                             case .settings:
                                 VStack(spacing: 12) {
                                     Spacer()
                                     Image(systemName: "gearshape")
-                                        .font(.system(size: 28, weight: .light))
+                                        .font(.appSystem(size: 28, weight: .light))
                                         .foregroundColor(.secondary.opacity(0.6))
                                     Text("Open the full window to adjust settings")
-                                        .font(.system(size: 12, weight: .medium))
+                                        .font(.appSystem(size: 12, weight: .medium))
                                         .foregroundColor(.secondary)
                                         .multilineTextAlignment(.center)
                                     Button(action: {
@@ -458,7 +478,7 @@ struct MenuBarView: View {
                                         #endif
                                     }) {
                                         Text("Open Window")
-                                            .font(.system(size: 12, weight: .semibold))
+                                            .font(.appSystem(size: 12, weight: .semibold))
                                             .foregroundColor(.white)
                                             .padding(.horizontal, 16)
                                             .padding(.vertical, 6)
@@ -516,7 +536,7 @@ struct MenuBarView: View {
                                             )
                                             .scaleEffect(selectedTab == .profile ? 1.1 : 1.0)
                                         Text("Profile")
-                                            .font(.system(size: 10, weight: selectedTab == .profile ? .semibold : .regular))
+                                            .font(.appSystem(size: 10, weight: selectedTab == .profile ? .semibold : .regular))
                                     }
                                     .foregroundColor(selectedTab == .profile ? Color.havenPurple : .secondary)
                                     .frame(maxWidth: .infinity)
@@ -529,8 +549,12 @@ struct MenuBarView: View {
                                     selectedTab = .relay
                                 }
 
-                                TabButton(icon: "photo.on.rectangle", title: "Media", isSelected: selectedTab == .media) {
+                                TabButton(icon: "photo.on.rectangle", title: "Blossom", isSelected: selectedTab == .media) {
                                     selectedTab = .media
+                                }
+
+                                TabButton(icon: "gearshape", title: "Settings", isSelected: selectedTab == .settings) {
+                                    selectedTab = .settings
                                 }
                             }
                             .padding(.horizontal, 4)
@@ -630,7 +654,7 @@ struct MenuBarView: View {
                                     #endif
                                 }) {
                                     Image(systemName: "arrow.up.forward.square")
-                                        .font(.system(size: 16))
+                                        .font(.appSystem(size: 16))
                                         .foregroundColor(.secondary)
                                 }
                                 .buttonStyle(.plain)
@@ -639,14 +663,6 @@ struct MenuBarView: View {
                             
                             Spacer()
 
-                            Button(action: { selectedTab = .settings }) {
-                                Image(systemName: "gearshape.fill")
-                                    .font(.system(size: 16))
-                                    .foregroundColor(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Settings")
-
                             Button("Quit Nostr Vault") {
                                 #if os(macOS)
                                 NSApp.terminate(nil)
@@ -654,7 +670,7 @@ struct MenuBarView: View {
                             }
                             .buttonStyle(.plain)
                             .foregroundColor(.secondary)
-                            .font(.system(size: 13))
+                            .font(.appSystem(size: 13))
                         }
                         .padding()
                         .background(Color.platformControlBackground)
@@ -671,18 +687,18 @@ struct MenuBarView: View {
                     
                     VStack(spacing: 24) {
                         Text("Importing Notes")
-                            .font(.title2.bold())
+                            .font(.appTitle2.bold())
                             .foregroundColor(.white)
                         
                         // Progress Bar Custom Style
                         VStack(alignment: .leading, spacing: 8) {
                             HStack {
                                 Text(relayManager.importStatusMessage)
-                                    .font(.caption)
+                                    .font(.appCaption)
                                     .foregroundColor(.white.opacity(0.8))
                                 Spacer()
                                 Text("\(Int(relayManager.importProgress * 100))%")
-                                    .font(.caption.monospaced())
+                                    .font(.appCaption.monospaced())
                                     .foregroundColor(.white)
                             }
                             
@@ -708,7 +724,7 @@ struct MenuBarView: View {
                         .frame(width: 300)
                         
                         Text("Please keep the app open.")
-                            .font(.footnote)
+                            .font(.appFootnote)
                             .foregroundColor(.white.opacity(0.5))
                         
                         Divider()
@@ -719,7 +735,7 @@ struct MenuBarView: View {
                                 relayManager.dismissImport()
                             }) {
                                 Text("Close")
-                                    .font(.system(size: 14, weight: .bold))
+                                    .font(.appSystem(size: 14, weight: .bold))
                                     .foregroundColor(.white)
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 10)
@@ -733,7 +749,7 @@ struct MenuBarView: View {
                                 relayManager.cancelImport()
                             }) {
                                 Text("Cancel Import")
-                                    .font(.system(size: 13))
+                                    .font(.appSystem(size: 13))
                                     .foregroundColor(.red)
                                     .padding(.horizontal, 16)
                                     .padding(.vertical, 8)
@@ -758,12 +774,12 @@ struct MenuBarView: View {
 
                 VStack(spacing: 20) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 48))
+                        .font(.appSystem(size: 48))
                         .foregroundColor(.orange)
 
                     VStack(spacing: 6) {
                         Text("Startup Error")
-                            .font(.title2.bold())
+                            .font(.appTitle2.bold())
                             .foregroundColor(.white)
 
                         Text("A previous Nostr Vault process is still running. Run the following command in Terminal to stop it, then relaunch the app.")
@@ -774,7 +790,7 @@ struct MenuBarView: View {
 
                     HStack(spacing: 8) {
                         Text("pkill -9 haven")
-                            .font(.system(size: 14, weight: .medium, design: .monospaced))
+                            .font(.appSystem(size: 14, weight: .medium, design: .monospaced))
                             .foregroundColor(.white)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
@@ -791,7 +807,7 @@ struct MenuBarView: View {
                             #endif
                         }) {
                             Image(systemName: "doc.on.doc")
-                                .font(.system(size: 14))
+                                .font(.appSystem(size: 14))
                                 .foregroundColor(.white)
                                 .frame(width: 36, height: 36)
                                 .background(Color.orange)
@@ -806,7 +822,7 @@ struct MenuBarView: View {
                         relayManager.forceCleanAndRestart()
                     }) {
                         Text("Retry")
-                            .font(.headline)
+                            .font(.appHeadline)
                             .foregroundColor(.white)
                             .frame(width: 140, height: 36)
                             .background(Color.orange)
@@ -827,6 +843,7 @@ struct MenuBarView: View {
                 PostActionNotificationBanner()
                 ZapNotificationBanner()
                 FollowNotificationBanner()
+                ActionToastBanner()
                 MediaUploadNotificationBanner()
                 ErrorNotificationBanner()
             }
@@ -846,6 +863,11 @@ struct MenuBarView: View {
             // injection while the app is inactive — reduces log volume, CPU,
             // and prevents pipe backpressure from Go stdout.
             NetworkSyncService.shared.stop()
+            // Throttle Swift-side background work: stop log parsing into
+            // UI entries, pause the profile-fetch timer, and halt the
+            // LogStore 1-second publishing timer.
+            RelayProcessManager.shared.enterBackground()
+            NostrService.shared.enterBackground()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             stopInactivityTimer()
@@ -853,6 +875,9 @@ struct MenuBarView: View {
             FeedService.shared.resumeFeed()
             // Resume external relay syncing.
             NetworkSyncService.shared.start()
+            // Resume full log processing and profile fetching.
+            RelayProcessManager.shared.enterForeground()
+            NostrService.shared.enterForeground()
         }
         .onReceive(NotificationCenter.default.publisher(for: .havenOpenFeedRelaySettings)) { _ in
             selectedTab = .settings
@@ -896,12 +921,12 @@ struct SidebarTabButton: View {
         Button(action: action) {
             HStack(spacing: 12) {
                 Image(systemName: icon)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.appSystem(size: 15, weight: .semibold))
                     .foregroundColor(isSelected ? .white : (isHovered ? .primary : .secondary))
                     .frame(width: 20, height: 20)
                 
                 Text(title)
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
+                    .font(.appSystem(size: 13, weight: isSelected ? .semibold : .medium))
                     .foregroundColor(isSelected ? .white : (isHovered ? .primary : .secondary))
                 
                 Spacer()
@@ -931,10 +956,10 @@ struct TabButton: View {
         Button(action: action) {
             VStack(spacing: 4) {
                 Image(systemName: icon)
-                    .font(.system(size: 16, weight: isSelected ? .semibold : .medium))
+                    .font(.appSystem(size: 16, weight: isSelected ? .semibold : .medium))
                     .scaleEffect(isSelected ? 1.1 : 1.0)
                 Text(title)
-                    .font(.system(size: 10, weight: isSelected ? .semibold : .regular))
+                    .font(.appSystem(size: 10, weight: isSelected ? .semibold : .regular))
             }
             .foregroundColor(isSelected ? Color.havenPurple : .secondary)
             .frame(maxWidth: .infinity)
@@ -970,7 +995,7 @@ struct AccountSwitcherView: View {
             // Header
             HStack {
                 Text("Accounts")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.appSystem(size: 13, weight: .semibold))
                     .foregroundColor(.primary)
                 Spacer()
             }
@@ -1030,13 +1055,13 @@ struct AccountSwitcherView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(displayName)
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.appSystem(size: 13, weight: .semibold))
                             .foregroundColor(.primary)
                             .lineLimit(1)
 
                         if isOwner {
                             Text("Owner")
-                                .font(.system(size: 9, weight: .bold))
+                                .font(.appSystem(size: 9, weight: .bold))
                                 .foregroundColor(Color.havenPurple)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 2)
@@ -1046,7 +1071,7 @@ struct AccountSwitcherView: View {
                     }
 
                     Text(npub.prefix(20) + "...")
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.appSystem(size: 10, design: .monospaced))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
@@ -1057,7 +1082,7 @@ struct AccountSwitcherView: View {
                 if !hasKey {
                     Button(action: { importingNpub = npub }) {
                         Image(systemName: "key.fill")
-                            .font(.system(size: 11))
+                            .font(.appSystem(size: 11))
                             .foregroundColor(.orange)
                             .padding(6)
                             .background(Color.orange.opacity(0.12))
@@ -1067,13 +1092,13 @@ struct AccountSwitcherView: View {
                     .help("Import signing key")
                 } else {
                     Image(systemName: "key.fill")
-                        .font(.system(size: 11))
+                        .font(.appSystem(size: 11))
                         .foregroundColor(.secondary.opacity(0.4))
                 }
 
                 // Active checkmark
                 Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 15))
+                    .font(.appSystem(size: 15))
                     .foregroundColor(isActive ? Color.havenPurple : .secondary.opacity(0.3))
             }
             .padding(.horizontal, 12)
@@ -1101,9 +1126,9 @@ struct AccountSwitcherView: View {
                     .frame(width: 32, height: 32)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Import Key")
-                        .font(.headline)
+                        .font(.appHeadline)
                     Text(displayName)
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.secondary)
                 }
                 Spacer()
@@ -1134,7 +1159,7 @@ struct AccountSwitcherView: View {
                         }
                     }
                     Text("Enter the nsec for \(displayName)")
-                        .font(.caption2)
+                        .font(.appCaption2)
                         .foregroundColor(.secondary)
                 }
 
@@ -1152,20 +1177,20 @@ struct AccountSwitcherView: View {
                     SecureField("Confirm Password", text: $importConfirm)
                         .textContentType(.newPassword)
                     Label("Password saved to Keychain automatically", systemImage: "lock.fill")
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.green)
                 }
 
                 if let error = importError {
                     Section {
-                        Text(error).font(.caption).foregroundColor(.red)
+                        Text(error).font(.appCaption).foregroundColor(.red)
                     }
                 }
                 if importSuccess {
                     Section {
                         HStack {
                             Image(systemName: "checkmark.circle.fill").foregroundColor(.green)
-                            Text("Key imported successfully!").font(.caption).fontWeight(.semibold)
+                            Text("Key imported successfully!").font(.appCaption).fontWeight(.semibold)
                         }
                     }
                 }
@@ -1326,19 +1351,19 @@ struct SearchView: View {
 
     var body: some View {
         ZStack {
-            Color(red: 0.08, green: 0.08, blue: 0.1).ignoresSafeArea()
+            Color.platformWindowBackground.ignoresSafeArea()
 
             VStack(spacing: 0) {
                 // Search header
                 VStack(spacing: 12) {
                     HStack {
                         Image(systemName: "magnifyingglass")
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(.appSystem(size: 16, weight: .semibold))
                             .foregroundColor(.secondary)
 
                         TextField("Search users, notes, hashtags...", text: $searchQuery)
                             .textFieldStyle(.plain)
-                            .font(.system(size: 14))
+                            .font(.appSystem(size: 14))
                             #if os(iOS)
                             .focused($searchFieldFocused)
                             .submitLabel(.search)
@@ -1370,7 +1395,7 @@ struct SearchView: View {
                                 #endif
                             }) {
                                 Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 14))
+                                    .font(.appSystem(size: 14))
                                     .foregroundColor(.secondary)
                             }
                             .buttonStyle(.plain)
@@ -1389,9 +1414,9 @@ struct SearchView: View {
                                     Button(action: { resultTypeFilter = filter }) {
                                         HStack(spacing: 4) {
                                             Image(systemName: filter.icon)
-                                                .font(.system(size: 10, weight: .semibold))
+                                                .font(.appSystem(size: 10, weight: .semibold))
                                             Text(filter.label)
-                                                .font(.system(size: 12, weight: .semibold))
+                                                .font(.appSystem(size: 12, weight: .semibold))
                                         }
                                         .foregroundColor(resultTypeFilter == filter ? .white : .secondary)
                                         .padding(.horizontal, 10)
@@ -1407,7 +1432,7 @@ struct SearchView: View {
                     }
                 }
                 .padding()
-                .background(Color(red: 0.08, green: 0.08, blue: 0.1))
+                .background(Color.platformWindowBackground)
 
                 Divider()
 
@@ -1428,33 +1453,41 @@ struct SearchView: View {
             searchFieldFocused = false
         }
         .overlay(alignment: .bottomTrailing) {
-            Button(action: { showingCompose = true }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "square.and.pencil")
-                        .font(.system(size: 15, weight: .bold))
-                    Text("Post")
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                }
-                .foregroundColor(.white)
-                .frame(height: 48)
-                .padding(.horizontal, 18)
-                .background(
-                    Capsule()
-                        .fill(
-                            LinearGradient(
-                                gradient: Gradient(colors: [Color.havenPurple, Color.havenPurpleLight]),
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
+            if !feedService.feedScrollingDown {
+                Button(action: { showingCompose = true }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "square.and.pencil")
+                            .font(.appSystem(size: 15, weight: .bold))
+                        Text("Post")
+                            .font(.appSystem(size: 14, weight: .bold, design: .rounded))
+                    }
+                    .foregroundColor(.white)
+                    .frame(height: 48)
+                    .padding(.horizontal, 18)
+                    .background(
+                        Capsule()
+                            .fill(
+                                LinearGradient(
+                                    gradient: Gradient(colors: [Color.havenPurple, Color.havenPurpleLight]),
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
                             )
-                        )
-                        .shadow(color: Color.havenPurple.opacity(0.35), radius: 8, x: 0, y: 4)
-                )
+                            .shadow(color: Color.havenPurple.opacity(0.35), radius: 8, x: 0, y: 4)
+                    )
+                }
+                .padding(.trailing, 20)
+                .padding(.bottom, 90)
+                .hoverEffect(.lift)
+                .transition(.scale(scale: 0.5).combined(with: .opacity))
             }
-            .padding(.trailing, 20)
-            .padding(.bottom, 90)
-            .hoverEffect(.lift)
         }
+        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: feedService.feedScrollingDown)
         #endif
+        .onReceive(NotificationCenter.default.publisher(for: .composeFromTabBar)) { note in
+            guard (note.object as? Int) == 1 else { return }
+            showingCompose = true
+        }
         .sheet(isPresented: $showingCompose) {
             ComposeView(onDismiss: { showingCompose = false })
                 .environmentObject(nostrService)
@@ -1506,14 +1539,14 @@ struct SearchView: View {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
                             Text("Recent")
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(.appSystem(size: 13, weight: .semibold))
                                 .foregroundColor(.secondary)
                             Spacer()
                             Button("Clear") {
                                 recentSearches = []
                                 UserDefaults.standard.removeObject(forKey: "recentSearches")
                             }
-                            .font(.system(size: 12))
+                            .font(.appSystem(size: 12))
                             .foregroundColor(.secondary.opacity(0.7))
                             .buttonStyle(.plain)
                         }
@@ -1523,9 +1556,9 @@ struct SearchView: View {
                                 Button(action: { searchQuery = query }) {
                                     HStack(spacing: 4) {
                                         Image(systemName: "clock.arrow.circlepath")
-                                            .font(.system(size: 10))
+                                            .font(.appSystem(size: 10))
                                         Text(query)
-                                            .font(.system(size: 12, weight: .medium))
+                                            .font(.appSystem(size: 12, weight: .medium))
                                     }
                                     .foregroundColor(.primary.opacity(0.8))
                                     .padding(.horizontal, 10)
@@ -1544,14 +1577,14 @@ struct SearchView: View {
                 if !trending.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Trending")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.appSystem(size: 13, weight: .semibold))
                             .foregroundColor(.secondary)
 
                         FlowLayout(spacing: 6) {
                             ForEach(trending, id: \.self) { tag in
                                 Button(action: { searchQuery = "#\(tag)" }) {
                                     Text("#\(tag)")
-                                        .font(.system(size: 12, weight: .medium))
+                                        .font(.appSystem(size: 12, weight: .medium))
                                         .foregroundColor(Color.havenPurple)
                                         .padding(.horizontal, 10)
                                         .padding(.vertical, 6)
@@ -1569,7 +1602,7 @@ struct SearchView: View {
                 if !suggested.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Active in your feed")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.appSystem(size: 13, weight: .semibold))
                             .foregroundColor(.secondary)
 
                         VStack(spacing: 4) {
@@ -1580,19 +1613,19 @@ struct SearchView: View {
                                             .frame(width: 34, height: 34)
                                         VStack(alignment: .leading, spacing: 1) {
                                             Text(profile.bestName)
-                                                .font(.system(size: 13, weight: .medium))
+                                                .font(.appSystem(size: 13, weight: .medium))
                                                 .foregroundColor(.primary)
                                                 .lineLimit(1)
                                             if let nip05 = profile.nip05, !nip05.isEmpty {
                                                 Text(nip05)
-                                                    .font(.system(size: 11))
+                                                    .font(.appSystem(size: 11))
                                                     .foregroundColor(.secondary)
                                                     .lineLimit(1)
                                             }
                                         }
                                         Spacer()
                                         Image(systemName: "chevron.right")
-                                            .font(.system(size: 11, weight: .semibold))
+                                            .font(.appSystem(size: 11, weight: .semibold))
                                             .foregroundColor(.secondary.opacity(0.5))
                                     }
                                     .padding(.vertical, 6)
@@ -1609,14 +1642,14 @@ struct SearchView: View {
                 if recentSearches.isEmpty && trending.isEmpty && suggested.isEmpty {
                     VStack(spacing: 16) {
                         Image(systemName: "magnifyingglass")
-                            .font(.system(size: 48, weight: .thin))
+                            .font(.appSystem(size: 48, weight: .thin))
                             .foregroundColor(.secondary.opacity(0.5))
                         VStack(spacing: 8) {
                             Text("Search")
-                                .font(.system(size: 18, weight: .semibold))
+                                .font(.appSystem(size: 18, weight: .semibold))
                                 .foregroundColor(.primary)
                             Text("Find users, notes, hashtags and links\nOr paste a note1 or nevent1 ID")
-                                .font(.system(size: 13))
+                                .font(.appSystem(size: 13))
                                 .foregroundColor(.secondary)
                                 .multilineTextAlignment(.center)
                         }
@@ -1627,6 +1660,7 @@ struct SearchView: View {
             }
             .padding()
         }
+        .scrollDirectionTracking(feedService: feedService)
     }
 
     /// Simple wrapping layout for chips
@@ -1679,7 +1713,7 @@ struct SearchView: View {
                 .tint(Color.havenPurple)
             if pendingDirectNoteId != nil {
                 Text("Looking up note...")
-                    .font(.system(size: 13))
+                    .font(.appSystem(size: 13))
                     .foregroundColor(.secondary)
             }
         }
@@ -1690,11 +1724,11 @@ struct SearchView: View {
     private var noResultsState: some View {
         VStack(spacing: 16) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 32, weight: .thin))
+                .font(.appSystem(size: 32, weight: .thin))
                 .foregroundColor(.secondary.opacity(0.5))
 
             Text("No results found")
-                .font(.system(size: 14, weight: .semibold))
+                .font(.appSystem(size: 14, weight: .semibold))
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1709,7 +1743,7 @@ struct SearchView: View {
                 if (resultTypeFilter == .all || resultTypeFilter == .users) && !searchResults.users.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Users")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.appSystem(size: 13, weight: .semibold))
                             .foregroundColor(.secondary)
                             .padding(.horizontal, 16)
 
@@ -1726,7 +1760,7 @@ struct SearchView: View {
                 if (resultTypeFilter == .all || resultTypeFilter == .notes) && !searchResults.notes.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Notes")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.appSystem(size: 13, weight: .semibold))
                             .foregroundColor(.secondary)
                             .padding(.horizontal, 16)
 
@@ -1763,7 +1797,7 @@ struct SearchView: View {
                 if (resultTypeFilter == .all || resultTypeFilter == .hashtags) && !searchResults.hashtags.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Hashtags")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.appSystem(size: 13, weight: .semibold))
                             .foregroundColor(.secondary)
                             .padding(.horizontal, 16)
 
@@ -1780,7 +1814,7 @@ struct SearchView: View {
                 if (resultTypeFilter == .all || resultTypeFilter == .links) && !searchResults.links.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Links")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.appSystem(size: 13, weight: .semibold))
                             .foregroundColor(.secondary)
                             .padding(.horizontal, 16)
 
@@ -1796,6 +1830,7 @@ struct SearchView: View {
             .padding(.vertical, 16)
             .tabBarBottomPadding()
         }
+        .scrollDirectionTracking(feedService: feedService)
     }
 
     @ViewBuilder
@@ -1807,19 +1842,19 @@ struct SearchView: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(profile.bestName)
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.appSystem(size: 13, weight: .semibold))
                         .foregroundColor(.primary)
                         .lineLimit(1)
 
                     Text(pubkey.prefix(16) + "...")
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(.appSystem(size: 11, design: .monospaced))
                         .foregroundColor(.secondary)
                 }
 
                 Spacer()
 
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.appSystem(size: 12, weight: .semibold))
                     .foregroundColor(.secondary.opacity(0.5))
             }
             .padding(.horizontal, 12)
@@ -1835,14 +1870,14 @@ struct SearchView: View {
         HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text("#\(hashtag)")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.appSystem(size: 13, weight: .semibold))
                     .foregroundColor(.havenPurple)
             }
 
             Spacer()
 
             Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.appSystem(size: 12, weight: .semibold))
                 .foregroundColor(.secondary.opacity(0.5))
         }
         .padding(.horizontal, 12)
@@ -1855,12 +1890,12 @@ struct SearchView: View {
     private func linkRow(link: SearchLink) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(link.title)
-                .font(.system(size: 13, weight: .semibold))
+                .font(.appSystem(size: 13, weight: .semibold))
                 .foregroundColor(.havenPurple)
                 .lineLimit(1)
 
             Text(link.url)
-                .font(.system(size: 11, design: .monospaced))
+                .font(.appSystem(size: 11, design: .monospaced))
                 .foregroundColor(.secondary)
                 .lineLimit(1)
         }
@@ -2014,3 +2049,4 @@ struct SearchView: View {
         return links
     }
 }
+

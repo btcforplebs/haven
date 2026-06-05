@@ -108,15 +108,15 @@ struct BitcoinSweepView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Available balance")
-                        .font(.system(size: 12))
+                        .font(.appSystem(size: 12))
                         .foregroundColor(.secondary)
                     Text(formatSats(balanceSats))
-                        .font(.system(size: 22, weight: .bold, design: .monospaced))
+                        .font(.appSystem(size: 22, weight: .bold, design: .monospaced))
                         .foregroundColor(Color(red: 1.0, green: 0.75, blue: 0.3))
                 }
                 Spacer()
                 Image(systemName: "bitcoinsign.circle.fill")
-                    .font(.system(size: 32))
+                    .font(.appSystem(size: 32))
                     .foregroundColor(.orange)
             }
             .padding(16)
@@ -126,10 +126,10 @@ struct BitcoinSweepView: View {
             // Destination
             VStack(alignment: .leading, spacing: 6) {
                 Text("Destination address")
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.appSystem(size: 13, weight: .medium))
                     .foregroundColor(.secondary)
                 TextField("bc1p…", text: $destAddress)
-                    .font(.system(size: 13, design: .monospaced))
+                    .font(.appSystem(size: 13, design: .monospaced))
                     .textFieldStyle(.plain)
                     .autocorrectionDisabled()
                     #if os(iOS)
@@ -145,7 +145,7 @@ struct BitcoinSweepView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Fee rate")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.appSystem(size: 13, weight: .medium))
                         .foregroundColor(.secondary)
                     if loadingFees {
                         ProgressView().scaleEffect(0.6)
@@ -174,7 +174,7 @@ struct BitcoinSweepView: View {
 
             if case .failure(let msg) = sweepState {
                 Text(msg)
-                    .font(.system(size: 13))
+                    .font(.appSystem(size: 13))
                     .foregroundColor(.red)
                     .padding(10)
                     .background(Color.red.opacity(0.08))
@@ -192,7 +192,7 @@ struct BitcoinSweepView: View {
                         Image(systemName: "bitcoinsign.circle.fill")
                     }
                     Text(sweepState.isSweeping ? "Broadcasting…" : "Sweep")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.appSystem(size: 16, weight: .semibold))
                 }
                 .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
@@ -205,7 +205,7 @@ struct BitcoinSweepView: View {
 
             if sendAmount <= 546 && sendAmount > 0 {
                 Text("Insufficient funds after fees")
-                    .font(.system(size: 12))
+                    .font(.appSystem(size: 12))
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity)
             }
@@ -217,11 +217,11 @@ struct BitcoinSweepView: View {
     private func successView(txid: String, amount: Int, fee: Int) -> some View {
         VStack(spacing: 20) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 56))
+                .font(.appSystem(size: 56))
                 .foregroundColor(.orange)
 
             Text("Swept!")
-                .font(.title2.bold())
+                .font(.appTitle2.bold())
                 .foregroundColor(.white)
 
             VStack(spacing: 6) {
@@ -234,10 +234,10 @@ struct BitcoinSweepView: View {
 
             VStack(spacing: 8) {
                 Text("Transaction ID")
-                    .font(.system(size: 12))
+                    .font(.appSystem(size: 12))
                     .foregroundColor(.secondary)
                 Text(txid)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.appSystem(size: 11, design: .monospaced))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
@@ -249,7 +249,7 @@ struct BitcoinSweepView: View {
                         Image(systemName: "arrow.up.right.square")
                         Text("View on mempool")
                     }
-                    .font(.system(size: 14, weight: .medium))
+                    .font(.appSystem(size: 14, weight: .medium))
                     .foregroundColor(.havenPurple)
                 }
             }
@@ -265,14 +265,14 @@ struct BitcoinSweepView: View {
         return Button(action: { selectedTier = tier }) {
             VStack(spacing: 2) {
                 Text(tier.label)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.appSystem(size: 12, weight: .semibold))
                 if let rate = rate {
                     Text("\(rate) sat/vB")
-                        .font(.system(size: 10))
+                        .font(.appSystem(size: 10))
                         .foregroundColor(isSelected ? .white.opacity(0.8) : .secondary)
                 } else {
                     Text("–")
-                        .font(.system(size: 10))
+                        .font(.appSystem(size: 10))
                         .foregroundColor(.secondary)
                 }
             }
@@ -288,11 +288,11 @@ struct BitcoinSweepView: View {
     private func feePreviewRow(label: String, value: String, color: Color) -> some View {
         HStack {
             Text(label)
-                .font(.system(size: 13))
+                .font(.appSystem(size: 13))
                 .foregroundColor(.secondary)
             Spacer()
             Text(value)
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .font(.appSystem(size: 13, weight: .semibold, design: .monospaced))
                 .foregroundColor(color)
         }
     }

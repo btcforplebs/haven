@@ -569,7 +569,7 @@ class CashuService: ObservableObject {
 
         let walletContent = NIP60WalletContent(
             mints: [mintURLString],
-            relays: ConfigService.shared.config.blastrRelays,
+            relays: ConfigService.shared.config.activeBlastrRelays,
             unit: "sat",
             name: "Haven Cashu Wallet"
         )
@@ -704,7 +704,7 @@ class CashuService: ObservableObject {
         if let privateURL = URL(string: config.nostrURL + "/private") {
             relayURLs.append(privateURL)
         }
-        relayURLs.append(contentsOf: config.blastrRelays.compactMap { URL(string: $0) })
+        relayURLs.append(contentsOf: config.activeBlastrRelays.compactMap { URL(string: $0) })
         guard !relayURLs.isEmpty else { return }
 
         isLoading = true

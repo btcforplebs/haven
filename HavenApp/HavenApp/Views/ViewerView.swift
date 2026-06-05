@@ -10,6 +10,7 @@ import Photos
 
 struct ViewerView: View {
     let mediaOnly: Bool
+    let embedded: Bool
 
     @EnvironmentObject var configService: ConfigService
     @EnvironmentObject var nostrService: NostrService
@@ -23,8 +24,9 @@ struct ViewerView: View {
     @FocusState private var isSearchFocused: Bool
     @State private var viewMode: ViewMode = .notes
 
-    init(mediaOnly: Bool = false) {
+    init(mediaOnly: Bool = false, embedded: Bool = false) {
         self.mediaOnly = mediaOnly
+        self.embedded = embedded
         if mediaOnly {
             _viewMode = State(initialValue: .media)
         }
@@ -38,7 +40,7 @@ struct ViewerView: View {
     @State private var likesFilter: LikesFilter = .onMyNotes
     @State private var zapsFilter: ZapsFilter = .onMyNotes
     @State private var mediaLocationFilter: MediaLocationFilter = .all
-    @State private var mediaTypeFilter: Set<MediaTypeFilter> = [.photo, .video, .gif, .other]
+    @State private var mediaTypeFilter: Set<MediaTypeFilter> = Set(MediaTypeFilter.allCases)
 
     // Cached display data (computed in background)
     @State private var displayNotes: [NostrEvent] = []
@@ -86,7 +88,6 @@ struct ViewerView: View {
     #if os(iOS)
     @State private var saveToPhotosMessage: String?
     #endif
-    @State private var deleteStatusMessage: String?
     @State private var isCopied = false
     @State private var requestedMissingIds = Set<String>()
     @State private var requestedMissingZapNoteIds = Set<String>()
@@ -99,8 +100,23 @@ struct ViewerView: View {
     @State private var showingFileImporter = false
     @State private var showingPhotoPicker = false
     @State private var showingUploadOptions = false
+    @State private var photosPickerFilter: PHPickerFilter = .any(of: [.images, .videos])
     @State private var isPastingContent = false
     @State private var pasteError: String?
+    @State private var activeUploadTasks: [Task<Void, Never>] = []
+    @State private var showingBlossomMediaList = false
+    @State private var mediaLayoutMode: MediaLayoutMode = .grid
+    @State private var noteLayoutMode: NoteLayoutMode = .expanded
+
+    enum MediaLayoutMode {
+        case grid
+        case list
+    }
+
+    enum NoteLayoutMode {
+        case expanded
+        case compact
+    }
 
     private var blossomService: BlossomService {
         BlossomService(configService: configService, nostrService: nostrService)
@@ -360,6 +376,7 @@ struct ViewerView: View {
         let currentNoteMedia = nostrService.noteMedia
         let currentBlossom = blossomCache.items
         let owner = nostrService.activeHexPubkey
+        let isOwnerBrowsing = (owner == nostrService.ownerHexPubkey)
         let whitelist = configService.whitelistedHexPubkeys
         let blacklist = configService.activeAccountBlockedHexPubkeys
 
@@ -698,10 +715,14 @@ struct ViewerView: View {
 
                     switch currentFilter {
                     case .all:
+                        if isOwnerBrowsing {
+                            // Owner sees all media on the relay
+                            return true
+                        }
+                        // Whitelisted accounts see only their own media + media they're tagged in
                         let isMine = item.pubkey == owner
                         let isTagged = item.tags?.contains { $0.count >= 2 && $0[0] == "p" && $0[1] == owner } ?? false
-                        let isWhitelisted = item.pubkey != nil && whitelist.contains(item.pubkey!)
-                        return isMine || isTagged || isWhitelisted
+                        return isMine || isTagged
                     case .mine: return item.pubkey == owner
                     case .tagged:
                         if item.pubkey == owner { return false }
@@ -737,6 +758,12 @@ struct ViewerView: View {
                 // Apply event timestamps where available instead of file modification dates
                 if currentFilter == .all || currentFilter == .mine {
                     for item in currentBlossom {
+                        // Whitelisted accounts only see their own blossom items + items tagging them
+                        if !isOwnerBrowsing && currentFilter == .all {
+                            let isMine = item.pubkey == owner
+                            let isTagged = item.tags?.contains { $0.count >= 2 && $0[0] == "p" && $0[1] == owner } ?? false
+                            if !isMine && !isTagged { continue }
+                        }
                         let key = self.normalizedKeyStatic(for: item.url)
                         recordURL(key, item.url)
                         if let eventDate = eventTimestamps[key] {
@@ -824,17 +851,22 @@ struct ViewerView: View {
                     }
                 }
 
-                // Apply location filter: blossom (URL on a configured mirror) /
-                // cache (everything else not flagged) / notFound (user-flagged 404) / all (blossom+cache).
+                // Apply location filter: blossom (physically in local blossom directory) /
+                // cache (cached from feed, not in blossom) / notFound (user-flagged 404) /
+                // all (blossom+cache).
                 let notFoundCapture = currentNotFound
                 let locationFilter = currentLocationFilter
                 let passesLocation: (MediaItem) -> Bool = { item in
                     let is404 = notFoundCapture.contains(item.url.absoluteString)
-                    let onMirror = isOnMirror(item.url)
+
+                    // Check if file is actually in the local blossom directory
+                    let hash = self.normalizedKeyStatic(for: item.url)
+                    let inBlossomDir = MediaCacheService.shared.isInLocalBlossom(hash: hash)
+
                     switch locationFilter {
                     case .all: return !is404
-                    case .blossom: return onMirror && !is404
-                    case .cache: return !onMirror && !is404
+                    case .blossom: return inBlossomDir && !is404
+                    case .cache: return !inBlossomDir && !is404
                     case .notFound: return is404
                     }
                 }
@@ -869,19 +901,14 @@ struct ViewerView: View {
                         var sniffedType: MediaItem.MediaType = .unknown
                         var sniffedMime: String? = nil
                         
-                        if ["jpg", "jpeg", "png", "gif", "webp", "avif", "heic"].contains(ext) {
-                            sniffedType = .image
-                            sniffedMime = "image/\(ext == "jpg" ? "jpeg" : ext)"
-                        } else if ["mp4", "mov", "webm", "avi", "hevc", "h265"].contains(ext) {
-                            sniffedType = .video
-                            if ["hevc", "h265"].contains(ext) {
-                                sniffedMime = "video/mp4"
-                            } else {
-                                sniffedMime = "video/\(ext)"
+                        if let mime = SupportedMediaFormats.mime(forExtension: ext) {
+                            switch SupportedMediaFormats.category(forExtension: ext) {
+                            case .image, .gif: sniffedType = .image
+                            case .video:       sniffedType = .video
+                            case .audio:       sniffedType = .audio
+                            case .none:        break
                             }
-                        } else if ["mp3", "wav", "ogg", "m4a", "flac"].contains(ext) {
-                            sniffedType = .audio
-                            sniffedMime = "audio/\(ext)"
+                            sniffedMime = mime
                         }
                         
                         if sniffedType != .unknown {
@@ -978,7 +1005,7 @@ struct ViewerView: View {
     }
     @ViewBuilder
     private func headerView(isNarrow: Bool) -> some View {
-        if mediaOnly {
+        if mediaOnly || embedded {
             EmptyView()
         } else {
             VStack(spacing: 12) {
@@ -1014,6 +1041,7 @@ struct ViewerView: View {
                         } else if viewMode == .zaps {
                             zapsFilterView
                         }
+                        compactToggleButton
                     }
                 }
                 #else
@@ -1027,11 +1055,11 @@ struct ViewerView: View {
             #if os(macOS)
             .padding(.horizontal)
             .padding(.vertical, 10)
-            .background(Color(red: 0.12, green: 0.12, blue: 0.16))
+            .background(Color.platformSecondaryGroupedBackground)
             #else
             .padding(.horizontal, viewMode == .media ? 16 : 0)
             .padding(.vertical, viewMode == .media ? 10 : 0)
-            .background(viewMode == .media ? Color(red: 0.12, green: 0.12, blue: 0.16) : Color.clear)
+            .background(viewMode == .media ? Color.platformSecondaryGroupedBackground : Color.clear)
             #endif
         }
     }
@@ -1101,12 +1129,12 @@ struct ViewerView: View {
     private var relaySearchBar: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 15, weight: .semibold))
+                .font(.appSystem(size: 15, weight: .semibold))
                 .foregroundColor(.secondary)
 
             TextField(searchPlaceholder, text: $searchText)
                 .textFieldStyle(.plain)
-                .font(.system(size: 15))
+                .font(.appSystem(size: 15))
                 .foregroundColor(.primary)
                 .focused($isSearchFocused)
                 .submitLabel(.search)
@@ -1133,7 +1161,7 @@ struct ViewerView: View {
                     committedSearch = ""
                 }) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 15))
+                        .font(.appSystem(size: 15))
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -1147,7 +1175,7 @@ struct ViewerView: View {
                 searchText = ""
                 committedSearch = ""
             }
-            .font(.system(size: 14, weight: .medium))
+            .font(.appSystem(size: 14, weight: .medium))
             .foregroundColor(Color.havenPurple)
         }
         .padding(.horizontal, 14)
@@ -1156,7 +1184,7 @@ struct ViewerView: View {
         .cornerRadius(10)
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .background(Color(red: 0.08, green: 0.08, blue: 0.1))
+        .background(Color.platformWindowBackground)
     }
     #endif
 
@@ -1190,11 +1218,72 @@ struct ViewerView: View {
     private var viewContentBase: some View {
         GeometryReader { geometry in
             ZStack {
-                Color(red: 0.08, green: 0.08, blue: 0.1).ignoresSafeArea()
+                Color.platformWindowBackground.ignoresSafeArea()
 
                 #if os(macOS)
                 if mediaOnly {
                     compactViewContent(isNarrow: geometry.size.width < 500)
+                } else if embedded {
+                    // Embedded in sidebar: notes content with relay console pinned at bottom
+                    VStack(spacing: 0) {
+                        desktopHeaderView
+
+                        Divider()
+
+                        ScrollView {
+                            listContent
+
+                            if !displayNotes.isEmpty || !displayMedia.isEmpty || !displayLikedNotes.isEmpty {
+                                Color.clear
+                                    .frame(height: 1)
+                                    .padding(.bottom, 20)
+                                    .onAppear {
+                                        if !nostrService.isFetching && (!displayNotes.isEmpty || !displayMedia.isEmpty) {
+                                            loadMore()
+                                        }
+                                    }
+                                    .id(nostrService.events.count)
+                            }
+                        }
+                        .refreshable {
+                            refreshAll()
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                        Divider()
+                            .background(Color.platformSeparator)
+
+                        // Local Relay Server Console
+                        VStack(alignment: .leading, spacing: 0) {
+                            HStack {
+                                Image(systemName: "terminal.fill")
+                                    .font(.appSystem(size: 10, weight: .bold))
+                                    .foregroundColor(.green)
+
+                                Text("LOCAL RELAY SERVER CONSOLE")
+                                    .font(.appSystem(size: 10, weight: .bold, design: .monospaced))
+                                    .foregroundColor(.secondary)
+
+                                Spacer()
+
+                                HStack(spacing: 5) {
+                                    Circle().fill(Color.red.opacity(0.7)).frame(width: 7, height: 7)
+                                    Circle().fill(Color.yellow.opacity(0.7)).frame(width: 7, height: 7)
+                                    Circle().fill(Color.green.opacity(0.7)).frame(width: 7, height: 7)
+                                }
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Color.platformConsoleHeaderBackground)
+
+                            Divider()
+                                .background(Color.platformCardBorder)
+
+                            LogsView(logStore: relayManager.logStore, hideHeader: true)
+                                .frame(height: 200)
+                        }
+                        .background(Color.platformTertiaryGroupedBackground)
+                    }
                 } else if geometry.size.width > 680 {
                     let availableDashboardHeight = max(420, geometry.size.height - 300)
                     let preferredDashboardHeight = max(620, geometry.size.height * 0.56)
@@ -1244,7 +1333,7 @@ struct ViewerView: View {
                         VStack(spacing: 0) {
                             HStack {
                                 Text("Relay Dashboard")
-                                    .font(.system(size: 16, weight: .bold))
+                                    .font(.appSystem(size: 16, weight: .bold))
                                     .foregroundColor(.primary)
                                 Spacer()
                                 Button("Done") {
@@ -1254,7 +1343,7 @@ struct ViewerView: View {
                             }
                             .padding(.horizontal, 20)
                             .padding(.vertical, 14)
-                            .background(Color(red: 0.12, green: 0.12, blue: 0.15))
+                            .background(Color.platformConsoleHeaderBackground)
 
                             Divider()
 
@@ -1418,23 +1507,29 @@ struct ViewerView: View {
                 loadLocalMedia(force: true)
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .macRelaySyncComplete)) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .feedInjectionComplete)) { _ in
             refreshAll()
         }
         .onReceive(NotificationCenter.default.publisher(for: .mediaNotFoundChanged)) { _ in
             scheduleUpdateDisplayData()
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("OpenRelayDashboard"))) { _ in
+        .onReceive(NotificationCenter.default.publisher(for: .blossomDirectoryChanged)) { _ in
+            loadLocalMedia(force: true)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .openRelayDashboard)) { _ in
             showingRelayDashboard = true
         }
         #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: .havenOpenRelayLikes)) { _ in
+            guard !mediaOnly else { return }
             withAnimation(.easeInOut(duration: 0.15)) { viewMode = .likes }
         }
         .onReceive(NotificationCenter.default.publisher(for: .havenOpenRelayNotes)) { _ in
+            guard !mediaOnly else { return }
             withAnimation(.easeInOut(duration: 0.15)) { viewMode = .notes }
         }
         .onReceive(NotificationCenter.default.publisher(for: .havenOpenRelayZaps)) { _ in
+            guard !mediaOnly else { return }
             withAnimation(.easeInOut(duration: 0.15)) { viewMode = .zaps }
         }
         #endif
@@ -1485,7 +1580,7 @@ struct ViewerView: View {
         .photosPicker(
             isPresented: $showingPhotoPicker,
             selection: $selectedUploadItems,
-            matching: .any(of: [.images, .videos])
+            matching: photosPickerFilter
         )
         .onChange(of: selectedUploadItems) { _, items in
             if !items.isEmpty {
@@ -1493,20 +1588,20 @@ struct ViewerView: View {
                 showingPhotoPicker = false
             }
         }
-        .onChange(of: showingPhotoPicker) { _, newValue in
-            if newValue {
-                // Trigger the PhotosPicker by attaching it conditionally
-                // This is handled in the view hierarchy
-            }
+        .sheet(isPresented: $showingBlossomMediaList) {
+            BlossomDashboardView()
+                .environmentObject(configService)
+                .environmentObject(nostrService)
         }
 
         #if os(iOS)
         .navigationTitle(currentPageTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
                 if !mediaOnly {
-                    HStack(spacing: 4) {
+                    HStack(spacing: 12) {
                         IconFilterButton(icon: "doc.text", tooltip: "Notes", isSelected: viewMode == .notes, color: .havenPurple) {
                             withAnimation(.easeInOut(duration: 0.15)) { viewMode = .notes }
                         }
@@ -1531,7 +1626,7 @@ struct ViewerView: View {
                             }
                         } label: {
                             Image(systemName: "magnifyingglass")
-                                .font(.system(size: 14, weight: .semibold))
+                                .font(.appSystem(size: 14, weight: .semibold))
                                 .foregroundColor(isSearchBarVisible ? .white : .secondary)
                                 .frame(width: 34, height: 34)
                                 .background(
@@ -1541,11 +1636,44 @@ struct ViewerView: View {
                         }
                     }
                 } else {
-                    HStack(spacing: 4) {
-                        IconFilterButton(icon: mediaTypeFilter.count == 4 ? "circle.grid.2x2.fill" : "circle.grid.2x2", tooltip: "All Media", isSelected: mediaTypeFilter.count == 4, color: .havenPurple, action: selectAllMediaTypes)
-                        IconFilterButton(icon: mediaTypeFilter.contains(.photo) ? "photo.fill" : "photo", tooltip: "Photos", isSelected: mediaTypeFilter.contains(.photo), color: .primary) { toggleMediaTypeFilter(.photo) }
-                        IconFilterButton(icon: mediaTypeFilter.contains(.video) ? "video.fill" : "video", tooltip: "Videos", isSelected: mediaTypeFilter.contains(.video), color: .primary) { toggleMediaTypeFilter(.video) }
-                        IconFilterButton(icon: "GIF", tooltip: "GIFs", isSelected: mediaTypeFilter.contains(.gif), color: .primary) { toggleMediaTypeFilter(.gif) }
+                    HStack(spacing: 12) {
+                        let allSelected = mediaTypeFilter.count == MediaTypeFilter.allCases.count
+                        let photoSelected = mediaTypeFilter.contains(.photo)
+                        let videoSelected = mediaTypeFilter.contains(.video)
+                        let gifSelected = mediaTypeFilter.contains(.gif)
+                        let otherSelected = mediaTypeFilter.contains(.other)
+
+                        IconFilterButton(
+                            icon: allSelected ? "circle.grid.2x2.fill" : "circle.grid.2x2",
+                            tooltip: "All Media",
+                            isSelected: allSelected,
+                            color: .havenPurple,
+                            action: selectAllMediaTypes
+                        )
+                        IconFilterButton(
+                            icon: photoSelected ? "photo.fill" : "photo",
+                            tooltip: "Photos",
+                            isSelected: photoSelected,
+                            color: .primary
+                        ) { toggleMediaTypeFilter(.photo) }
+                        IconFilterButton(
+                            icon: videoSelected ? "video.fill" : "video",
+                            tooltip: "Videos",
+                            isSelected: videoSelected,
+                            color: .primary
+                        ) { toggleMediaTypeFilter(.video) }
+                        IconFilterButton(
+                            icon: "GIF",
+                            tooltip: "GIFs",
+                            isSelected: gifSelected,
+                            color: .primary
+                        ) { toggleMediaTypeFilter(.gif) }
+                        IconFilterButton(
+                            icon: otherSelected ? "doc.fill" : "doc",
+                            tooltip: "Documents",
+                            isSelected: otherSelected,
+                            color: .primary
+                        ) { toggleMediaTypeFilter(.other) }
                     }
                 }
             }
@@ -1558,47 +1686,20 @@ struct ViewerView: View {
                             IconFilterButton(icon: "at", tooltip: "Tagged", isSelected: contentFilter == .tagged, color: .havenPurple) { contentFilter = .tagged }
                             IconFilterButton(icon: "checkmark.seal.fill", tooltip: "Whitelisted", isSelected: contentFilter == .whitelist, color: .havenPurple) { contentFilter = .whitelist }
                         }
+                        .applyGlassCapsule()
                         .transition(.opacity)
                     } else if viewMode == .media && !mediaOnly {
                         HStack(spacing: 4) {
-                            // Upload button with action sheet
                             IconFilterButton(icon: "plus", tooltip: "Upload", isSelected: true, color: .havenPurple) {
                                 showingUploadOptions = true
                             }
                             .confirmationDialog("Upload Media", isPresented: $showingUploadOptions) {
                                 Button("Photos") {
+                                    photosPickerFilter = .images
                                     showingPhotoPicker = true
                                 }
-                                Button("Files") {
-                                    showingFileImporter = true
-                                }
-                                Button("Cancel", role: .cancel) { }
-                            }
-
-                            // PhotosPicker triggered by state
-                            if showingPhotoPicker {
-                                PhotosPicker(selection: $selectedUploadItems, matching: .any(of: [.images, .videos])) {
-                                    EmptyView()
-                                }
-                                .onChange(of: selectedUploadItems) {
-                                    showingPhotoPicker = false
-                                }
-                            }
-
-                            IconFilterButton(icon: "wand.and.stars", tooltip: "Magic Paste", isSelected: !isPastingContent, color: isPastingContent ? .secondary : .havenPurple) {
-                                handlePasteFromClipboard()
-                            }
-                            .disabled(isPastingContent)
-                        }
-                        .transition(.opacity)
-                    } else if mediaOnly {
-                        HStack(spacing: 4) {
-                            // Standing plus button that triggers confirmationDialog with all 3 upload options
-                            IconFilterButton(icon: "plus", tooltip: "Upload Options", isSelected: true, color: .havenPurple) {
-                                showingUploadOptions = true
-                            }
-                            .confirmationDialog("Upload Media", isPresented: $showingUploadOptions) {
-                                Button("Photos") {
+                                Button("Videos") {
+                                    photosPickerFilter = .videos
                                     showingPhotoPicker = true
                                 }
                                 Button("Files") {
@@ -1609,21 +1710,46 @@ struct ViewerView: View {
                                 }
                                 Button("Cancel", role: .cancel) { }
                             }
-
-                            Divider()
-                                .frame(height: 18)
-                                .background(Color.white.opacity(0.12))
-
-                            // Blossom Button (flower icon: camera.macro)
-                            IconFilterButton(icon: "camera.macro", tooltip: "Blossom", isSelected: mediaLocationFilter == .blossom, color: .havenPurple) {
-                                selectLocationFilter(.blossom)
+                        }
+                        .applyGlassCapsule()
+                        .transition(.opacity)
+                    } else if mediaOnly {
+                        HStack(spacing: 4) {
+                            // Grid/List toggle button - shows the mode you'll switch TO
+                            IconFilterButton(
+                                icon: mediaLayoutMode == .grid ? "list.bullet" : "square.grid.2x2.fill",
+                                tooltip: mediaLayoutMode == .grid ? "List View" : "Grid View",
+                                isSelected: false,
+                                color: .havenPurple
+                            ) {
+                                withAnimation {
+                                    mediaLayoutMode = mediaLayoutMode == .grid ? .list : .grid
+                                }
                             }
 
-                            // Cache Button (document stack icon: doc.on.doc.fill)
-                            IconFilterButton(icon: "doc.on.doc.fill", tooltip: "Cache", isSelected: mediaLocationFilter == .cache, color: .havenPurple) {
-                                selectLocationFilter(.cache)
+                            // Standing plus button that triggers confirmationDialog with all 3 upload options
+                            IconFilterButton(icon: "plus", tooltip: "Upload Options", isSelected: true, color: .havenPurple) {
+                                showingUploadOptions = true
+                            }
+                            .confirmationDialog("Upload Media", isPresented: $showingUploadOptions) {
+                                Button("Photos") {
+                                    photosPickerFilter = .images
+                                    showingPhotoPicker = true
+                                }
+                                Button("Videos") {
+                                    photosPickerFilter = .videos
+                                    showingPhotoPicker = true
+                                }
+                                Button("Files") {
+                                    showingFileImporter = true
+                                }
+                                Button("Magic Paste") {
+                                    handlePasteFromClipboard()
+                                }
+                                Button("Cancel", role: .cancel) { }
                             }
                         }
+                        .applyGlassCapsule()
                         .transition(.opacity)
                     } else if viewMode == .likes {
                         HStack(spacing: 4) {
@@ -1632,6 +1758,7 @@ struct ViewerView: View {
                             IconFilterButton(icon: "checkmark.seal.fill", tooltip: "Whitelisted", isSelected: likesFilter == .onWhitelisted, color: .havenPurple) { likesFilter = .onWhitelisted }
                             IconFilterButton(icon: "heart", tooltip: "My Likes", isSelected: likesFilter == .myLikes, color: .havenPurple) { likesFilter = .myLikes }
                         }
+                        .applyGlassCapsule()
                         .transition(.opacity)
                     } else if viewMode == .zaps && !mediaOnly {
                         HStack(spacing: 4) {
@@ -1640,6 +1767,7 @@ struct ViewerView: View {
                             IconFilterButton(icon: "checkmark.seal.fill", tooltip: "Whitelisted", isSelected: zapsFilter == .onWhitelisted, color: .havenPurple) { zapsFilter = .onWhitelisted }
                             IconFilterButton(icon: "bolt", tooltip: "My Zaps", isSelected: zapsFilter == .myZaps, color: .havenPurple) { zapsFilter = .myZaps }
                         }
+                        .applyGlassCapsule()
                         .transition(.opacity)
                     }
                 }
@@ -1681,36 +1809,64 @@ struct ViewerView: View {
                 }
                 .tabBarBottomPadding()
             }
+            .scrollDismissesKeyboard(.interactively)
             .refreshable {
-                #if os(iOS)
-                MacRelaySyncService.shared.syncIfConfigured()
-                #endif
                 refreshAll()
             }
+            .scrollDirectionTracking(feedService: feedService)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         #if os(iOS)
         .overlay(alignment: .bottomTrailing) {
-            Button(action: { showingRelayDashboard = true }) {
-                HStack(spacing: 6) {
-                    Image(systemName: "antenna.radiowaves.left.and.right")
-                        .font(.system(size: 15, weight: .bold))
-                    Text("Relay")
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
+            if !feedService.feedScrollingDown {
+                if viewMode == .media {
+                    // Blossom button for Media mode
+                    Button(action: { showingBlossomMediaList = true }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "chart.bar.fill")
+                                .font(.appSystem(size: 15, weight: .bold))
+                            Text("Blossom")
+                                .font(.appSystem(size: 14, weight: .bold, design: .rounded))
+                        }
+                        .foregroundColor(.white)
+                        .frame(height: 48)
+                        .padding(.horizontal, 18)
+                        .background(
+                            Capsule()
+                                .fill(Color.havenPurple)
+                                .shadow(color: Color.havenPurple.opacity(0.35), radius: 8, x: 0, y: 4)
+                        )
+                    }
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 90)
+                    .hoverEffect(.lift)
+                    .transition(.scale(scale: 0.5).combined(with: .opacity))
+                } else {
+                    // Relay button for other modes
+                    Button(action: { showingRelayDashboard = true }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "antenna.radiowaves.left.and.right")
+                                .font(.appSystem(size: 15, weight: .bold))
+                            Text("Relay")
+                                .font(.appSystem(size: 14, weight: .bold, design: .rounded))
+                        }
+                        .foregroundColor(.white)
+                        .frame(height: 48)
+                        .padding(.horizontal, 18)
+                        .background(
+                            Capsule()
+                                .fill(statusColor)
+                                .shadow(color: statusColor.opacity(0.35), radius: 8, x: 0, y: 4)
+                        )
+                    }
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 90)
+                    .hoverEffect(.lift)
+                    .transition(.scale(scale: 0.5).combined(with: .opacity))
                 }
-                .foregroundColor(.white)
-                .frame(height: 48)
-                .padding(.horizontal, 18)
-                .background(
-                    Capsule()
-                        .fill(statusColor)
-                        .shadow(color: statusColor.opacity(0.35), radius: 8, x: 0, y: 4)
-                )
             }
-            .padding(.trailing, 20)
-            .padding(.bottom, 90)
-            .hoverEffect(.lift)
         }
+        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: feedService.feedScrollingDown)
         #endif
     }
 
@@ -1729,10 +1885,7 @@ struct ViewerView: View {
                 } else if viewMode == .zaps {
                     zapsFilterView
                 } else if viewMode == .media {
-                    HStack(spacing: 8) {
-                        uploadButton
-                        pasteButton
-                    }
+                    uploadButton
                 }
             }
             
@@ -1740,23 +1893,36 @@ struct ViewerView: View {
         .frame(maxWidth: .infinity)
         .padding(.horizontal)
         .padding(.vertical, 12)
-        .background(Color(red: 0.12, green: 0.12, blue: 0.16))
+        .background(Color.platformSecondaryGroupedBackground)
     }
 
     private var uploadButton: some View {
         Menu {
-            Button(action: { showingPhotoPicker = true }) {
+            Button(action: {
+                photosPickerFilter = .images
+                showingPhotoPicker = true
+            }) {
                 Label("Photos", systemImage: "photo")
+            }
+            Button(action: {
+                photosPickerFilter = .videos
+                showingPhotoPicker = true
+            }) {
+                Label("Videos", systemImage: "video")
             }
             Button(action: { showingFileImporter = true }) {
                 Label("Files", systemImage: "folder")
             }
+            Button(action: handlePasteFromClipboard) {
+                Label("Magic Paste", systemImage: "wand.and.stars")
+            }
+            .disabled(isPastingContent)
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.appSystem(size: 11, weight: .bold))
                 Text("Upload")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.appSystem(size: 12, weight: .semibold))
             }
             .foregroundColor(.white)
             .padding(.horizontal, 12)
@@ -1774,40 +1940,10 @@ struct ViewerView: View {
         .menuStyle(.automatic)
     }
 
-    private var pasteButton: some View {
-        Button(action: handlePasteFromClipboard) {
-            HStack(spacing: 6) {
-                Image(systemName: "wand.and.stars")
-                    .font(.system(size: 11, weight: .bold))
-                Text("Magic Paste")
-                    .font(.system(size: 12, weight: .semibold))
-            }
-            .foregroundColor(.white)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                Group {
-                    if isPastingContent {
-                        Color.gray
-                    } else {
-                        LinearGradient(
-                            colors: [Color.havenPurple, Color.havenPurpleLight],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    }
-                }
-            )
-            .cornerRadius(12)
-            .shadow(color: Color.havenPurple.opacity(0.3), radius: 4, x: 0, y: 2)
-        }
-        .buttonStyle(.plain)
-        .disabled(isPastingContent)
-    }
 
     private func toggleMediaTypeFilter(_ filter: MediaTypeFilter) {
         withAnimation(.easeInOut(duration: 0.15)) {
-            if mediaTypeFilter.count == 4 {
+            if mediaTypeFilter.count == MediaTypeFilter.allCases.count {
                 mediaTypeFilter = [filter]
             } else if mediaTypeFilter.contains(filter) {
                 if mediaTypeFilter.count > 1 {
@@ -1821,7 +1957,7 @@ struct ViewerView: View {
 
     private func selectAllMediaTypes() {
         withAnimation(.easeInOut(duration: 0.15)) {
-            mediaTypeFilter = [.photo, .video, .gif, .other]
+            mediaTypeFilter = Set(MediaTypeFilter.allCases)
         }
     }
 
@@ -1870,11 +2006,29 @@ struct ViewerView: View {
             notesButton
             likesButton
             zapsButton
+            #if os(iOS)
+            // Add compact toggle on mobile
+            if UIDevice.current.userInterfaceIdiom == .phone {
+                compactToggleButton
+            }
+            #endif
         }
         .padding(4)
         .background(Color(red: 0.15, green: 0.15, blue: 0.2))
         .cornerRadius(20)
         .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color(red: 0.2, green: 0.2, blue: 0.25), lineWidth: 0.8))
+    }
+
+    private var compactToggleButton: some View {
+        ModeButton(
+            title: noteLayoutMode == .compact ? "Expand" : "Compact",
+            icon: noteLayoutMode == .compact ? "rectangle.expand.vertical" : "rectangle.compress.vertical",
+            isSelected: noteLayoutMode == .compact
+        ) {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                noteLayoutMode = noteLayoutMode == .compact ? .expanded : .compact
+            }
+        }
     }
     
     private var filterView: some View {
@@ -1899,47 +2053,23 @@ struct ViewerView: View {
     }
     
     private var sourceFilterView: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    Image(systemName: "tray.full")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.secondary)
-                        .padding(.trailing, 2)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                Image(systemName: "photo.on.rectangle")
+                    .font(.appSystem(size: 11, weight: .semibold))
+                    .foregroundColor(.secondary)
+                    .padding(.trailing, 2)
 
-                    FilterButton(title: "All", color: .havenPurple, isSelected: mediaLocationFilter == .all) {
-                        mediaLocationFilter = .all
-                    }
-                    FilterButton(title: "Blossom", color: .havenPurple, isSelected: mediaLocationFilter == .blossom) {
-                        mediaLocationFilter = .blossom
-                    }
-                    FilterButton(title: "Cache", color: .havenPurple, isSelected: mediaLocationFilter == .cache) {
-                        mediaLocationFilter = .cache
-                    }
-                    FilterButton(title: "404", color: .havenPurple, isSelected: mediaLocationFilter == .notFound) {
-                        mediaLocationFilter = .notFound
-                    }
-                }
-            }
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    Image(systemName: "photo.on.rectangle")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(.secondary)
-                        .padding(.trailing, 2)
-
-                    ForEach(MediaTypeFilter.allCases, id: \.self) { typeFilter in
-                        FilterButton(
-                            title: typeFilter.rawValue,
-                            color: .havenPurple,
-                            isSelected: mediaTypeFilter.contains(typeFilter)
-                        ) {
-                            if mediaTypeFilter.contains(typeFilter) {
-                                mediaTypeFilter.remove(typeFilter)
-                            } else {
-                                mediaTypeFilter.insert(typeFilter)
-                            }
+                ForEach(MediaTypeFilter.allCases, id: \.self) { typeFilter in
+                    FilterButton(
+                        title: typeFilter.rawValue,
+                        color: .havenPurple,
+                        isSelected: mediaTypeFilter.contains(typeFilter)
+                    ) {
+                        if mediaTypeFilter.contains(typeFilter) {
+                            mediaTypeFilter.remove(typeFilter)
+                        } else {
+                            mediaTypeFilter.insert(typeFilter)
                         }
                     }
                 }
@@ -2005,21 +2135,21 @@ struct ViewerView: View {
                             .tint(Color.havenPurple)
                         VStack(spacing: 8) {
                             Text("Loading likes...")
-                                .font(.system(size: 18, weight: .bold, design: .default))
+                                .font(.appSystem(size: 18, weight: .bold, design: .default))
                                 .tracking(0.3)
                             Text("This may take a moment")
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .font(.appSystem(size: 12, weight: .medium, design: .monospaced))
                                 .foregroundColor(.secondary.opacity(0.6))
                                 .tracking(0.5)
                         }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(red: 0.08, green: 0.08, blue: 0.1))
+                .background(Color.platformWindowBackground)
             } else if displayLikedNotes.isEmpty {
                 VStack(spacing: 24) {
                     Image(systemName: likesFilter != .myLikes ? "heart.slash" : "heart")
-                        .font(.system(size: 48, weight: .thin))
+                        .font(.appSystem(size: 48, weight: .thin))
                         .foregroundStyle(
                             LinearGradient(
                                 gradient: Gradient(colors: [.red, .pink]),
@@ -2029,16 +2159,16 @@ struct ViewerView: View {
                         )
                     VStack(spacing: 8) {
                         Text(likesFilter != .myLikes ? "No reactions yet" : "No liked posts")
-                            .font(.system(size: 18, weight: .bold, design: .default))
+                            .font(.appSystem(size: 18, weight: .bold, design: .default))
                             .tracking(0.2)
                         Text(likesFilter != .myLikes ? "Reactions on these notes will appear here" : "Posts you've liked will appear here")
-                            .font(.system(size: 13, weight: .regular, design: .monospaced))
+                            .font(.appSystem(size: 13, weight: .regular, design: .monospaced))
                             .foregroundColor(.secondary)
                             .tracking(0.3)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(red: 0.08, green: 0.08, blue: 0.1))
+                .background(Color.platformWindowBackground)
             } else {
                 LazyVStack(spacing: 12) {
                     ForEach(displayLikedNotes) { event in
@@ -2059,7 +2189,7 @@ struct ViewerView: View {
                                 tags: event.tags,
                                 kind: event.kind
                             ))) {
-                                NoteRow(event: event, truncate: true)
+                                NoteRow(event: event, truncate: true, layoutMode: noteLayoutMode)
                                     .padding(.horizontal, 16)
                                     .onAppear {
                                         if event.id == displayLikedNotes.last?.id {
@@ -2069,7 +2199,7 @@ struct ViewerView: View {
                             }
                             .buttonStyle(.plain)
                             #else
-                            NoteRow(event: event, truncate: true)
+                            NoteRow(event: event, truncate: true, layoutMode: noteLayoutMode)
                                 .padding(.horizontal, 16)
                                 .onAppear {
                                     if event.id == displayLikedNotes.last?.id {
@@ -2086,7 +2216,7 @@ struct ViewerView: View {
                         if id.hasPrefix("npub1") || id.hasPrefix("nprofile1") {
                             self.showingProfilePubkey = id
                             return .handled
-                        } else if id.hasPrefix("note1") || id.hasPrefix("nevent1") {
+                        } else if id.hasPrefix("note1") || id.hasPrefix("nevent1") || id.hasPrefix("naddr1") {
                             self.showingNoteId = id
                             return .handled
                         }
@@ -2112,21 +2242,21 @@ struct ViewerView: View {
                             .tint(Color.havenPurple)
                         VStack(spacing: 8) {
                             Text("Loading zaps...")
-                                .font(.system(size: 18, weight: .bold, design: .default))
+                                .font(.appSystem(size: 18, weight: .bold, design: .default))
                                 .tracking(0.3)
                             Text("This may take a moment")
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .font(.appSystem(size: 12, weight: .medium, design: .monospaced))
                                 .foregroundColor(.secondary.opacity(0.6))
                                 .tracking(0.5)
                         }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(red: 0.08, green: 0.08, blue: 0.1))
+                .background(Color.platformWindowBackground)
             } else if displayZappedNotes.isEmpty {
                 VStack(spacing: 24) {
                     Image(systemName: zapsFilter != .myZaps ? "bolt.slash" : "bolt")
-                        .font(.system(size: 48, weight: .thin))
+                        .font(.appSystem(size: 48, weight: .thin))
                         .foregroundStyle(
                             LinearGradient(
                                 gradient: Gradient(colors: [.orange, .yellow]),
@@ -2136,16 +2266,16 @@ struct ViewerView: View {
                         )
                     VStack(spacing: 8) {
                         Text(zapsFilter != .myZaps ? "No zaps yet" : "No zapped posts")
-                            .font(.system(size: 18, weight: .bold, design: .default))
+                            .font(.appSystem(size: 18, weight: .bold, design: .default))
                             .tracking(0.2)
                         Text(zapsFilter != .myZaps ? "Zaps on these notes will appear here" : "Posts you've zapped will appear here")
-                            .font(.system(size: 13, weight: .regular, design: .monospaced))
+                            .font(.appSystem(size: 13, weight: .regular, design: .monospaced))
                             .foregroundColor(.secondary)
                             .tracking(0.3)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(red: 0.08, green: 0.08, blue: 0.1))
+                .background(Color.platformWindowBackground)
             } else {
                 LazyVStack(spacing: 12) {
                     ForEach(displayZappedNotes) { event in
@@ -2165,7 +2295,7 @@ struct ViewerView: View {
                                 tags: event.tags,
                                 kind: event.kind
                             ))) {
-                                NoteRow(event: event, truncate: true)
+                                NoteRow(event: event, truncate: true, layoutMode: noteLayoutMode)
                                     .padding(.horizontal, 16)
                                     .onAppear {
                                         if event.id == displayZappedNotes.last?.id {
@@ -2175,7 +2305,7 @@ struct ViewerView: View {
                             }
                             .buttonStyle(.plain)
                             #else
-                            NoteRow(event: event, truncate: true)
+                            NoteRow(event: event, truncate: true, layoutMode: noteLayoutMode)
                                 .padding(.horizontal, 16)
                                 .onAppear {
                                     if event.id == displayZappedNotes.last?.id {
@@ -2192,7 +2322,7 @@ struct ViewerView: View {
                         if id.hasPrefix("npub1") || id.hasPrefix("nprofile1") {
                             self.showingProfilePubkey = id
                             return .handled
-                        } else if id.hasPrefix("note1") || id.hasPrefix("nevent1") {
+                        } else if id.hasPrefix("note1") || id.hasPrefix("nevent1") || id.hasPrefix("naddr1") {
                             self.showingNoteId = id
                             return .handled
                         }
@@ -2209,7 +2339,7 @@ struct ViewerView: View {
         if displayProfileResults.isEmpty {
             VStack(spacing: 24) {
                 Image(systemName: "person.2.slash")
-                    .font(.system(size: 48, weight: .thin))
+                    .font(.appSystem(size: 48, weight: .thin))
                     .foregroundStyle(
                         LinearGradient(
                             gradient: Gradient(colors: [Color.havenPurple, Color.havenPurple.opacity(0.5)]),
@@ -2219,10 +2349,10 @@ struct ViewerView: View {
                     )
                 VStack(spacing: 8) {
                     Text("No profiles found")
-                        .font(.system(size: 18, weight: .bold))
+                        .font(.appSystem(size: 18, weight: .bold))
                         .tracking(0.2)
                     Text("Try a different search term")
-                        .font(.system(size: 13, weight: .regular, design: .monospaced))
+                        .font(.appSystem(size: 13, weight: .regular, design: .monospaced))
                         .foregroundColor(.secondary)
                         .tracking(0.3)
                 }
@@ -2256,21 +2386,21 @@ struct ViewerView: View {
 
                         VStack(spacing: 8) {
                             Text(relayManager.isBooting ? relayManager.bootStatusMessage.isEmpty ? "Starting relay..." : relayManager.bootStatusMessage : "Loading notes...")
-                                .font(.system(size: 18, weight: .bold, design: .default))
+                                .font(.appSystem(size: 18, weight: .bold, design: .default))
                                 .tracking(0.3)
                             Text("This may take a moment")
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .font(.appSystem(size: 12, weight: .medium, design: .monospaced))
                                 .foregroundColor(.secondary.opacity(0.6))
                                 .tracking(0.5)
                         }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(red: 0.08, green: 0.08, blue: 0.1))
+                .background(Color.platformWindowBackground)
             } else if displayNotes.isEmpty {
                 VStack(spacing: 24) {
                     Image(systemName: "doc.text.magnifyingglass")
-                        .font(.system(size: 48, weight: .thin))
+                        .font(.appSystem(size: 48, weight: .thin))
                         .foregroundStyle(
                             LinearGradient(
                                 gradient: Gradient(colors: [Color.havenPurple, Color.havenPurpleLight]),
@@ -2281,17 +2411,17 @@ struct ViewerView: View {
 
                     VStack(spacing: 8) {
                         Text("No notes found")
-                            .font(.system(size: 18, weight: .bold, design: .default))
+                            .font(.appSystem(size: 18, weight: .bold, design: .default))
                             .tracking(0.2)
 
                         Text("Try changing your filter settings")
-                            .font(.system(size: 13, weight: .regular, design: .monospaced))
+                            .font(.appSystem(size: 13, weight: .regular, design: .monospaced))
                             .foregroundColor(.secondary)
                             .tracking(0.3)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(red: 0.08, green: 0.08, blue: 0.1))
+                .background(Color.platformWindowBackground)
             } else {
                 let whitelisted = configService.whitelistedHexPubkeys
                 let owner = nostrService.activeHexPubkey
@@ -2309,6 +2439,7 @@ struct ViewerView: View {
                         ))) {
                             NoteRow(
                                 event: event,
+                                layoutMode: noteLayoutMode,
                                 reactors: showEngagement ? reactionMap[event.id] : nil,
                                 latestReactionDate: showEngagement ? latestReactionDates[event.id] : nil,
                                 zappers: showEngagement ? zapMap[event.id] : nil,
@@ -2320,6 +2451,7 @@ struct ViewerView: View {
                         #else
                         NoteRow(
                             event: event,
+                            layoutMode: noteLayoutMode,
                             reactors: showEngagement ? reactionMap[event.id] : nil,
                             latestReactionDate: showEngagement ? latestReactionDates[event.id] : nil,
                             zappers: showEngagement ? zapMap[event.id] : nil,
@@ -2364,21 +2496,21 @@ struct ViewerView: View {
 
                         VStack(spacing: 8) {
                             Text("Loading media...")
-                                .font(.system(size: 18, weight: .bold, design: .default))
+                                .font(.appSystem(size: 18, weight: .bold, design: .default))
                                 .tracking(0.3)
                             Text("Scanning for uploads")
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .font(.appSystem(size: 12, weight: .medium, design: .monospaced))
                                 .foregroundColor(.secondary.opacity(0.6))
                                 .tracking(0.5)
                         }
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(red: 0.08, green: 0.08, blue: 0.1))
+                .background(Color.platformWindowBackground)
             } else if items.isEmpty {
                 VStack(spacing: 24) {
                     Image(systemName: "photo.on.rectangle")
-                        .font(.system(size: 48, weight: .thin))
+                        .font(.appSystem(size: 48, weight: .thin))
                         .foregroundStyle(
                             LinearGradient(
                                 gradient: Gradient(colors: [Color.havenPurple, Color.havenPurpleLight]),
@@ -2389,42 +2521,63 @@ struct ViewerView: View {
 
                     VStack(spacing: 8) {
                         Text("No media found")
-                            .font(.system(size: 18, weight: .bold, design: .default))
+                            .font(.appSystem(size: 18, weight: .bold, design: .default))
                             .tracking(0.2)
 
                         Text("Try changing your filter settings")
-                            .font(.system(size: 13, weight: .regular, design: .monospaced))
+                            .font(.appSystem(size: 13, weight: .regular, design: .monospaced))
                             .foregroundColor(.secondary)
                             .tracking(0.3)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(red: 0.08, green: 0.08, blue: 0.1))
+                .background(Color.platformWindowBackground)
             } else {
-                #if os(macOS)
-                let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
-                #else
-                let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 3)
-                #endif
+                if mediaLayoutMode == .grid {
+                    #if os(macOS)
+                    let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
+                    #else
+                    let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 3)
+                    #endif
 
-                LazyVGrid(columns: columns, spacing: 8) {
-                    ForEach(items) { item in
-                        MediaGridItem(
-                            item: item,
-                            onDeleteFromMirrors: { deleteMediaFromMirrors(item: $0) },
-                            onDeleteEverywhere: { deleteMediaEverywhere(item: $0) },
-                            onMirrorComplete: { loadLocalMedia(force: true) }
-                        ) {
-                            withAnimation(.easeInOut(duration: 0.2)) { selectedMedia = item }
-                        }
-                        .onAppear {
-                            if item.id == items.last?.id {
-                                loadMoreItems()
+                    LazyVGrid(columns: columns, spacing: 8) {
+                        ForEach(items) { item in
+                            MediaGridItem(
+                                item: item,
+                                onDeleteFromMirrors: { deleteMediaFromMirrors(item: $0) },
+                                onDeleteEverywhere: { deleteMediaEverywhere(item: $0) },
+                                onMirrorComplete: { loadLocalMedia(force: true) }
+                            ) {
+                                withAnimation(.easeInOut(duration: 0.2)) { selectedMedia = item }
+                            }
+                            .onAppear {
+                                if item.id == items.last?.id {
+                                    loadMoreItems()
+                                }
                             }
                         }
                     }
+                    .padding(.horizontal, 8)
+                } else {
+                    LazyVStack(spacing: 8) {
+                        ForEach(items) { item in
+                            MediaListItem(
+                                item: item,
+                                onDeleteFromMirrors: { deleteMediaFromMirrors(item: $0) },
+                                onDeleteEverywhere: { deleteMediaEverywhere(item: $0) },
+                                onMirrorComplete: { loadLocalMedia(force: true) }
+                            ) {
+                                withAnimation(.easeInOut(duration: 0.2)) { selectedMedia = item }
+                            }
+                            .onAppear {
+                                if item.id == items.last?.id {
+                                    loadMoreItems()
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12)
                 }
-                .padding(.horizontal, 8)
             }
         }
     }
@@ -2457,7 +2610,7 @@ struct ViewerView: View {
                                 }
                             }) {
                                 Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
-                                    .font(.system(size: 16, weight: .semibold))
+                                    .font(.appSystem(size: 16, weight: .semibold))
                                     .foregroundColor(isCopied ? .green : .white)
                                     .padding(10)
                                     .background(Color.white.opacity(0.1))
@@ -2473,7 +2626,7 @@ struct ViewerView: View {
                                 saveMediaToPhotos(item: item)
                             }) {
                                 Image(systemName: "square.and.arrow.down")
-                                    .font(.system(size: 16, weight: .semibold))
+                                    .font(.appSystem(size: 16, weight: .semibold))
                                     .padding(10)
                                     .background(Color.white.opacity(0.1))
                                     .cornerRadius(8)
@@ -2495,7 +2648,7 @@ struct ViewerView: View {
                             }
                         } label: {
                             Image(systemName: "trash")
-                                .font(.system(size: 16, weight: .semibold))
+                                .font(.appSystem(size: 16, weight: .semibold))
                                 .padding(10)
                                 .background(Color.white.opacity(0.1))
                                 .cornerRadius(8)
@@ -2509,6 +2662,26 @@ struct ViewerView: View {
                             }
                         )
 
+                        if let noteId = findNoteId(for: item) {
+                            Button(action: {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    selectedMedia = nil
+                                    dragOffset = .zero
+                                }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                    showingNoteId = noteId
+                                }
+                            }) {
+                                Image(systemName: "doc.text")
+                                    .font(.appSystem(size: 16, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .padding(10)
+                                    .background(Color.white.opacity(0.1))
+                                    .cornerRadius(8)
+                            }
+                            .buttonStyle(.plain)
+                        }
+
                         Spacer()
 
                         Button(action: {
@@ -2518,7 +2691,7 @@ struct ViewerView: View {
                             }
                         }) {
                             Image(systemName: "xmark.circle.fill")
-                                .font(.title)
+                                .font(.appTitle)
                                 .foregroundColor(.white.opacity(0.6))
                         }
                         .buttonStyle(.plain)
@@ -2526,20 +2699,14 @@ struct ViewerView: View {
                     #if os(iOS)
                     if let message = saveToPhotosMessage {
                         Text(message)
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(message.contains("Saved") ? .green : .red)
                             .transition(.opacity)
                     }
                     #endif
-                    if let deleteMessage = deleteStatusMessage {
-                        Text(deleteMessage)
-                            .font(.caption)
-                            .foregroundColor(deleteMessage.contains("Failed") ? .red : .green)
-                            .transition(.opacity)
-                    }
                     if isCopied {
                         Text("Link copied to clipboard")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.green)
                             .transition(.opacity)
                     }
@@ -2584,7 +2751,7 @@ struct ViewerView: View {
                 Spacer()
 
                 Text(configService.externalShareURL(for: item.url).absoluteString)
-                    .font(.caption.monospaced())
+                    .font(.appCaption.monospaced())
                     .foregroundColor(.secondary)
                     .padding(.bottom)
                     .opacity(max(0, 1.0 - (abs(dragOffset.height) / 100.0)))
@@ -2620,6 +2787,22 @@ struct ViewerView: View {
                 }
             }
         )
+    }
+
+    /// Find the Nostr event ID for a media item by matching its URL or blossom hash against stored events.
+    private func findNoteId(for item: MediaItem) -> String? {
+        let mediaURL = item.url.absoluteString
+        // Try exact URL match first
+        if let event = nostrService.events.first(where: { $0.content.contains(mediaURL) }) {
+            return event.id
+        }
+        // For blossom URLs the displayed URL may differ from the original;
+        // fall back to matching the SHA256 hash embedded in the URL path.
+        let hash = item.url.lastPathComponent
+        if hash.count == 64, hash.allSatisfy({ $0.isHexDigit }) {
+            return nostrService.events.first(where: { $0.content.contains(hash) })?.id
+        }
+        return nil
     }
 
     private func navigateMedia(direction: Int) {
@@ -2723,16 +2906,12 @@ struct ViewerView: View {
         #endif
 
         var urls = [configService.config.nostrURL].compactMap { URL(string: $0) }
-        let macURL = configService.config.macRelayURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !macURL.isEmpty, let macRelay = URL(string: macURL) {
-            urls.append(macRelay)
-        }
         // Also try external relays for notes not on the local relay
-        let externalStrs = configService.config.feedRelays.isEmpty ? [
+        let externalStrs = configService.config.activeFeedRelays.isEmpty ? [
             "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
-        ] : configService.config.feedRelays
+        ] : configService.config.activeFeedRelays
         urls.append(contentsOf: externalStrs.compactMap { URL(string: $0) })
 
         nostrService.fetchNotesByIds(missingIds, from: urls)
@@ -2782,15 +2961,11 @@ struct ViewerView: View {
         #endif
 
         var urls = [configService.config.nostrURL].compactMap { URL(string: $0) }
-        let macURL = configService.config.macRelayURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !macURL.isEmpty, let macRelay = URL(string: macURL) {
-            urls.append(macRelay)
-        }
-        let externalStrs = configService.config.feedRelays.isEmpty ? [
+        let externalStrs = configService.config.activeFeedRelays.isEmpty ? [
             "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
-        ] : configService.config.feedRelays
+        ] : configService.config.activeFeedRelays
         urls.append(contentsOf: externalStrs.compactMap { URL(string: $0) })
 
         nostrService.fetchNotesByIds(missingIds, from: urls)
@@ -2897,6 +3072,10 @@ struct ViewerView: View {
     func loadLocalMedia(force: Bool = false) {
         let cache = blossomCache
 
+        // Start filesystem watcher so external uploads (e.g. phone → Mac relay) trigger a rescan
+        let blossomDir = configService.relayDataDir.appendingPathComponent(configService.config.blossomPath)
+        cache.startWatchingIfNeeded(directory: blossomDir)
+
         // Skip rescan if cache is fresh and this isn't a forced reload (e.g. after upload/delete)
         if !force && cache.isFresh() { return }
 
@@ -2976,135 +3155,157 @@ struct ViewerView: View {
 
     private func handleUploadSelectedItems(_ items: [PhotosPickerItem]) {
         guard !items.isEmpty else { return }
-        
+
         let blossom = blossomService
-        
+
         for item in items {
+            // Check ALL supported content types — .first can be a non-video type
+            // even for videos (e.g. combined picker, HEVC, iCloud items).
+            let isVideo = item.supportedContentTypes.contains { $0.conforms(to: .movie) || $0.conforms(to: .video) }
             let contentType = item.supportedContentTypes.first ?? .image
-            let isVideo = contentType.conforms(to: .movie) || contentType.conforms(to: .video)
-            
+
             let filename = "media-\(UUID().uuidString.prefix(8))"
-            
-            Task { @MainActor in
-                let notificationId = MediaUploadNotificationManager.shared.add(filename: filename)
-                
+
+            // Create a structured task and store it to keep it alive
+            let uploadTask = Task {
+                let notificationId = await MainActor.run {
+                    MediaUploadNotificationManager.shared.add(filename: filename)
+                }
+
                 if isVideo {
-                    item.loadTransferable(type: ImportedVideoFile.self) { result in
-                        switch result {
-                        case .success(let video):
-                            guard let video = video else {
-                                Task { @MainActor in
-                                    MediaUploadNotificationManager.shared.markFailed(id: notificationId, message: "Failed to read video file.")
-                                }
-                                return
-                            }
-                            
+                    // Handle video upload — try file-based ImportedVideoFile first,
+                    // fall back to Data if the system can't provide a .movie file
+                    // representation (HEVC transcoding failure, iCloud-only items, etc.).
+                    do {
+                        var fileURL: URL?
+                        var mimeType = "video/mp4"
+
+                        if let video = try? await item.loadTransferable(type: ImportedVideoFile.self) {
                             let derivedType = UTType(filenameExtension: video.url.pathExtension) ?? contentType
-                            let mimeType = derivedType.preferredMIMEType ?? "video/mp4"
-                            
-                            Task {
-                                guard let sha256 = ComposeView.streamingSHA256(of: video.url) else {
-                                    await MainActor.run {
-                                        MediaUploadNotificationManager.shared.markFailed(id: notificationId, message: "Failed to compute SHA256.")
-                                    }
-                                    try? FileManager.default.removeItem(at: video.url)
-                                    return
-                                }
-                                
-                                let uploadedURL = await blossom.uploadAndMirror(
-                                    fileURL: video.url,
-                                    sha256: sha256,
-                                    contentType: mimeType
-                                ) { progress in
-                                    Task { @MainActor in
-                                        MediaUploadNotificationManager.shared.updateProgress(id: notificationId, progress: progress)
-                                    }
-                                }
-                                
-                                try? FileManager.default.removeItem(at: video.url)
-                                
-                                await MainActor.run {
-                                    if uploadedURL != nil {
-                                        MediaUploadNotificationManager.shared.markSuccess(id: notificationId)
-                                        loadLocalMedia(force: true)
-                                    } else {
-                                        MediaUploadNotificationManager.shared.markFailed(id: notificationId, message: "Upload failed.")
-                                    }
-                                }
+                            mimeType = derivedType.preferredMIMEType ?? "video/mp4"
+                            fileURL = video.url
+                        } else if let data = try await item.loadTransferable(type: Data.self) {
+                            // Fallback: write raw bytes to a temp file so we can stream the upload.
+                            // Determine MIME from the first video-conformant supported type.
+                            let videoType = item.supportedContentTypes.first { $0.conforms(to: .movie) || $0.conforms(to: .video) }
+                            let ext = videoType?.preferredFilenameExtension ?? "mp4"
+                            mimeType = videoType?.preferredMIMEType ?? "video/mp4"
+                            let dest = FileManager.default.temporaryDirectory
+                                .appendingPathComponent("haven-upload-\(UUID().uuidString)")
+                                .appendingPathExtension(ext)
+                            try data.write(to: dest)
+                            fileURL = dest
+                        }
+
+                        guard let fileURL else {
+                            await MainActor.run {
+                                MediaUploadNotificationManager.shared.markFailed(id: notificationId, message: "Failed to read video file.")
                             }
-                        case .failure(let error):
+                            return
+                        }
+
+                        guard let sha256 = ComposeView.streamingSHA256(of: fileURL) else {
+                            await MainActor.run {
+                                MediaUploadNotificationManager.shared.markFailed(id: notificationId, message: "Failed to compute SHA256.")
+                            }
+                            try? FileManager.default.removeItem(at: fileURL)
+                            return
+                        }
+
+                        let localSuccess = await blossom.saveToLocalRelay(
+                            fileURL: fileURL,
+                            sha256: sha256,
+                            contentType: mimeType
+                        ) { progress in
                             Task { @MainActor in
-                                MediaUploadNotificationManager.shared.markFailed(id: notificationId, message: error.localizedDescription)
+                                MediaUploadNotificationManager.shared.updateProgress(id: notificationId, progress: progress)
                             }
+                        }
+
+                        try? FileManager.default.removeItem(at: fileURL)
+
+                        await MainActor.run {
+                            if localSuccess {
+                                MediaUploadNotificationManager.shared.markSuccess(id: notificationId)
+                                self.loadLocalMedia(force: true)
+                            } else {
+                                MediaUploadNotificationManager.shared.markFailed(id: notificationId, message: "Failed to upload video to local relay.")
+                            }
+                        }
+                    } catch {
+                        await MainActor.run {
+                            MediaUploadNotificationManager.shared.markFailed(id: notificationId, message: error.localizedDescription)
                         }
                     }
                 } else {
-                    item.loadTransferable(type: Data.self) { result in
-                        switch result {
-                        case .success(let data):
-                            guard let data = data else {
-                                Task { @MainActor in
-                                    MediaUploadNotificationManager.shared.markFailed(id: notificationId, message: "Failed to read image data.")
-                                }
-                                return
+                    // Handle image upload - use async loadTransferable
+                    do {
+                        guard let data = try await item.loadTransferable(type: Data.self) else {
+                            await MainActor.run {
+                                MediaUploadNotificationManager.shared.markFailed(id: notificationId, message: "Failed to read image data.")
                             }
-                            
-                            Task {
-                                var finalData = data
-                                var finalType = contentType
-                                
-                                // Convert HEIC/HEIF to JPEG
-                                if contentType.conforms(to: .heic) || contentType.conforms(to: .heif) {
-                                    #if os(iOS)
-                                    if let image = UIImage(data: data),
-                                       let jpegData = image.jpegData(compressionQuality: 0.8) {
-                                        finalData = jpegData
-                                        finalType = .jpeg
-                                    }
-                                    #elseif os(macOS)
-                                    if let image = NSImage(data: data),
-                                       let tiffData = image.tiffRepresentation,
-                                       let bitmapRep = NSBitmapImageRep(data: tiffData),
-                                       let jpegData = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) {
-                                        finalData = jpegData
-                                        finalType = .jpeg
-                                    }
-                                    #endif
-                                }
-                                
-                                let mimeType = finalType.preferredMIMEType ?? "image/jpeg"
-                                let sha256 = SHA256.hash(data: finalData).map { String(format: "%02x", $0) }.joined()
-                                
-                                let uploadedURL = await blossom.uploadAndMirror(
-                                    data: finalData,
-                                    sha256: sha256,
-                                    contentType: mimeType
-                                ) { progress in
-                                    Task { @MainActor in
-                                        MediaUploadNotificationManager.shared.updateProgress(id: notificationId, progress: progress)
-                                    }
-                                }
-                                
-                                await MainActor.run {
-                                    if uploadedURL != nil {
-                                        MediaUploadNotificationManager.shared.markSuccess(id: notificationId)
-                                        loadLocalMedia(force: true)
-                                    } else {
-                                        MediaUploadNotificationManager.shared.markFailed(id: notificationId, message: "Upload failed.")
-                                    }
-                                }
+                            return
+                        }
+
+                        var finalData = data
+                        var finalType = contentType
+
+                        // Convert HEIC/HEIF to JPEG
+                        if contentType.conforms(to: .heic) || contentType.conforms(to: .heif) {
+                            #if os(iOS)
+                            if let image = UIImage(data: data),
+                               let jpegData = image.jpegData(compressionQuality: 0.8) {
+                                finalData = jpegData
+                                finalType = .jpeg
                             }
-                        case .failure(let error):
-                            Task { @MainActor in
-                                MediaUploadNotificationManager.shared.markFailed(id: notificationId, message: error.localizedDescription)
+                            #elseif os(macOS)
+                            if let image = NSImage(data: data),
+                               let tiffData = image.tiffRepresentation,
+                               let bitmapRep = NSBitmapImageRep(data: tiffData),
+                               let jpegData = bitmapRep.representation(using: .jpeg, properties: [.compressionFactor: 0.8]) {
+                                finalData = jpegData
+                                finalType = .jpeg
                             }
+                            #endif
+                        }
+
+                        let mimeType = finalType.preferredMIMEType ?? "image/jpeg"
+                        let sha256 = SHA256.hash(data: finalData).map { String(format: "%02x", $0) }.joined()
+
+                        let localSuccess = await blossom.saveToLocalRelay(
+                            data: finalData,
+                            sha256: sha256,
+                            contentType: mimeType
+                        )
+
+                        await MainActor.run {
+                            if localSuccess {
+                                MediaUploadNotificationManager.shared.markSuccess(id: notificationId)
+                                self.loadLocalMedia(force: true)
+                            } else {
+                                MediaUploadNotificationManager.shared.markFailed(id: notificationId, message: "Failed to upload image to local relay.")
+                            }
+                        }
+                    } catch {
+                        await MainActor.run {
+                            MediaUploadNotificationManager.shared.markFailed(id: notificationId, message: error.localizedDescription)
                         }
                     }
                 }
             }
+
+            // Store task to keep it alive
+            activeUploadTasks.append(uploadTask)
         }
-        
+
+        // Clear selected items only AFTER creating all tasks
         self.selectedUploadItems = []
+
+        // Clean up completed tasks periodically
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
+            activeUploadTasks.removeAll { $0.isCancelled || Task.isCancelled }
+        }
     }
 
     private func handleUploadFileURLs(_ urls: [URL]) {
@@ -3154,7 +3355,7 @@ struct ViewerView: View {
                         return
                     }
                     
-                    let uploadedURL = await blossom.uploadAndMirror(
+                    let localSuccess = await blossom.saveToLocalRelay(
                         fileURL: tempDest,
                         sha256: sha256,
                         contentType: mimeType
@@ -3163,15 +3364,15 @@ struct ViewerView: View {
                             MediaUploadNotificationManager.shared.updateProgress(id: notificationId, progress: progress)
                         }
                     }
-                    
+
                     try? FileManager.default.removeItem(at: tempDest)
-                    
+
                     await MainActor.run {
-                        if uploadedURL != nil {
+                        if localSuccess {
                             MediaUploadNotificationManager.shared.markSuccess(id: notificationId)
                             loadLocalMedia(force: true)
                         } else {
-                            MediaUploadNotificationManager.shared.markFailed(id: notificationId, message: "Upload failed.")
+                            MediaUploadNotificationManager.shared.markFailed(id: notificationId, message: "Failed to upload to local relay.")
                         }
                     }
                 }
@@ -3214,19 +3415,11 @@ struct ViewerView: View {
 
                 let sha256 = SHA256.hash(data: imageData).map { String(format: "%02x", $0) }.joined()
 
-                let uploadedURL = await blossom.uploadAndMirror(
+                success = await blossom.saveToLocalRelay(
                     data: imageData,
                     sha256: sha256,
                     contentType: detectedContentType
-                ) { progress in
-                    Task { @MainActor in
-                        if let id = notificationId {
-                            MediaUploadNotificationManager.shared.updateProgress(id: id, progress: progress)
-                        }
-                    }
-                }
-
-                success = uploadedURL != nil
+                )
             }
             // SCENARIO 2: Check for URL string
             else if let clipboardString = PlatformClipboard.getString() {
@@ -3285,8 +3478,11 @@ struct ViewerView: View {
             let service = BlossomService(configService: configService, nostrService: nostrService)
             let success = await service.deleteFromMirrors(sha256: sha256)
             await MainActor.run {
-                deleteStatusMessage = success ? "Deleted from mirrors" : "Failed to delete from mirrors"
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { deleteStatusMessage = nil }
+                if success {
+                    ActionToastManager.shared.show(icon: "trash", message: "Deleted from mirrors", color: Color(red: 0.2, green: 0.8, blue: 0.6))
+                } else {
+                    ActionToastManager.shared.show(icon: "exclamationmark.triangle.fill", message: "Failed to delete from mirrors", color: .red.opacity(0.85))
+                }
             }
         }
     }
@@ -3317,15 +3513,14 @@ struct ViewerView: View {
                 }
                 
                 if localOk && mirrorsOk {
-                    deleteStatusMessage = "Deleted"
+                    ActionToastManager.shared.show(icon: "trash", message: "Deleted", color: Color(red: 0.2, green: 0.8, blue: 0.6))
                 } else if localOk {
-                    deleteStatusMessage = "Deleted locally (Mirrors failed)"
+                    ActionToastManager.shared.show(icon: "exclamationmark.triangle.fill", message: "Deleted locally (Mirrors failed)", color: .orange.opacity(0.85))
                 } else if mirrorsOk {
-                    deleteStatusMessage = "Deleted from mirrors, local failed"
+                    ActionToastManager.shared.show(icon: "exclamationmark.triangle.fill", message: "Deleted from mirrors, local failed", color: .orange.opacity(0.85))
                 } else {
-                    deleteStatusMessage = "Failed to delete"
+                    ActionToastManager.shared.show(icon: "exclamationmark.triangle.fill", message: "Failed to delete", color: .red.opacity(0.85))
                 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { deleteStatusMessage = nil }
             }
         }
     }
@@ -3353,7 +3548,7 @@ struct LikedByRow: View {
         let unique = uniqueReactors
         HStack(spacing: 6) {
             Image(systemName: "heart.fill")
-                .font(.system(size: 12, weight: .bold))
+                .font(.appSystem(size: 12, weight: .bold))
                 .foregroundColor(.pink)
 
             HStack(spacing: -6) {
@@ -3371,13 +3566,13 @@ struct LikedByRow: View {
             let remaining = unique.count - names.count
 
             Text(likedByText(names: names, remaining: remaining))
-                .font(.system(size: 13, weight: .medium))
+                .font(.appSystem(size: 13, weight: .medium))
                 .foregroundColor(.secondary)
                 .lineLimit(1)
 
             if let date = latestDate {
                 Text(timeAgo(from: date))
-                    .font(.system(size: 12, weight: .regular))
+                    .font(.appSystem(size: 12, weight: .regular))
                     .foregroundColor(.secondary.opacity(0.7))
             }
 
@@ -3438,11 +3633,11 @@ struct ReactorsListView: View {
 
                         VStack(alignment: .leading, spacing: 4) {
                             Text(profile?.bestName ?? "npub…" + String(reactor.pubkey.suffix(6)))
-                                .font(.system(size: 16, weight: .semibold))
+                                .font(.appSystem(size: 16, weight: .semibold))
                                 .foregroundColor(.primary)
                             if let nip05 = profile?.nip05, !nip05.isEmpty {
                                 Text(nip05)
-                                    .font(.system(size: 13))
+                                    .font(.appSystem(size: 13))
                                     .foregroundColor(Color.havenPurple)
                             }
                         }
@@ -3450,10 +3645,10 @@ struct ReactorsListView: View {
                         Spacer()
 
                         Text(reactor.emoji)
-                            .font(.system(size: 20))
+                            .font(.appSystem(size: 20))
 
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.appSystem(size: 12, weight: .semibold))
                             .foregroundColor(.secondary.opacity(0.5))
                     }
                 }
@@ -3510,11 +3705,11 @@ struct RepostersListView: View {
 
                         VStack(alignment: .leading, spacing: 4) {
                             Text(profile?.bestName ?? "npub\u{2026}" + String(pubkey.suffix(6)))
-                                .font(.system(size: 16, weight: .semibold))
+                                .font(.appSystem(size: 16, weight: .semibold))
                                 .foregroundColor(.primary)
                             if let nip05 = profile?.nip05, !nip05.isEmpty {
                                 Text(nip05)
-                                    .font(.system(size: 13))
+                                    .font(.appSystem(size: 13))
                                     .foregroundColor(Color.havenPurple)
                             }
                         }
@@ -3522,7 +3717,7 @@ struct RepostersListView: View {
                         Spacer()
 
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.appSystem(size: 12, weight: .semibold))
                             .foregroundColor(.secondary.opacity(0.5))
                     }
                 }
@@ -3579,11 +3774,11 @@ struct QuotersListView: View {
 
                         VStack(alignment: .leading, spacing: 4) {
                             Text(profile?.bestName ?? "npub\u{2026}" + String(pubkey.suffix(6)))
-                                .font(.system(size: 16, weight: .semibold))
+                                .font(.appSystem(size: 16, weight: .semibold))
                                 .foregroundColor(.primary)
                             if let nip05 = profile?.nip05, !nip05.isEmpty {
                                 Text(nip05)
-                                    .font(.system(size: 13))
+                                    .font(.appSystem(size: 13))
                                     .foregroundColor(Color.havenPurple)
                             }
                         }
@@ -3591,7 +3786,7 @@ struct QuotersListView: View {
                         Spacer()
 
                         Image(systemName: "chevron.right")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.appSystem(size: 12, weight: .semibold))
                             .foregroundColor(.secondary.opacity(0.5))
                     }
                 }
@@ -3650,7 +3845,7 @@ struct ZappedByRow: View {
         let unique = uniqueZappers
         HStack(spacing: 6) {
             Image(systemName: "bolt.fill")
-                .font(.system(size: 11, weight: .bold))
+                .font(.appSystem(size: 11, weight: .bold))
                 .foregroundColor(.orange)
 
             HStack(spacing: -6) {
@@ -3667,7 +3862,7 @@ struct ZappedByRow: View {
             let remaining = unique.count - names.count
 
             Text(zappedByText(names: names, remaining: remaining))
-                .font(.system(size: 12, weight: .medium))
+                .font(.appSystem(size: 12, weight: .medium))
                 .foregroundColor(.secondary)
                 .lineLimit(1)
 
@@ -3710,10 +3905,10 @@ struct FilterButton: View {
             HStack(spacing: 4) {
                 if let icon = icon {
                     Image(systemName: icon)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.appSystem(size: 10, weight: .semibold))
                 }
                 Text(title)
-                    .font(.system(size: 11, weight: isSelected ? .bold : .regular, design: .monospaced))
+                    .font(.appSystem(size: 11, weight: isSelected ? .bold : .regular, design: .monospaced))
                     .lineLimit(1)
                     .fixedSize()
             }
@@ -3744,7 +3939,7 @@ struct IconFilterButton: View {
             Group {
                 if icon == "GIF" {
                     Text("GIF")
-                        .font(.system(size: 9, weight: .black, design: .rounded))
+                        .font(.appSystem(size: 9, weight: .black, design: .rounded))
                         .foregroundColor(isSelected ? color : .secondary)
                         .padding(.horizontal, 4)
                         .padding(.vertical, 2)
@@ -3754,7 +3949,7 @@ struct IconFilterButton: View {
                         )
                 } else {
                     Image(systemName: icon)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.appSystem(size: 15, weight: .semibold))
                         .foregroundColor(isSelected ? color : .secondary)
                 }
             }
@@ -3782,10 +3977,10 @@ struct ModeButton: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.appSystem(size: 14, weight: .semibold))
                     .foregroundColor(isSelected ? .white : (hasNotification ? accentTint : .white))
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold, design: .default))
+                    .font(.appSystem(size: 13, weight: .semibold, design: .default))
                     .lineLimit(1)
                     .foregroundColor(isSelected ? .white : (hasNotification ? accentTint : .white))
             }
@@ -3816,20 +4011,20 @@ struct ProfileResultRow: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(profile.bestName)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.appSystem(size: 15, weight: .semibold))
                     .foregroundColor(.primary)
                     .lineLimit(1)
 
                 if let nip05 = profile.nip05, !nip05.isEmpty {
                     Text(nip05)
-                        .font(.system(size: 12, weight: .regular, design: .monospaced))
+                        .font(.appSystem(size: 12, weight: .regular, design: .monospaced))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
 
                 if let about = profile.about, !about.isEmpty {
                     Text(about)
-                        .font(.system(size: 13, weight: .regular))
+                        .font(.appSystem(size: 13, weight: .regular))
                         .foregroundColor(.secondary.opacity(0.8))
                         .lineLimit(2)
                 }
@@ -3838,7 +4033,7 @@ struct ProfileResultRow: View {
             Spacer()
 
             Image(systemName: "chevron.right")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.appSystem(size: 12, weight: .semibold))
                 .foregroundColor(.secondary.opacity(0.5))
         }
         .padding(.horizontal, 16)
@@ -3854,6 +4049,8 @@ struct NoteRow: View {
     /// When true, clamp the body to a few lines and append a "Show more"
     /// affordance. Used by compact contexts like the likes/zaps lists.
     var truncate: Bool = false
+    /// Layout mode for the note display
+    var layoutMode: ViewerView.NoteLayoutMode = .expanded
     /// Optional inline engagement data rendered inside the card.
     var reactors: [(pubkey: String, emoji: String)]? = nil
     var latestReactionDate: Date? = nil
@@ -3932,28 +4129,33 @@ struct NoteRow: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        let avatarSize: CGFloat = layoutMode == .compact ? 32 : 40
+        let headerSpacing: CGFloat = layoutMode == .compact ? 8 : 12
+        let contentFontSize: CGFloat = layoutMode == .compact ? 14 : 15
+        let cardSpacing: CGFloat = layoutMode == .compact ? 8 : 10
+
+        VStack(alignment: .leading, spacing: cardSpacing) {
             // Header with profile and timestamp
-            HStack(alignment: .center, spacing: 12) {
+            HStack(alignment: .center, spacing: headerSpacing) {
                 AvatarView(
                     url: nostrService.profiles[event.pubkey]?.pictureURL,
                     pubkey: event.pubkey,
-                    size: 40
+                    size: avatarSize
                 )
                 .overlay(Circle().stroke(Color(red: 0.2, green: 0.2, blue: 0.25), lineWidth: 0.5))
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(displayName)
-                            .font(.system(size: 14, weight: .semibold, design: .default))
+                            .font(.appSystem(size: 14, weight: .semibold, design: .default))
                             .lineLimit(1)
 
                         if event.kind == 6 {
                             HStack(spacing: 3) {
                                 Image(systemName: "arrow.2.squarepath")
-                                    .font(.system(size: 10, weight: .semibold))
+                                    .font(.appSystem(size: 10, weight: .semibold))
                                 Text("Reposted")
-                                    .font(.system(size: 11, weight: .medium))
+                                    .font(.appSystem(size: 11, weight: .medium))
                             }
                             .foregroundColor(.green)
                         }
@@ -3961,21 +4163,21 @@ struct NoteRow: View {
                         if event.isReply {
                             HStack(spacing: 3) {
                                 Image(systemName: "arrowshape.turn.up.left.fill")
-                                    .font(.system(size: 10, weight: .semibold))
+                                    .font(.appSystem(size: 10, weight: .semibold))
                                 Text("Reply")
-                                    .font(.system(size: 11, weight: .medium))
+                                    .font(.appSystem(size: 11, weight: .medium))
                             }
                             .foregroundColor(Color.havenPurple.opacity(0.7))
                         }
 
                         Image(systemName: noteType.icon)
-                            .font(.caption2)
+                            .font(.appCaption2)
                             .foregroundColor(noteType.color)
 
                         Spacer()
 
                         Text(timeAgo(from: event.createdAtDate))
-                            .font(.system(size: 11, weight: .regular, design: .monospaced))
+                            .font(.appSystem(size: 11, weight: .regular, design: .monospaced))
                             .foregroundColor(.secondary)
                             .tracking(0.2)
                     }
@@ -3993,7 +4195,7 @@ struct NoteRow: View {
 
                 if !cleanContent.isEmpty {
                     Text(NostrContentFormatter.format(cleanContent, mediaURLs: urls))
-                        .font(.system(size: 15, weight: .regular, design: .default))
+                        .font(.appSystem(size: contentFontSize, weight: .regular, design: .default))
                         .foregroundColor(Color(red: 1, green: 1, blue: 1))
                         .lineSpacing(2)
                         .lineLimit(truncate && !isExpanded ? 8 : nil)
@@ -4002,7 +4204,7 @@ struct NoteRow: View {
                     if truncate && !isExpanded && cleanContent.count > 240 {
                         Button(action: { withAnimation(.easeInOut(duration: 0.15)) { isExpanded = true } }) {
                             Text("Show more")
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .font(.appSystem(size: 12, weight: .semibold, design: .monospaced))
                                 .foregroundColor(.havenPurple)
                         }
                         .buttonStyle(.plain)
@@ -4174,7 +4376,7 @@ struct NoteRow: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "heart.fill")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.appSystem(size: 10, weight: .bold))
                             .foregroundColor(.pink)
 
                         HStack(spacing: -4) {
@@ -4185,12 +4387,12 @@ struct NoteRow: View {
                         }
 
                         Text("\(uniqueReactors.count)")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .font(.appSystem(size: 11, weight: .semibold, design: .monospaced))
                             .foregroundColor(.pink.opacity(0.8))
 
                         if let date = latestReactionDate {
                             Text(timeAgo(from: date))
-                                .font(.system(size: 10, weight: .regular, design: .monospaced))
+                                .font(.appSystem(size: 10, weight: .regular, design: .monospaced))
                                 .foregroundColor(.secondary.opacity(0.6))
                         }
                     }
@@ -4205,7 +4407,7 @@ struct NoteRow: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.2.squarepath")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.appSystem(size: 10, weight: .bold))
                             .foregroundColor(.green)
 
                         HStack(spacing: -4) {
@@ -4216,7 +4418,7 @@ struct NoteRow: View {
                         }
 
                         Text("\(uniqueReposters.count)")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .font(.appSystem(size: 11, weight: .semibold, design: .monospaced))
                             .foregroundColor(.green.opacity(0.8))
                     }
                 }
@@ -4230,7 +4432,7 @@ struct NoteRow: View {
                 } label: {
                     HStack(spacing: 4) {
                         Image(systemName: "quote.bubble.fill")
-                            .font(.system(size: 10, weight: .bold))
+                            .font(.appSystem(size: 10, weight: .bold))
                             .foregroundColor(.blue)
 
                         HStack(spacing: -4) {
@@ -4241,7 +4443,7 @@ struct NoteRow: View {
                         }
 
                         Text("\(uniqueQuoters.count)")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .font(.appSystem(size: 11, weight: .semibold, design: .monospaced))
                             .foregroundColor(.blue.opacity(0.8))
                     }
                 }
@@ -4252,7 +4454,7 @@ struct NoteRow: View {
             if !uniqueZapperPubkeys.isEmpty {
                 HStack(spacing: 4) {
                     Image(systemName: "bolt.fill")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.appSystem(size: 10, weight: .bold))
                         .foregroundColor(.orange)
 
                     HStack(spacing: -4) {
@@ -4263,7 +4465,7 @@ struct NoteRow: View {
                     }
 
                     Text(Self.formatSats(totalSats))
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(.appSystem(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundColor(.orange.opacity(0.8))
                 }
             }
@@ -4330,13 +4532,13 @@ struct RepostedNoteView: View {
                 .overlay(Circle().stroke(Color(red: 0.2, green: 0.2, blue: 0.25), lineWidth: 0.5))
 
                 Text(innerDisplayName)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.appSystem(size: 13, weight: .semibold))
                     .lineLimit(1)
 
                 Spacer()
 
                 Text(timeAgo(from: inner.createdAtDate))
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .font(.appSystem(size: 10, weight: .regular, design: .monospaced))
                     .foregroundColor(.secondary)
             }
 
@@ -4346,7 +4548,7 @@ struct RepostedNoteView: View {
             let content = inner.content.trimmingCharacters(in: .whitespacesAndNewlines)
             if !content.isEmpty {
                 Text(NostrContentFormatter.format(content, mediaURLs: urls))
-                    .font(.system(size: 14, weight: .regular, design: .default))
+                    .font(.appSystem(size: 14, weight: .regular, design: .default))
                     .foregroundColor(Color(red: 0.9, green: 0.9, blue: 0.9))
                     .lineSpacing(2)
                     .lineLimit(nil)
@@ -4406,6 +4608,7 @@ struct MediaGridItem: View {
     @State private var isHovered = false
     @State private var showingReportDialog = false
     @State private var isMirroringToLocal = false
+    @State private var isPushingToMirrors = false
     @State private var mirrorStatusMessage: String?
 
     var body: some View {
@@ -4420,7 +4623,7 @@ struct MediaGridItem: View {
                         ZStack {
                             Color(red: 0.1, green: 0.1, blue: 0.14)
                             Image(systemName: "waveform")
-                                .font(.system(size: 36))
+                                .font(.appSystem(size: 36))
                                 .foregroundColor(.havenPurple)
                         }
                     } else if item.type == .unknown {
@@ -4428,11 +4631,11 @@ struct MediaGridItem: View {
                             Color(red: 0.1, green: 0.1, blue: 0.14)
                             VStack(spacing: 4) {
                                 Image(systemName: "doc.fill")
-                                    .font(.system(size: 28))
+                                    .font(.appSystem(size: 28))
                                     .foregroundColor(.havenPurple.opacity(0.6))
                                 if let mime = item.mimeType {
                                     Text(mime)
-                                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                        .font(.appSystem(size: 9, weight: .medium, design: .monospaced))
                                         .foregroundColor(.secondary)
                                         .lineLimit(1)
                                 }
@@ -4478,6 +4681,16 @@ struct MediaGridItem: View {
                     Label(isMirroringToLocal ? "Mirroring..." : "Mirror to Blossom", systemImage: "arrow.down.circle")
                 }
                 .disabled(isMirroringToLocal)
+            }
+
+            // Push local-only items to external mirrors
+            if !isRemoteMedia && !configService.config.activeBlossomMirrors.isEmpty {
+                Button(action: {
+                    pushToMirrors()
+                }) {
+                    Label(isPushingToMirrors ? "Pushing..." : "Push to Mirrors", systemImage: "arrow.up.circle")
+                }
+                .disabled(isPushingToMirrors)
             }
 
             if onDeleteFromMirrors != nil || onDeleteEverywhere != nil {
@@ -4573,6 +4786,330 @@ struct MediaGridItem: View {
         }
     }
 
+    private func pushToMirrors() {
+        isPushingToMirrors = true
+        Task {
+            let service = BlossomService(configService: configService, nostrService: nostrService)
+            let sha256 = item.url.deletingPathExtension().lastPathComponent
+            guard sha256.count == 64 && sha256.allSatisfy({ $0.isHexDigit }) else {
+                await MainActor.run {
+                    isPushingToMirrors = false
+                    mirrorStatusMessage = "Could not extract hash"
+                }
+                return
+            }
+            let success = await service.pushLocalToMirrors(sha256: sha256)
+            await MainActor.run {
+                isPushingToMirrors = false
+                mirrorStatusMessage = success ? "Pushed to mirrors" : "Push to mirrors failed"
+            }
+        }
+    }
+
+    #if os(iOS)
+    private func saveMediaToPhotos(item: MediaItem) {
+        Task {
+            let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+            guard status == .authorized || status == .limited else { return }
+
+            let session = URLSession(configuration: .default, delegate: LocalhostTrustDelegate(), delegateQueue: nil)
+            do {
+                let (data, _) = try await session.data(from: item.url)
+
+                if item.type == .video {
+                    let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4")
+                    try data.write(to: tempURL)
+                    try await PHPhotoLibrary.shared().performChanges {
+                        PHAssetCreationRequest.forAsset().addResource(with: .video, fileURL: tempURL, options: nil)
+                    }
+                    try? FileManager.default.removeItem(at: tempURL)
+                } else {
+                    try await PHPhotoLibrary.shared().performChanges {
+                        let request = PHAssetCreationRequest.forAsset()
+                        request.addResource(with: .photo, data: data, options: PHAssetResourceCreationOptions())
+                    }
+                }
+            } catch {
+                print("Save to Photos error: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func saveMediaToPhotos() {
+        saveMediaToPhotos(item: item)
+    }
+    #endif
+}
+
+struct MediaListItem: View {
+    let item: MediaItem
+    var onDeleteFromMirrors: ((MediaItem) -> Void)? = nil
+    var onDeleteEverywhere: ((MediaItem) -> Void)? = nil
+    var onMirrorComplete: (() -> Void)? = nil
+    let onSelect: () -> Void
+    @EnvironmentObject var configService: ConfigService
+    @EnvironmentObject var nostrService: NostrService
+    @State private var showingReportDialog = false
+    @State private var isMirroringToLocal = false
+    @State private var isPushingToMirrors = false
+    @State private var mirrorStatusMessage: String?
+
+    var body: some View {
+        Button(action: onSelect) {
+            HStack(spacing: 12) {
+                // Thumbnail
+                Color.clear
+                    .aspectRatio(1.0, contentMode: .fit)
+                    .frame(width: 60, height: 60)
+                    .overlay(
+                        Group {
+                            if item.type == .video {
+                                VideoThumbnailView(url: item.url, mimeType: item.mimeType)
+                            } else if item.type == .audio {
+                                ZStack {
+                                    Color(red: 0.1, green: 0.1, blue: 0.14)
+                                    Image(systemName: "waveform")
+                                        .font(.appSystem(size: 20))
+                                        .foregroundColor(.havenPurple)
+                                }
+                            } else if item.type == .unknown {
+                                ZStack {
+                                    Color(red: 0.1, green: 0.1, blue: 0.14)
+                                    Image(systemName: "doc.fill")
+                                        .font(.appSystem(size: 18))
+                                        .foregroundColor(.havenPurple.opacity(0.6))
+                                }
+                            } else if item.isAnimatedGIF {
+                                AnimatedImage(url: item.url, contentMode: .fill, shouldAnimate: false, targetSize: CGSize(width: 60, height: 60))
+                            } else {
+                                RetryableAsyncImage(url: item.url, contentMode: .fill, targetSize: CGSize(width: 60, height: 60))
+                            }
+                        }
+                    )
+                    .background(Color.black.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                // Type Icon
+                Image(systemName: item.type == .video ? "video.fill" : item.type == .audio ? "waveform" : item.type == .image ? "photo.fill" : "doc.fill")
+                    .font(.appSystem(size: 20))
+                    .foregroundColor(.havenPurple)
+                    .frame(width: 32)
+
+                // Location Status
+                VStack(alignment: .leading, spacing: 4) {
+                    if !isRemoteMedia {
+                        HStack(spacing: 4) {
+                            Image(systemName: "internaldrive.fill")
+                                .font(.appSystem(size: 11))
+                            Text("Local")
+                                .font(.appSystem(size: 13, weight: .medium))
+                        }
+                        .foregroundColor(.green)
+                    } else {
+                        HStack(spacing: 4) {
+                            Image(systemName: "cloud.fill")
+                                .font(.appSystem(size: 11))
+                            Text(item.url.host ?? "Remote")
+                                .font(.appSystem(size: 13, weight: .medium))
+                                .lineLimit(1)
+                        }
+                        .foregroundColor(.blue)
+                    }
+
+                    // TODO: Add mirror count when available
+                    // Text("2 mirrors").font(.caption).foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                // Action Buttons
+                HStack(spacing: 8) {
+                    // Upload to mirrors (only for local items with mirrors configured)
+                    if !isRemoteMedia && !configService.config.activeBlossomMirrors.isEmpty {
+                        Button(action: pushToMirrors) {
+                            Image(systemName: isPushingToMirrors ? "arrow.up.circle.fill" : "arrow.up.circle")
+                                .font(.appSystem(size: 22))
+                                .foregroundColor(isPushingToMirrors ? .secondary : .havenPurple)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isPushingToMirrors)
+                    }
+
+                    // Download to local (only for remote items not on local)
+                    if !isOnMirror && configService.hasExternalShareURL(for: URL(string: "https://localhost")!) {
+                        Button(action: mirrorToLocalRelay) {
+                            Image(systemName: isMirroringToLocal ? "arrow.down.circle.fill" : "arrow.down.circle")
+                                .font(.appSystem(size: 22))
+                                .foregroundColor(isMirroringToLocal ? .secondary : .havenPurple)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isMirroringToLocal)
+                    }
+
+                    // Copy link
+                    Button(action: {
+                        PlatformClipboard.copy(item.shareURL(with: configService).absoluteString)
+                    }) {
+                        Image(systemName: "doc.on.doc")
+                            .font(.appSystem(size: 22))
+                            .foregroundColor(.havenPurple)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.trailing, 8)
+            }
+            .padding(12)
+            .background(Color(red: 0.1, green: 0.1, blue: 0.14).opacity(0.6))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button(action: {
+                PlatformClipboard.copy(item.shareURL(with: configService).absoluteString)
+            }) {
+                Label("Copy Link", systemImage: "doc.on.doc")
+            }
+            #if os(iOS)
+            if item.type == .image || item.type == .video {
+                Button(action: {
+                    saveMediaToPhotos()
+                }) {
+                    Label("Save to Photos", systemImage: "square.and.arrow.down")
+                }
+            }
+            #endif
+
+            if !isOnMirror && configService.hasExternalShareURL(for: URL(string: "https://localhost")!) {
+                Button(action: {
+                    mirrorToLocalRelay()
+                }) {
+                    Label(isMirroringToLocal ? "Mirroring..." : "Mirror to Blossom", systemImage: "arrow.down.circle")
+                }
+                .disabled(isMirroringToLocal)
+            }
+
+            if !isRemoteMedia && !configService.config.activeBlossomMirrors.isEmpty {
+                Button(action: {
+                    pushToMirrors()
+                }) {
+                    Label(isPushingToMirrors ? "Pushing..." : "Push to Mirrors", systemImage: "arrow.up.circle")
+                }
+                .disabled(isPushingToMirrors)
+            }
+
+            if onDeleteFromMirrors != nil || onDeleteEverywhere != nil {
+                Menu {
+                    if let onDeleteFromMirrors = onDeleteFromMirrors {
+                        Button(role: .destructive, action: {
+                            onDeleteFromMirrors(item)
+                        }) {
+                            Label("Delete from mirrors", systemImage: "trash")
+                        }
+                    }
+                    if let onDeleteEverywhere = onDeleteEverywhere {
+                        Button(role: .destructive, action: {
+                            onDeleteEverywhere(item)
+                        }) {
+                            Label("Delete everywhere", systemImage: "trash.fill")
+                        }
+                    }
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
+            }
+
+            Divider()
+
+            if MediaCacheService.shared.isKnown404(url: item.url) {
+                Button(action: {
+                    MediaCacheService.shared.unmarkNotFound(url: item.url)
+                }) {
+                    Label("Remove from 404", systemImage: "arrow.uturn.backward.circle")
+                }
+            } else {
+                Button(action: {
+                    MediaCacheService.shared.markNotFound(url: item.url)
+                }) {
+                    Label("Mark as 404", systemImage: "xmark.octagon")
+                }
+            }
+            if let pubkey = item.pubkey, pubkey != nostrService.activeHexPubkey {
+                Button(action: {
+                    showingReportDialog = true
+                }) {
+                    Label("Report Media", systemImage: "flag.fill")
+                }
+
+                Divider()
+
+                Button(action: {
+                    guard let data = Bech32.hexToData(pubkey),
+                          let npub = Bech32.encode(hrp: "npub", data: data) else { return }
+                    configService.blockProfile(npub)
+                }) {
+                    Label("Block User", systemImage: "hand.raised.fill")
+                }
+            }
+        }
+        .sheet(isPresented: $showingReportDialog) {
+            UGCReportingDialog(eventId: nil, pubkey: item.pubkey ?? "", onDismiss: { showingReportDialog = false }) {
+                nostrService.objectWillChange.send()
+            }
+            .environmentObject(nostrService)
+            .environmentObject(configService)
+        }
+    }
+
+    private var isRemoteMedia: Bool {
+        let host = item.url.host?.lowercased() ?? ""
+        return host != "localhost" && host != "127.0.0.1" && host != "0.0.0.0"
+    }
+
+    private var isOnMirror: Bool {
+        let currentMirrorHosts: Set<String> = Set(
+            configService.config.activeBlossomMirrors.compactMap {
+                URL(string: $0)?.host?.lowercased()
+            }
+        )
+        guard let host = item.url.host?.lowercased() else { return false }
+        return currentMirrorHosts.contains(host) || host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0"
+    }
+
+    private func mirrorToLocalRelay() {
+        isMirroringToLocal = true
+        Task {
+            let service = BlossomService(configService: configService, nostrService: nostrService)
+            let success = await service.downloadFromURL(url: item.url)
+            await MainActor.run {
+                isMirroringToLocal = false
+                mirrorStatusMessage = success ? "Saved to local relay" : "Mirror failed"
+                if success {
+                    onMirrorComplete?()
+                }
+            }
+        }
+    }
+
+    private func pushToMirrors() {
+        isPushingToMirrors = true
+        Task {
+            let service = BlossomService(configService: configService, nostrService: nostrService)
+            let sha256 = item.url.deletingPathExtension().lastPathComponent
+            guard sha256.count == 64 && sha256.allSatisfy({ $0.isHexDigit }) else {
+                await MainActor.run {
+                    isPushingToMirrors = false
+                    mirrorStatusMessage = "Could not extract hash"
+                }
+                return
+            }
+            let success = await service.pushLocalToMirrors(sha256: sha256)
+            await MainActor.run {
+                isPushingToMirrors = false
+                mirrorStatusMessage = success ? "Pushed to mirrors" : "Push to mirrors failed"
+            }
+        }
+    }
+
     #if os(iOS)
     private func saveMediaToPhotos(item: MediaItem) {
         Task {
@@ -4654,14 +5191,14 @@ struct RetryableAsyncImage: View {
                                 Rectangle().fill(Color.havenPurplePale.opacity(0.3))
                                 VStack(spacing: 6) {
                                     Image(systemName: "photo.fill.on.rectangle.fill")
-                                        .font(.system(size: 28))
+                                        .font(.appSystem(size: 28))
                                         .foregroundColor(.havenPurple.opacity(0.8))
                                     
                                     VStack(spacing: 2) {
                                         Text("Media Missing")
-                                            .font(.system(size: 11, weight: .bold))
+                                            .font(.appSystem(size: 11, weight: .bold))
                                         Text("Error 404")
-                                            .font(.system(size: 9))
+                                            .font(.appSystem(size: 9))
                                             .textCase(.uppercase)
                                     }
                                     .foregroundColor(.havenPurple)
@@ -4672,7 +5209,7 @@ struct RetryableAsyncImage: View {
                                         checkCache()
                                     }) {
                                         Text("Try Again")
-                                            .font(.system(size: 10, weight: .bold))
+                                            .font(.appSystem(size: 10, weight: .bold))
                                             .padding(.horizontal, 10)
                                             .padding(.vertical, 4)
                                             .background(Color.havenPurple)
@@ -4780,13 +5317,13 @@ struct VideoThumbnailView: View {
                         .clipped()
                     
                     Image(systemName: "play.circle.fill")
-                        .font(.system(size: 40))
+                        .font(.appSystem(size: 40))
                         .foregroundColor(.white.opacity(0.85))
                         .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 2)
                 } else if isLoading {
                     ZStack {
                         LinearGradient(
-                            colors: [Color(red: 0.12, green: 0.12, blue: 0.16), Color(red: 0.06, green: 0.06, blue: 0.08)],
+                            colors: [Color.platformSecondaryGroupedBackground, Color(red: 0.06, green: 0.06, blue: 0.08)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         )
@@ -4796,7 +5333,7 @@ struct VideoThumbnailView: View {
                             .tint(.white.opacity(0.6))
                         
                         Image(systemName: "play.circle.fill")
-                            .font(.system(size: 40))
+                            .font(.appSystem(size: 40))
                             .foregroundColor(.white.opacity(0.3))
                             .shadow(radius: 2)
                     }
@@ -4810,18 +5347,18 @@ struct VideoThumbnailView: View {
                         
                         VStack(spacing: 6) {
                             Image(systemName: "video.fill")
-                                .font(.system(size: 22))
+                                .font(.appSystem(size: 22))
                                 .foregroundColor(.havenPurple.opacity(0.7))
                             
                             Text("Video")
-                                .font(.system(size: 10, weight: .bold, design: .default))
+                                .font(.appSystem(size: 10, weight: .bold, design: .default))
                                 .foregroundColor(.secondary.opacity(0.8))
                                 .tracking(0.5)
                         }
                         .padding(.bottom, 4)
                         
                         Image(systemName: "play.circle.fill")
-                            .font(.system(size: 40))
+                            .font(.appSystem(size: 40))
                             .foregroundColor(.white.opacity(0.75))
                             .shadow(color: .black.opacity(0.25), radius: 4, x: 0, y: 2)
                     }
@@ -4857,13 +5394,14 @@ struct SourceIndicatorView: View {
     @State private var source: MediaCacheService.MediaSource = .remote
     @State private var isCaching = false
     @State private var isMirroring = false
-    
+    @State private var showMirrorStatus = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 4) {
                 Image(systemName: source.icon)
                 Text(source.rawValue)
-                    .font(.system(size: 11, weight: .bold))
+                    .font(.appSystem(size: 11, weight: .bold))
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
@@ -4874,6 +5412,11 @@ struct SourceIndicatorView: View {
                 RoundedRectangle(cornerRadius: 20)
                     .stroke(source.color.opacity(0.3), lineWidth: 1)
             )
+            .onTapGesture {
+                if source == .blossom {
+                    showMirrorStatus = true
+                }
+            }
             
             if source == .remote {
                 Button(action: cacheMedia) {
@@ -4882,7 +5425,7 @@ struct SourceIndicatorView: View {
                             .frame(width: 16, height: 16)
                     } else {
                         Label("Cache Locally", systemImage: "square.and.arrow.down")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.appSystem(size: 11, weight: .bold))
                     }
                 }
                 .buttonStyle(.bordered)
@@ -4897,7 +5440,7 @@ struct SourceIndicatorView: View {
                             .frame(width: 16, height: 16)
                     } else {
                         Label("Mirror to Blossom", systemImage: "arrow.down.circle")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.appSystem(size: 11, weight: .bold))
                     }
                 }
                 .buttonStyle(.bordered)
@@ -4907,6 +5450,11 @@ struct SourceIndicatorView: View {
         }
         .onAppear {
             updateSource()
+        }
+        .sheet(isPresented: $showMirrorStatus) {
+            MirrorStatusSheet(url: url)
+                .environmentObject(configService)
+                .environmentObject(nostrService)
         }
     }
     
@@ -4942,6 +5490,117 @@ struct SourceIndicatorView: View {
                     source = .blossom
                     onMirrorComplete?()
                 }
+            }
+        }
+    }
+}
+
+// MARK: - MirrorStatusSheet
+
+struct MirrorStatusSheet: View {
+    let url: URL
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var configService: ConfigService
+    @EnvironmentObject var nostrService: NostrService
+
+    @State private var mirrorStatus: [String: Bool] = [:]
+    @State private var isLoading = true
+    @State private var sha256Hash: String?
+
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 0) {
+                if isLoading {
+                    ProgressView("Checking mirrors...")
+                        .padding()
+                } else if mirrorStatus.isEmpty {
+                    ContentUnavailableView(
+                        "No Mirrors Configured",
+                        systemImage: "server.rack",
+                        description: Text("Configure Blossom mirrors in Settings to enable external backup")
+                    )
+                } else {
+                    List {
+                        Section {
+                            if let hash = sha256Hash {
+                                HStack {
+                                    Text("Hash")
+                                        .foregroundColor(.secondary)
+                                    Spacer()
+                                    Text(hash.prefix(16) + "...")
+                                        .font(.system(.caption, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+
+                        Section("Mirror Status") {
+                            ForEach(Array(mirrorStatus.keys.sorted()), id: \.self) { mirror in
+                                HStack {
+                                    Image(systemName: mirrorStatus[mirror] == true ? "checkmark.circle.fill" : "xmark.circle.fill")
+                                        .foregroundColor(mirrorStatus[mirror] == true ? .green : .red)
+
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        if let host = URL(string: mirror)?.host {
+                                            Text(host)
+                                                .font(.appSystem(size: 14, weight: .semibold))
+                                        }
+                                        Text(mirror)
+                                            .font(.appSystem(size: 11))
+                                            .foregroundColor(.secondary)
+                                            .lineLimit(1)
+                                    }
+
+                                    Spacer()
+
+                                    if mirrorStatus[mirror] == true {
+                                        Text("Available")
+                                            .font(.appSystem(size: 11, weight: .medium))
+                                            .foregroundColor(.green)
+                                    } else {
+                                        Text("Not Found")
+                                            .font(.appSystem(size: 11, weight: .medium))
+                                            .foregroundColor(.secondary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Blossom Mirrors")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .task {
+            await checkMirrors()
+        }
+    }
+
+    private func checkMirrors() async {
+        isLoading = true
+
+        // Extract hash from URL
+        let lastComponent = url.deletingPathExtension().lastPathComponent
+        if lastComponent.count == 64, lastComponent.allSatisfy({ $0.isHexDigit }) {
+            sha256Hash = lastComponent
+
+            let service = BlossomService(configService: configService, nostrService: nostrService)
+            let status = await service.checkMirrorStatus(sha256: lastComponent)
+
+            await MainActor.run {
+                mirrorStatus = status
+                isLoading = false
+            }
+        } else {
+            await MainActor.run {
+                isLoading = false
             }
         }
     }
@@ -5015,15 +5674,15 @@ struct ViewerViewMediaItem: View {
             } else if resolvedType == .unknown {
                 VStack(spacing: 12) {
                     Image(systemName: "doc.fill")
-                        .font(.system(size: 64))
+                        .font(.appSystem(size: 64))
                         .foregroundColor(Color.havenPurple.opacity(0.6))
                     if let mime = mediaItem.mimeType {
                         Text(mime)
-                            .font(.system(size: 14, weight: .medium, design: .monospaced))
+                            .font(.appSystem(size: 14, weight: .medium, design: .monospaced))
                             .foregroundColor(.secondary)
                     } else {
                         Text("Unknown Format")
-                            .font(.headline)
+                            .font(.appHeadline)
                             .foregroundColor(.secondary)
                     }
                 }
@@ -5045,11 +5704,11 @@ struct ViewerViewMediaItem: View {
         }
         
         let ext = mediaItem.url.pathExtension.lowercased()
-        if ["mp4", "mov", "webm", "avi", "hevc", "h265"].contains(ext) {
+        if SupportedMediaFormats.videoExtensions.contains(ext) {
             resolvedType = .video
-        } else if ["jpg", "jpeg", "png", "gif", "webp", "avif", "heic"].contains(ext) {
+        } else if SupportedMediaFormats.imageOrGifExtensions.contains(ext) {
             resolvedType = .image
-        } else if ["mp3", "wav", "ogg", "m4a", "flac"].contains(ext) {
+        } else if SupportedMediaFormats.audioExtensions.contains(ext) {
             resolvedType = .audio
         } else if let cached = MediaTypeDetector.shared.getCachedContentType(for: mediaItem.url) {
             if MediaTypeDetector.shared.isVideoContentType(cached) {

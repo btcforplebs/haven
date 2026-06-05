@@ -82,7 +82,7 @@ struct AccountNotificationSection: View {
                 Text(displayName)
                 if isOwner {
                     Text("Owner")
-                        .font(.caption2)
+                        .font(.appCaption2)
                         .fontWeight(.bold)
                         .foregroundColor(.secondary)
                 }

@@ -70,6 +70,9 @@ class DMService: ObservableObject {
     private var nip04Client: WebSocketClient?        // /inbox (NIP-04 legacy DMs)
     private var externalClients: [WebSocketClient] = [] // temporary external relay clients
     private var cancellables = Set<AnyCancellable>()
+    /// Subscriptions tied to the current chat/NIP-04 clients.
+    /// Cancelled on reconnect to prevent stale clients from firing events.
+    private var connectionCancellables = Set<AnyCancellable>()
     private var seenGiftWrapIds = Set<String>()
     private var dmUpdateSubject = PassthroughSubject<Void, Never>()
     private let processingQueue = DispatchQueue(label: "com.haven.dm-processing", qos: .userInitiated)
@@ -77,6 +80,17 @@ class DMService: ObservableObject {
     private var isAuthenticated = false
     private var loadedAccountPubkey: String = ""
     private var switchGeneration: UInt64 = 0 // incremented on each account switch to invalidate stale callbacks
+
+    /// Tracks event IDs already injected into the local relay to prevent duplicate writes.
+    private var injectedDmIds = Set<String>()
+    private let maxInjectedDmIds = 5_000
+
+    /// Persisted timestamp for efficient DM catch-up from external relays.
+    private let lastExternalFetchKey = "com.haven.dm.lastExternalFetchTimestamp"
+    var lastExternalFetchTimestamp: Int64 {
+        get { Int64(UserDefaults.standard.integer(forKey: lastExternalFetchKey)) }
+        set { UserDefaults.standard.set(Int(newValue), forKey: lastExternalFetchKey) }
+    }
 
     private init() {
         loadedAccountPubkey = NostrService.shared.activeHexPubkey
@@ -102,6 +116,7 @@ class DMService: ObservableObject {
                 if state == .running && self.inboxClient == nil {
                     self.startListening()
                 } else if state == .idle {
+                    self.connectionCancellables.removeAll()
                     self.inboxClient?.disconnect()
                     self.inboxClient = nil
                     self.nip04Client?.disconnect()
@@ -124,7 +139,9 @@ class DMService: ObservableObject {
             return
         }
 
-        // Disconnect any existing client and reset auth state
+        // Cancel old client subscriptions before tearing down, so stale
+        // clients don't fire disconnect events that produce log spam.
+        connectionCancellables.removeAll()
         inboxClient?.disconnect()
         isAuthenticated = false
         pendingAuthChallenge = nil
@@ -137,11 +154,12 @@ class DMService: ObservableObject {
             .sink { [weak self] message in
                 self?.processMessage(message)
             }
-            .store(in: &cancellables)
+            .store(in: &connectionCancellables)
 
         client.$connectionState
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
+                guard let self = self, self.inboxClient === client else { return }
                 switch state {
                 case .connected:
                     // /chat requires NIP-42 AUTH — wait for the AUTH challenge
@@ -149,12 +167,12 @@ class DMService: ObservableObject {
                     print("✅ DM chat relay connected, awaiting AUTH challenge...")
                 case .disconnected, .error:
                     print("❌ DM chat relay disconnected")
-                    self?.isAuthenticated = false
+                    self.isAuthenticated = false
                 default:
                     break
                 }
             }
-            .store(in: &cancellables)
+            .store(in: &connectionCancellables)
 
         print("🔗 Connecting to DM chat relay: \(chatURL)")
         client.connect(url: chatURL)
@@ -176,18 +194,18 @@ class DMService: ObservableObject {
             .sink { [weak self] message in
                 self?.processNIP04Message(message)
             }
-            .store(in: &cancellables)
+            .store(in: &connectionCancellables)
 
         client.$connectionState
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
-                guard let self = self else { return }
+                guard let self = self, self.nip04Client === client else { return }
                 if state == .connected {
                     print("✅ NIP-04 inbox connected")
                     self.sendNIP04Subscription(to: client)
                 }
             }
-            .store(in: &cancellables)
+            .store(in: &connectionCancellables)
 
         print("🔗 Connecting to NIP-04 inbox: \(inboxURL)")
         client.connect(url: inboxURL)
@@ -302,6 +320,12 @@ class DMService: ObservableObject {
         )
         await publishToInbox(selfGiftWrap)
 
+        // Publish self-copy to own DM relays for cross-device sync
+        let ownRelays = await fetchRecipientDMRelays(ownHexPubkey)
+        for relayURL in ownRelays {
+            await publishToRelay(selfGiftWrap, url: relayURL)
+        }
+
         // Add message to conversation optimistically
         let message = DMMessage(
             id: giftWrap.id,
@@ -355,8 +379,14 @@ class DMService: ObservableObject {
         }
 
         // Publish to recipient's relays
-        let relays = await fetchRecipientDMRelays(recipientHexPubkey)
-        for relayURL in relays {
+        let recipientRelays = await fetchRecipientDMRelays(recipientHexPubkey)
+        for relayURL in recipientRelays {
+            await publishToRelay(event, url: relayURL)
+        }
+
+        // Publish to own relays for cross-device sync
+        let ownRelays = await fetchRecipientDMRelays(ownHexPubkey)
+        for relayURL in ownRelays where !recipientRelays.contains(relayURL) {
             await publishToRelay(event, url: relayURL)
         }
 
@@ -398,6 +428,15 @@ class DMService: ObservableObject {
         saveConversations()
     }
 
+    /// Called on app foreground. Fetches external DMs if enough time has elapsed.
+    func syncOnForeground() {
+        let now = Int64(Date().timeIntervalSince1970)
+        let lastFetch = lastExternalFetchTimestamp
+        // Don't refetch if we just did it recently (within 5 minutes)
+        guard now - lastFetch > 300 else { return }
+        fetchFromExternalRelays()
+    }
+
     func refresh() {
         // Reconnect to the local chat relay
         reconnectInbox()
@@ -413,9 +452,16 @@ class DMService: ObservableObject {
 
         let generation = self.switchGeneration
 
-        var relays = ConfigService.shared.config.blastrRelays
+        var relays = ConfigService.shared.config.activeBlastrRelays
         if relays.isEmpty {
             relays = ["wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"]
+        }
+
+        // Include own DM relays so we can discover sent messages from other devices
+        if let ownDMRelays = NostrService.shared.dmRelayLists[ownPubkey] {
+            for relay in ownDMRelays where !relays.contains(relay) {
+                relays.append(relay)
+            }
         }
 
         print("🌐 Fetching DMs from \(relays.count) external relays...")
@@ -448,12 +494,16 @@ class DMService: ObservableObject {
                         return
                     }
                     if state == .connected {
+                        // Use 1-hour overlap for clock drift safety
+                        let since = max(0, self.lastExternalFetchTimestamp - 3600)
+
                         // NIP-17 gift wraps
-                        let nip17Filter: [String: Any] = [
+                        var nip17Filter: [String: Any] = [
                             "kinds": [1059],
                             "#p": [ownPubkey],
-                            "limit": 100
+                            "limit": 500
                         ]
+                        if since > 0 { nip17Filter["since"] = since }
                         let req1 = ["REQ", "ext-nip17-\(UUID().uuidString.prefix(6))", nip17Filter] as [Any]
                         if let data = try? JSONSerialization.data(withJSONObject: req1),
                            let str = String(data: data, encoding: .utf8) {
@@ -461,11 +511,12 @@ class DMService: ObservableObject {
                         }
 
                         // NIP-04 legacy DMs (received)
-                        let nip04FilterReceived: [String: Any] = [
+                        var nip04FilterReceived: [String: Any] = [
                             "kinds": [4],
                             "#p": [ownPubkey],
-                            "limit": 100
+                            "limit": 500
                         ]
+                        if since > 0 { nip04FilterReceived["since"] = since }
                         let req2 = ["REQ", "ext-nip04-in-\(UUID().uuidString.prefix(6))", nip04FilterReceived] as [Any]
                         if let data = try? JSONSerialization.data(withJSONObject: req2),
                            let str = String(data: data, encoding: .utf8) {
@@ -473,21 +524,27 @@ class DMService: ObservableObject {
                         }
 
                         // NIP-04 legacy DMs (sent)
-                        let nip04FilterSent: [String: Any] = [
+                        var nip04FilterSent: [String: Any] = [
                             "kinds": [4],
                             "authors": [ownPubkey],
-                            "limit": 100
+                            "limit": 500
                         ]
+                        if since > 0 { nip04FilterSent["since"] = since }
                         let req3 = ["REQ", "ext-nip04-out-\(UUID().uuidString.prefix(6))", nip04FilterSent] as [Any]
                         if let data = try? JSONSerialization.data(withJSONObject: req3),
                            let str = String(data: data, encoding: .utf8) {
                             client.send(text: str)
                         }
 
-                        // Disconnect after timeout
+                        // Disconnect after timeout and update fetch timestamp
                         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
                             client.disconnect()
                             self?.externalClients.removeAll { $0 === client }
+                            // Update timestamp and tear down injection clients when the last external client disconnects
+                            if self?.externalClients.isEmpty == true {
+                                self?.lastExternalFetchTimestamp = Int64(Date().timeIntervalSince1970)
+                                self?.disconnectInjectionClients()
+                            }
                         }
                     }
                 }
@@ -515,14 +572,129 @@ class DMService: ObservableObject {
                let eventData = json[safe: 2] as? [String: Any],
                let eventJSON = try? JSONSerialization.data(withJSONObject: eventData),
                let event = try? JSONDecoder().decode(NostrEvent.self, from: eventJSON) {
+                // Process the DM for display
                 if event.kind == 1059 {
                     self.handleIncomingGiftWrap(event)
                 } else if event.kind == 4 {
                     self.handleIncomingNIP04(event)
                 }
+
+                // Also inject the raw event into the local relay so it persists
+                // across app restarts and syncs to other devices via the Go relay.
+                self.injectExternalDmIntoLocalRelay(eventData, eventId: event.id, kind: event.kind)
             }
         } catch {
             print("❌ Failed to process external message: \(error)")
+        }
+    }
+
+    /// Shared injection clients for writing fetched DMs into the local relay.
+    /// Lazily connected and reused across a batch fetch to avoid per-event connections.
+    private var chatInjectionClient: WebSocketClient?
+    private var inboxInjectionClient: WebSocketClient?
+    /// Pending events queued while the injection client is still connecting.
+    private var pendingChatInjections: [[String: Any]] = []
+    private var pendingInboxInjections: [[String: Any]] = []
+
+    /// Injects an externally-fetched DM event into the local relay so it persists
+    /// in the relay DB and is available on other devices via the Go relay's sync.
+    private func injectExternalDmIntoLocalRelay(_ eventData: [String: Any], eventId: String, kind: Int) {
+        // Dedup: skip events we've already injected this session
+        guard !injectedDmIds.contains(eventId) else { return }
+        injectedDmIds.insert(eventId)
+        if injectedDmIds.count > maxInjectedDmIds {
+            injectedDmIds.removeAll(keepingCapacity: true)
+        }
+
+        if kind == 1059 {
+            injectViaChatClient(eventData)
+        } else {
+            injectViaInboxClient(eventData)
+        }
+    }
+
+    private func sendEventToClient(_ client: WebSocketClient, _ eventData: [String: Any]) {
+        let msg = ["EVENT", eventData] as [Any]
+        if let data = try? JSONSerialization.data(withJSONObject: msg),
+           let str = String(data: data, encoding: .utf8) {
+            client.send(text: str)
+        }
+    }
+
+    private func injectViaChatClient(_ eventData: [String: Any]) {
+        if let client = chatInjectionClient, client.connectionState == .connected {
+            sendEventToClient(client, eventData)
+            return
+        }
+
+        pendingChatInjections.append(eventData)
+
+        // Already connecting, just queue
+        if chatInjectionClient != nil { return }
+
+        guard let url = chatRelayURL() else { return }
+        let client = WebSocketClient()
+        client.isTemporary = true
+        chatInjectionClient = client
+
+        client.$connectionState
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state in
+                guard let self = self else { return }
+                if state == .connected {
+                    for pending in self.pendingChatInjections {
+                        self.sendEventToClient(client, pending)
+                    }
+                    self.pendingChatInjections.removeAll()
+                }
+            }
+            .store(in: &cancellables)
+
+        client.connect(url: url)
+    }
+
+    private func injectViaInboxClient(_ eventData: [String: Any]) {
+        if let client = inboxInjectionClient, client.connectionState == .connected {
+            sendEventToClient(client, eventData)
+            return
+        }
+
+        pendingInboxInjections.append(eventData)
+
+        // Already connecting, just queue
+        if inboxInjectionClient != nil { return }
+
+        guard let url = inboxRelayURL() else { return }
+        let client = WebSocketClient()
+        client.isTemporary = true
+        inboxInjectionClient = client
+
+        client.$connectionState
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state in
+                guard let self = self else { return }
+                if state == .connected {
+                    for pending in self.pendingInboxInjections {
+                        self.sendEventToClient(client, pending)
+                    }
+                    self.pendingInboxInjections.removeAll()
+                }
+            }
+            .store(in: &cancellables)
+
+        client.connect(url: url)
+    }
+
+    /// Tears down injection clients after external fetch completes.
+    private func disconnectInjectionClients() {
+        // Give a brief window for any final writes to flush
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
+            self?.chatInjectionClient?.disconnect()
+            self?.chatInjectionClient = nil
+            self?.inboxInjectionClient?.disconnect()
+            self?.inboxInjectionClient = nil
+            self?.pendingChatInjections.removeAll()
+            self?.pendingInboxInjections.removeAll()
         }
     }
 
@@ -610,8 +782,12 @@ class DMService: ObservableObject {
     }
 
     private func handleAuthChallenge(_ challenge: String) {
-        guard let client = inboxClient,
-              let relayURL = chatRelayURL()?.absoluteString else { return }
+        guard let client = inboxClient else { return }
+
+        // The relay tag must match the relay's ServiceURL (its public-facing URL),
+        // NOT the localhost connection URL. Khatru validates the relay tag against
+        // "wss://" + config.RelayURL + "/chat", so we must use the same value here.
+        let relayURL = ConfigService.shared.config.nostrURL + "/chat"
 
         // Sign a NIP-42 AUTH event (kind 22242)
         let tags: [[String]] = [
@@ -841,8 +1017,12 @@ class DMService: ObservableObject {
         loadedAccountPubkey = newPubkey
         conversations = []
         seenGiftWrapIds.removeAll()
+        injectedDmIds.removeAll()
         isAuthenticated = false
         pendingAuthChallenge = nil
+
+        // Tear down injection clients from previous account
+        disconnectInjectionClients()
 
         // Load new account's conversations
         loadConversations()
@@ -897,9 +1077,9 @@ class DMService: ObservableObject {
         }
 
         // Fallback: use common relays where most users have inbox
-        let fallbackRelays = ConfigService.shared.config.blastrRelays.isEmpty
+        let fallbackRelays = ConfigService.shared.config.activeBlastrRelays.isEmpty
             ? ["wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"]
-            : ConfigService.shared.config.blastrRelays
+            : ConfigService.shared.config.activeBlastrRelays
         print("⚠️ No relay list for \(pubkey.prefix(8)), using fallback relays")
         return fallbackRelays
     }
@@ -1017,7 +1197,9 @@ class DMService: ObservableObject {
     }
 
     private func cacheFileURL(forPubkey pubkey: String? = nil) -> URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("Haven")
+        }
         let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
         try? FileManager.default.createDirectory(at: havenDir, withIntermediateDirectories: true)
         let key = pubkey ?? loadedAccountPubkey
@@ -1026,7 +1208,9 @@ class DMService: ObservableObject {
     }
 
     private func legacyCacheFileURL() -> URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("Haven")
+        }
         let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
         return havenDir.appendingPathComponent("dm_cache.json")
     }

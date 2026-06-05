@@ -57,7 +57,7 @@ struct CustomZapSheet: View {
                 .padding(.top, 16)
                 .padding(.bottom, 24)
         }
-        .background(Color(red: 0.08, green: 0.08, blue: 0.1))
+        .background(Color.platformWindowBackground)
         .onAppear {
             selectedAmount = defaultAmount
         }
@@ -68,19 +68,19 @@ struct CustomZapSheet: View {
     private var headerSection: some View {
         HStack(spacing: 10) {
             Image(systemName: "bolt.fill")
-                .font(.system(size: 18, weight: .bold))
+                .font(.appSystem(size: 18, weight: .bold))
                 .foregroundColor(.orange)
                 .shadow(color: .orange.opacity(0.6), radius: 8)
 
             Text("Zap Amount")
-                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .font(.appSystem(size: 18, weight: .bold, design: .rounded))
                 .foregroundColor(.white)
 
             Spacer()
 
             Button { dismiss() } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 22))
+                    .font(.appSystem(size: 22))
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
@@ -108,7 +108,7 @@ struct CustomZapSheet: View {
                     #endif
                 } label: {
                     Text(preset.label)
-                        .font(.system(size: 16, weight: .bold, design: .monospaced))
+                        .font(.appSystem(size: 16, weight: .bold, design: .monospaced))
                         .foregroundColor(isSelected ? .white : .secondary)
                         .frame(maxWidth: .infinity)
                         .frame(height: 48)
@@ -150,11 +150,11 @@ struct CustomZapSheet: View {
     private var customAmountField: some View {
         HStack(spacing: 10) {
             Image(systemName: "pencil.line")
-                .font(.system(size: 14, weight: .medium))
+                .font(.appSystem(size: 14, weight: .medium))
                 .foregroundColor(isCustomActive ? .orange : .secondary)
 
             TextField("Custom amount", text: $customAmountText)
-                .font(.system(size: 16, weight: .medium, design: .monospaced))
+                .font(.appSystem(size: 16, weight: .medium, design: .monospaced))
                 .foregroundColor(.white)
                 .textFieldStyle(.plain)
                 #if os(iOS)
@@ -168,7 +168,7 @@ struct CustomZapSheet: View {
                 }
 
             Text("sats")
-                .font(.system(size: 14, weight: .medium))
+                .font(.appSystem(size: 14, weight: .medium))
                 .foregroundColor(.secondary)
         }
         .padding(14)
@@ -196,9 +196,9 @@ struct CustomZapSheet: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "bolt.fill")
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.appSystem(size: 16, weight: .bold))
                 Text("Zap \(effectiveAmount > 0 ? formatSats(effectiveAmount) : "---") sats")
-                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .font(.appSystem(size: 17, weight: .bold, design: .rounded))
             }
             .foregroundColor(.white)
             .frame(maxWidth: .infinity)

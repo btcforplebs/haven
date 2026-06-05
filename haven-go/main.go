@@ -97,10 +97,16 @@ func main() {
 	}
 	go func() {
 		// Try to load from cache first - instant startup
-		// Initialize asynchronously to avoid blocking relay startup
-		wotModel.LoadFromCache()
+		// Only run full network rebuild if cache is missing or expired
+		cacheLoaded := wotModel.LoadFromCache()
 		wot.ResetReady()
-		go wot.Initialize(mainCtx, wotModel)
+		if cacheLoaded {
+			wot.MarkReady(wotModel)
+			log.Println("  ✓ Web of Trust loaded from cache, skipping rebuild")
+		} else {
+			go wot.Initialize(mainCtx, wotModel)
+			log.Println("  ✓ Web of Trust initializing from network")
+		}
 
 		go subscribeInboxAndChat(mainCtx)
 		go startPeriodicCloudBackups(mainCtx)

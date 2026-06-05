@@ -17,6 +17,9 @@ SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
 SERVER_PORT = int(os.getenv("SERVER_PORT", "7766"))
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./push_server.db")
 
+# API Authentication
+API_KEY = os.getenv("API_KEY", "")
+
 # Nostr Configuration
 # LOCAL_RELAY is checked first for fastest response (sub-ms on same machine)
 LOCAL_RELAY = os.getenv("LOCAL_RELAY_URL", "")

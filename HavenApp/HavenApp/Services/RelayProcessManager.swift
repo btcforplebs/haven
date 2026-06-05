@@ -58,6 +58,7 @@ class RelayProcessManager: ObservableObject {
     private var activitySuppressedUntil: Date?
 
     private var outputPipe: Pipe?
+    private var stderrPipe: Pipe?
     private var savedStdout: Int32 = -1
     private var savedStderr: Int32 = -1
     private var logBuffer = Data() // Buffer for incomplete log lines
@@ -81,6 +82,31 @@ class RelayProcessManager: ObservableObject {
     private static let bootWatchdogTimeout: TimeInterval = 90
 
     // (Log throttling moved to LogStore)
+
+    /// Whether the UI is actively visible (popover open / window focused).
+    /// When false, background log processing skips LogEntry creation and
+    /// non-critical @Published updates to reduce CPU and SwiftUI churn.
+    nonisolated(unsafe) private(set) var isUIActive = true
+
+    /// Call when the menu-bar popover closes or app resigns active.
+    func enterBackground() {
+        guard isUIActive else { return }
+        isUIActive = false
+        logStore.stopThrottler()
+        #if DEBUG
+        print("RelayProcessManager: entering background mode")
+        #endif
+    }
+
+    /// Call when the menu-bar popover opens or app becomes active.
+    func enterForeground() {
+        guard !isUIActive else { return }
+        isUIActive = true
+        logStore.startThrottler()
+        #if DEBUG
+        print("RelayProcessManager: entering foreground mode")
+        #endif
+    }
     
     struct LogEntry: Identifiable {
         let id = UUID()
@@ -131,14 +157,17 @@ class RelayProcessManager: ObservableObject {
 
     /// Suppress the relay activity red dot briefly after the user posts their own event.
     func suppressActivityForOwnPost() {
-        activitySuppressedUntil = Date().addingTimeInterval(3)
-        eventsStoredWhenLastViewed = eventsStored + 1
+        // Use a longer suppression window to account for relay processing time and network latency
+        activitySuppressedUntil = Date().addingTimeInterval(5)
+        // Account for user's post plus potential batch/echo events
+        // Buffer of +2 handles edge cases where post is batched with incoming events
+        eventsStoredWhenLastViewed = eventsStored + 2
     }
 
     func startRelay(config: HavenConfig, isRetry: Bool = false) {
-        // Strict guard: Must be idle and NO process should be running
-        guard state == .idle && !isRunning else {
-            logStore.append(LogEntry(timestamp: Date(), level: "WARN", message: "Cannot start relay: current state is \(state) (running: \(isRunning))"))
+        // Strict guard: Must be idle, not running, and not in the middle of a shutdown
+        guard state == .idle && !isRunning && !isShuttingDown else {
+            logStore.append(LogEntry(timestamp: Date(), level: "WARN", message: "Cannot start relay: current state is \(state) (running: \(isRunning), shuttingDown: \(isShuttingDown))"))
             return
         }
 
@@ -218,15 +247,20 @@ class RelayProcessManager: ObservableObject {
         encoder.outputFormatting = .prettyPrinted
         
         let importRelaysURL = relayDataDir.appendingPathComponent(config.importSeedRelaysFile)
-        if let data = try? encoder.encode(config.importSeedRelays) {
+        if let data = try? encoder.encode(config.activeImportSeedRelays) {
             try? data.write(to: importRelaysURL)
         }
         
         let blastrRelaysURL = relayDataDir.appendingPathComponent(config.blastrRelaysFile)
-        if let data = try? encoder.encode(config.blastrRelays) {
+        if let data = try? encoder.encode(config.activeBlastrRelays) {
             try? data.write(to: blastrRelaysURL)
         }
-        
+
+        let dmRelaysURL = relayDataDir.appendingPathComponent("relays_dm.json")
+        if let data = try? encoder.encode(config.dmRelays) {
+            try? data.write(to: dmRelaysURL)
+        }
+
         // Write whitelisted_npubs.json (Required by new binary)
         let whitelistURL = relayDataDir.appendingPathComponent("whitelisted_npubs.json")
         if let data = try? encoder.encode(config.whitelistedNpubs) {
@@ -239,7 +273,7 @@ class RelayProcessManager: ObservableObject {
             try? data.write(to: blacklistURL)
         }
         
-        logStore.append(LogEntry(timestamp: Date(), level: "INFO", message: "Config: \(config.importSeedRelays.count) import relays, \(config.blastrRelays.count) blastr relays, \(config.whitelistedNpubs.count) whitelisted npubs"))
+        logStore.append(LogEntry(timestamp: Date(), level: "INFO", message: "Config: \(config.activeImportSeedRelays.count) import relays, \(config.activeBlastrRelays.count) blastr relays, \(config.whitelistedNpubs.count) whitelisted npubs"))
 
         // Reset conflict state
         self.isPortConflict = false
@@ -261,24 +295,20 @@ class RelayProcessManager: ObservableObject {
                 free(cValue)
             }
         }
-        #if os(macOS)
-        let bindAddress = "0.0.0.0"
-        #else
         let bindAddress = config.allowNetworkAccess ? "0.0.0.0" : "127.0.0.1"
-        #endif
         setenv("RELAY_BIND_ADDRESS", bindAddress, 1)
         if let cKey = strdup("RELAY_BIND_ADDRESS"), let cValue = strdup(bindAddress) {
             SetHavenEnvC(cKey, cValue)
             free(cKey)
             free(cValue)
         }
-        
+
         // Change working directory so Go creates files in relayDataDir
         FileManager.default.changeCurrentDirectoryPath(relayDataDir.path)
-        
+
         // Redirect stdout/stderr to capture Go logs
         captureOutput(in: relayDataDir)
-        
+
         logStore.append(LogEntry(timestamp: Date(), level: "INFO", message: "Captured output natively"))
 
         self.state = .booting
@@ -355,6 +385,29 @@ class RelayProcessManager: ObservableObject {
             try? await Task.sleep(nanoseconds: 250_000_000)
         }
         return isRunning && !isBooting
+    }
+
+    /// Gracefully restart the relay by stopping and restarting it.
+    /// Used for automatic recovery when blossom uploads to the local relay fail.
+    func gracefulRestart() async -> Bool {
+        guard let config = lastConfig else {
+            logStore.append(LogEntry(timestamp: Date(), level: "WARN", message: "Cannot restart: no saved config"))
+            return false
+        }
+
+        logStore.append(LogEntry(timestamp: Date(), level: "INFO", message: "Graceful restart for blossom recovery..."))
+
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            stopRelay {
+                continuation.resume()
+            }
+        }
+
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+
+        startRelay(config: config, isRetry: true)
+
+        return await ensureRelayReady(timeout: 30.0)
     }
 
     func stopRelay(completion: (() -> Void)? = nil) {
@@ -566,8 +619,9 @@ class RelayProcessManager: ObservableObject {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
         
-        if let data = try? encoder.encode(config.importSeedRelays) { try? data.write(to: relayDataDir.appendingPathComponent(config.importSeedRelaysFile)) }
-        if let data = try? encoder.encode(config.blastrRelays.isEmpty ? [] : config.blastrRelays) { try? data.write(to: relayDataDir.appendingPathComponent(config.blastrRelaysFile)) }
+        if let data = try? encoder.encode(config.activeImportSeedRelays) { try? data.write(to: relayDataDir.appendingPathComponent(config.importSeedRelaysFile)) }
+        if let data = try? encoder.encode(config.activeBlastrRelays.isEmpty ? [] : config.activeBlastrRelays) { try? data.write(to: relayDataDir.appendingPathComponent(config.blastrRelaysFile)) }
+        if let data = try? encoder.encode(config.dmRelays) { try? data.write(to: relayDataDir.appendingPathComponent("relays_dm.json")) }
         if let data = try? encoder.encode(config.whitelistedNpubs) { try? data.write(to: relayDataDir.appendingPathComponent("whitelisted_npubs.json")) }
         if let data = try? encoder.encode(config.blacklistedNpubs) { try? data.write(to: relayDataDir.appendingPathComponent("blacklisted_npubs.json")) }
         
@@ -584,11 +638,7 @@ class RelayProcessManager: ObservableObject {
                 free(cValue)
             }
         }
-        #if os(macOS)
-        let bindAddress = "0.0.0.0"
-        #else
         let bindAddress = config.allowNetworkAccess ? "0.0.0.0" : "127.0.0.1"
-        #endif
         setenv("RELAY_BIND_ADDRESS", bindAddress, 1)
         if let cKey = strdup("RELAY_BIND_ADDRESS"), let cValue = strdup(bindAddress) {
             SetHavenEnvC(cKey, cValue)
@@ -656,9 +706,25 @@ class RelayProcessManager: ObservableObject {
             savedStdout = dup(STDOUT_FILENO)
             savedStderr = dup(STDERR_FILENO)
 
-            // Redirect STDOUT and STDERR to our pipe
+            // Redirect STDOUT to main pipe; give STDERR its own pipe so
+            // heavy logging on both channels can't fill a single buffer
+            // and deadlock Go goroutines.
             dup2(pipe.fileHandleForWriting.fileDescriptor, STDOUT_FILENO)
-            dup2(pipe.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
+
+            let errPipe = Pipe()
+            stderrPipe = errPipe
+            dup2(errPipe.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
+
+            // Drain stderr into the same log file / processing path
+            errPipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
+                let data = handle.availableData
+                guard !data.isEmpty else { return }
+                self?.logProcessingQueue.async {
+                    // Merge stderr data into the main pipe's handler by writing
+                    // it to the log file directly; the main pipe handles parsing.
+                    try? pipe.fileHandleForWriting.write(contentsOf: data)
+                }
+            }
 
             // Open a persistent file handle for the log file
             let logFileURL = directory.appendingPathComponent("relay.log")
@@ -668,8 +734,6 @@ class RelayProcessManager: ObservableObject {
             logFileHandle = try? FileHandle(forWritingTo: logFileURL)
             logFileHandle?.seekToEndOfFile()
 
-            // Local buffer for the background queue to avoid MainActor isolation
-            var localBuffer = Data()
             // Safety cap: if the buffer grows beyond 512 KB (e.g. the main
             // thread can't keep up), drop data to prevent unbounded memory
             // growth and pipe backpressure that can deadlock Go goroutines.
@@ -679,20 +743,27 @@ class RelayProcessManager: ObservableObject {
             // referencing @MainActor-isolated property from background queue.
             let fileHandle = logFileHandle
 
+            // Use NSLock-protected buffer to avoid data races — the
+            // readabilityHandler can fire on an arbitrary thread and the
+            // logProcessingQueue serialises processing, but Swift's closure
+            // capture of a mutable local var is not concurrency-safe.
+            let bufferLock = NSLock()
+            var localBuffer = Data()
+
             pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
                 let data = handle.availableData
                 guard !data.isEmpty else { return }
 
-                // Process output on a background queue to keep MainActor free
+                // Process output on a serial background queue to keep MainActor free
                 self?.logProcessingQueue.async {
                     // Write to persistent log file
                     fileHandle?.write(data)
 
+                    bufferLock.lock()
                     localBuffer.append(data)
 
                     // Safety valve: drop oldest data if buffer grows too large
                     if localBuffer.count > maxBufferSize {
-                        // Find a newline near the middle and discard everything before it
                         let dropTarget = localBuffer.count - maxBufferSize / 2
                         if let nl = localBuffer[dropTarget...].firstIndex(of: 0x0A) {
                             localBuffer = localBuffer.subdata(in: localBuffer.index(after: nl)..<localBuffer.endIndex)
@@ -703,6 +774,7 @@ class RelayProcessManager: ObservableObject {
 
                     // Find the last newline character
                     guard let range = localBuffer.range(of: Data([0x0A]), options: .backwards) else {
+                        bufferLock.unlock()
                         return
                     }
 
@@ -711,6 +783,7 @@ class RelayProcessManager: ObservableObject {
 
                     // Keep the remainder in the buffer
                     localBuffer = localBuffer.subdata(in: range.upperBound..<localBuffer.endIndex)
+                    bufferLock.unlock()
 
                     if let output = String(data: validData, encoding: .utf8) {
                         self?.processOutputInBackground(output)
@@ -732,6 +805,8 @@ class RelayProcessManager: ObservableObject {
             close(savedStderr)
             savedStderr = -1
         }
+        stderrPipe?.fileHandleForReading.readabilityHandler = nil
+        stderrPipe = nil
         outputPipe?.fileHandleForReading.readabilityHandler = nil
         outputPipe = nil
         logFileHandle = nil
@@ -777,17 +852,34 @@ class RelayProcessManager: ObservableObject {
         let lines = output.components(separatedBy: .newlines).filter { !$0.isEmpty }
         guard !lines.isEmpty else { return }
 
-        var newEntries: [LogEntry] = []
         var batch = BatchedStateUpdate()
-
         for line in lines {
-            newEntries.append(LogEntry.parse(line))
             collectStateChanges(from: line, into: &batch)
         }
 
-        Task { @MainActor in
-            self.logStore.enqueue(newEntries)
-            self.applyBatchedUpdate(batch)
+        // When the UI is hidden (popover closed), skip LogEntry creation
+        // and non-critical @Published updates to save CPU and memory.
+        let active = self.isUIActive
+        if active {
+            var newEntries: [LogEntry] = []
+            newEntries.reserveCapacity(lines.count)
+            for line in lines {
+                newEntries.append(LogEntry.parse(line))
+            }
+            Task { @MainActor in
+                self.logStore.enqueue(newEntries)
+                self.applyBatchedUpdate(batch)
+            }
+        } else {
+            // Only dispatch for critical state changes (errors, boot/import completion)
+            let hasCritical = batch.isLocked || batch.isPortConflict
+                || batch.stopBooting || batch.stopImporting
+                || batch.eventsStoredDelta != 0
+            if hasCritical {
+                Task { @MainActor in
+                    self.applyBatchedUpdate(batch)
+                }
+            }
         }
     }
 
@@ -980,6 +1072,7 @@ class RelayProcessManager: ObservableObject {
             }
             if batch.stopBooting {
                 isBooting = false
+                state = .running  // Transition from .booting to .running
                 bootStatusMessage = ""
                 isWotSyncing = true  // Relay is up, WoT may still be syncing
                 cancelBootWatchdog()
@@ -1048,14 +1141,13 @@ class RelayProcessManager: ObservableObject {
         let cleanNpub = config.ownerNpub.trimmingCharacters(in: .whitespacesAndNewlines)
             .filter { "abcdefghijklmnopqrstuvwxyz0123456789".contains($0.lowercased()) }
 
-        // TLS — only enable HTTPS on iOS (macOS uses plain HTTP; Cloudflare handles TLS)
+        // TLS — only enable HTTPS on iOS (ATS requires it); macOS uses plain HTTP locally
         #if os(iOS)
         let enableTLS = "1"
-        let relayBindAddress = config.allowNetworkAccess ? "0.0.0.0" : "127.0.0.1"
         #else
         let enableTLS = "0"
-        let relayBindAddress = "0.0.0.0"
         #endif
+        let relayBindAddress = config.allowNetworkAccess ? "0.0.0.0" : "127.0.0.1"
 
         return [
             "OWNER_NPUB": cleanNpub,
@@ -1149,6 +1241,9 @@ class RelayProcessManager: ObservableObject {
             "IMPORT_OWNER_NOTES_FETCH_TIMEOUT_SECONDS": "300",
             "IMPORT_TAGGED_NOTES_FETCH_TIMEOUT_SECONDS": "600",
 
+            // DM Relays
+            "DM_RELAYS_FILE": "relays_dm.json",
+
             // Backup
             "BACKUP_PROVIDER": config.backupProvider,
             "BACKUP_INTERVAL_HOURS": String(config.backupIntervalHours),
@@ -1188,8 +1283,11 @@ class RelayProcessManager: ObservableObject {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .prettyPrinted
 
-        if let data = try? encoder.encode(config.importSeedRelays) {
+        if let data = try? encoder.encode(config.activeImportSeedRelays) {
             try? data.write(to: relayDataDir.appendingPathComponent(config.importSeedRelaysFile))
+        }
+        if let data = try? encoder.encode(config.dmRelays) {
+            try? data.write(to: relayDataDir.appendingPathComponent("relays_dm.json"))
         }
         if let data = try? encoder.encode(config.whitelistedNpubs) {
             try? data.write(to: relayDataDir.appendingPathComponent(config.whitelistedNpubsFile))
@@ -1224,7 +1322,10 @@ class RelayProcessManager: ObservableObject {
             self.prepareEnvForBackup(config: config)
 
             DispatchQueue.global().async {
-                let cPath = strdup(outputPath)
+                guard let cPath = strdup(outputPath) else {
+                    Task { @MainActor in completion(false) }
+                    return
+                }
                 let result = BackupDatabaseC(cPath)
                 free(cPath)
                 Task { @MainActor in
@@ -1251,7 +1352,10 @@ class RelayProcessManager: ObservableObject {
             self.prepareEnvForBackup(config: config)
 
             DispatchQueue.global().async {
-                let cPath = strdup(inputPath)
+                guard let cPath = strdup(inputPath) else {
+                    Task { @MainActor in completion(false) }
+                    return
+                }
                 let result = RestoreDatabaseC(cPath)
                 free(cPath)
                 Task { @MainActor in
@@ -1344,8 +1448,14 @@ class RelayProcessManager: ObservableObject {
         
         // Launch Go ZipDirectoryC on background thread
         DispatchQueue.global().async { [weak self] in
-            let cSrc = strdup(blossomDir.path)
-            let cDst = strdup(tempZipURL.path)
+            guard let cSrc = strdup(blossomDir.path), let cDst = strdup(tempZipURL.path) else {
+                free(nil) // no-op, just balances the flow
+                Task { @MainActor in
+                    self?.logStore.append(LogEntry(timestamp: Date(), level: "ERROR", message: "Memory allocation failed for Blossom backup"))
+                    completion(false)
+                }
+                return
+            }
             let result = ZipDirectoryC(cSrc, cDst)
             free(cSrc)
             free(cDst)
@@ -1399,8 +1509,13 @@ class RelayProcessManager: ObservableObject {
         
         // Launch Go UnzipDirectoryC on background thread
         DispatchQueue.global().async { [weak self] in
-            let cSrc = strdup(tempZipURL.path)
-            let cDst = strdup(blossomDir.path)
+            guard let cSrc = strdup(tempZipURL.path), let cDst = strdup(blossomDir.path) else {
+                Task { @MainActor in
+                    self?.logStore.append(LogEntry(timestamp: Date(), level: "ERROR", message: "Memory allocation failed for Blossom import"))
+                    completion(false)
+                }
+                return
+            }
             let result = UnzipDirectoryC(cSrc, cDst)
             free(cSrc)
             free(cDst)
@@ -1475,8 +1590,14 @@ class RelayProcessManager: ObservableObject {
                 }
                 
                 // Zip the staging directory content using Go ZipDirectoryC
-                let cSrc = strdup(stagingDir.path)
-                let cDst = strdup(tempZipURL.path)
+                guard let cSrc = strdup(stagingDir.path), let cDst = strdup(tempZipURL.path) else {
+                    await MainActor.run {
+                        try? FileManager.default.removeItem(at: stagingDir)
+                        self.logStore.append(LogEntry(timestamp: Date(), level: "ERROR", message: "Memory allocation failed for Blossom export"))
+                        completion(false)
+                    }
+                    return
+                }
                 let result = ZipDirectoryC(cSrc, cDst)
                 free(cSrc)
                 free(cDst)
@@ -1543,8 +1664,14 @@ class RelayProcessManager: ObservableObject {
         
         // 2. Unzip to staging using Go UnzipDirectoryC
         DispatchQueue.global().async { [weak self] in
-            let cSrc = strdup(tempZipURL.path)
-            let cDst = strdup(stagingDir.path)
+            guard let cSrc = strdup(tempZipURL.path), let cDst = strdup(stagingDir.path) else {
+                Task { @MainActor in
+                    self?.logStore.append(LogEntry(timestamp: Date(), level: "ERROR", message: "Memory allocation failed for Blossom import"))
+                    try? FileManager.default.removeItem(at: tempZipURL)
+                    completion(false)
+                }
+                return
+            }
             let result = UnzipDirectoryC(cSrc, cDst)
             free(cSrc)
             free(cDst)

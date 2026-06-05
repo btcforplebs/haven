@@ -2,6 +2,12 @@ import Foundation
 import Combine
 import SwiftUI
 
+extension Notification.Name {
+    /// Posted when FeedService injects external events into the local relay.
+    /// Replaces the old `.macRelaySyncComplete` notification.
+    static let feedInjectionComplete = Notification.Name("feedInjectionComplete")
+}
+
 // MARK: - Models
 
 /// Lightweight engagement counts per note, populated from relay data.
@@ -149,7 +155,7 @@ struct FeedNote: Identifiable, Hashable, Equatable, Codable {
     }()
 
     private static let quoteRegex: NSRegularExpression? = {
-        try? NSRegularExpression(pattern: #"nostr:(note1[a-z0-9]+|nevent1[a-z0-9]+)"#, options: .caseInsensitive)
+        try? NSRegularExpression(pattern: #"nostr:(note1[a-z0-9]+|nevent1[a-z0-9]+|naddr1[a-z0-9]+)"#, options: .caseInsensitive)
     }()
 
     /// Matches any HTTP(S) URL in content for link preview extraction.
@@ -199,6 +205,31 @@ struct FeedNote: Identifiable, Hashable, Equatable, Codable {
                         } else {
                             break
                         }
+                    }
+                } else if identifier.hasPrefix("naddr1") {
+                    // NIP-19 naddr TLV: type 0 = d-tag (UTF-8), type 1 = relay, type 2 = pubkey (32 bytes), type 3 = kind (4 bytes BE)
+                    guard let decoded = Bech32.decode(identifier) else { return nil }
+                    var data = decoded.data
+                    var dTag: String?
+                    var pubkey: String?
+                    var kind: UInt32?
+                    while data.count >= 2 {
+                        let tlvType = data.removeFirst()
+                        let length = Int(data.removeFirst())
+                        guard data.count >= length else { break }
+                        let value = data.prefix(length)
+                        switch tlvType {
+                        case 0: dTag = String(data: Data(value), encoding: .utf8)
+                        case 2 where length == 32: pubkey = value.map { String(format: "%02x", $0) }.joined()
+                        case 3 where length == 4:
+                            kind = Data(value).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
+                        default: break
+                        }
+                        data.removeFirst(length)
+                    }
+                    if let k = kind, let p = pubkey {
+                        // Coordinate format: "naddr:<kind>:<pubkey>:<d-tag>"
+                        return "naddr:\(k):\(p):\(dTag ?? "")"
                     }
                 }
                 return nil
@@ -345,13 +376,19 @@ final class BackgroundAccumulator: @unchecked Sendable {
 
     static let flushIntervalFast: TimeInterval = 0.2
     static let flushIntervalNormal: TimeInterval = 0.5
+    static let flushIntervalRealtime: TimeInterval = 0.05
 
     /// During initial feed load, flush more frequently so content appears sooner.
     /// Set to true by FeedService when subscribeToAllRelays starts; false on EOSE.
     var isInitialLoad = false
 
+    /// Global feed mode uses ultra-fast flushing for real-time streaming.
+    /// Set to true when feedMode is .global or media+global.
+    var isGlobalMode = false
+
     var effectiveFlushInterval: TimeInterval {
-        isInitialLoad ? Self.flushIntervalFast : Self.flushIntervalNormal
+        if isGlobalMode { return Self.flushIntervalRealtime }
+        return isInitialLoad ? Self.flushIntervalFast : Self.flushIntervalNormal
     }
 
     struct Snapshot {
@@ -382,9 +419,11 @@ final class BackgroundAccumulator: @unchecked Sendable {
 
         // Cap dedup set to prevent unbounded growth. Evict roughly half rather
         // than clearing entirely so recent IDs still suppress duplicates.
+        // Sort before evicting so every device drops the same (lexicographically smallest) IDs.
         if seenEngagementIds.count > Self.maxEngagementIds {
-            let toRemove = seenEngagementIds.count - Self.maxEngagementIds / 2
-            seenEngagementIds = Set(seenEngagementIds.dropFirst(toRemove))
+            let keepCount = Self.maxEngagementIds / 2
+            let sorted = seenEngagementIds.sorted(by: >)
+            seenEngagementIds = Set(sorted.prefix(keepCount))
         }
         return snap
     }
@@ -465,6 +504,8 @@ class FeedService: ObservableObject {
     @Published var feedMode: FeedMode = .following
     @Published var mediaFeedMode: MediaFeedMode = .following
     @Published var notes: [FeedNote] = []
+    /// O(1) lookup index for notes by ID. Maintained alongside `notes` mutations.
+    private(set) var noteIndex: [String: FeedNote] = [:]
     @Published var parentNotesCache: [String: FeedNote] = [:]
     @Published var followedPubkeys: [String] = []
     @Published var extendedNetworkPubkeys: [String] = []
@@ -480,6 +521,8 @@ class FeedService: ObservableObject {
     @Published var popularFilter: PopularFilter = .all
     @Published var showPopularEngagement = false
     @Published var isLoadingFeed    = false
+    /// Set by FeedView scroll tracking — true when user is scrolling down, used to collapse tab bar.
+    @Published var feedScrollingDown = false
     @Published var connectionStatus = "Disconnected"
 
     /// Three-state connection indicator color
@@ -518,9 +561,15 @@ class FeedService: ObservableObject {
     /// Precomputed to avoid needing `Array(enumerated())` in the view's ForEach.
     private(set) var parentIsNextNote: Set<String> = []
 
+    /// Rebuild the O(1) note lookup dictionary from the current `notes` array.
+    private func rebuildNoteIndex() {
+        noteIndex = Dictionary(notes.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+    }
+
     /// Recompute the cached filtered-notes arrays. Called after any mutation to
     /// `notes`, `feedMode`, or relevant config (showReposts / showReplies / blocked).
     func recomputeFilteredNotes() {
+        rebuildNoteIndex()
         let blocked = ConfigService.shared.activeAccountBlockedHexPubkeys
         let showReposts = ConfigService.shared.config.showReposts
         let showReplies = ConfigService.shared.config.showReplies
@@ -554,6 +603,21 @@ class FeedService: ObservableObject {
             }
         }
 
+        // Apply throttle limits: for each throttled author, keep only their N most recent posts
+        let throttled = ConfigService.shared.activeAccountThrottledHexPubkeys
+        if !throttled.isEmpty {
+            var authorCounts: [String: Int] = [:]
+            newFiltered = newFiltered.filter { note in
+                guard let maxPosts = throttled[note.pubkey] else { return true }
+                let count = authorCounts[note.pubkey, default: 0]
+                if count < maxPosts {
+                    authorCounts[note.pubkey] = count + 1
+                    return true
+                }
+                return false
+            }
+        }
+
         // Only publish a change when the visible list actually differs.
         // This prevents unnecessary SwiftUI re-renders (and scroll position resets)
         // when a background buffer flush adds notes that are filtered out or
@@ -576,12 +640,29 @@ class FeedService: ObservableObject {
         }
 
         let isGlobalMedia = feedMode == .media && mediaFeedMode == .global
-        let newMedia = notes.filter { note in
+        var newMedia = notes.filter { note in
             if blocked.contains(note.pubkey) { return false }
             // Only show media from WOT members in global media mode
             if isGlobalMedia && !wotPubkeys.isEmpty && !wotPubkeys.contains(note.pubkey) { return false }
             return !note.mediaURLs.isEmpty
-        }.sorted { $0.createdAt > $1.createdAt }
+        }.sorted {
+            if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+            return $0.id > $1.id
+        }
+
+        // Apply throttle limits to media feed as well
+        if !throttled.isEmpty {
+            var mediaCounts: [String: Int] = [:]
+            newMedia = newMedia.filter { note in
+                guard let maxPosts = throttled[note.pubkey] else { return true }
+                let count = mediaCounts[note.pubkey, default: 0]
+                if count < maxPosts {
+                    mediaCounts[note.pubkey] = count + 1
+                    return true
+                }
+                return false
+            }
+        }
 
         if newMedia.map(\.id) != filteredMediaNotes.map(\.id) {
             filteredMediaNotes = newMedia
@@ -652,7 +733,7 @@ class FeedService: ObservableObject {
     /// Public relays used to supplement the local relay.
     /// Uses Blastr relays if configured, otherwise well-known defaults.
     private var externalRelayURLs: [URL] {
-        let configured = ConfigService.shared.config.feedRelays
+        let configured = ConfigService.shared.config.activeFeedRelays
         let strs = configured.isEmpty ? [
             "wss://relay.damus.io",
             "wss://relay.primal.net",
@@ -727,6 +808,23 @@ class FeedService: ObservableObject {
     private var profileSaveTimer: Timer?
 
     private var configCancellables = Set<AnyCancellable>()
+
+    // MARK: - Local Relay Injection
+
+    /// WebSocket clients for injecting external events into the local relay.
+    /// One for outbox (owner/whitelisted events), one for inbox (external events).
+    private var outboxInjectionClient: WebSocketClient?
+    private var inboxInjectionClient: WebSocketClient?
+    /// Pending messages queued while injection clients are still connecting.
+    private var pendingOutboxMessages: [String] = []
+    private var pendingInboxMessages: [String] = []
+    /// Tracks injected event IDs to prevent feedback loops.
+    private var injectedEventIds = Set<String>()
+    private let maxInjectedIds = 10_000
+    /// True while FeedService is actively injecting events (used by NetworkSyncService to avoid overlap).
+    @Published var isInjecting: Bool = false
+    /// Throttles the `.feedInjectionComplete` notification.
+    private var lastInjectionNotification: Date = .distantPast
 
     private init() {
         // FeedService no longer manages profiles; NostrService does.
@@ -845,7 +943,9 @@ class FeedService: ObservableObject {
     // MARK: - Disk Snapshot Persistence
 
     private nonisolated static func diskSnapshotURL(forKey key: String) -> URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("Haven")
+        }
         let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
         try? FileManager.default.createDirectory(at: havenDir, withIntermediateDirectories: true)
         let safeKey = key.isEmpty ? "owner" : key.replacingOccurrences(of: "/", with: "_")
@@ -882,6 +982,18 @@ class FeedService: ObservableObject {
         return snap
     }
 
+    private func diskSnapshotExists(forKey key: String) -> Bool {
+        let url = Self.diskSnapshotURL(forKey: key)
+        guard FileManager.default.fileExists(atPath: url.path) else { return false }
+        // Quick check: if file exists and isn't expired, we have a snapshot.
+        // Don't decode the entire snapshot here — just check modification date.
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let modDate = attrs[.modificationDate] as? Date else {
+            return false
+        }
+        return modDate.timeIntervalSinceNow >= -DiskFeedSnapshot.maxAge
+    }
+
     /// Snapshot the old account, restore (or cold-load) the new account, then
     /// kick off a relay top-up against the now-current state.
     private func handleAccountSwitch() {
@@ -892,9 +1004,16 @@ class FeedService: ObservableObject {
         // 1. Stash the just-rendered state under the previous npub.
         captureSnapshot(forKey: previousKey)
 
-        // 2. Tear down only the feed-level WebSocket connections — global
-        // services (profile + Kind 10002 fetches) keep their clients.
-        disconnectFeedClients()
+        // 2. Only disconnect feed clients if we need a full refresh (no snapshot available).
+        // This prevents unnecessary relay disconnections when switching between accounts
+        // that have cached state. We'll disconnect later if needed during refresh().
+        let hasSnapshot = accountSnapshots[newKey] != nil || diskSnapshotExists(forKey: newKey)
+        if !hasSnapshot {
+            // No snapshot — will need fresh data, so disconnect now.
+            disconnectFeedClients()
+        }
+        // NOTE: Global services (profile + Kind 10002 fetches) keep their clients
+        // running across account switches by design.
 
         // 3. Cancel in-flight loading flags + timers so the new flow isn't blocked.
         isLoadingContacts = false
@@ -1056,7 +1175,9 @@ class FeedService: ObservableObject {
     }
 
     private static func interactionStateURL(forKey key: String) -> URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("Haven")
+        }
         let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
         try? FileManager.default.createDirectory(at: havenDir, withIntermediateDirectories: true)
         let safeKey = key.isEmpty ? "owner" : key.replacingOccurrences(of: "/", with: "_")
@@ -1064,7 +1185,9 @@ class FeedService: ObservableObject {
     }
 
     private static func interactionStateURL(legacy: Bool) -> URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("Haven")
+        }
         let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
         try? FileManager.default.createDirectory(at: havenDir, withIntermediateDirectories: true)
         return havenDir.appendingPathComponent(legacyInteractionStateFile)
@@ -1225,9 +1348,15 @@ class FeedService: ObservableObject {
         disconnectFeedClients()
         cancellables.removeAll()
 
+        // Reset global mode flag when switching away from global
+        let isGlobal = mode == .global || (mode == .media && mediaFeedMode == .global)
+        processingQueue.async { [weak self] in
+            self?.bgAccumulator.isGlobalMode = isGlobal
+        }
+
         if mode == .popular {
             loadPopularFeed()
-        } else if mode == .global || (mode == .media && mediaFeedMode == .global) {
+        } else if isGlobal {
             // Global mode doesn't need contacts — subscribe directly
             loadWotPubkeys()
             subscribeToAllRelays()
@@ -1283,6 +1412,7 @@ class FeedService: ObservableObject {
         guard !isPaused else { return }
         isPaused = true
         disconnectFeedClients()
+        disconnectInjectionClients()
         cancellables.removeAll()
         noteFlushTimer?.invalidate()
         noteFlushTimer = nil
@@ -1463,7 +1593,10 @@ class FeedService: ObservableObject {
                       let type = json[0] as? String else { return }
 
                 if type == "EOSE" {
-                    let results = collected.sorted { $0.createdAt > $1.createdAt }
+                    let results = collected.sorted {
+                        if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+                        return $0.id > $1.id
+                    }
                     DispatchQueue.main.async {
                         guard let self = self else { return }
                         self.searchResults = results
@@ -1568,16 +1701,96 @@ class FeedService: ObservableObject {
         }
         fetchingNoteIds.insert(id)
         fetchingNoteTimestamps[id] = Date()
-        noteFetchQueue.insert(id)
-        scheduleNoteFetchFlush()
+
+        if id.hasPrefix("naddr:") {
+            fetchMissingNoteByNaddr(coordinate: id)
+        } else {
+            noteFetchQueue.insert(id)
+            scheduleNoteFetchFlush()
+        }
+    }
+
+    /// Fetches an addressable event by its naddr coordinate ("naddr:<kind>:<pubkey>:<d-tag>").
+    private func fetchMissingNoteByNaddr(coordinate: String) {
+        let parts = coordinate.split(separator: ":", maxSplits: 3).map(String.init)
+        guard parts.count >= 3,
+              let kind = Int(parts[1]) else { return }
+        let pubkey = parts[2]
+        let dTag = parts.count > 3 ? parts[3] : ""
+
+        let filter: [String: Any] = ["kinds": [kind], "authors": [pubkey], "#d": [dTag], "limit": 1]
+        let subId = "naddr-\(UUID().uuidString.prefix(6))"
+        let req = ["REQ", subId, filter] as [Any]
+        guard let reqData = try? JSONSerialization.data(withJSONObject: req),
+              let reqStr = String(data: reqData, encoding: .utf8) else { return }
+
+        var candidates: [URL] = []
+        if let local = localRelayURL { candidates.append(local) }
+        candidates.append(contentsOf: externalRelayURLs)
+
+        for url in candidates {
+            if let activeClient = feedClients[url.absoluteString],
+               activeClient.connectionState == .connected {
+                activeClient.send(text: reqStr)
+                let closeMsg = ["CLOSE", subId] as [Any]
+                if let closeData = try? JSONSerialization.data(withJSONObject: closeMsg),
+                   let closeStr = String(data: closeData, encoding: .utf8) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) {
+                        activeClient.send(text: closeStr)
+                    }
+                }
+                continue
+            }
+
+            let c = WebSocketClient()
+            c.isTemporary = true
+            c.messageSubject
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] msg in self?.handleParentNoteFetch(msg) }
+                .store(in: &cancellables)
+            c.$connectionState
+                .receive(on: DispatchQueue.main)
+                .sink { state in
+                    if state == .connected {
+                        c.send(text: reqStr)
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { c.disconnect() }
+                    }
+                }
+                .store(in: &cancellables)
+            c.connect(url: url)
+        }
     }
 
     /// Looks up a note in the local parent notes cache or in the main feed list.
+    /// Also handles naddr coordinate strings ("naddr:<kind>:<pubkey>:<d-tag>").
     func findNote(id: String) -> FeedNote? {
+        if id.hasPrefix("naddr:") {
+            return findNoteByNaddrCoordinate(id)
+        }
         if let cached = parentNotesCache[id] {
             return cached
         }
-        return notes.first(where: { $0.id == id })
+        return noteIndex[id]
+    }
+
+    /// Finds a note matching an naddr coordinate ("naddr:<kind>:<pubkey>:<d-tag>").
+    private func findNoteByNaddrCoordinate(_ coordinate: String) -> FeedNote? {
+        let parts = coordinate.split(separator: ":", maxSplits: 3).map(String.init)
+        guard parts.count >= 3,
+              let kind = Int(parts[1]) else { return nil }
+        let pubkey = parts[2]
+        let dTag = parts.count > 3 ? parts[3] : ""
+
+        let match: (FeedNote) -> Bool = { note in
+            note.kind == kind && note.pubkey == pubkey &&
+            note.tags.contains(where: { $0.count >= 2 && $0[0] == "d" && $0[1] == dTag })
+        }
+
+        // Check parentNotesCache first
+        if let cached = parentNotesCache.values.first(where: match) {
+            return cached
+        }
+        return notes.first(where: match)
     }
 
     /// Load older notes (pagination) — fetches the page before the oldest note currently shown.
@@ -2009,8 +2222,11 @@ class FeedService: ObservableObject {
         connectionStatus = "Loading feed…"
 
         // Use faster flush interval during initial load for snappier content display.
+        // Global mode gets ultra-fast real-time flushing for streaming effect.
+        let isGlobal = feedMode == .global || (feedMode == .media && mediaFeedMode == .global)
         processingQueue.async { [weak self] in
             self?.bgAccumulator.isInitialLoad = true
+            self?.bgAccumulator.isGlobalMode = isGlobal
         }
 
         var allURLs: [URL] = []
@@ -2046,10 +2262,6 @@ class FeedService: ObservableObject {
                 self.processingQueue.async { [weak self] in
                     self?.bgAccumulator.isInitialLoad = false
                 }
-                // Trigger Mac relay sync after feed timeout too
-                #if os(iOS)
-                MacRelaySyncService.shared.syncIfConfigured()
-                #endif
             }
         }
 
@@ -2097,9 +2309,17 @@ class FeedService: ObservableObject {
         let c = WebSocketClient()
         feedClients[key] = c
 
+        let isLocalRelay = url.host == "127.0.0.1" || url.host == "localhost"
+
         c.messageSubject
             .receive(on: processingQueue)
-            .sink { [weak self] msg in self?.handleFeedMsgBackground(msg, totalRelays: totalRelays) }
+            .sink { [weak self] msg in
+                self?.handleFeedMsgBackground(msg, totalRelays: totalRelays)
+                // Inject events from external relays into the local relay for persistence
+                if !isLocalRelay {
+                    self?.handleExternalEventInjection(msg)
+                }
+            }
             .store(in: &cancellables)
 
         c.$connectionState
@@ -2129,9 +2349,6 @@ class FeedService: ObservableObject {
                             self.processingQueue.async { [weak self] in
                                 self?.bgAccumulator.isInitialLoad = false
                             }
-                            #if os(iOS)
-                            MacRelaySyncService.shared.syncIfConfigured()
-                            #endif
                         }
                     } else {
                         // Retry after delay
@@ -2155,9 +2372,16 @@ class FeedService: ObservableObject {
         c.isTemporary = true
         feedClients[key] = c
 
+        let isLocalRelay = url.host == "127.0.0.1" || url.host == "localhost"
+
         c.messageSubject
             .receive(on: processingQueue)
-            .sink { [weak self] msg in self?.handleFeedMsgBackground(msg, totalRelays: totalRelays) }
+            .sink { [weak self] msg in
+                self?.handleFeedMsgBackground(msg, totalRelays: totalRelays)
+                if !isLocalRelay {
+                    self?.handleExternalEventInjection(msg)
+                }
+            }
             .store(in: &cancellables)
 
         c.$connectionState
@@ -2392,10 +2616,6 @@ class FeedService: ObservableObject {
                     self.processingQueue.async { [weak self] in
                         self?.bgAccumulator.isInitialLoad = false
                     }
-                    // Trigger Mac relay sync after feed has finished initial load
-                    #if os(iOS)
-                    MacRelaySyncService.shared.syncIfConfigured()
-                    #endif
                 }
             }
             return
@@ -2628,10 +2848,11 @@ class FeedService: ObservableObject {
             for entry in snap.rawEventEntries {
                 rawEventCache[entry.id] = entry.json
             }
-            // Cap cache size to prevent unbounded growth
+            // Cap cache size to prevent unbounded growth.
+            // Sort keys so every device evicts the same (oldest/smallest) entries.
             if rawEventCache.count > Self.maxRawEventCacheSize {
                 let overflow = rawEventCache.count - Self.maxRawEventCacheSize
-                let keysToRemove = Array(rawEventCache.keys.prefix(overflow))
+                let keysToRemove = rawEventCache.keys.sorted().prefix(overflow)
                 for key in keysToRemove { rawEventCache.removeValue(forKey: key) }
             }
         }
@@ -2651,7 +2872,9 @@ class FeedService: ObservableObject {
 
     private func scheduleNoteFlush() {
         guard noteFlushTimer == nil else { return }
-        noteFlushTimer = Timer.scheduledTimer(withTimeInterval: 0.8, repeats: false) { [weak self] _ in
+        // Global feed uses ultra-fast flushing for real-time streaming feel
+        let interval: TimeInterval = (feedMode == .global || (feedMode == .media && mediaFeedMode == .global)) ? 0.05 : 0.8
+        noteFlushTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 self?.flushNoteBuffer()
             }
@@ -2680,7 +2903,10 @@ class FeedService: ObservableObject {
         if notes.isEmpty || isLoadingFeed {
             var updated = notes
             updated.append(contentsOf: batch)
-            updated.sort { $0.createdAt > $1.createdAt }
+            updated.sort {
+                if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+                return $0.id > $1.id
+            }
             if updated.count > Self.maxNotes {
                 updated.removeLast(updated.count - Self.maxNotes)
             }
@@ -2710,7 +2936,10 @@ class FeedService: ObservableObject {
             // Build locally, assign once to minimize objectWillChange notifications
             var updated = notes
             updated.append(contentsOf: toAdd)
-            updated.sort { $0.createdAt > $1.createdAt }
+            updated.sort {
+                if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+                return $0.id > $1.id
+            }
             if updated.count > Self.maxNotes {
                 updated.removeLast(updated.count - Self.maxNotes)
             }
@@ -2720,7 +2949,10 @@ class FeedService: ObservableObject {
         if !toPending.isEmpty {
             let updatedPending = pendingNotes + toPending
             let uniqueMap = Dictionary(updatedPending.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-            var sorted = uniqueMap.values.sorted { $0.createdAt > $1.createdAt }
+            var sorted = uniqueMap.values.sorted {
+                if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+                return $0.id > $1.id
+            }
             // Drop oldest pending notes to prevent unbounded memory growth
             if sorted.count > Self.maxPendingNotes {
                 sorted.removeLast(sorted.count - Self.maxPendingNotes)
@@ -2977,5 +3209,143 @@ class FeedService: ObservableObject {
 
             client.connect(url: url)
         }
+    }
+
+    // MARK: - Local Relay Injection
+
+    /// Parses an external relay message and injects the event into the local relay.
+    /// Called on `processingQueue` — must be thread-safe.
+    private nonisolated func handleExternalEventInjection(_ msg: String) {
+        guard let data = msg.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [Any],
+              json.count >= 3,
+              let type = json[0] as? String, type == "EVENT",
+              let ev = json[2] as? [String: Any],
+              let eventId = ev["id"] as? String else { return }
+
+        // Only inject feed-relevant event kinds (notes, reactions, reposts, zaps)
+        guard let kind = ev["kind"] as? Int,
+              [1, 6, 7, 30023, 9735].contains(kind) else { return }
+
+        DispatchQueue.main.async { [weak self] in
+            self?.injectIntoLocalRelay(ev, eventId: eventId)
+        }
+    }
+
+    /// Writes an event to the local relay. Routes owner/whitelisted events to outbox,
+    /// external events to /inbox (which has no blast hook, preventing feedback loops).
+    private func injectIntoLocalRelay(_ eventDict: [String: Any], eventId: String) {
+        // Dedup: skip events already injected this session
+        guard !injectedEventIds.contains(eventId) else { return }
+        injectedEventIds.insert(eventId)
+        if injectedEventIds.count > maxInjectedIds {
+            injectedEventIds.removeAll(keepingCapacity: true)
+            injectedEventIds.insert(eventId)
+        }
+
+        let config = ConfigService.shared.config
+        let ownerHex = Bech32.decode(config.ownerNpub)?.hexString ?? ""
+        let whitelisted = ConfigService.shared.whitelistedHexPubkeys
+
+        let pubkey = eventDict["pubkey"] as? String ?? ""
+        let isTrackedAuthor = pubkey == ownerHex || whitelisted.contains(pubkey)
+
+        let msg: [Any] = ["EVENT", eventDict]
+        guard let data = try? JSONSerialization.data(withJSONObject: msg),
+              let str = String(data: data, encoding: .utf8) else { return }
+
+        // Route to the appropriate injection client
+        if isTrackedAuthor {
+            sendToOutboxInjection(str)
+        } else {
+            sendToInboxInjection(str)
+        }
+
+        notifyInjectionComplete()
+    }
+
+    /// Sends a message to the outbox injection client, queuing if not yet connected.
+    private func sendToOutboxInjection(_ str: String) {
+        if let client = outboxInjectionClient, client.connectionState == .connected {
+            client.send(text: str)
+            return
+        }
+
+        pendingOutboxMessages.append(str)
+
+        // Already connecting, just queue
+        if outboxInjectionClient != nil { return }
+
+        guard let url = URL(string: ConfigService.shared.config.nostrURL) else { return }
+
+        let client = WebSocketClient()
+        client.isTemporary = false
+        outboxInjectionClient = client
+        isInjecting = true
+
+        client.$connectionState
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state in
+                guard let self = self, state == .connected else { return }
+                for pending in self.pendingOutboxMessages {
+                    client.send(text: pending)
+                }
+                self.pendingOutboxMessages.removeAll()
+            }
+            .store(in: &cancellables)
+
+        client.connect(url: url)
+    }
+
+    /// Sends a message to the inbox injection client, queuing if not yet connected.
+    private func sendToInboxInjection(_ str: String) {
+        if let client = inboxInjectionClient, client.connectionState == .connected {
+            client.send(text: str)
+            return
+        }
+
+        pendingInboxMessages.append(str)
+
+        // Already connecting, just queue
+        if inboxInjectionClient != nil { return }
+
+        guard let url = URL(string: ConfigService.shared.config.nostrURL + "/inbox") else { return }
+
+        let client = WebSocketClient()
+        client.isTemporary = false
+        inboxInjectionClient = client
+        isInjecting = true
+
+        client.$connectionState
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state in
+                guard let self = self, state == .connected else { return }
+                for pending in self.pendingInboxMessages {
+                    client.send(text: pending)
+                }
+                self.pendingInboxMessages.removeAll()
+            }
+            .store(in: &cancellables)
+
+        client.connect(url: url)
+    }
+
+    /// Disconnects injection clients (called from pauseFeed).
+    private func disconnectInjectionClients() {
+        outboxInjectionClient?.disconnect()
+        outboxInjectionClient = nil
+        inboxInjectionClient?.disconnect()
+        inboxInjectionClient = nil
+        pendingOutboxMessages.removeAll()
+        pendingInboxMessages.removeAll()
+        isInjecting = false
+    }
+
+    /// Posts `.feedInjectionComplete` at most once per 30 seconds.
+    private func notifyInjectionComplete() {
+        let now = Date()
+        guard now.timeIntervalSince(lastInjectionNotification) > 30 else { return }
+        lastInjectionNotification = now
+        NotificationCenter.default.post(name: .feedInjectionComplete, object: nil)
     }
 }

@@ -11,20 +11,20 @@ struct QuotedNoteView: View {
                 AvatarView(url: profile?.pictureURL, pubkey: note.pubkey, size: 18)
                 
                 Text(profile?.bestName ?? "Someone")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.appSystem(size: 12, weight: .semibold))
                     .foregroundColor(.primary.opacity(0.9))
-                
+
                 Spacer()
-                
+
                 Text(relativeTime(note.createdAt))
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .font(.appSystem(size: 10, weight: .regular, design: .monospaced))
                     .foregroundColor(.secondary.opacity(0.7))
             }
-            
+
             let formattedContent = NostrContentFormatter.format(note.content, mediaURLs: note.mediaURLs, hideQuotes: true)
             if !formattedContent.characters.isEmpty {
                 Text(formattedContent)
-                    .font(.system(size: 13, weight: .regular))
+                    .font(.appSystem(size: 13, weight: .regular))
                     .foregroundColor(.secondary)
                     .lineLimit(3)
                     .multilineTextAlignment(.leading)
@@ -45,7 +45,10 @@ struct QuotedNoteView: View {
         .cornerRadius(8)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.havenPurple.opacity(0.15), lineWidth: 1)
+                .stroke(
+                    Color.havenPurple.opacity(ConfigService.shared.config.useOLED ? 0.30 : 0.12),
+                    lineWidth: ConfigService.shared.config.useOLED ? 1.2 : 0.5
+                )
         )
     }
     

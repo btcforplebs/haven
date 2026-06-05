@@ -226,7 +226,7 @@ func subscribeInboxAndChat(ctx context.Context) {
 
 	wdbInbox := eventstore.RelayWrapper{Store: inboxDB}
 	wdbChat := eventstore.RelayWrapper{Store: chatDB}
-	startTime := nostr.Timestamp(time.Now().Add(-time.Minute * 5).Unix())
+	startTime := nostr.Timestamp(time.Now().Add(-time.Hour * 24).Unix())
 	filter := nostr.Filter{
 		Tags: nostr.TagMap{
 			"p": slices.Collect(maps.Keys(config.WhitelistedPubKeys)),
@@ -234,9 +234,22 @@ func subscribeInboxAndChat(ctx context.Context) {
 		Since: &startTime,
 	}
 
-	log.Println("📢 subscribing to inbox")
+	// Build deduplicated relay set: ImportSeedRelays + DmRelays
+	relaySet := make(map[string]struct{})
+	for _, r := range config.ImportSeedRelays {
+		relaySet[r] = struct{}{}
+	}
+	for _, r := range config.DmRelays {
+		relaySet[r] = struct{}{}
+	}
+	relays := make([]string, 0, len(relaySet))
+	for r := range relaySet {
+		relays = append(relays, r)
+	}
 
-	for ev := range pool.SubscribeMany(ctx, config.ImportSeedRelays, filter) {
+	log.Println("📢 subscribing to inbox on", len(relays), "relays (import + DM)")
+
+	for ev := range pool.SubscribeMany(ctx, relays, filter) {
 		if _, ok := config.BlacklistedPubKeys[ev.PubKey]; ok {
 			slog.Debug("🚫discarding imported note from blacklisted pubkey", "pubkey", ev.PubKey, "id", ev.ID)
 			continue

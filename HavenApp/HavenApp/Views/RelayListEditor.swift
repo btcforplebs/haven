@@ -42,7 +42,7 @@ struct RelayListEditor: View {
                 Button(action: addRelay) {
                     Image(systemName: "plus.circle.fill")
                         .foregroundColor(.havenPurple)
-                        .font(.title3)
+                        .font(.appTitle3)
                 }
                 .disabled(newRelay.isEmpty)
             }

@@ -130,20 +130,20 @@ struct WalletCashuTab: View {
     private var betaBanner: some View {
         HStack(spacing: 10) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 18, weight: .bold))
+                .font(.appSystem(size: 18, weight: .bold))
                 .foregroundColor(.orange)
             VStack(alignment: .leading, spacing: 2) {
                 Text("BETA - EXPERIMENTAL")
-                    .font(.system(size: 13, weight: .black))
+                    .font(.appSystem(size: 13, weight: .black))
                     .foregroundColor(.orange)
                 Text("Cashu ecash backed by your relay. Tokens are stored encrypted on your private relay for cross-device sync and recovery. Do not store large amounts.")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.appSystem(size: 11, weight: .medium))
                     .foregroundColor(.orange.opacity(0.8))
             }
             Spacer()
             Button(action: { showingCashuInfo = true }) {
                 Image(systemName: "info.circle.fill")
-                    .font(.system(size: 20))
+                    .font(.appSystem(size: 20))
                     .foregroundColor(.orange.opacity(0.7))
             }
             .buttonStyle(.plain)
@@ -163,13 +163,13 @@ struct WalletCashuTab: View {
     private var mintNotConfiguredCard: some View {
         VStack(spacing: 12) {
             Image(systemName: "banknote.fill")
-                .font(.system(size: 32))
+                .font(.appSystem(size: 32))
                 .foregroundColor(.secondary)
             Text("No Mint Connected")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.appSystem(size: 16, weight: .semibold))
                 .foregroundColor(.primary)
             Text("Add a Cashu mint URL in Settings to enable the ecash wallet.")
-                .font(.system(size: 13))
+                .font(.appSystem(size: 13))
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
         }
@@ -190,10 +190,10 @@ struct WalletCashuTab: View {
         VStack(spacing: 8) {
             HStack {
                 Image(systemName: "banknote.fill")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.appSystem(size: 14, weight: .semibold))
                     .foregroundColor(Self.ecashBrown)
                 Text("ECASH BALANCE")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.appSystem(size: 12, weight: .bold))
                     .foregroundColor(.secondary)
                 Spacer()
                 if isLoadingBalance {
@@ -202,7 +202,7 @@ struct WalletCashuTab: View {
                 } else {
                     Button(action: { refreshBalance() }) {
                         Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.appSystem(size: 12, weight: .semibold))
                             .foregroundColor(.secondary)
                     }
                     .buttonStyle(.plain)
@@ -211,17 +211,17 @@ struct WalletCashuTab: View {
 
             if let error = balanceError {
                 Text(error)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.red)
             } else {
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(formatSats(cashuService.balanceSats))
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .font(.appSystem(size: 28, weight: .bold, design: .rounded))
                         .foregroundColor(.primary)
                         .scaleEffect(balancePulse ? 1.15 : 1.0)
                         .animation(.spring(response: 0.3, dampingFraction: 0.5), value: balancePulse)
                     Text("sats")
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.appSystem(size: 14, weight: .medium))
                         .foregroundColor(.secondary)
                     Spacer()
                 }
@@ -233,9 +233,9 @@ struct WalletCashuTab: View {
                         ProgressView().controlSize(.small)
                     }
                     Image(systemName: "icloud.and.arrow.down")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.appSystem(size: 12, weight: .semibold))
                     Text("Restore from Relays")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.appSystem(size: 13, weight: .medium))
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 8)
@@ -260,9 +260,9 @@ struct WalletCashuTab: View {
     private var recoveryBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 14, weight: .bold))
+                .font(.appSystem(size: 14, weight: .bold))
             Text("Recovered \(formatSats(recoveredSats)) sats of ecash")
-                .font(.system(size: 13, weight: .bold))
+                .font(.appSystem(size: 13, weight: .bold))
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 20)
@@ -281,12 +281,12 @@ struct WalletCashuTab: View {
     private var mintInfoCard: some View {
         HStack(spacing: 12) {
             Image(systemName: "building.columns.fill")
-                .font(.system(size: 14, weight: .semibold))
+                .font(.appSystem(size: 14, weight: .semibold))
                 .foregroundColor(Self.ecashBrown)
             VStack(alignment: .leading, spacing: 2) {
                 if let info = cashuService.mintInfo, let name = info.name, !name.isEmpty {
                     Text(name)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.appSystem(size: 13, weight: .medium))
                         .foregroundColor(.primary)
                 }
                 Text(configService.config.cashuMintURL)
@@ -312,10 +312,10 @@ struct WalletCashuTab: View {
         VStack(spacing: 12) {
             HStack {
                 Image(systemName: "bolt.horizontal.fill")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.appSystem(size: 14, weight: .semibold))
                     .foregroundColor(.yellow)
                 Text("LIGHTNING BRIDGE")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.appSystem(size: 12, weight: .bold))
                     .foregroundColor(.secondary)
                 Spacer()
             }
@@ -349,7 +349,7 @@ struct WalletCashuTab: View {
     private var fundContent: some View {
         VStack(spacing: 12) {
             TextField("Amount (sats)", text: $mintAmountSats)
-                .font(.system(size: 14, design: .monospaced))
+                .font(.appSystem(size: 14, design: .monospaced))
                 #if os(iOS)
                 .keyboardType(.numberPad)
                 #endif
@@ -363,7 +363,7 @@ struct WalletCashuTab: View {
                             ProgressView().controlSize(.small)
                         }
                         Text("Create Invoice")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.appSystem(size: 14, weight: .semibold))
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 10)
@@ -386,7 +386,7 @@ struct WalletCashuTab: View {
                             Image(systemName: "bolt.fill")
                                 .foregroundColor(.yellow)
                             Text("Fund from Lightning")
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(.appSystem(size: 13, weight: .semibold))
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
@@ -400,7 +400,7 @@ struct WalletCashuTab: View {
                             Image(systemName: "arrow.down.circle.fill")
                                 .foregroundColor(.green)
                             Text("Paid Externally")
-                                .font(.system(size: 13, weight: .semibold))
+                                .font(.appSystem(size: 13, weight: .semibold))
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
@@ -414,7 +414,7 @@ struct WalletCashuTab: View {
                     HStack(spacing: 6) {
                         ProgressView().controlSize(.small)
                         Text("Waiting for payment to confirm...")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.secondary)
                     }
                 }
@@ -422,7 +422,7 @@ struct WalletCashuTab: View {
 
             if let error = mintError {
                 Text(error)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.red)
             }
 
@@ -431,7 +431,7 @@ struct WalletCashuTab: View {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(.green)
                     Text(success)
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.green)
                 }
             }
@@ -443,7 +443,7 @@ struct WalletCashuTab: View {
     private var cashOutContent: some View {
         VStack(spacing: 12) {
             TextField("Amount (sats)", text: $cashOutAmountSats)
-                .font(.system(size: 14, design: .monospaced))
+                .font(.appSystem(size: 14, design: .monospaced))
                 #if os(iOS)
                 .keyboardType(.numberPad)
                 #endif
@@ -459,7 +459,7 @@ struct WalletCashuTab: View {
                         Image(systemName: "bolt.fill")
                             .foregroundColor(.yellow)
                         Text("Generate Invoice")
-                            .font(.system(size: 14, weight: .semibold))
+                            .font(.appSystem(size: 14, weight: .semibold))
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 10)
@@ -472,7 +472,7 @@ struct WalletCashuTab: View {
             if let invoice = cashOutInvoice {
                 // Show the generated invoice
                 Text(invoice)
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.appSystem(size: 10, design: .monospaced))
                     .foregroundColor(.secondary)
                     .lineLimit(3)
                     .textSelection(.enabled)
@@ -480,11 +480,11 @@ struct WalletCashuTab: View {
                 if let quote = meltQuote {
                     HStack {
                         Text("Amount: \(quote.amount) sats")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.secondary)
                         Spacer()
                         Text("Fee: \(quote.fee_reserve) sats")
-                            .font(.caption)
+                            .font(.appCaption)
                             .foregroundColor(.secondary)
                     }
 
@@ -497,7 +497,7 @@ struct WalletCashuTab: View {
                             Image(systemName: "banknote.fill")
                                 .foregroundColor(Self.ecashBrown)
                             Text("Pay from Ecash")
-                                .font(.system(size: 14, weight: .semibold))
+                                .font(.appSystem(size: 14, weight: .semibold))
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
@@ -510,7 +510,7 @@ struct WalletCashuTab: View {
 
             if let error = meltError {
                 Text(error)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.red)
             }
 
@@ -519,7 +519,7 @@ struct WalletCashuTab: View {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(.green)
                     Text(result)
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.green)
                 }
             }
@@ -544,7 +544,7 @@ struct WalletCashuTab: View {
             }
 
             Text(invoice)
-                .font(.system(size: 10, design: .monospaced))
+                .font(.appSystem(size: 10, design: .monospaced))
                 .foregroundColor(.secondary)
                 .lineLimit(4)
                 .textSelection(.enabled)
@@ -558,7 +558,7 @@ struct WalletCashuTab: View {
                     copiedInvoice ? "Copied!" : "Copy Invoice",
                     systemImage: copiedInvoice ? "checkmark" : "doc.on.doc"
                 )
-                .font(.system(size: 13, weight: .medium))
+                .font(.appSystem(size: 13, weight: .medium))
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
@@ -573,10 +573,10 @@ struct WalletCashuTab: View {
         VStack(spacing: 12) {
             HStack {
                 Image(systemName: "banknote.fill")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.appSystem(size: 14, weight: .semibold))
                     .foregroundColor(Self.ecashBrown)
                 Text("ECASH TOKENS")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.appSystem(size: 12, weight: .bold))
                     .foregroundColor(.secondary)
                 Spacer()
             }
@@ -610,7 +610,7 @@ struct WalletCashuTab: View {
     private var sendContent: some View {
         VStack(spacing: 12) {
             TextField("Amount (sats)", text: $sendAmountSats)
-                .font(.system(size: 14, design: .monospaced))
+                .font(.appSystem(size: 14, design: .monospaced))
                 #if os(iOS)
                 .keyboardType(.numberPad)
                 #endif
@@ -622,7 +622,7 @@ struct WalletCashuTab: View {
                         ProgressView().controlSize(.small)
                     }
                     Text("Create Token")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.appSystem(size: 14, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
@@ -633,14 +633,14 @@ struct WalletCashuTab: View {
 
             if let error = sendTokenError {
                 Text(error)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.red)
             }
 
             if let token = generatedToken {
                 VStack(spacing: 8) {
                     Text(token)
-                        .font(.system(size: 10, design: .monospaced))
+                        .font(.appSystem(size: 10, design: .monospaced))
                         .foregroundColor(.secondary)
                         .lineLimit(4)
                         .textSelection(.enabled)
@@ -654,7 +654,7 @@ struct WalletCashuTab: View {
                             copiedToken ? "Copied!" : "Copy Token",
                             systemImage: copiedToken ? "checkmark" : "doc.on.doc"
                         )
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.appSystem(size: 13, weight: .medium))
                         .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
@@ -669,7 +669,7 @@ struct WalletCashuTab: View {
     private var receiveContent: some View {
         VStack(spacing: 12) {
             TextField("Paste cashuA... token", text: $receiveTokenString)
-                .font(.system(size: 13, design: .monospaced))
+                .font(.appSystem(size: 13, design: .monospaced))
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(3)
 
@@ -679,7 +679,7 @@ struct WalletCashuTab: View {
                         ProgressView().controlSize(.small)
                     }
                     Text("Redeem")
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.appSystem(size: 14, weight: .semibold))
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 10)
@@ -690,7 +690,7 @@ struct WalletCashuTab: View {
 
             if let error = receiveError {
                 Text(error)
-                    .font(.caption)
+                    .font(.appCaption)
                     .foregroundColor(.red)
             }
 
@@ -699,7 +699,7 @@ struct WalletCashuTab: View {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(.green)
                     Text(result)
-                        .font(.caption)
+                        .font(.appCaption)
                         .foregroundColor(.green)
                 }
             }
@@ -712,19 +712,19 @@ struct WalletCashuTab: View {
         VStack(spacing: 12) {
             HStack {
                 Image(systemName: "doc.text.fill")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.appSystem(size: 14, weight: .semibold))
                     .foregroundColor(Self.ecashBrown)
                 Text("BEARER INSTRUMENTS")
-                    .font(.system(size: 12, weight: .bold))
+                    .font(.appSystem(size: 12, weight: .bold))
                     .foregroundColor(.secondary)
                 Spacer()
                 if !cashuService.proofs.filter({ !$0.isSpent }).isEmpty {
                     Button(action: { copyAllProofs() }) {
                         HStack(spacing: 4) {
                             Image(systemName: copiedProofId == "_all" ? "checkmark" : "doc.on.doc.fill")
-                                .font(.system(size: 11, weight: .medium))
+                                .font(.appSystem(size: 11, weight: .medium))
                             Text(copiedProofId == "_all" ? "Copied!" : "Copy All")
-                                .font(.system(size: 11, weight: .medium))
+                                .font(.appSystem(size: 11, weight: .medium))
                         }
                         .foregroundColor(copiedProofId == "_all" ? .green : .secondary)
                     }
@@ -736,7 +736,7 @@ struct WalletCashuTab: View {
 
             if unspent.isEmpty {
                 Text("No ecash tokens stored on relay.")
-                    .font(.system(size: 13))
+                    .font(.appSystem(size: 13))
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 8)
@@ -745,16 +745,16 @@ struct WalletCashuTab: View {
                     HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("\(proof.amount) sats")
-                                .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                                .font(.appSystem(size: 14, weight: .semibold, design: .monospaced))
                                 .foregroundColor(.primary)
                             Text(String(proof.keysetId.prefix(12)))
-                                .font(.system(size: 10, design: .monospaced))
+                                .font(.appSystem(size: 10, design: .monospaced))
                                 .foregroundColor(.secondary)
                         }
                         Spacer()
                         Button(action: { copyProof(proof) }) {
                             Image(systemName: copiedProofId == proof.id ? "checkmark" : "doc.on.doc")
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.appSystem(size: 13, weight: .medium))
                                 .foregroundColor(copiedProofId == proof.id ? .green : .secondary)
                         }
                         .buttonStyle(.plain)
@@ -1101,12 +1101,12 @@ private struct CashuInfoView: View {
                     // Hero
                     VStack(spacing: 12) {
                         Image(systemName: "banknote.fill")
-                            .font(.system(size: 48, weight: .light))
+                            .font(.appSystem(size: 48, weight: .light))
                             .foregroundColor(Self.ecashBrown)
                         Text("Cashu Ecash Wallet")
-                            .font(.system(size: 22, weight: .bold, design: .rounded))
+                            .font(.appSystem(size: 22, weight: .bold, design: .rounded))
                         Text("Digital cash backed by your relay")
-                            .font(.subheadline)
+                            .font(.appSubheadline)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
                     }
@@ -1238,10 +1238,10 @@ private struct CashuInfoView: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: icon)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.appSystem(size: 16, weight: .semibold))
                     .foregroundColor(color)
                 Text(title)
-                    .font(.system(size: 16, weight: .bold))
+                    .font(.appSystem(size: 16, weight: .bold))
                     .foregroundColor(.primary)
             }
             .padding(.bottom, 2)
@@ -1249,7 +1249,7 @@ private struct CashuInfoView: View {
             VStack(alignment: .leading, spacing: 8) {
                 content()
             }
-            .font(.system(size: 13))
+            .font(.appSystem(size: 13))
             .foregroundColor(.secondary)
         }
         .padding(16)
@@ -1265,10 +1265,10 @@ private struct CashuInfoView: View {
     private func bulletPoint(_ text: String) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text("\u{2022}")
-                .font(.system(size: 13, weight: .bold))
+                .font(.appSystem(size: 13, weight: .bold))
                 .foregroundColor(Self.ecashBrown.opacity(0.7))
             Text(text)
-                .font(.system(size: 13))
+                .font(.appSystem(size: 13))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }

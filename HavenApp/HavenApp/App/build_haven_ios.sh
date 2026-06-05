@@ -50,6 +50,35 @@ fi
 
 cd "$GO_SRC_ROOT"
 
+# ── Source-change detection ──────────────────────────────────────────
+# Hash all Go source files + go.mod/go.sum to detect changes.
+# If nothing changed since the last successful build, skip recompilation.
+# Include PLATFORM_NAME in the checksum file so simulator vs device rebuilds correctly.
+CHECKSUM_FILE="${PROJECT_DIR}/build/ios/.libhaven_ios_checksum_${PLATFORM_NAME:-ios}"
+CURRENT_CHECKSUM=$(find . -name '*.go' -o -name 'go.mod' -o -name 'go.sum' | sort | xargs cat | shasum -a 256 | awk '{print $1}')
+
+# Track which platform the current .a was built for. The checksum files are
+# platform-specific but the .a output is shared, so switching between simulator
+# and device with unchanged source would skip the rebuild and link the wrong binary.
+PLATFORM_MARKER="${PROJECT_DIR}/build/ios/.libhaven_ios_built_platform"
+CURRENT_PLATFORM="${PLATFORM_NAME:-iphoneos}"
+
+if [ -f "$HAVEN_LIB_PATH" ] && [ -f "$PLATFORM_MARKER" ]; then
+    LAST_PLATFORM=$(cat "$PLATFORM_MARKER")
+    if [ "$LAST_PLATFORM" != "$CURRENT_PLATFORM" ]; then
+        echo "🔄 Platform changed from $LAST_PLATFORM to $CURRENT_PLATFORM — forcing rebuild."
+        rm -f "$HAVEN_LIB_PATH"
+    fi
+fi
+
+if [ -f "$HAVEN_LIB_PATH" ] && [ -f "$CHECKSUM_FILE" ]; then
+    PREVIOUS_CHECKSUM=$(cat "$CHECKSUM_FILE")
+    if [ "$CURRENT_CHECKSUM" = "$PREVIOUS_CHECKSUM" ]; then
+        echo "✅ Go source unchanged — skipping rebuild."
+        exit 0
+    fi
+fi
+
 # iOS always uses arm64 for device builds
 # For simulator, we can use arm64 (Apple Silicon) or x86_64 (Intel)
 NEED_ARM64=false
@@ -142,5 +171,10 @@ if [ -f "$GENERATED_HEADER" ]; then
 else
     echo "⚠️ Warning: libhaven_ios.h not found at $GENERATED_HEADER — bridging header may fail."
 fi
+
+# Persist checksum and platform marker so the next build can skip if unchanged
+mkdir -p "$(dirname "$CHECKSUM_FILE")"
+echo "$CURRENT_CHECKSUM" > "$CHECKSUM_FILE"
+echo "$CURRENT_PLATFORM" > "$PLATFORM_MARKER"
 
 echo "🎉 iOS build complete!"

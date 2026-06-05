@@ -56,6 +56,7 @@ type Config struct {
 	ImportOwnerNotesFetchTimeoutSeconds  int                 `json:"import_owned_notes_fetch_timeout_seconds"`
 	ImportTaggedNotesFetchTimeoutSeconds int                 `json:"import_tagged_fetch_timeout_seconds"`
 	ImportSeedRelays                     []string            `json:"import_seed_relays"`
+	DmRelays                             []string            `json:"dm_relays"`
 	BackupProvider                       string              `json:"backup_provider"`
 	BackupIntervalHours                  int                 `json:"backup_interval_hours"`
 	WotDepth                             int                 `json:"wot_depth"`
@@ -115,6 +116,7 @@ func loadConfig() Config {
 		ImportOwnerNotesFetchTimeoutSeconds:  getEnvInt("IMPORT_OWNER_NOTES_FETCH_TIMEOUT_SECONDS", 60),
 		ImportTaggedNotesFetchTimeoutSeconds: getEnvInt("IMPORT_TAGGED_NOTES_FETCH_TIMEOUT_SECONDS", 120),
 		ImportSeedRelays:                     getRelayListFromFile(getEnv("IMPORT_SEED_RELAYS_FILE")),
+		DmRelays:                             getRelayListFromFile(getEnvString("DM_RELAYS_FILE", "")),
 		BackupProvider:                       getEnvString("BACKUP_PROVIDER", "none"),
 		BackupIntervalHours:                  getEnvInt("BACKUP_INTERVAL_HOURS", 24),
 		WotDepth:                             getEnvInt("WOT_DEPTH", defaultWotDepth),

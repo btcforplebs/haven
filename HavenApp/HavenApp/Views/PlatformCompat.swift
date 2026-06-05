@@ -36,40 +36,87 @@ extension PlatformImage {
 // MARK: - Platform Colors
 
 extension Color {
+    @MainActor
     static var platformControlBackground: Color {
+        if ConfigService.shared.config.useOLED {
+            return Color.black
+        }
         #if canImport(AppKit)
-        Color(NSColor.windowBackgroundColor)
+        return Color(NSColor.windowBackgroundColor)
         #else
-        Color(UIColor.secondarySystemGroupedBackground)
+        return Color(UIColor.secondarySystemGroupedBackground)
         #endif
     }
 
+    @MainActor
     static var platformWindowBackground: Color {
-        #if canImport(AppKit)
-        Color(NSColor.windowBackgroundColor)
-        #else
-        Color(UIColor.systemBackground)
-        #endif
+        if ConfigService.shared.config.useOLED {
+            return Color.black
+        }
+        return Color(red: 0.08, green: 0.08, blue: 0.1)
     }
 
+    @MainActor
     static var platformTextBackground: Color {
+        if ConfigService.shared.config.useOLED {
+            return Color.black
+        }
         #if canImport(AppKit)
-        Color(NSColor.textBackgroundColor)
+        return Color(NSColor.textBackgroundColor)
         #else
-        Color(UIColor.systemBackground)
+        return Color(UIColor.systemBackground)
         #endif
     }
 
+    @MainActor
     static var platformSecondaryGroupedBackground: Color {
-        Color(red: 0.12, green: 0.12, blue: 0.16)
+        if ConfigService.shared.config.useOLED {
+            return Color.black
+        }
+        return Color(red: 0.12, green: 0.12, blue: 0.16)
     }
 
+    @MainActor
     static var platformTertiaryGroupedBackground: Color {
-        Color(red: 0.15, green: 0.15, blue: 0.2)
+        if ConfigService.shared.config.useOLED {
+            return Color(red: 0.05, green: 0.05, blue: 0.07)
+        }
+        return Color(red: 0.15, green: 0.15, blue: 0.2)
     }
 
+    @MainActor
     static var platformSeparator: Color {
-        Color(red: 0.2, green: 0.2, blue: 0.25)
+        if ConfigService.shared.config.useOLED {
+            return Color(red: 0.15, green: 0.15, blue: 0.18)
+        }
+        return Color(red: 0.2, green: 0.2, blue: 0.25)
+    }
+
+    /// Card/container backgrounds (StatsCard, RelayRow, KindRow, etc.)
+    @MainActor
+    static var platformCardBackground: Color {
+        if ConfigService.shared.config.useOLED {
+            return Color(red: 0.06, green: 0.06, blue: 0.06)
+        }
+        return Color(red: 0.12, green: 0.12, blue: 0.12).opacity(0.6)
+    }
+
+    /// Subtle card borders — nearly invisible in OLED mode
+    @MainActor
+    static var platformCardBorder: Color {
+        if ConfigService.shared.config.useOLED {
+            return Color.white.opacity(0.02)
+        }
+        return Color.white.opacity(0.04)
+    }
+
+    /// Console/terminal header background
+    @MainActor
+    static var platformConsoleHeaderBackground: Color {
+        if ConfigService.shared.config.useOLED {
+            return Color(red: 0.04, green: 0.04, blue: 0.05)
+        }
+        return Color(red: 0.12, green: 0.12, blue: 0.15)
     }
 }
 
@@ -194,6 +241,7 @@ extension View {
     @ViewBuilder
     func applyGlassCapsule() -> some View {
         #if os(iOS)
+        let isOLED = ConfigService.shared.config.useOLED
         if #available(iOS 26.0, *) {
             self.background(
                 Color.clear
@@ -205,18 +253,16 @@ extension View {
         } else {
             self
                 .background(
-                    Color.clear
-                        .overlay(
-                            Capsule()
-                                .fill(.ultraThinMaterial)
-                        )
+                    Capsule()
+                        .fill(.ultraThinMaterial)
+                        .opacity(isOLED ? 0.85 : 0.55)
                 )
                 .clipShape(Capsule())
                 .overlay(
                     Capsule()
-                        .stroke(.white.opacity(0.15), lineWidth: 0.5)
+                        .stroke(.white.opacity(isOLED ? 0.25 : 0.12), lineWidth: 0.5)
                 )
-                .shadow(color: .black.opacity(0.15), radius: 10, x: 0, y: 5)
+                .shadow(color: .black.opacity(0.08), radius: 12, x: 0, y: 5)
         }
         #else
         self
@@ -224,8 +270,43 @@ extension View {
     }
     
     @ViewBuilder
+    func applyGlassCircle() -> some View {
+        #if os(iOS)
+        let isOLED = ConfigService.shared.config.useOLED
+        if #available(iOS 26.0, *) {
+            self.background(
+                Color.clear
+                    .overlay(
+                        Circle()
+                            .glassEffect(.regular, in: .circle)
+                    )
+            )
+        } else {
+            self
+                .background(
+                    Color.clear
+                        .overlay(
+                            Circle()
+                                .fill(.ultraThinMaterial)
+                                .opacity(isOLED ? 0.85 : 1.0)
+                        )
+                )
+                .clipShape(Circle())
+                .overlay(
+                    Circle()
+                        .stroke(.white.opacity(isOLED ? 0.30 : 0.15), lineWidth: 0.5)
+                )
+                .shadow(color: .black.opacity(0.15), radius: 10, x: 0, y: 5)
+        }
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder
     func applyGlassRect(cornerRadius: CGFloat = 16) -> some View {
         #if os(iOS)
+        let isOLED = ConfigService.shared.config.useOLED
         if #available(iOS 26.0, *) {
             self.background(
                 Color.clear
@@ -241,12 +322,13 @@ extension View {
                         .overlay(
                             RoundedRectangle(cornerRadius: cornerRadius)
                                 .fill(.ultraThinMaterial)
+                                .opacity(isOLED ? 0.85 : 1.0)
                         )
                 )
                 .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
                 .overlay(
                     RoundedRectangle(cornerRadius: cornerRadius)
-                        .stroke(.white.opacity(0.15), lineWidth: 0.5)
+                        .stroke(.white.opacity(isOLED ? 0.30 : 0.15), lineWidth: 0.5)
                 )
                 .shadow(color: .black.opacity(0.15), radius: 10, x: 0, y: 5)
         }
