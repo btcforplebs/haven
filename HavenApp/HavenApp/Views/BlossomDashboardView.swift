@@ -101,14 +101,14 @@ struct BlossomDashboardView: View {
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
-                            .background(Color(UIColor.secondarySystemBackground))
+                            .background(Color.platformSecondaryGroupedBackground)
 
                             Divider()
 
                             ActivityLogView(logs: activityLogs, syncMessage: syncMessage)
                                 .frame(height: 300)
                         }
-                        .background(Color(UIColor.tertiarySystemBackground))
+                        .background(Color.platformTertiaryGroupedBackground)
                         .cornerRadius(8)
                         .overlay(
                             RoundedRectangle(cornerRadius: 8)
@@ -119,7 +119,9 @@ struct BlossomDashboardView: View {
                 }
                 .padding(.vertical)
             }
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 6) {
@@ -132,10 +134,10 @@ struct BlossomDashboardView: View {
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
                 }
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .primaryAction) {
                     HStack(spacing: 12) {
                         Button(action: { showingBlossomSettings = true }) {
                             Image(systemName: "gearshape")
@@ -157,7 +159,9 @@ struct BlossomDashboardView: View {
                 BlossomSettingsView()
                     .environmentObject(configService)
                     .environmentObject(nostrService)
+                    #if os(iOS)
                     .navigationBarTitleDisplayMode(.inline)
+                    #endif
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
                             Button("Done") { showingBlossomSettings = false }
@@ -462,7 +466,7 @@ struct UnifiedStatCard: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 16)
-            .background(Color(UIColor.secondarySystemBackground))
+            .background(Color.platformSecondaryGroupedBackground)
             .cornerRadius(12)
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
@@ -533,7 +537,7 @@ struct QuickActionsSection: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 8)
-                .background(Color(UIColor.secondarySystemBackground))
+                .background(Color.platformSecondaryGroupedBackground)
                 .cornerRadius(8)
             }
         }
@@ -570,7 +574,7 @@ struct UnifiedActionButton: View {
             }
             .frame(maxWidth: .infinity)
             .frame(height: 70)
-            .background(Color(UIColor.secondarySystemBackground))
+            .background(Color.platformSecondaryGroupedBackground)
             .cornerRadius(10)
             .overlay(
                 RoundedRectangle(cornerRadius: 10)
@@ -608,7 +612,7 @@ struct MirrorStatusSection: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
-                .background(Color(UIColor.secondarySystemBackground))
+                .background(Color.platformSecondaryGroupedBackground)
             }
             .buttonStyle(.plain)
 
@@ -650,7 +654,7 @@ struct MirrorRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color(UIColor.secondarySystemBackground))
+        .background(Color.platformSecondaryGroupedBackground)
         .overlay(
             Rectangle()
                 .fill(Color.white.opacity(0.03))
@@ -733,7 +737,7 @@ private struct BlossomStorageRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color(UIColor.secondarySystemBackground))
+        .background(Color.platformSecondaryGroupedBackground)
         .overlay(
             Rectangle()
                 .fill(Color.white.opacity(0.03))

@@ -1,6 +1,14 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+// This screen is an iOS-only media gallery: it uses UIKit types (UIImage,
+// UIColor, navigationBarTitleDisplayMode) and has no macOS call sites, yet the
+// file is a member of BOTH app targets — so without this guard it breaks the
+// macOS build ("cannot find type 'UIImage'"). Compile it for iOS only; the
+// macOS Blossom UI lives in BlossomDashboardView. If this is ever needed on
+// macOS, port it to PlatformImage / Color.platform* rather than dropping the guard.
+#if os(iOS)
+
 // MARK: - BlossomMediaListView
 
 /// Visual media gallery showing local Blossom content with easy mirror management.
@@ -613,3 +621,5 @@ struct SyncProgressSheet: View {
         .presentationDetents([.height(200)])
     }
 }
+
+#endif // os(iOS)

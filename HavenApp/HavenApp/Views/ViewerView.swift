@@ -1016,7 +1016,7 @@ struct ViewerView: View {
     private var iOSContent: some View {
         viewContentPlatform
         .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
+            ToolbarItem(placement: .cancellationAction) {
                 if !mediaOnly {
                     HStack(spacing: 12) {
                         IconFilterButton(icon: "doc.text", tooltip: "Notes", isSelected: viewMode == .notes, color: .havenPurple) {
@@ -1072,7 +1072,7 @@ struct ViewerView: View {
                     }
                 }
             }
-            ToolbarItem(placement: .navigationBarTrailing) {
+            ToolbarItem(placement: .primaryAction) {
                 HStack(spacing: 4) {
                     if !mediaOnly && viewMode != .media {
                         IconFilterButton(
@@ -1217,11 +1217,20 @@ struct ViewerView: View {
         .onChange(of: selectedMedia) { _, _ in
             isCopied = false
         }
+        #if os(iOS)
         .fullScreenCover(isPresented: isPresentingViewer) {
             if let item = selectedMedia {
                 mediaViewerContent(for: item)
             }
         }
+        #else
+        // macOS has no fullScreenCover — present the media viewer as a sheet.
+        .sheet(isPresented: isPresentingViewer) {
+            if let item = selectedMedia {
+                mediaViewerContent(for: item)
+            }
+        }
+        #endif
         // -- handlers from viewContentWithHandlers --
         .modifier(ViewerChangeHandlers(
             viewMode: viewMode,
@@ -1350,8 +1359,10 @@ struct ViewerView: View {
                     .environmentObject(nostrService)
                     .environmentObject(StatsService.shared)
                     .navigationTitle("")
+                    #if os(iOS)
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbarBackground(.hidden, for: .navigationBar)
+                    #endif
                     .toolbar {
                         ToolbarItem(placement: .confirmationAction) {
                             Button("Done") { showingRelayDashboard = false }
@@ -5964,9 +5975,11 @@ struct MirrorStatusSheet: View {
                 }
             }
             .navigationTitle("Blossom Mirrors")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") {
                         dismiss()
                     }
