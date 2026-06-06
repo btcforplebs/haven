@@ -154,10 +154,14 @@ enum NIP17Service {
             timestamp: giftWrapTimestamp
         )
 
-        // Sign gift wrap with ephemeral key
-        guard let giftWrapCStr = SignEventC(
+        // Mine PoW + sign gift wrap with ephemeral key
+        let powSnap = PowPreferences.snapshot()
+        let dmDiff = powSnap.dmEnabled ? powSnap.dmDifficulty : 0
+        guard let giftWrapCStr = MineAndSignEventC(
             UnsafeMutablePointer(mutating: (giftWrapEventJSON as NSString).utf8String),
-            UnsafeMutablePointer(mutating: (ephemeralSk as NSString).utf8String)
+            UnsafeMutablePointer(mutating: (ephemeralSk as NSString).utf8String),
+            Int32(dmDiff),
+            Int32(10_000_000)
         ) else {
             throw NIP17Service.NIP17Error.eventSigningFailed
         }
@@ -235,9 +239,14 @@ enum NIP17Service {
         let encryptedSeal = try NIP44Service.encrypt(plaintext: sealJSONForEncryption, recipientPubkey: giftWrapRecipient, senderPrivkey: ephemeralSk)
         let giftWrapEventJSON = try buildGiftWrapEventJSON(ephemeralPubkey: ephemeralPk, encryptedContent: encryptedSeal, recipientPubkey: giftWrapRecipient, timestamp: giftWrapTimestamp)
 
-        guard let giftWrapCStr = SignEventC(
+        // Mine PoW + sign gift wrap with ephemeral key
+        let powSnap = PowPreferences.snapshot()
+        let dmDiff = powSnap.dmEnabled ? powSnap.dmDifficulty : 0
+        guard let giftWrapCStr = MineAndSignEventC(
             UnsafeMutablePointer(mutating: (giftWrapEventJSON as NSString).utf8String),
-            UnsafeMutablePointer(mutating: (ephemeralSk as NSString).utf8String)
+            UnsafeMutablePointer(mutating: (ephemeralSk as NSString).utf8String),
+            Int32(dmDiff),
+            Int32(10_000_000)
         ) else { throw NIP17Error.eventSigningFailed }
 
         let giftWrapStr = String(cString: giftWrapCStr)

@@ -18,11 +18,9 @@ struct ViewerView: View {
     @StateObject private var feedService = FeedService.shared
 
     @State private var navigationPath = NavigationPath()
-    @State private var searchText = ""
     @State private var committedSearch = ""
     @State private var searchScope: SearchScope = .notes
     @State private var displayProfileResults: [FeedProfile] = []
-    @FocusState private var isSearchFocused: Bool
     @State private var viewMode: ViewMode = .notes
 
     init(mediaOnly: Bool = false, embedded: Bool = false) {
@@ -107,14 +105,14 @@ struct ViewerView: View {
     @State private var activeUploadTasks: [Task<Void, Never>] = []
     @State private var showingBlossomMediaList = false
     @State private var mediaLayoutMode: MediaLayoutMode = .grid
-    @State private var noteLayoutMode: NoteLayoutMode = .expanded
+    @AppStorage("viewerNoteLayoutMode") private var noteLayoutMode: NoteLayoutMode = .expanded
 
     enum MediaLayoutMode {
         case grid
         case list
     }
 
-    enum NoteLayoutMode {
+    enum NoteLayoutMode: String {
         case expanded
         case compact
     }
@@ -129,8 +127,6 @@ struct ViewerView: View {
     @State private var updateGeneration: Int = 0
     @State private var dragOffset: CGSize = .zero
     @State private var showingRelayDashboard = false
-    @State private var isSearchBarVisible = false
-    @State private var searchDebounceWork: DispatchWorkItem?
 
     // Static regex pattern to avoid recompilation
     nonisolated private static let hexPattern = try! NSRegularExpression(pattern: "[a-f0-9]{64}", options: .caseInsensitive)
@@ -720,10 +716,7 @@ struct ViewerView: View {
                             // Owner sees all media on the relay
                             return true
                         }
-                        // Whitelisted accounts see only their own media + media they're tagged in
-                        let isMine = item.pubkey == owner
-                        let isTagged = item.tags?.contains { $0.count >= 2 && $0[0] == "p" && $0[1] == owner } ?? false
-                        return isMine || isTagged
+                        return item.pubkey == owner
                     case .mine: return item.pubkey == owner
                     case .tagged:
                         if item.pubkey == owner { return false }
@@ -1036,28 +1029,6 @@ struct ViewerView: View {
                         IconFilterButton(icon: "bolt.fill", tooltip: "Zaps", isSelected: viewMode == .zaps, color: .havenPurple) {
                             withAnimation(.easeInOut(duration: 0.15)) { viewMode = .zaps }
                         }
-                        Button {
-                            withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                                isSearchBarVisible.toggle()
-                                if isSearchBarVisible {
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                        isSearchFocused = true
-                                    }
-                                } else {
-                                    searchText = ""
-                                    committedSearch = ""
-                                }
-                            }
-                        } label: {
-                            Image(systemName: "magnifyingglass")
-                                .font(.appSystem(size: 14, weight: .semibold))
-                                .foregroundColor(isSearchBarVisible ? .white : .secondary)
-                                .frame(width: 34, height: 34)
-                                .background(
-                                    Circle()
-                                        .fill(isSearchBarVisible ? Color.havenPurple : Color.secondary.opacity(0.15))
-                                )
-                        }
                     }
                 } else {
                     HStack(spacing: 12) {
@@ -1103,6 +1074,18 @@ struct ViewerView: View {
             }
             ToolbarItem(placement: .navigationBarTrailing) {
                 HStack(spacing: 4) {
+                    if !mediaOnly && viewMode != .media {
+                        IconFilterButton(
+                            icon: "rectangle.compress.vertical",
+                            tooltip: "Condensed View",
+                            isSelected: noteLayoutMode == .compact,
+                            color: .havenPurple
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                noteLayoutMode = noteLayoutMode == .compact ? .expanded : .compact
+                            }
+                        }
+                    }
                     if viewMode == .notes {
                         HStack(spacing: 4) {
                             IconFilterButton(icon: "square.stack", tooltip: "All", isSelected: contentFilter == .all, color: .havenPurple) { contentFilter = .all }
@@ -1495,101 +1478,6 @@ struct ViewerView: View {
         }
     }
 
-    private var searchPlaceholder: String {
-        switch searchScope {
-        case .notes:
-            return viewMode == .zaps ? "Search zapped notes..."
-                 : viewMode == .likes ? "Search liked notes..."
-                 : "Search notes..."
-        case .profiles:
-            return "Search profiles..."
-        case .hashtags:
-            return "Search hashtags..."
-        }
-    }
-
-    @ViewBuilder
-    private var searchScopeChips: some View {
-        HStack(spacing: 2) {
-            ForEach(SearchScope.allCases, id: \.self) { scope in
-                FilterButton(
-                    title: scope.label,
-                    icon: scope.icon,
-                    color: .havenPurple,
-                    isSelected: searchScope == scope
-                ) {
-                    searchScope = scope
-                    if !searchText.isEmpty {
-                        committedSearch = searchText
-                    }
-                }
-            }
-        }
-    }
-
-    #if os(iOS)
-    private var relaySearchBar: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "magnifyingglass")
-                .font(.appSystem(size: 15, weight: .semibold))
-                .foregroundColor(.secondary)
-
-            TextField(searchPlaceholder, text: $searchText)
-                .textFieldStyle(.plain)
-                .font(.appSystem(size: 15))
-                .foregroundColor(.primary)
-                .focused($isSearchFocused)
-                .submitLabel(.search)
-                .onSubmit {
-                    committedSearch = searchText
-                }
-                .onChange(of: searchText) { _, newValue in
-                    searchDebounceWork?.cancel()
-                    let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if trimmed.isEmpty {
-                        committedSearch = ""
-                        return
-                    }
-                    let work = DispatchWorkItem {
-                        committedSearch = newValue
-                    }
-                    searchDebounceWork = work
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
-                }
-
-            if !searchText.isEmpty {
-                Button(action: {
-                    searchText = ""
-                    committedSearch = ""
-                }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.appSystem(size: 15))
-                        .foregroundColor(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-
-            Button("Cancel") {
-                isSearchFocused = false
-                withAnimation(.spring(response: 0.25, dampingFraction: 0.85)) {
-                    isSearchBarVisible = false
-                }
-                searchText = ""
-                committedSearch = ""
-            }
-            .font(.appSystem(size: 14, weight: .medium))
-            .foregroundColor(Color.havenPurple)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(Color.secondary.opacity(0.1))
-        .cornerRadius(10)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(Color.platformWindowBackground)
-    }
-    #endif
-
     @ViewBuilder
     private var listContent: some View {
         VStack(spacing: 0) {
@@ -1611,9 +1499,6 @@ struct ViewerView: View {
         }
         .padding(.vertical, 16)
         .contentShape(Rectangle())
-        .onTapGesture {
-            isSearchFocused = false
-        }
     }
 
     @ViewBuilder
@@ -1697,14 +1582,6 @@ struct ViewerView: View {
                         }
                     }
                     .tabBarBottomPadding()
-                }
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    VStack(spacing: 0) {
-                        if isSearchBarVisible {
-                            relaySearchBar
-                                .transition(.move(edge: .top).combined(with: .opacity))
-                        }
-                    }
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .refreshable {
@@ -2149,13 +2026,6 @@ struct ViewerView: View {
 
             Divider()
 
-            #if os(iOS)
-            if isSearchBarVisible {
-                relaySearchBar
-                    .transition(.move(edge: .top).combined(with: .opacity))
-            }
-            #endif
-
             ScrollView {
                 VStack(spacing: 0) {
                     listContent
@@ -2252,8 +2122,12 @@ struct ViewerView: View {
                 } else if viewMode == .media {
                     uploadButton
                 }
+
+                if viewMode != .media {
+                    compactToggleButton
+                }
             }
-            
+
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal)
@@ -2386,8 +2260,8 @@ struct ViewerView: View {
 
     private var compactToggleButton: some View {
         ModeButton(
-            title: noteLayoutMode == .compact ? "Expand" : "Compact",
-            icon: noteLayoutMode == .compact ? "rectangle.expand.vertical" : "rectangle.compress.vertical",
+            title: "Compact",
+            icon: "rectangle.compress.vertical",
             isSelected: noteLayoutMode == .compact
         ) {
             withAnimation(.easeInOut(duration: 0.15)) {
@@ -4494,12 +4368,156 @@ struct NoteRow: View {
     }
     
     var body: some View {
+        Group {
+            if layoutMode == .compact {
+                compactLayout
+            } else {
+                expandedLayout
+            }
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            if noteType != .mine {
+                Button(action: {
+                    showingReportDialog = true
+                }) {
+                    Label("Report Post", systemImage: "flag.fill")
+                }
+
+                Divider()
+
+                Button(action: {
+                    blockUser(hexPubkey: event.pubkey)
+                }) {
+                    Label("Block User", systemImage: "hand.raised.fill")
+                }
+            }
+        }
+        .sheet(isPresented: $showingReportDialog) {
+            UGCReportingDialog(eventId: event.id, pubkey: event.pubkey, onDismiss: { showingReportDialog = false }) {
+                // Background refresh will handle hiding it, but we can proactively trigger update
+                nostrService.objectWillChange.send()
+            }
+            .environmentObject(nostrService)
+            .environmentObject(configService)
+        }
+        .onAppear {
+            if nostrService.profiles[event.pubkey] == nil {
+                nostrService.fetchMissingProfiles(for: [event.pubkey])
+            }
+        }
+    }
+
+    // MARK: - Compact Layout
+    /// A condensed single-row layout mirroring the Feed's compact mode:
+    /// 32pt avatar, name · time header, two lines of plain text, and a small
+    /// media thumbnail. No engagement bar — tapping the row opens the detail view.
+    private var compactLayout: some View {
+        let urls = event.mediaURLs
+        let innerUrls = repostedEvent?.mediaURLs ?? []
+        let firstMedia = urls.first ?? innerUrls.first
+        let totalMedia = urls.count + innerUrls.count
+        let contentToShow: String = {
+            if event.kind == 6, cleanContent.isEmpty, let inner = repostedEvent {
+                return inner.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            return cleanContent
+        }()
+
+        return HStack(alignment: .top, spacing: 8) {
+            AvatarView(
+                url: nostrService.profiles[event.pubkey]?.pictureURL,
+                pubkey: event.pubkey,
+                size: 32
+            )
+            .overlay(Circle().stroke(Color(red: 0.2, green: 0.2, blue: 0.25), lineWidth: 0.5))
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 4) {
+                    Text(displayName)
+                        .font(.appSystem(size: 13, weight: .semibold))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+
+                    Image(systemName: noteType.icon)
+                        .font(.appSystem(size: 9))
+                        .foregroundColor(noteType.color)
+
+                    Text("· \(timeAgo(from: event.createdAtDate))")
+                        .font(.appSystem(size: 11, weight: .regular, design: .monospaced))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+
+                    Spacer(minLength: 4)
+
+                    if event.kind == 6 {
+                        Image(systemName: "arrow.2.squarepath")
+                            .font(.appSystem(size: 10))
+                            .foregroundColor(.green.opacity(0.7))
+                    }
+                    if event.isReply {
+                        Image(systemName: "arrowshape.turn.up.left.fill")
+                            .font(.appSystem(size: 10))
+                            .foregroundColor(Color.havenPurple.opacity(0.7))
+                    }
+                }
+
+                if !contentToShow.isEmpty {
+                    Text(NostrContentFormatter.resolveMentionsPlainText(contentToShow))
+                        .font(.appSystem(size: 14))
+                        .foregroundColor(.white)
+                        .lineLimit(2)
+                        .lineSpacing(1)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            if let firstMedia = firstMedia {
+                ZStack(alignment: .bottomTrailing) {
+                    FeedMediaView(url: firstMedia, isThumbnail: true)
+                        .frame(width: 60, height: 60)
+                        .aspectRatio(1, contentMode: .fill)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                    if totalMedia > 1 {
+                        Text("+\(totalMedia - 1)")
+                            .font(.appSystem(size: 10, weight: .bold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Color.black.opacity(0.7))
+                            .clipShape(Capsule())
+                            .padding(4)
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            ZStack {
+                Color.platformSecondaryGroupedBackground
+                Color.havenPurple.opacity(0.015)
+            }
+        )
+        .cornerRadius(10)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.havenPurple.opacity(0.15), lineWidth: 0.5)
+        )
+        .contentShape(Rectangle())
+    }
+
+    // MARK: - Expanded Layout
+
+    private var expandedLayout: some View {
         let avatarSize: CGFloat = layoutMode == .compact ? 32 : 40
         let headerSpacing: CGFloat = layoutMode == .compact ? 8 : 12
         let contentFontSize: CGFloat = layoutMode == .compact ? 14 : 15
         let cardSpacing: CGFloat = layoutMode == .compact ? 8 : 10
 
-        VStack(alignment: .leading, spacing: cardSpacing) {
+        return VStack(alignment: .leading, spacing: cardSpacing) {
             // Header with profile and timestamp
             HStack(alignment: .center, spacing: headerSpacing) {
                 AvatarView(
@@ -4625,37 +4643,6 @@ struct NoteRow: View {
         .hoverEffect(.lift)
         #endif
         .clipped()
-        .buttonStyle(.plain)
-        .contextMenu {
-            if noteType != .mine {
-                Button(action: {
-                    showingReportDialog = true
-                }) {
-                    Label("Report Post", systemImage: "flag.fill")
-                }
-                
-                Divider()
-                
-                Button(action: {
-                    blockUser(hexPubkey: event.pubkey)
-                }) {
-                    Label("Block User", systemImage: "hand.raised.fill")
-                }
-            }
-        }
-        .sheet(isPresented: $showingReportDialog) {
-            UGCReportingDialog(eventId: event.id, pubkey: event.pubkey, onDismiss: { showingReportDialog = false }) {
-                // Background refresh will handle hiding it, but we can proactively trigger update
-                nostrService.objectWillChange.send()
-            }
-            .environmentObject(nostrService)
-            .environmentObject(configService)
-        }
-        .onAppear {
-            if nostrService.profiles[event.pubkey] == nil {
-                nostrService.fetchMissingProfiles(for: [event.pubkey])
-            }
-        }
     }
 
     private func avatarGradientForType(_ type: NoteType) -> LinearGradient {
@@ -5218,6 +5205,8 @@ struct MediaListItem: View {
     @State private var isMirroringToLocal = false
     @State private var isPushingToMirrors = false
     @State private var mirrorStatusMessage: String?
+    @State private var mirroredCount: Int? = nil
+    @State private var totalMirrors: Int = 0
 
     var body: some View {
         Button(action: onSelect) {
@@ -5263,13 +5252,23 @@ struct MediaListItem: View {
                 // Location Status
                 VStack(alignment: .leading, spacing: 4) {
                     if !isRemoteMedia {
-                        HStack(spacing: 4) {
+                        HStack(spacing: 8) {
+                            // Local storage — icon only
                             Image(systemName: "internaldrive.fill")
-                                .font(.appSystem(size: 11))
-                            Text("Local")
-                                .font(.appSystem(size: 13, weight: .medium))
+                                .font(.appSystem(size: 13))
+                                .foregroundColor(.green)
+
+                            // Blossom mirror count (x/x)
+                            if totalMirrors > 0 {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "cloud.fill")
+                                        .font(.appSystem(size: 11))
+                                    Text(mirrorCountText)
+                                        .font(.appSystem(size: 13, weight: .medium))
+                                }
+                                .foregroundColor(mirrorTint)
+                            }
                         }
-                        .foregroundColor(.green)
                     } else {
                         HStack(spacing: 4) {
                             Image(systemName: "cloud.fill")
@@ -5280,9 +5279,6 @@ struct MediaListItem: View {
                         }
                         .foregroundColor(.blue)
                     }
-
-                    // TODO: Add mirror count when available
-                    // Text("2 mirrors").font(.caption).foregroundColor(.secondary)
                 }
 
                 Spacer()
@@ -5328,6 +5324,9 @@ struct MediaListItem: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
         }
         .buttonStyle(.plain)
+        .task(id: item.id) {
+            await loadMirrorCount()
+        }
         .contextMenu {
             Button(action: {
                 PlatformClipboard.copy(item.shareURL(with: configService).absoluteString)
@@ -5508,6 +5507,37 @@ struct MediaListItem: View {
         saveMediaToPhotos(item: item)
     }
     #endif
+
+    /// Cloud label text, e.g. "2/3". Shows the total while the count is loading.
+    private var mirrorCountText: String {
+        if let count = mirroredCount {
+            return "\(count)/\(totalMirrors)"
+        }
+        return "–/\(totalMirrors)"
+    }
+
+    /// Tint for the cloud badge: gray while loading / not mirrored, orange when
+    /// partially mirrored, green when present on every configured mirror.
+    private var mirrorTint: Color {
+        guard let count = mirroredCount, count > 0 else { return .secondary }
+        return count >= totalMirrors ? .green : .orange
+    }
+
+    /// Checks how many configured Blossom mirrors hold this blob.
+    private func loadMirrorCount() async {
+        guard !isRemoteMedia else { return }
+        let mirrors = configService.config.activeBlossomMirrors
+        await MainActor.run { totalMirrors = mirrors.count }
+        guard !mirrors.isEmpty else { return }
+
+        let sha256 = item.url.deletingPathExtension().lastPathComponent
+        guard sha256.count == 64, sha256.allSatisfy({ $0.isHexDigit }) else { return }
+
+        let service = BlossomService(configService: configService, nostrService: nostrService)
+        let status = await service.checkMirrorStatus(sha256: sha256)
+        let count = status.values.filter { $0 }.count
+        await MainActor.run { mirroredCount = count }
+    }
 }
 
 struct RetryableAsyncImage: View {
@@ -5848,7 +5878,7 @@ struct SourceIndicatorView: View {
         isMirroring = true
         Task {
             let service = BlossomService(configService: configService, nostrService: nostrService)
-            let success = await service.downloadFromURL(url: url)
+            let success = await service.downloadFromURL(url: url, mirrorToExternal: true)
             await MainActor.run {
                 isMirroring = false
                 if success {

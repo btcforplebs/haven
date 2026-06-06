@@ -1255,6 +1255,7 @@ struct SearchView: View {
 
     @State private var searchQuery: String = ""
     @State private var resultTypeFilter: ResultTypeFilter = .all
+    @State private var searchMode: SearchMode = .relay
     @State private var searchResults: SearchResults = .empty
     @State private var isSearching = false
     @State private var searchDebounceTask: Task<Void, Never>?
@@ -1264,9 +1265,30 @@ struct SearchView: View {
     @State private var pendingDirectNoteId: String?
     @State private var showingCompose = false
     @State private var recentSearches: [String] = UserDefaults.standard.stringArray(forKey: "recentSearches") ?? []
+    @State private var cachedTrending: [String] = []
+    @State private var cachedSuggested: [(String, FeedProfile)] = []
+    @State private var lastDiscoveryRefresh: Date = .distantPast
     #if os(iOS)
     @FocusState private var searchFieldFocused: Bool
     #endif
+
+    enum SearchMode: CaseIterable {
+        case relay, global
+
+        var label: String {
+            switch self {
+            case .relay: return "Relay"
+            case .global: return "Global"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .relay: return "externaldrive.connected.to.line.below"
+            case .global: return "globe"
+            }
+        }
+    }
 
     enum ResultTypeFilter: CaseIterable {
         case all, users, notes, hashtags, links
@@ -1320,7 +1342,7 @@ struct SearchView: View {
         UserDefaults.standard.set(recentSearches, forKey: "recentSearches")
     }
 
-    private var trendingHashtags: [String] {
+    private func computeTrendingHashtags() -> [String] {
         var counts: [String: Int] = [:]
         for note in feedService.notes {
             for tag in note.tags where tag.count >= 2 && tag[0] == "t" {
@@ -1331,7 +1353,7 @@ struct SearchView: View {
         return counts.sorted { $0.value > $1.value }.prefix(8).map { $0.key }
     }
 
-    private var suggestedProfiles: [(String, FeedProfile)] {
+    private func computeSuggestedProfiles() -> [(String, FeedProfile)] {
         // Profiles that appear most in the feed (most active posters)
         var postCounts: [String: Int] = [:]
         for note in feedService.notes {
@@ -1347,6 +1369,18 @@ struct SearchView: View {
                       profile.name != nil || profile.displayName != nil else { return nil }
                 return (pubkey, profile)
             }
+    }
+
+    /// Recomputes the empty-state discovery lists (trending hashtags + suggested
+    /// profiles) into cached state. The feed streams events continuously, so these
+    /// are throttled to avoid the empty state reshuffling on every published change.
+    private func refreshDiscovery(force: Bool = false) {
+        guard searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let now = Date()
+        guard force || now.timeIntervalSince(lastDiscoveryRefresh) >= 5 else { return }
+        lastDiscoveryRefresh = now
+        cachedTrending = computeTrendingHashtags()
+        cachedSuggested = computeSuggestedProfiles()
     }
 
     var body: some View {
@@ -1376,6 +1410,8 @@ struct SearchView: View {
                                     searchResults = .empty
                                     pendingDirectNoteId = nil
                                     isSearching = false
+                                    nostrService.cancelGlobalSearch()
+                                    refreshDiscovery(force: true)
                                     return
                                 }
                                 searchDebounceTask = Task {
@@ -1390,6 +1426,7 @@ struct SearchView: View {
                             Button(action: {
                                 searchQuery = ""
                                 resultTypeFilter = .all
+                                nostrService.cancelGlobalSearch()
                                 #if os(iOS)
                                 searchFieldFocused = false
                                 #endif
@@ -1406,8 +1443,20 @@ struct SearchView: View {
                     .background(Color.secondary.opacity(0.1))
                     .cornerRadius(10)
 
-                    // Result type filter
-                    if !searchQuery.isEmpty {
+                    #if os(macOS)
+                    // macOS has no glass toolbar — keep filters/mode inline.
+                    HStack(spacing: 12) {
+                        // Search source: relay vs global
+                        HStack(spacing: 6) {
+                            ForEach(SearchMode.allCases, id: \.self) { mode in
+                                modeChip(mode)
+                            }
+                        }
+
+                        Divider()
+                            .frame(height: 16)
+
+                        // Result type filters
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 6) {
                                 ForEach(ResultTypeFilter.allCases, id: \.self) { filter in
@@ -1427,9 +1476,9 @@ struct SearchView: View {
                                     .buttonStyle(.plain)
                                 }
                             }
-                            .padding(.horizontal, 4)
                         }
                     }
+                    #endif
                 }
                 .padding()
                 .background(Color.platformWindowBackground)
@@ -1483,6 +1532,40 @@ struct SearchView: View {
             }
         }
         .animation(.spring(response: 0.4, dampingFraction: 0.75), value: feedService.feedScrollingDown)
+        .toolbar {
+            // Left glass pill: result-type filters
+            ToolbarItem(placement: .navigationBarLeading) {
+                HStack(spacing: 8) {
+                    ForEach(ResultTypeFilter.allCases, id: \.self) { filter in
+                        IconFilterButton(
+                            icon: filter.icon,
+                            tooltip: filter.label,
+                            isSelected: resultTypeFilter == filter,
+                            color: .havenPurple
+                        ) {
+                            resultTypeFilter = filter
+                        }
+                    }
+                }
+            }
+            // Right glass pill: search source (relay vs global)
+            ToolbarItem(placement: .navigationBarTrailing) {
+                HStack(spacing: 8) {
+                    ForEach(SearchMode.allCases, id: \.self) { mode in
+                        IconFilterButton(
+                            icon: mode.icon,
+                            tooltip: mode.label,
+                            isSelected: searchMode == mode,
+                            color: .havenPurple
+                        ) {
+                            guard searchMode != mode else { return }
+                            searchMode = mode
+                            rerunSearch()
+                        }
+                    }
+                }
+            }
+        }
         #endif
         .onReceive(NotificationCenter.default.publisher(for: .composeFromTabBar)) { note in
             guard (note.object as? Int) == 1 else { return }
@@ -1512,7 +1595,13 @@ struct SearchView: View {
         .sheet(item: $showingMediaUrl) { media in
             FeedMediaViewer(url: media.url, onDismiss: { showingMediaUrl = nil })
         }
+        .onAppear {
+            refreshDiscovery(force: true)
+        }
         .onReceive(feedService.$notes) { notes in
+            // Throttled refresh of the empty-state discovery lists as the feed grows.
+            refreshDiscovery()
+
             guard let noteId = pendingDirectNoteId else { return }
             if let note = notes.first(where: { $0.id == noteId }) {
                 pendingDirectNoteId = nil
@@ -1573,7 +1662,7 @@ struct SearchView: View {
                 }
 
                 // Trending hashtags
-                let trending = trendingHashtags
+                let trending = cachedTrending
                 if !trending.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Trending")
@@ -1598,7 +1687,7 @@ struct SearchView: View {
                 }
 
                 // Suggested profiles
-                let suggested = suggestedProfiles
+                let suggested = cachedSuggested
                 if !suggested.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Active in your feed")
@@ -1928,6 +2017,42 @@ struct SearchView: View {
         return nil
     }
 
+    #if os(macOS)
+    @ViewBuilder
+    private func modeChip(_ mode: SearchMode) -> some View {
+        Button(action: {
+            guard searchMode != mode else { return }
+            searchMode = mode
+            rerunSearch()
+        }) {
+            HStack(spacing: 4) {
+                Image(systemName: mode.icon)
+                    .font(.appSystem(size: 10, weight: .semibold))
+                Text(mode.label)
+                    .font(.appSystem(size: 12, weight: .semibold))
+            }
+            .foregroundColor(searchMode == mode ? .white : .secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(searchMode == mode ? Color.havenPurple : Color.secondary.opacity(0.12))
+            .cornerRadius(6)
+        }
+        .buttonStyle(.plain)
+    }
+    #endif
+
+    /// Re-run the current query, e.g. after switching between relay/global modes.
+    private func rerunSearch() {
+        nostrService.cancelGlobalSearch()
+        let trimmed = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            searchResults = .empty
+            isSearching = false
+            return
+        }
+        performSearch(query: searchQuery)
+    }
+
     private func performSearch(query: String) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -1978,6 +2103,40 @@ struct SearchView: View {
             return
         }
 
+        // Global (NIP-50) search across external relays.
+        if searchMode == .global {
+            isSearching = true
+            let requestedQuery = trimmed
+            nostrService.globalSearch(query: trimmed) { globalResults in
+                // Ignore stale completions (user changed query or switched mode).
+                guard self.searchMode == .global,
+                      self.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == requestedQuery else { return }
+
+                var results = SearchResults()
+                for profile in globalResults.profiles {
+                    results.users[profile.pubkey] = profile
+                }
+                results.notes = Array(globalResults.notes.prefix(30))
+
+                var foundHashtags = Set<String>()
+                for note in globalResults.notes {
+                    for tag in self.extractHashtags(from: note.content) where tag.lowercased().contains(trimmedQuery) {
+                        foundHashtags.insert(tag)
+                    }
+                }
+                results.hashtags = Array(foundHashtags).sorted()
+
+                let urls = self.extractURLs(from: globalResults.notes)
+                results.links = urls.filter { $0.url.lowercased().contains(trimmedQuery) ||
+                                              $0.title.lowercased().contains(trimmedQuery) }
+
+                self.searchResults = results
+                self.isSearching = false
+            }
+            return
+        }
+
+        // Relay search: filter data served by the local relay.
         isSearching = true
 
         let localProfiles = nostrService.profiles

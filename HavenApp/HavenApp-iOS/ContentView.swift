@@ -33,7 +33,16 @@ struct ContentView: View {
                 }
             } else {
                 if horizontalSizeClass == .regular {
-                    iPadSidebarView(selectedTab: $selectedTab)
+                    // iPad: persistent sidebar in landscape, bottom tab bar in
+                    // portrait (where the sidebar collapses and would otherwise
+                    // leave no visible navigation).
+                    GeometryReader { geo in
+                        if geo.size.width >= geo.size.height {
+                            iPadSidebarView(selectedTab: $selectedTab)
+                        } else {
+                            iPhoneTabView(selectedTab: $selectedTab)
+                        }
+                    }
                 } else {
                     iPhoneTabView(selectedTab: $selectedTab)
                 }
@@ -320,7 +329,7 @@ struct iPhoneTabView: View {
 
             NavigationStack(path: $searchPath) {
                 SearchView()
-                    .navigationTitle("Search")
+                    .navigationTitle("")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbarBackground(.hidden, for: .navigationBar)
                     .navigationDestination(for: FeedNote.self) { note in
@@ -565,10 +574,12 @@ struct BottomTabBar: View {
                         .frame(width: 36, height: 36)
                     Image(systemName: collapsedFABIcon)
                         .font(.appSystem(size: 15, weight: .bold))
-                        .foregroundColor(collapsedFABColor)
+                        .foregroundStyle(collapsedFABColor)
+                        .symbolRenderingMode(.monochrome)
                 }
             }
             .buttonStyle(.plain)
+            .tint(collapsedFABColor)
         }
         .transition(.scale(scale: 0.9).combined(with: .opacity))
     }

@@ -151,7 +151,7 @@ struct FeedView: View {
                     .padding(.trailing, 8)
             }
         }
-        .padding(.horizontal, isCompactModeActive && !isExpanded ? 0 : 16)
+        .padding(.horizontal, isCompactModeActive && !isExpanded ? 8 : 16)
     }
 
     var body: some View {
@@ -1462,7 +1462,7 @@ struct FeedNoteRow: View {
                 }()
 
                 if !contentToShow.isEmpty {
-                    Text(contentToShow)
+                    Text(NostrContentFormatter.resolveMentionsPlainText(contentToShow))
                         .font(.appSystem(size: 14))
                         .foregroundColor(.white)
                         .lineLimit(2)
@@ -1499,7 +1499,21 @@ struct FeedNoteRow: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
+        .background(
+            ZStack {
+                Color.platformSecondaryGroupedBackground
+                Color.havenPurple.opacity(0.015)
+            }
+        )
+        .cornerRadius(10)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(
+                    Color.havenPurple.opacity(ConfigService.shared.config.useOLED ? 0.30 : 0.15),
+                    lineWidth: ConfigService.shared.config.useOLED ? 1.0 : 0.5
+                )
+        )
         .contentShape(Rectangle())
         .onTapGesture {
             onTapRow?()

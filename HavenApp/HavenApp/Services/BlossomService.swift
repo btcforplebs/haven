@@ -499,9 +499,13 @@ class BlossomService: @unchecked Sendable {
 
     /// Download media from any URL and store it in the local Blossom server.
     /// Computes SHA256 from the downloaded data — works with any remote server, not just configured mirrors.
-    /// - Parameter url: The full URL to download from (e.g., https://blossom.primal.net/abc123.jpg)
+    /// - Parameters:
+    ///   - url: The full URL to download from (e.g., https://blossom.primal.net/abc123.jpg)
+    ///   - mirrorToExternal: Whether to also push the blob to configured external Blossom mirrors.
+    ///     Pass `true` for user-initiated "Mirror to Blossom" actions so all configured servers receive the blob.
+    ///     Defaults to `false` for internal/batch operations where only local storage is needed.
     /// - Returns: true if the blob was successfully downloaded and stored locally
-    func downloadFromURL(url: URL) async -> Bool {
+    func downloadFromURL(url: URL, mirrorToExternal: Bool = false) async -> Bool {
         var request = URLRequest(url: url)
         request.timeoutInterval = 120  // 2 minutes — 30s was too short for video files
 
@@ -519,8 +523,7 @@ class BlossomService: @unchecked Sendable {
             let contentType = httpResponse.mimeType ?? "application/octet-stream"
 
             // Upload to local relay via BUD-02 spec (HTTP PUT with kind 24242 auth).
-            // Skip external mirroring — the blob is being pulled FROM an external source.
-            let success = await saveToLocalRelay(data: data, sha256: sha256, contentType: contentType, mirrorToExternal: false)
+            let success = await saveToLocalRelay(data: data, sha256: sha256, contentType: contentType, mirrorToExternal: mirrorToExternal)
             if success {
                 logger.info("Successfully mirrored \(sha256.prefix(8)) from \(url.host ?? "remote") via local relay upload")
             }

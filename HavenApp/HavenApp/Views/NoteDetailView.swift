@@ -527,7 +527,7 @@ struct NoteDetailView: View {
     }
     
     private func threadSection(proxy: ScrollViewProxy) -> some View {
-        VStack(alignment: .leading, spacing: isCompactView ? 4 : 12) {
+        VStack(alignment: .leading, spacing: isCompactView ? 6 : 12) {
             ForEach(dynamicParents) { parent in
                 let parentProfile = nostrService.profiles[parent.pubkey]
 
@@ -605,19 +605,13 @@ struct NoteDetailView: View {
 
     @ViewBuilder
     private func compactParentNoteView(parent: FeedNote, profile: FeedProfile?, proxy: ScrollViewProxy) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            // Thread indicator
-            VStack(spacing: 0) {
-                Rectangle()
-                    .fill(Color.havenPurple.opacity(0.3))
-                    .frame(width: 2)
-                    .frame(maxHeight: .infinity)
-            }
-            .frame(width: 6)
+        let isOLED = ConfigService.shared.config.useOLED
+        let isFocusedParent = parent.id == focusedNoteId
 
-            // Avatar (24x24 for parents)
+        HStack(alignment: .top, spacing: 8) {
+            // Avatar
             AvatarView(url: profile?.pictureURL, pubkey: parent.pubkey)
-                .frame(width: 24, height: 24)
+                .frame(width: 28, height: 28)
                 .onTapGesture {
                     showingProfilePubkey = parent.pubkey
                 }
@@ -627,10 +621,10 @@ struct NoteDetailView: View {
                 HStack(spacing: 4) {
                     Text(profile?.bestName ?? shortKey(parent.pubkey))
                         .font(.appSystem(size: 12, weight: .semibold))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.white.opacity(isOLED ? 0.85 : 0.9))
                         .lineLimit(1)
 
-                    Text("· \(relativeTime(parent.createdAt))")
+                    Text("\u{b7} \(relativeTime(parent.createdAt))")
                         .font(.appSystem(size: 10))
                         .foregroundColor(.secondary.opacity(0.7))
 
@@ -640,15 +634,35 @@ struct NoteDetailView: View {
                 if !parent.content.isEmpty {
                     Text(parent.content)
                         .font(.appSystem(size: 12))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.white.opacity(isOLED ? 0.7 : 0.75))
                         .lineLimit(1)
                 }
             }
         }
         .id(parent.id)
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(
+                    isFocusedParent
+                        ? Color.havenPurple.opacity(isOLED ? 0.08 : 0.12)
+                        : Color.platformSecondaryGroupedBackground
+                )
+        )
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.havenPurple.opacity(0.015))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(
+                    isFocusedParent
+                        ? Color.havenPurple.opacity(isOLED ? 0.6 : 0.4)
+                        : Color.havenPurple.opacity(isOLED ? 0.30 : 0.15),
+                    lineWidth: isFocusedParent ? 1.5 : (isOLED ? 1.0 : 0.5)
+                )
+        )
         .padding(.horizontal, 16)
-        .padding(.vertical, 4)
-        .background(parent.id == focusedNoteId ? Color.havenPurple.opacity(0.08) : Color.clear)
         .contentShape(Rectangle())
         .onTapGesture {
             selectAndScrollToNote(parent.id, proxy: proxy)
@@ -1768,7 +1782,7 @@ struct ThreadedReplyNode: View {
 
         let isCurrentFocused = reply.id == focusedNoteId
 
-        VStack(alignment: .leading, spacing: isCompactMode ? 2 : 8) {
+        VStack(alignment: .leading, spacing: isCompactMode ? 6 : 8) {
             if isCompactMode {
                 compactReplyView(isCurrentFocused: isCurrentFocused, childReplies: childReplies)
             } else {
@@ -1831,7 +1845,7 @@ struct ThreadedReplyNode: View {
                     }
                 } else {
                     // Compact mode: show nested replies with visual depth indicators
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 6) {
                         ForEach(childReplies) { child in
                             ThreadedReplyNode(
                                 reply: child,
@@ -1918,25 +1932,13 @@ struct ThreadedReplyNode: View {
     private func compactReplyView(isCurrentFocused: Bool, childReplies: [FeedNote]) -> some View {
         let replyProfile = nostrService.profiles[reply.pubkey]
         let indentMultiplier = min(depth - 1, 5) // Cap indentation at depth 5
-        let indentWidth: CGFloat = CGFloat(indentMultiplier) * 12
+        let indentWidth: CGFloat = CGFloat(indentMultiplier) * 16
         let isOLED = ConfigService.shared.config.useOLED
 
         HStack(alignment: .top, spacing: 8) {
-            // Simplified depth indicator - minimal thread line for nested replies
-            if depth > 1 {
-                Rectangle()
-                    .fill(Color.secondary.opacity(isOLED ? 0.15 : 0.2))
-                    .frame(width: 1)
-                    .padding(.leading, indentWidth)
-            }
-
-            // Avatar - smaller and cleaner for compact mode
+            // Avatar
             AvatarView(url: replyProfile?.pictureURL, pubkey: reply.pubkey)
-                .frame(width: 16, height: 16)
-                .overlay(
-                    Circle()
-                        .stroke(Color.secondary.opacity(isOLED ? 0.12 : 0.08), lineWidth: 0.5)
-                )
+                .frame(width: 28, height: 28)
                 .onTapGesture {
                     onProfile?(reply.pubkey)
                 }
@@ -1944,28 +1946,28 @@ struct ThreadedReplyNode: View {
             // Content
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 5) {
-                    Text(replyProfile?.bestName ?? "npub…" + String(reply.pubkey.suffix(6)))
-                        .font(.appSystem(size: 11.5, weight: .semibold))
+                    Text(replyProfile?.bestName ?? "npub\u{2026}" + String(reply.pubkey.suffix(6)))
+                        .font(.appSystem(size: 12, weight: .semibold))
                         .foregroundColor(.white.opacity(isOLED ? 0.92 : 0.95))
                         .lineLimit(1)
 
                     if let nip05 = replyProfile?.nip05, !nip05.isEmpty {
                         Image(systemName: "checkmark.seal.fill")
-                            .font(.appSystem(size: 7.5))
+                            .font(.appSystem(size: 8))
                             .foregroundColor(Color.havenPurple.opacity(0.8))
                     }
 
-                    Text("· \(relativeTime(reply.createdAt))")
+                    Text("\u{b7} \(relativeTime(reply.createdAt))")
                         .font(.appSystem(size: 10))
                         .foregroundColor(.secondary.opacity(isOLED ? 0.7 : 0.8))
 
                     Spacer()
 
-                    // Reply count badge - more subtle
+                    // Reply count badge
                     if !childReplies.isEmpty {
                         HStack(spacing: 3) {
                             Image(systemName: "text.bubble")
-                                .font(.appSystem(size: 8, weight: .medium))
+                                .font(.appSystem(size: 9, weight: .medium))
                             Text("\(childReplies.count)")
                                 .font(.appSystem(size: 9, weight: .semibold, design: .monospaced))
                         }
@@ -1975,14 +1977,14 @@ struct ThreadedReplyNode: View {
 
                 if !reply.content.isEmpty {
                     Text(reply.content)
-                        .font(.appSystem(size: 11.5))
+                        .font(.appSystem(size: 12))
                         .foregroundColor(.white.opacity(isOLED ? 0.8 : 0.85))
                         .lineLimit(2)
                         .lineSpacing(1.5)
                         .padding(.top, 1)
                 }
 
-                // Compact engagement (only show if has engagement)
+                // Compact engagement
                 if expandedEngagement {
                     let reactions = groupedReactionsForReply(reply.id)
                     let zapInfo = zapTotalForReply(reply.id)
@@ -1993,29 +1995,29 @@ struct ThreadedReplyNode: View {
                             if !reactions.isEmpty {
                                 HStack(spacing: 2) {
                                     Text(reactions.first?.emoji ?? "")
-                                        .font(.appSystem(size: 9))
+                                        .font(.appSystem(size: 10))
                                     Text("\(reactions.reduce(0) { $0 + $1.count })")
-                                        .font(.appSystem(size: 8, weight: .semibold, design: .monospaced))
+                                        .font(.appSystem(size: 9, weight: .semibold, design: .monospaced))
                                         .foregroundColor(.secondary)
                                 }
                             }
                             if zapInfo.count > 0 {
-                                HStack(spacing: 1) {
+                                HStack(spacing: 2) {
                                     Image(systemName: "bolt.fill")
-                                        .font(.appSystem(size: 7))
+                                        .font(.appSystem(size: 8))
                                         .foregroundColor(.orange)
                                     Text("\(zapInfo.count)")
-                                        .font(.appSystem(size: 8, weight: .semibold, design: .monospaced))
+                                        .font(.appSystem(size: 9, weight: .semibold, design: .monospaced))
                                         .foregroundColor(.secondary)
                                 }
                             }
                             if repostCount > 0 {
-                                HStack(spacing: 1) {
+                                HStack(spacing: 2) {
                                     Image(systemName: "arrow.2.squarepath")
-                                        .font(.appSystem(size: 7))
+                                        .font(.appSystem(size: 8))
                                         .foregroundColor(.green)
                                     Text("\(repostCount)")
-                                        .font(.appSystem(size: 8, weight: .semibold, design: .monospaced))
+                                        .font(.appSystem(size: 9, weight: .semibold, design: .monospaced))
                                         .foregroundColor(.secondary)
                                 }
                             }
@@ -2026,23 +2028,29 @@ struct ThreadedReplyNode: View {
             }
         }
         .id(reply.id)
-        .padding(.vertical, 8)
-        .padding(.horizontal, 10)
+        .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 10)
-                .fill(isCurrentFocused
-                    ? Color.havenPurple.opacity(isOLED ? 0.08 : 0.12)
-                    : (isOLED ? Color.white.opacity(0.02) : Color.clear))
+                .fill(
+                    isCurrentFocused
+                        ? Color.havenPurple.opacity(isOLED ? 0.08 : 0.12)
+                        : Color.platformSecondaryGroupedBackground
+                )
+        )
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.havenPurple.opacity(0.015))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .stroke(
                     isCurrentFocused
-                        ? Color.havenPurple.opacity(isOLED ? 0.35 : 0.3)
-                        : Color.secondary.opacity(isOLED ? 0.1 : 0.06),
-                    lineWidth: isCurrentFocused ? 1 : 0.5
+                        ? Color.havenPurple.opacity(isOLED ? 0.6 : 0.4)
+                        : Color.havenPurple.opacity(isOLED ? 0.30 : 0.15),
+                    lineWidth: isCurrentFocused ? 1.5 : (isOLED ? 1.0 : 0.5)
                 )
         )
+        .padding(.leading, indentWidth)
         .contentShape(Rectangle())
         .onTapGesture {
             withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {

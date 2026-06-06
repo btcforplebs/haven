@@ -7,15 +7,18 @@ import "C"
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"log/slog"
+	"math/bits"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -381,6 +384,83 @@ func SignEventC(jsonStr *C.char, sk *C.char) *C.char {
 	}
 	if err := event.Sign(C.GoString(sk)); err != nil {
 		slog.Error("SignEventC: failed to sign event", "error", err)
+		return nil
+	}
+	res, _ := easyjson.Marshal(event)
+	return C.CString(string(res))
+}
+
+// countLeadingZeroBits counts leading zero bits in a byte slice (typically a 32-byte SHA-256 hash).
+func countLeadingZeroBits(data []byte) int {
+	n := 0
+	for _, b := range data {
+		if b == 0 {
+			n += 8
+		} else {
+			n += bits.LeadingZeros8(b)
+			break
+		}
+	}
+	return n
+}
+
+//export MineAndSignEventC
+func MineAndSignEventC(jsonStr *C.char, sk *C.char, difficulty C.int, maxAttempts C.int) *C.char {
+	diff := int(difficulty)
+	maxAtt := int(maxAttempts)
+
+	event := nostr.Event{}
+	if err := easyjson.Unmarshal([]byte(C.GoString(jsonStr)), &event); err != nil {
+		slog.Error("MineAndSignEventC: failed to unmarshal event", "error", err)
+		return nil
+	}
+
+	// If difficulty is 0, skip mining and just sign
+	if diff <= 0 {
+		if err := event.Sign(C.GoString(sk)); err != nil {
+			slog.Error("MineAndSignEventC: failed to sign event", "error", err)
+			return nil
+		}
+		res, _ := easyjson.Marshal(event)
+		return C.CString(string(res))
+	}
+
+	// Default maxAttempts safety valve
+	if maxAtt <= 0 {
+		maxAtt = 10_000_000
+	}
+
+	diffStr := strconv.Itoa(diff)
+	baseTags := make(nostr.Tags, len(event.Tags))
+	copy(baseTags, event.Tags)
+
+	for nonce := 0; nonce < maxAtt; nonce++ {
+		// Build tags with nonce appended
+		mineTags := make(nostr.Tags, len(baseTags), len(baseTags)+1)
+		copy(mineTags, baseTags)
+		mineTags = append(mineTags, nostr.Tag{"nonce", strconv.Itoa(nonce), diffStr})
+		event.Tags = mineTags
+
+		// Serialize and hash
+		h := sha256.Sum256(event.Serialize())
+
+		// Check leading zero bits
+		if countLeadingZeroBits(h[:]) >= diff {
+			// Found valid nonce — sign and return
+			if err := event.Sign(C.GoString(sk)); err != nil {
+				slog.Error("MineAndSignEventC: failed to sign mined event", "error", err)
+				return nil
+			}
+			res, _ := easyjson.Marshal(event)
+			return C.CString(string(res))
+		}
+	}
+
+	// Exhausted maxAttempts — sign without PoW (graceful degradation)
+	slog.Warn("MineAndSignEventC: exhausted maxAttempts, signing without PoW", "difficulty", diff, "maxAttempts", maxAtt)
+	event.Tags = baseTags
+	if err := event.Sign(C.GoString(sk)); err != nil {
+		slog.Error("MineAndSignEventC: fallback sign failed", "error", err)
 		return nil
 	}
 	res, _ := easyjson.Marshal(event)

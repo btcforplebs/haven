@@ -122,6 +122,69 @@ public struct NostrContentFormatter {
         return result
     }
 
+
+    // MARK: - Plain-text mention resolution (for compact views)
+
+    /// Replaces nostr:npub and nostr:nprofile with @ProfileName as plain text,
+    /// without generating markdown links or AttributedStrings.
+    @MainActor
+    public static func resolveMentionsPlainText(_ content: String) -> String {
+        var text = content
+        text = resolveMentionNames(in: text, regex: npubRegex)
+        text = resolveMentionNames(in: text, regex: nprofileRegex)
+        return text
+    }
+
+    @MainActor
+    private static func resolveMentionNames(in text: String, regex: NSRegularExpression) -> String {
+        let nsString = text as NSString
+        let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
+        var result = text
+        var offset = 0
+        for match in matches {
+            let fullRange = NSRange(location: match.range.location + offset, length: match.range.length)
+            let matchedValue = nsString.substring(with: match.range(at: 1))
+            var hexPubkey: String?
+            if matchedValue.hasPrefix("npub1") {
+                if let decoded = Bech32.decode(matchedValue) {
+                    hexPubkey = decoded.hexString
+                }
+            } else if matchedValue.hasPrefix("nprofile1") {
+                if let decoded = Bech32.decode(matchedValue) {
+                    var data = decoded.data
+                    while data.count >= 2 {
+                        let type = data.removeFirst()
+                        let length = Int(data.removeFirst())
+                        if data.count >= length {
+                            let value = data.prefix(length)
+                            if type == 0 && length == 32 {
+                                hexPubkey = value.map { String(format: "%02x", $0) }.joined()
+                                break
+                            }
+                            data.removeFirst(length)
+                        } else {
+                            break
+                        }
+                    }
+                }
+            }
+            let displayLabel: String
+            if let hex = hexPubkey, let name = NostrService.shared.profiles[hex]?.bestName {
+                displayLabel = "@\(name)"
+            } else {
+                let preview = matchedValue.prefix(12)
+                displayLabel = "@\(preview)..."
+                if let hex = hexPubkey {
+                    NostrService.shared.fetchMissingProfiles(for: [hex])
+                }
+            }
+            let prevLength = fullRange.length
+            result = (result as NSString).replacingCharacters(in: fullRange, with: displayLabel)
+            offset += displayLabel.count - prevLength
+        }
+        return result
+    }
+
     @MainActor
     private static func replaceWithLinks(in text: String, regex: NSRegularExpression, template: String, label: String? = nil) -> String {
         let nsString = text as NSString

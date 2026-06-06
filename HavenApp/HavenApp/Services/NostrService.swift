@@ -421,6 +421,105 @@ class NostrService: ObservableObject {
         }
     }
 
+    // MARK: - Global (NIP-50) Search
+
+    /// Parsed results of a NIP-50 global search.
+    struct GlobalSearchResults {
+        var profiles: [FeedProfile] = []
+        var notes: [FeedNote] = []
+    }
+
+    /// Public NIP-50 search-capable relays queried for global search.
+    private static let nip50SearchRelays = [
+        "wss://relay.nostr.band",
+        "wss://relay.noswhere.com"
+    ]
+
+    private var globalSearchClients: [WebSocketClient] = []
+    private var globalSearchCancellables = Set<AnyCancellable>()
+
+    /// NIP-50 global search across public search relays. Connects to external
+    /// search-capable relays, sends a REQ with a `search` filter for notes
+    /// (kind 1) and profiles (kind 0), collects results until a timeout, then
+    /// returns parsed FeedNotes/FeedProfiles on the main thread. Any prior
+    /// in-flight global search is cancelled first.
+    func globalSearch(query: String, completion: @escaping (GlobalSearchResults) -> Void) {
+        cancelGlobalSearch()
+
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2 else {
+            completion(GlobalSearchResults())
+            return
+        }
+
+        let relays = Self.nip50SearchRelays.compactMap { URL(string: $0) }
+        guard !relays.isEmpty else {
+            completion(GlobalSearchResults())
+            return
+        }
+
+        let collector = GlobalSearchCollector()
+        let subId = "gsearch-\(UUID().uuidString.prefix(8))"
+        var didFinish = false
+
+        let finish: () -> Void = { [weak self] in
+            guard let self = self else { return }
+            if didFinish { return }
+            didFinish = true
+            let results = collector.snapshot()
+            self.cancelGlobalSearch()
+            DispatchQueue.main.async {
+                // Merge discovered profiles into the shared cache so avatars/names render.
+                for profile in results.profiles where self.profiles[profile.pubkey] == nil {
+                    self.profiles[profile.pubkey] = profile
+                }
+                completion(results)
+            }
+        }
+
+        for url in relays {
+            let client = WebSocketClient()
+            client.isTemporary = true
+
+            client.messageSubject
+                .receive(on: processingQueue)
+                .sink { message in
+                    collector.ingest(message: message, subId: subId)
+                }
+                .store(in: &globalSearchCancellables)
+
+            client.$connectionState
+                .receive(on: DispatchQueue.main)
+                .sink { state in
+                    if state == .connected {
+                        let notesFilter: [String: Any] = ["kinds": [1], "search": trimmed, "limit": 30]
+                        let profileFilter: [String: Any] = ["kinds": [0], "search": trimmed, "limit": 20]
+                        let req = ["REQ", subId, notesFilter, profileFilter] as [Any]
+                        if let data = try? JSONSerialization.data(withJSONObject: req),
+                           let str = String(data: data, encoding: .utf8) {
+                            client.send(text: str)
+                        }
+                    }
+                }
+                .store(in: &globalSearchCancellables)
+
+            client.connect(url: url)
+            globalSearchClients.append(client)
+        }
+
+        // Return whatever was collected after a fixed window.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
+            finish()
+        }
+    }
+
+    /// Tears down any in-flight global search connections.
+    func cancelGlobalSearch() {
+        for client in globalSearchClients { client.disconnect() }
+        globalSearchClients.removeAll()
+        globalSearchCancellables.removeAll()
+    }
+
     func resetConnections() {
         for (urlString, subId) in activeSubscriptions {
             if let client = clients[urlString] {
@@ -686,6 +785,125 @@ class NostrService: ObservableObject {
             }
         } else {
             return signEvent(kind: kind, content: content, tags: tags, password: password)
+        }
+    }
+
+    // MARK: - Proof of Work Mining + Signing
+
+    /// Signs an event with NIP-13 Proof of Work mining via the Go backend.
+    /// When difficulty > 0, mines a nonce tag before signing. Falls back to plain signing on failure.
+    func mineAndSignEvent(kind: Int, content: String, tags: [[String]] = [], difficulty: Int = 0, maxAttempts: Int = 10_000_000, password: String? = nil) -> NostrEvent? {
+        var sk: String?
+        let config = ConfigService.shared.config
+
+        let activeNpub = config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
+        let signingAsOwner = activeNpub.isEmpty || activeNpub == config.ownerNpub
+
+        if signingAsOwner {
+            if !config.ownerNcryptsec.isEmpty {
+                let pwd = password ?? NIP49Service.getPasswordFromKeychain()
+                if let pwd = pwd {
+                    do {
+                        sk = try config.getDecryptedHexKey(password: pwd)
+                    } catch {
+                        print("NostrService: NIP-49 decrypt failed: \(error.localizedDescription)")
+                        return nil
+                    }
+                } else {
+                    print("NostrService: NIP-49 key exists but no password in Keychain")
+                    return nil
+                }
+            } else {
+                sk = config.ownerHexKey
+            }
+        } else {
+            do {
+                if let hexKey = try ConfigService.shared.getCredentialHexKey(forNpub: activeNpub) {
+                    sk = hexKey
+                } else {
+                    print("NostrService: No credential for active account \(activeNpub.prefix(16))..., cannot sign")
+                    return nil
+                }
+            } catch {
+                print("NostrService: Failed to decrypt whitelisted account key: \(error.localizedDescription)")
+                return nil
+            }
+        }
+
+        guard let sk = sk, !sk.isEmpty else {
+            print("NostrService: Cannot sign - no private key available")
+            return nil
+        }
+
+        let signingPubkey = signingAsOwner ? ownerHexPubkey : activeHexPubkey
+
+        var finalTags = tags
+        if kind == 1 && !finalTags.contains(where: { $0.first == "client" }) {
+            #if os(iOS)
+            let clientName: String
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                clientName = "Nostr Vault on iPadOS"
+            } else {
+                clientName = "Nostr Vault on iOS"
+            }
+            #else
+            let clientName = "Nostr Vault on MacOS"
+            #endif
+            finalTags.append(["client", clientName])
+        }
+
+        let eventDict: [String: Any] = [
+            "pubkey": signingPubkey,
+            "created_at": Int64(Date().timeIntervalSince1970),
+            "kind": kind,
+            "content": content,
+            "tags": finalTags
+        ]
+
+        guard let jsonData = try? JSONSerialization.data(withJSONObject: eventDict),
+              let jsonStr = String(data: jsonData, encoding: .utf8) else {
+            print("NostrService: Failed to serialize event to JSON")
+            return nil
+        }
+
+        guard let signedCStr = MineAndSignEventC(
+            UnsafeMutablePointer(mutating: (jsonStr as NSString).utf8String),
+            UnsafeMutablePointer(mutating: (sk as NSString).utf8String),
+            Int32(difficulty),
+            Int32(maxAttempts)
+        ) else {
+            print("NostrService: MineAndSignEventC returned nil")
+            return nil
+        }
+
+        let signedJsonStr = String(cString: signedCStr)
+        free(signedCStr)
+
+        guard let signedData = signedJsonStr.data(using: .utf8) else {
+            print("NostrService: Failed to convert signed JSON to Data")
+            return nil
+        }
+
+        do {
+            return try JSONDecoder().decode(NostrEvent.self, from: signedData)
+        } catch {
+            print("NostrService: Failed to decode signed event: \(error) — JSON: \(signedJsonStr.prefix(200))")
+            return nil
+        }
+    }
+
+    /// Async variant of mineAndSignEvent that supports NIP-46 remote signing.
+    /// For NIP-46 mode: skips PoW (no secret key available) and delegates to signEventAsync.
+    /// For local mode: mines PoW and signs via the Go backend.
+    func mineAndSignEventAsync(kind: Int, content: String, tags: [[String]] = [], difficulty: Int = 0, maxAttempts: Int = 10_000_000, password: String? = nil) async -> NostrEvent? {
+        let config = ConfigService.shared.config
+        let mode = config.activeSigningMode()
+
+        if mode == "nip46" {
+            // NIP-46: we don't have the secret key, so skip PoW
+            return await signEventAsync(kind: kind, content: content, tags: tags, password: password)
+        } else {
+            return mineAndSignEvent(kind: kind, content: content, tags: tags, difficulty: difficulty, maxAttempts: maxAttempts, password: password)
         }
     }
 
@@ -2058,5 +2276,64 @@ class NostrService: ObservableObject {
             }
             return finalURL
         }
+    }
+}
+
+/// Thread-safe accumulator for NIP-50 global search results. EVENT messages
+/// from multiple relays are deduplicated by id (notes) / pubkey (profiles).
+final class GlobalSearchCollector {
+    private let lock = NSLock()
+    private var notes: [String: FeedNote] = [:]
+    private var profiles: [String: FeedProfile] = [:]
+
+    func ingest(message: String, subId: String) {
+        guard let data = message.data(using: .utf8),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [Any],
+              arr.count >= 3,
+              let type = arr[0] as? String, type == "EVENT",
+              let sid = arr[1] as? String, sid == subId,
+              let ev = arr[2] as? [String: Any],
+              let id = ev["id"] as? String,
+              let pubkey = ev["pubkey"] as? String,
+              let kind = (ev["kind"] as? NSNumber)?.intValue,
+              let content = ev["content"] as? String else { return }
+        let createdAt = (ev["created_at"] as? NSNumber)?.int64Value ?? 0
+        let tags = (ev["tags"] as? [[String]]) ?? []
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        if kind == 1 {
+            guard notes[id] == nil else { return }
+            notes[id] = FeedNote(
+                id: id,
+                pubkey: pubkey,
+                content: content,
+                createdAt: Date(timeIntervalSince1970: TimeInterval(createdAt)),
+                tags: tags,
+                kind: kind
+            )
+        } else if kind == 0 {
+            guard let metadata = try? JSONSerialization.jsonObject(with: content.data(using: .utf8) ?? Data()) as? [String: Any] else { return }
+            var profile = FeedProfile(pubkey: pubkey)
+            profile.name = metadata["name"] as? String
+            profile.displayName = metadata["display_name"] as? String
+            profile.pictureURL = (metadata["picture"] as? String).flatMap { URL(string: $0) }
+            profile.nip05 = metadata["nip05"] as? String
+            profile.about = metadata["about"] as? String
+            profile.lud16 = metadata["lud16"] as? String
+            profile.lud06 = metadata["lud06"] as? String
+            profile.website = metadata["website"] as? String
+            profiles[pubkey] = profile
+        }
+    }
+
+    func snapshot() -> NostrService.GlobalSearchResults {
+        lock.lock()
+        defer { lock.unlock() }
+        var results = NostrService.GlobalSearchResults()
+        results.notes = notes.values.sorted { $0.createdAt > $1.createdAt }
+        results.profiles = Array(profiles.values)
+        return results
     }
 }

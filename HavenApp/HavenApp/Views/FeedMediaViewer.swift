@@ -377,10 +377,13 @@ struct FeedMediaViewer: View {
             }
 
             do {
-                let data = try await downloadMedia()
+                let (data, serverContentType) = try await downloadMedia()
                 let sha256 = SHA256.hash(data: data)
                 let sha256String = sha256.compactMap { String(format: "%02x", $0) }.joined()
-                let contentType = determineContentType()
+                // Prefer the source server's Content-Type — it's the authoritative type from
+                // the server where the blob is already playable. Only fall back to guessing
+                // (determineContentType) when the server didn't provide one (e.g. cached data).
+                let contentType = serverContentType ?? determineContentType()
 
                 let saved = await self.blossomService.saveToLocalRelay(
                     data: data,
@@ -499,6 +502,22 @@ struct FeedMediaViewer: View {
     }
 
     private func getMirroredLink() -> String {
+        // If the current URL is already on a known external Blossom mirror, use it directly
+        if let host = url.host?.lowercased() {
+            let isLocal = host == "127.0.0.1" || host == "localhost" || host == "0.0.0.0"
+            if !isLocal {
+                let mirrorHosts: Set<String> = Set(
+                    configService.config.activeBlossomMirrors.compactMap {
+                        URL(string: $0)?.host?.lowercased()
+                    }
+                )
+                if mirrorHosts.contains(host) {
+                    return url.absoluteString
+                }
+            }
+        }
+
+        // For local URLs, rewrite to an external shareable URL
         let hash = extractSHA256FromURL()
         if !hash.isEmpty {
             let port = configService.config.relayPort
@@ -537,15 +556,18 @@ struct FeedMediaViewer: View {
         return currentMirrorHosts.contains(host) || host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0"
     }
 
-    private func downloadMedia() async throws -> Data {
+    /// Downloads media data and returns it along with the server's Content-Type (if available).
+    /// Preserving the source server's Content-Type is critical for mirroring — it's the only
+    /// reliable way to transfer format metadata since the khatru magic library can't detect MP4/MOV.
+    private func downloadMedia() async throws -> (Data, String?) {
         // 1. If it's already a local file URL, load it directly
         if url.isFileURL {
-            return try Data(contentsOf: url)
+            return (try Data(contentsOf: url), nil)
         }
 
         // 2. Try fetching via MediaCacheService which handles caching & localhost self-signed SSL/TLS issues
         if let cachedData = await MediaCacheService.shared.fetchData(url: url) {
-            return cachedData
+            return (cachedData, nil)
         }
 
         // 3. Fallback to standard network request if cache fetch returns nil (e.g. uncached remote resource)
@@ -553,7 +575,7 @@ struct FeedMediaViewer: View {
         request.timeoutInterval = 120  // 2 minutes — 30s was too short for video files
 
         let (data, response) = try await URLSession.shared.data(for: request)
-        
+
         // If it's a file URL (e.g. resolved asynchronously later), it won't have an HTTPURLResponse
         if let httpResponse = response as? HTTPURLResponse {
             guard (200...299).contains(httpResponse.statusCode) else {
@@ -561,15 +583,24 @@ struct FeedMediaViewer: View {
                 let mediaType = isVideo ? "video" : isGIF ? "GIF" : "image"
                 throw NSError(domain: "DownloadError", code: status, userInfo: [NSLocalizedDescriptionKey: "Failed to download \(mediaType): HTTP \(status)"])
             }
+            return (data, httpResponse.mimeType)
         }
-        
-        return data
+
+        return (data, nil)
     }
 
     private func determineContentType() -> String {
         let ext = url.pathExtension.lowercased()
         if let mime = SupportedMediaFormats.mime(forExtension: ext) {
             return mime
+        }
+        // Use the actual detected content type from the HEAD-based detector when available.
+        // This is critical for hash-based Blossom URLs (no extension) — without it the
+        // server's magic library can't identify MP4/MOV and falls back to whatever we send.
+        if let detected = MediaTypeDetector.shared.getCachedContentType(for: url) {
+            // Strip parameters (e.g. "video/mp4; codecs=avc1" → "video/mp4")
+            let base = detected.split(separator: ";").first.map(String.init) ?? detected
+            return base.trimmingCharacters(in: .whitespaces)
         }
         // Fallback defaults
         if isVideo { return "video/mp4" }

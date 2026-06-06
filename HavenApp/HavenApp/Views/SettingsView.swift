@@ -55,6 +55,7 @@ struct SettingsView: View {
         case blastr = "Blastr"
         case blossom = "Blossom"
         case macRelay = "Mac Relay"
+        case proofOfWork = "Proof of Work"
         case advanced = "Advanced"
         case wallet = "Wallet"
         case logs = "Logs"
@@ -93,6 +94,7 @@ struct SettingsView: View {
                 #else
                 return "desktopcomputer"
                 #endif
+            case .proofOfWork: return "hammer.fill"
             case .advanced: return "gearshape.2"
             case .wallet: return "bitcoinsign.circle"
             case .logs: return "list.bullet.rectangle"
@@ -494,6 +496,7 @@ struct SettingsView: View {
         case .blastr: return .cyan
         case .blossom: return .green
         case .macRelay: return .teal
+        case .proofOfWork: return .purple
         case .advanced: return .gray
         case .wallet: return .orange
         case .logs: return .secondary
@@ -532,6 +535,7 @@ struct SettingsView: View {
                 #else
                 MacRelayDomainSettingsView()
                 #endif
+            case .proofOfWork: ProofOfWorkSettingsView()
             case .advanced: AdvancedSettingsView()
             case .wallet: WalletSettingsView()
             case .logs: LogsView(logStore: relayManager.logStore)

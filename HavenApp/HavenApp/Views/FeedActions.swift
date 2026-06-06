@@ -67,8 +67,10 @@ struct FeedActions {
                 feedService.saveInteractionState()
                 let relayHint = ConfigService.shared.config.nostrURL
                 Task {
-                    guard let signed = await nostrService.signEventAsync(kind: 7, content: ConfigService.shared.config.defaultReactionEmoji,
-                        tags: [["e", noteId, relayHint], ["p", note.pubkey], ["k", String(note.kind)]]) else {
+                    let powSnap = PowPreferences.snapshot()
+                    let powDiff = powSnap.reactionEnabled ? powSnap.reactionDifficulty : 0
+                    guard let signed = await nostrService.mineAndSignEventAsync(kind: 7, content: ConfigService.shared.config.defaultReactionEmoji,
+                        tags: [["e", noteId, relayHint], ["p", note.pubkey], ["k", String(note.kind)]], difficulty: powDiff) else {
                         // Rollback optimistic update on signing failure
                         await MainActor.run {
                             feedService.likedEventIds.remove(noteId)
@@ -102,8 +104,10 @@ struct FeedActions {
                 }
                 let relayHint = ConfigService.shared.config.nostrURL
                 Task {
-                    guard let signed = await nostrService.signEventAsync(kind: 7, content: emoji,
-                        tags: [["e", note.id, relayHint], ["p", note.pubkey], ["k", String(note.kind)]]) else {
+                    let powSnap = PowPreferences.snapshot()
+                    let powDiff = powSnap.reactionEnabled ? powSnap.reactionDifficulty : 0
+                    guard let signed = await nostrService.mineAndSignEventAsync(kind: 7, content: emoji,
+                        tags: [["e", note.id, relayHint], ["p", note.pubkey], ["k", String(note.kind)]], difficulty: powDiff) else {
                         // Rollback optimistic update on signing failure
                         if !wasAlreadyLiked {
                             await MainActor.run {

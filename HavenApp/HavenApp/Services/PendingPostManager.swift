@@ -129,9 +129,12 @@ class PendingPostManager: ObservableObject {
                 ?? ConfigService.shared.config.nostrURL
 
             Task {
-                guard let signed = await nostrService.signEventAsync(
+                let powSnap = PowPreferences.snapshot()
+                let powDiff = powSnap.noteEnabled ? powSnap.noteDifficulty : 0
+                guard let signed = await nostrService.mineAndSignEventAsync(
                     kind: 6, content: embedded,
-                    tags: [["e", originalId, relayHint], ["p", originalPubkey]]
+                    tags: [["e", originalId, relayHint], ["p", originalPubkey]],
+                    difficulty: powDiff
                 ) else { return }
                 nostrService.postEvent(signed)
             }

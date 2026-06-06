@@ -386,6 +386,7 @@ func initRelays(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		defer file.Close()
 		if _, err := io.Copy(file, bytes.NewReader(body)); err != nil {
 			return err
 		}

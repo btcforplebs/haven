@@ -73,6 +73,12 @@ struct ProfileView: View {
     @State private var isLoadingOlderNotes = false
     @State private var hasMoreNotes = true
 
+    // Tagged notes (notes by others that tag/mention/repost/quote this user)
+    @State private var taggedNotes: [FeedNote] = []
+    @State private var seenTaggedIds = Set<String>()
+    @State private var isLoadingOlderTaggedNotes = false
+    @State private var hasMoreTaggedNotes = true
+
     // Total counts from local relay (own profile)
     @State private var totalNoteCount: Int? = nil
     @State private var totalMediaCount: Int? = nil
@@ -83,6 +89,7 @@ struct ProfileView: View {
         case notes = "Notes"
         case media = "Media"
         case replies = "Replies"
+        case tagged = "Tagged"
         var id: String { rawValue }
     }
 
@@ -139,11 +146,16 @@ struct ProfileView: View {
         profileNotes.filter { $0.isReply }
     }
 
+    private var taggedFilteredNotes: [FeedNote] {
+        taggedNotes.filter { $0.pubkey != pubkey }
+    }
+
     private var currentSectionNotes: [FeedNote] {
         switch selectedSection {
         case .notes: return topNotes
         case .media: return mediaNotes
         case .replies: return replyNotes
+        case .tagged: return taggedFilteredNotes
         }
     }
 
@@ -190,10 +202,10 @@ struct ProfileView: View {
         )
     }
 
-    private var sectionCount: (notes: Int, media: Int, replies: Int) {
+    private var sectionCount: (notes: Int, media: Int, replies: Int, tagged: Int) {
         let notes = (isOwnProfile ? totalNoteCount : nil) ?? topNotes.count
         let media = (isOwnProfile ? totalMediaCount : nil) ?? mediaNotes.count
-        return (notes, media, replyNotes.count)
+        return (notes, media, replyNotes.count, taggedFilteredNotes.count)
     }
 
     // MARK: - Body
@@ -1032,6 +1044,7 @@ struct ProfileView: View {
         case .notes: return sectionCount.notes
         case .media: return sectionCount.media
         case .replies: return sectionCount.replies
+        case .tagged: return sectionCount.tagged
         }
     }
 
@@ -1074,7 +1087,9 @@ struct ProfileView: View {
                     }
                     FeedNoteRow(
                         note: note,
-                        profile: profile,
+                        profile: selectedSection == .tagged
+                            ? nostrService.profiles[note.pubkey]
+                            : profile,
                         rowData: FeedNoteRowData.resolve(
                             for: note,
                             feedService: feedService,
@@ -1106,13 +1121,18 @@ struct ProfileView: View {
                 }
 
                 // Infinite scroll sentinel
-                if hasMoreNotes && !notes.isEmpty {
+                let hasMore = selectedSection == .tagged ? hasMoreTaggedNotes : hasMoreNotes
+                if hasMore && !notes.isEmpty {
                     Color.clear
                         .frame(height: 1)
                         .onAppear {
-                            loadOlderProfileNotes()
+                            if selectedSection == .tagged {
+                                loadOlderTaggedNotes()
+                            } else {
+                                loadOlderProfileNotes()
+                            }
                         }
-                    if isLoadingOlderNotes {
+                    if (selectedSection == .tagged ? isLoadingOlderTaggedNotes : isLoadingOlderNotes) {
                         ProgressView()
                             .scaleEffect(0.6)
                             .tint(Color.havenPurple)
@@ -1385,6 +1405,7 @@ struct ProfileView: View {
         case .notes: return "text.bubble"
         case .media: return "photo"
         case .replies: return "arrowshape.turn.up.left"
+        case .tagged: return "at"
         }
     }
 
@@ -1399,6 +1420,10 @@ struct ProfileView: View {
         isLoadingNotes = false
         isLoadingOlderNotes = false
         hasMoreNotes = true
+        taggedNotes.removeAll()
+        seenTaggedIds.removeAll()
+        isLoadingOlderTaggedNotes = false
+        hasMoreTaggedNotes = true
         followingCount = nil
         followsMe = false
         followersCount = nil
@@ -1553,7 +1578,12 @@ struct ProfileView: View {
                             "#p": [pubkey],
                             "limit": 100
                         ]
-                        let req: [Any] = ["REQ", "profile-\(UUID().uuidString.prefix(6))", notesFilter, profileFilter, contactFilter, followersFilter]
+                        let taggedFilter: [String: Any] = [
+                            "kinds": [1, 6, 30023],
+                            "#p": [pubkey],
+                            "limit": 50
+                        ]
+                        let req: [Any] = ["REQ", "profile-\(UUID().uuidString.prefix(6))", notesFilter, profileFilter, contactFilter, followersFilter, taggedFilter]
                         if let data = try? JSONSerialization.data(withJSONObject: req),
                            let str = String(data: data, encoding: .utf8) {
                             client.send(text: str)
@@ -1618,6 +1648,41 @@ struct ProfileView: View {
                 return
             }
 
+            // Check if this is a tagged event (authored by someone else, but p-tagging the profile user)
+            let isTaggedEvent = event.pubkey != pubkey &&
+                [1, 6, 30023].contains(event.kind) &&
+                event.tags.contains(where: { $0.count >= 2 && $0[0] == "p" && $0[1] == pubkey })
+
+            if isTaggedEvent {
+                guard !seenTaggedIds.contains(event.id) else { return }
+                seenTaggedIds.insert(event.id)
+
+                let note = FeedNote(
+                    id: event.id,
+                    pubkey: event.pubkey,
+                    content: event.content,
+                    createdAt: Date(timeIntervalSince1970: TimeInterval(event.created_at)),
+                    tags: event.tags,
+                    kind: event.kind
+                )
+
+                taggedNotes.append(note)
+                taggedNotes.sort { $0.createdAt > $1.createdAt }
+
+                // Fetch profile for the tagger
+                if nostrService.profiles[event.pubkey] == nil {
+                    nostrService.fetchMissingProfiles(for: [event.pubkey])
+                }
+
+                // Trigger fetch of the original note for empty-content reposts
+                if event.kind == 6 && event.content.isEmpty,
+                   let refId = event.tags.first(where: { $0.count >= 2 && $0[0] == "e" })?[1] {
+                    feedService.fetchMissingNote(id: refId)
+                }
+
+                return
+            }
+
             // For notes (kind 1, 6, 30023), only show from the target user
             guard event.pubkey == pubkey else { return }
 
@@ -1646,10 +1711,14 @@ struct ProfileView: View {
                 nostrService.fetchMissingProfiles(for: [pubkey])
             }
         } else if type == "EOSE" {
-            isLoadingNotes = false
-            // Also mark older-notes loading as done when any EOSE arrives
-            if isLoadingOlderNotes {
-                isLoadingOlderNotes = false
+            let subId = (json.count >= 2 ? json[1] as? String : nil) ?? ""
+            if subId.hasPrefix("older-tagged-") {
+                isLoadingOlderTaggedNotes = false
+            } else {
+                isLoadingNotes = false
+                if isLoadingOlderNotes {
+                    isLoadingOlderNotes = false
+                }
             }
         }
     }
@@ -1684,6 +1753,37 @@ struct ProfileView: View {
                 self.hasMoreNotes = false
             }
             self.isLoadingOlderNotes = false
+        }
+    }
+
+    private func loadOlderTaggedNotes() {
+        guard !isLoadingOlderTaggedNotes, hasMoreTaggedNotes else { return }
+        guard let oldest = taggedNotes.last else { return }
+        isLoadingOlderTaggedNotes = true
+
+        let untilTimestamp = Int(oldest.createdAt.timeIntervalSince1970)
+        let countBefore = taggedNotes.count
+
+        for client in profileClients {
+            let subId = "older-tagged-\(UUID().uuidString.prefix(6))"
+            let filter: [String: Any] = [
+                "kinds": [1, 6, 30023],
+                "#p": [pubkey],
+                "until": untilTimestamp,
+                "limit": 50
+            ]
+            let req: [Any] = ["REQ", subId, filter]
+            if let data = try? JSONSerialization.data(withJSONObject: req),
+               let str = String(data: data, encoding: .utf8) {
+                client.send(text: str)
+            }
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            if self.taggedNotes.count == countBefore {
+                self.hasMoreTaggedNotes = false
+            }
+            self.isLoadingOlderTaggedNotes = false
         }
     }
 

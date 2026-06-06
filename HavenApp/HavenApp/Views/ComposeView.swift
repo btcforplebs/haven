@@ -1072,10 +1072,12 @@ struct ComposeView: View {
                 }
             }
 
-            // 3. Sign
+            // 3. Mine PoW + Sign
             let isReply = effectiveReplyTo != nil
-            print("ComposeView: signing \(isReply ? "reply" : "post") – mode=\(configService.config.activeSigningMode()) nip46connected=\(NIP46Service.shared.isConnected) tags=\(tags.count)")
-            guard let event = await nostrService.signEventAsync(kind: 1, content: finalContent, tags: tags) else {
+            let powSnap = PowPreferences.snapshot()
+            let powDifficulty = powSnap.noteEnabled ? powSnap.noteDifficulty : 0
+            print("ComposeView: signing \(isReply ? "reply" : "post") – mode=\(configService.config.activeSigningMode()) nip46connected=\(NIP46Service.shared.isConnected) tags=\(tags.count) pow=\(powDifficulty)")
+            guard let event = await nostrService.mineAndSignEventAsync(kind: 1, content: finalContent, tags: tags, difficulty: powDifficulty) else {
                 await MainActor.run {
                     let signingMode = configService.config.activeSigningMode()
                     print("ComposeView: sign FAILED – signingMode=\(signingMode) activeNpub=\(configService.config.activeAccountNpub.prefix(20)) isReply=\(isReply)")

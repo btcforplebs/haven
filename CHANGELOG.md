@@ -5,9 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - 2026-06-05
+## [Unreleased] - 2026-06-06
+
+> **Proof of Work, Global Search & Discovery Release**: Optional NIP-13 proof-of-work mining for notes, reactions, reposts, and DMs; NIP-50 global search across public relays; a profile "Tagged" tab; a persistent condensed note layout; orientation-aware iPad navigation; and smarter media Content-Type handling.
+
+### Added
+- **Proof of Work (NIP-13)**: Optional proof-of-work mining is now applied to notes, replies, reactions, reposts, and direct messages before signing. A new Go backend export `MineAndSignEventC` appends a `nonce` tag and SHA-256-hashes the serialized event until the target leading-zero-bit difficulty is met, then signs — with graceful fallback to plain signing after a 10M-attempt safety valve or on error. A new "Proof of Work" Settings section (`ProofOfWorkSettingsView`) exposes per-category enable toggles and difficulty steppers (8–32 bits), backed by `PowPreferences` (defaults: notes 16 bits, reactions/DMs 12 bits, all enabled). Swift `mineAndSignEvent` / `mineAndSignEventAsync` mine locally and fall back to NIP-46 remote signing (no PoW) when no local key is available; DM gift wraps mine PoW with their ephemeral key.
+- **Global Search (NIP-50)**: SearchView gains a relay/global toggle. Global mode queries public NIP-50 search relays (`relay.nostr.band`, `relay.noswhere.com`) for notes (kind 1) and profiles (kind 0), deduplicates results across relays via a thread-safe `GlobalSearchCollector`, merges discovered profiles into the shared cache, and returns after a 4-second window. In-flight searches are cancelled on mode switch or cancel.
+- **Profile "Tagged" Tab**: ProfileView adds a "Tagged" section listing kind 1/6/30023 notes from other users that mention, reply to, or tag the profile (`#p`), with its own infinite-scroll pagination and tagger-profile display.
+- **Condensed Note View**: A persistent compact/condensed layout (32pt avatar, name · time, two-line content, thumbnail) is available in ViewerView via a toolbar toggle (persisted with `@AppStorage`) and applied to FeedView and NoteDetailView reply threads.
+
+### Changed
+- **Orientation-Aware iPad Navigation**: iPad now switches between the sidebar (landscape) and the bottom tab bar (portrait) based on view geometry, instead of always using the sidebar.
+- **Media Content-Type Preservation**: `downloadMedia()` now captures the server's HTTP `Content-Type` and prefers it over extension-based guessing — important for hash-based Blossom URLs that lack file extensions. `getMirroredLink()` returns the URL unchanged when it already points at a known mirror, and falls back to `MediaTypeDetector` for extension-less URLs.
+- **User-Initiated Blossom Mirroring**: `BlossomService.downloadFromURL` gains a `mirrorToExternal` flag so the "Mirror to Blossom" action pushes the blob to all configured external mirrors (internal/batch pulls stay local-only). ViewerView's media list now shows per-item mirror counts (x/y).
+- **Search & Discovery UI**: On iOS, result-type filters and the search-mode toggle moved into a glass toolbar. Trending hashtags and suggested profiles are now cached and refresh-throttled (5s) to stop UI thrashing as the feed streams events.
+- **Thread & Compact Styling**: NoteDetailView compact replies use larger avatars (28pt), card-style parent notes, and stronger purple focus highlighting. Compact notes resolve mentions to plain `@name` text via the new `NostrContentFormatter.resolveMentionsPlainText()`, avoiding AttributedString/link overhead in dense layouts.
+- **Whitelisted Media Scope**: Whitelisted accounts now see only their own media in the relay media grid (the "tagged by" exemption was removed).
+
+### Fixed
+- **Go Relay File Descriptor Leak**: `initRelays` now defers `file.Close()` after copying downloaded relay data, preventing a descriptor leak.
+- **Collapsed FAB Tint**: The collapsed iOS tab bar's floating action button now renders with explicit monochrome `foregroundStyle`/`tint` so the glyph color is consistent.
 
 ### Removed
+- **Relay Note Search Bar**: Removed the inline search bar and toggle for local relay notes in ViewerView; global search via SearchView supersedes it.
+- **Dashboard Compact Stats Toggle**: Removed the compact-view toggle and compact stats layout from DashboardView — statistics now always render in the full layout.
 - **Apple Sign In Identity Backup (Experimental)**: Removed incomplete Apple Sign In integration that was developed as a proof-of-concept for NIP-OAUTH-IDENTITY-BACKUP. Deleted `AppleSignInManager.swift`, `BackupCryptoService.swift`, and `iCloudKeychainService.swift` from codebase. NIP specification and reference implementation preserved in `/nips/` directory for future consideration pending community adoption. Feature was never released to users.
 
 ## [2.5.1 (6) macOS / 1.1.1 (6) iOS] - 2026-06-04

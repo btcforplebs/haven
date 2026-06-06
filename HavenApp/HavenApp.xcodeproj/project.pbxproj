@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AA0001011111111111111111 /* PowPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0003011111111111111111 /* PowPreferences.swift */; };
+		AA0001021111111111111111 /* PowPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0003011111111111111111 /* PowPreferences.swift */; };
+		AA0002011111111111111111 /* ProofOfWorkSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0003021111111111111111 /* ProofOfWorkSettingsView.swift */; };
+		AA0002021111111111111111 /* ProofOfWorkSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0003021111111111111111 /* ProofOfWorkSettingsView.swift */; };
 		00119641B62DB2BBCEB963B0 /* Theming.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93ED6BB091A4EBC9250A7858 /* Theming.swift */; };
 		00818490B64E8F12D093EDBD /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCB7EF5F402D9835CC63612F /* DashboardView.swift */; };
 		0187825E75EB359DC64021CB /* NostrContentFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF76B5373E734C5934402DBD /* NostrContentFormatter.swift */; };
@@ -204,6 +208,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		AA0003011111111111111111 /* PowPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PowPreferences.swift; sourceTree = "<group>"; };
+		AA0003021111111111111111 /* ProofOfWorkSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProofOfWorkSettingsView.swift; sourceTree = "<group>"; };
 		05E22622B26A3F1A5C9D0A2A /* StatsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsService.swift; sourceTree = "<group>"; };
 		0DD61BE8DFF662A086B42872 /* NIP17Service.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NIP17Service.swift; sourceTree = "<group>"; };
 		0E04A276931F29CD944A3474 /* CachedAsyncImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CachedAsyncImage.swift; sourceTree = "<group>"; };
@@ -367,6 +373,7 @@
 				7EADF0099992A209CBBEFFB2 /* PlatformCompat.swift */,
 				917FF6B76ACEFA8BD210FC37 /* ProfileView.swift */,
 				B082AB61C72D6EF9CCFD625B /* PushNotificationSettingsView.swift */,
+				AA0003021111111111111111 /* ProofOfWorkSettingsView.swift */,
 				4AB6A6872532B023E705FC6C /* RelayListEditor.swift */,
 				A271B5E3364858651DC05603 /* SettingsView.swift */,
 				89B8E92EE192A7FDE8094D4D /* SetupWizardView.swift */,
@@ -522,6 +529,7 @@
 				7EC0F366EF1C957EF41DE12C /* NotificationNames.swift */,
 				19B6B870C61AB1313009408E /* NWCService.swift */,
 				665772231EE1D4B0755E95C3 /* PendingPostManager.swift */,
+				AA0003011111111111111111 /* PowPreferences.swift */,
 				83A89942B12FE776468EDB8C /* PriceService.swift */,
 				68544CD2DF847509E3D23681 /* ProfilePicturePrefetchService.swift */,
 				75ED38A5B67740F711EB5C45 /* PushNotificationService.swift */,
@@ -759,6 +767,8 @@
 				26E85D97A185783B78EC5405 /* NoteDetailView.swift in Sources */,
 				90C3C712CB8B0009CB8C3047 /* NotificationNames.swift in Sources */,
 				FCCCFD519D53A12A81C43930 /* PendingPostManager.swift in Sources */,
+				AA0001011111111111111111 /* PowPreferences.swift in Sources */,
+				AA0002011111111111111111 /* ProofOfWorkSettingsView.swift in Sources */,
 				53D20A98943D467A4CA6030B /* PlatformCompat.swift in Sources */,
 				6DA4DEC18EB584B409F4955D /* PriceService.swift in Sources */,
 				39D77023FAFDDDFE24D50B9A /* ProfilePicturePrefetchService.swift in Sources */,
@@ -856,6 +866,8 @@
 				7D819C17829EEEDB078DA4AB /* NoteDetailView.swift in Sources */,
 				8B334441FF49DC33B053C484 /* NotificationNames.swift in Sources */,
 				27BBFB192439FAD50AEB34EC /* PendingPostManager.swift in Sources */,
+				AA0001021111111111111111 /* PowPreferences.swift in Sources */,
+				AA0002021111111111111111 /* ProofOfWorkSettingsView.swift in Sources */,
 				6299766B577696BB8E498D3B /* PlatformCompat.swift in Sources */,
 				D345A3970B0C13CF6C96F080 /* PriceService.swift in Sources */,
 				2B50BCD81B2AED742C9033E6 /* ProfilePicturePrefetchService.swift in Sources */,

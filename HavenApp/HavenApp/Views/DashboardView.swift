@@ -20,7 +20,6 @@ struct DashboardView: View {
     @State private var showingFullLogs = false
     @State private var shareSheetURL: URL?
     @State private var showingShareSheet = false
-    @State private var isCompactView = false
 
     var isSidebar: Bool = false
     
@@ -282,21 +281,7 @@ struct DashboardView: View {
                     compactLogConsole
 
                     // MARK: - Statistics
-                    Group {
-                        if isCompactView {
-                            compactStatsLayout
-                                .transition(.asymmetric(
-                                    insertion: AnyTransition.opacity.combined(with: AnyTransition.scale(scale: 0.95)),
-                                    removal: AnyTransition.opacity
-                                ))
-                        } else {
-                            fullStatsLayout
-                                .transition(.asymmetric(
-                                    insertion: AnyTransition.opacity.combined(with: AnyTransition.scale(scale: 0.95)),
-                                    removal: AnyTransition.opacity
-                                ))
-                        }
-                    }
+                    fullStatsLayout
                     
                     // MARK: - Actions
                     Spacer(minLength: 8)
@@ -382,21 +367,6 @@ struct DashboardView: View {
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                IconFilterButton(
-                    icon: "rectangle.compress.vertical",
-                    tooltip: "Toggle Compact View",
-                    isSelected: isCompactView,
-                    color: .havenPurple,
-                    action: {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                            isCompactView.toggle()
-                        }
-                    }
-                )
-            }
-        }
         #endif
     }
 
@@ -414,128 +384,6 @@ struct DashboardView: View {
                 StatsCard(title: "Storage Used", value: statsService.formattedStorageSize, icon: "internaldrive.fill", color: .blue, action: { showingStorageBreakdown = true })
                 StatsCard(title: "Blossom Storage", value: statsService.formattedBlossomSize, icon: "camera.macro", color: .green, action: { showingBlossomBreakdown = true })
                 StatsCard(title: "Media Cache", value: statsService.formattedCacheSize, icon: "photo.stack.fill", color: .orange, action: { showingCacheBreakdown = true })
-            }
-            .padding(.horizontal)
-        }
-    }
-
-    private var compactStatsLayout: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Statistics")
-                .font(.appSystem(size: 13, weight: .semibold))
-                .foregroundColor(.secondary)
-                .padding(.horizontal)
-
-            VStack(spacing: 8) {
-                // Row 1: Events and Storage
-                HStack(spacing: 12) {
-                    Button {
-                        showingKindBreakdown = true
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "doc.text.fill")
-                                .font(.appSystem(size: 12, weight: .semibold))
-                                .foregroundColor(.havenPurple)
-                                .frame(width: 20)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Events")
-                                    .font(.appSystem(size: 10, weight: .medium))
-                                    .foregroundColor(.secondary)
-                                Text("\(statsService.loadedEventsCount)")
-                                    .font(.appSystem(size: 13, weight: .bold))
-                                    .foregroundColor(.primary)
-                            }
-
-                            Spacer()
-                        }
-                        .padding(10)
-                        .background(Color.havenPurple.opacity(0.08))
-                        .cornerRadius(8)
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        showingStorageBreakdown = true
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "internaldrive.fill")
-                                .font(.appSystem(size: 12, weight: .semibold))
-                                .foregroundColor(.blue)
-                                .frame(width: 20)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Storage")
-                                    .font(.appSystem(size: 10, weight: .medium))
-                                    .foregroundColor(.secondary)
-                                Text(statsService.formattedStorageSize)
-                                    .font(.appSystem(size: 13, weight: .bold))
-                                    .foregroundColor(.primary)
-                            }
-
-                            Spacer()
-                        }
-                        .padding(10)
-                        .background(Color.blue.opacity(0.08))
-                        .cornerRadius(8)
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                // Row 2: Blossom and Cache
-                HStack(spacing: 12) {
-                    Button {
-                        showingBlossomBreakdown = true
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "camera.macro")
-                                .font(.appSystem(size: 12, weight: .semibold))
-                                .foregroundColor(.green)
-                                .frame(width: 20)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Blossom")
-                                    .font(.appSystem(size: 10, weight: .medium))
-                                    .foregroundColor(.secondary)
-                                Text(statsService.formattedBlossomSize)
-                                    .font(.appSystem(size: 13, weight: .bold))
-                                    .foregroundColor(.primary)
-                            }
-
-                            Spacer()
-                        }
-                        .padding(10)
-                        .background(Color.green.opacity(0.08))
-                        .cornerRadius(8)
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        showingCacheBreakdown = true
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "photo.stack.fill")
-                                .font(.appSystem(size: 12, weight: .semibold))
-                                .foregroundColor(.orange)
-                                .frame(width: 20)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Cache")
-                                    .font(.appSystem(size: 10, weight: .medium))
-                                    .foregroundColor(.secondary)
-                                Text(statsService.formattedCacheSize)
-                                    .font(.appSystem(size: 13, weight: .bold))
-                                    .foregroundColor(.primary)
-                            }
-
-                            Spacer()
-                        }
-                        .padding(10)
-                        .background(Color.orange.opacity(0.08))
-                        .cornerRadius(8)
-                    }
-                    .buttonStyle(.plain)
-                }
             }
             .padding(.horizontal)
         }

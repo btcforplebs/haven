@@ -324,9 +324,6 @@
     "Bunker URI" : {
 
     },
-    "Cache" : {
-
-    },
     "Cached Files" : {
 
     },
@@ -433,6 +430,9 @@
 
     },
     "Digital cash backed by your relay" : {
+
+    },
+    "Direct Messages" : {
 
     },
     "Dismiss" : {
@@ -651,9 +651,6 @@
 
     },
     "EVENT ID" : {
-
-    },
-    "Events" : {
 
     },
     "Events will be signed by the remote signer (NIP-46)." : {
@@ -1461,6 +1458,9 @@
     "Notes (JSONL)" : {
 
     },
+    "Notes & Replies" : {
+
+    },
     "Npub" : {
 
     },
@@ -1540,6 +1540,9 @@
 
     },
     "Profile" : {
+
+    },
+    "Proof of Work mines a hash prefix on your events, acting as a spam deterrent. Higher difficulty takes longer but signals more effort." : {
 
     },
     "Publishes this relay as the account's inbox so other clients know where to send events." : {
@@ -2924,9 +2927,6 @@
 
     },
     "Statistics" : {
-
-    },
-    "Storage" : {
 
     },
     "Summary" : {
