@@ -1560,34 +1560,16 @@ struct SearchView: View {
         .toolbar {
             // Left glass pill: result-type filters
             ToolbarItem(placement: .navigationBarLeading) {
-                ViewThatFits {
-                    HStack(spacing: 8) {
-                        ForEach(ResultTypeFilter.allCases, id: \.self) { filter in
-                            IconFilterButton(
-                                icon: filter.icon,
-                                tooltip: filter.label,
-                                isSelected: resultTypeFilter == filter,
-                                color: .havenPurple
-                            ) {
-                                resultTypeFilter = filter
-                            }
+                HStack(spacing: 8) {
+                    ForEach(ResultTypeFilter.allCases, id: \.self) { filter in
+                        IconFilterButton(
+                            icon: filter.icon,
+                            tooltip: filter.label,
+                            isSelected: resultTypeFilter == filter,
+                            color: .havenPurple
+                        ) {
+                            resultTypeFilter = filter
                         }
-                    }
-
-                    Menu {
-                        ForEach(ResultTypeFilter.allCases, id: \.self) { filter in
-                            Button {
-                                resultTypeFilter = filter
-                            } label: {
-                                Label(filter.label, systemImage: filter.icon)
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "line.3.horizontal.decrease")
-                            .font(.appSystem(size: 15, weight: .semibold))
-                            .foregroundColor(.havenPurple)
-                            .frame(width: 36, height: 36)
-                            .contentShape(Rectangle())
                     }
                 }
             }

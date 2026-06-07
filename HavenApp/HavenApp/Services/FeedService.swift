@@ -685,9 +685,9 @@ class FeedService: ObservableObject {
     private var lastFetchedContactCount: Int = 0
 
     /// Pubkeys that belong to the user's Web of Trust, loaded from the relay's
-    /// cached WOT graph (`wot_cache.json`). Used to filter the GLOBAL feed so
-    /// only notes from WOT members are shown.
-    private var wotPubkeys: Set<String> = []
+    /// cached WOT graph (`wot_cache.json`). Used to filter the GLOBAL feed and
+    /// Media tab so only notes/media from WOT members are shown.
+    @Published private(set) var wotPubkeys: Set<String> = []
 
     /// Popularity scores returned by the local DVM, keyed by note ID.
     /// Used to sort the Popular feed by engagement rank.

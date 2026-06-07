@@ -402,6 +402,41 @@ struct VideoScrubber: View {
     }
 }
 
+// MARK: - VideoShimmerPlaceholder
+
+/// Animated shimmer placeholder shown while a video thumbnail is loading.
+/// Provides visual feedback that content is incoming rather than a blank grey frame.
+private struct VideoShimmerPlaceholder: View {
+    @State private var phase: CGFloat = -1.0
+
+    var body: some View {
+        ZStack {
+            Color.platformTertiaryGroupedBackground
+
+            // Subtle gradient shimmer sweep
+            LinearGradient(
+                stops: [
+                    .init(color: .white.opacity(0), location: max(0, phase - 0.3)),
+                    .init(color: .white.opacity(0.06), location: phase),
+                    .init(color: .white.opacity(0), location: min(1, phase + 0.3))
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            // Centered video icon so user knows this is a video
+            Image(systemName: "video.fill")
+                .font(.appSystem(size: 24))
+                .foregroundColor(.white.opacity(0.25))
+        }
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: false)) {
+                phase = 2.0
+            }
+        }
+    }
+}
+
 // MARK: - InlineFeedVideoPlayer
 
 /// Lightweight inline video player for feed cards.
@@ -485,15 +520,15 @@ struct InlineFeedVideoPlayer: View {
                     .contentShape(Rectangle())
                     .onTapGesture { onTap?() }
                 } else {
-                    // Loading — show thumbnail or progress
+                    // Loading — show thumbnail if ready, otherwise shimmer placeholder
                     if let thumb = thumbnail {
                         Image(platformImage: thumb)
                             .resizable()
                             .scaledToFill()
                             .frame(width: geo.size.width, height: geo.size.height)
+                    } else {
+                        VideoShimmerPlaceholder()
                     }
-                    ProgressView()
-                        .tint(.white.opacity(0.8))
                 }
 
                 // Bottom controls: mute button + scrubber
@@ -574,7 +609,11 @@ struct InlineFeedVideoPlayer: View {
     private func loadThumbnail() {
         Task {
             if let thumb = await MediaCacheService.shared.generateThumbnail(for: url) {
-                await MainActor.run { self.thumbnail = thumb }
+                await MainActor.run {
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        self.thumbnail = thumb
+                    }
+                }
             }
         }
     }

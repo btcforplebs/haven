@@ -376,6 +376,7 @@ struct ViewerView: View {
         let isOwnerBrowsing = (owner == nostrService.ownerHexPubkey)
         let whitelist = configService.whitelistedHexPubkeys
         let blacklist = configService.activeAccountBlockedHexPubkeys
+        let wotPubkeys = feedService.wotPubkeys
 
         #if DEBUG
         print("updateDisplayData: blossom=\(currentBlossom.count) noteMedia=\(currentNoteMedia.count) events=\(currentEvents.count) filter=\(currentFilter) source=\(mediaSourceFilter)")
@@ -393,6 +394,7 @@ struct ViewerView: View {
         let macRelayHttps = configService.config.macRelayHttpsURL
         let currentNotFound = MediaCacheService.shared.known404Set()
         let currentMaxDisplayed = maxDisplayedItems
+        let currentMediaOnly = mediaOnly
         let gen = updateGeneration
 
         Task.detached(priority: .userInitiated) {
@@ -713,14 +715,16 @@ struct ViewerView: View {
                     switch currentFilter {
                     case .all:
                         if isOwnerBrowsing {
-                            // Owner sees all media on the relay
+                            // Owner sees media from WoT members (or all if WoT not yet loaded)
+                            if !wotPubkeys.isEmpty, let pk = item.pubkey, pk != owner {
+                                return wotPubkeys.contains(pk)
+                            }
                             return true
                         }
                         return item.pubkey == owner
                     case .mine: return item.pubkey == owner
                     case .tagged:
-                        if item.pubkey == owner { return false }
-                        return item.tags?.contains { $0.count >= 2 && $0[0] == "p" && $0[1] == owner } ?? false
+                        return false
                     case .whitelist:
                         guard let pk = item.pubkey else { return false }
                         return whitelist.contains(pk) && pk != owner
@@ -752,11 +756,14 @@ struct ViewerView: View {
                 // Apply event timestamps where available instead of file modification dates
                 if currentFilter == .all || currentFilter == .mine {
                     for item in currentBlossom {
-                        // Whitelisted accounts only see their own blossom items + items tagging them
+                        // Whitelisted accounts only see their own blossom items
                         if !isOwnerBrowsing && currentFilter == .all {
                             let isMine = item.pubkey == owner
-                            let isTagged = item.tags?.contains { $0.count >= 2 && $0[0] == "p" && $0[1] == owner } ?? false
-                            if !isMine && !isTagged { continue }
+                            if !isMine { continue }
+                        }
+                        // WoT filter for owner browsing blossom items
+                        if isOwnerBrowsing && currentFilter == .all && !wotPubkeys.isEmpty {
+                            if let pk = item.pubkey, pk != owner, !wotPubkeys.contains(pk) { continue }
                         }
                         let key = self.normalizedKeyStatic(for: item.url)
                         recordURL(key, item.url)
@@ -865,6 +872,14 @@ struct ViewerView: View {
                     }
                 }
                 filtered = filtered.filter(passesLocation)
+
+                // Exclude items from notes that merely tag the owner —
+                // these are often spam and not user-uploaded media.
+                filtered = filtered.filter { item in
+                    if item.pubkey == owner { return true }
+                    let tagsOwner = item.tags?.contains { $0.count >= 2 && $0[0] == "p" && $0[1] == owner } ?? false
+                    return !tagsOwner
+                }
 
                 // Sort by date added, newest first
                 filtered.sort(by: { $0.dateAdded > $1.dateAdded })
@@ -1010,7 +1025,7 @@ struct ViewerView: View {
         #endif
     }
 
-    // MARK: - Leading Toolbar (inline vs. compact menu)
+    // MARK: - Leading Toolbar
 
     @ViewBuilder
     private var leadingToolbarInline: some View {
@@ -1067,52 +1082,6 @@ struct ViewerView: View {
                     color: .primary
                 ) { toggleMediaTypeFilter(.other) }
             }
-        }
-    }
-
-    @ViewBuilder
-    private var leadingToolbarMenu: some View {
-        Menu {
-            if !mediaOnly {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { viewMode = .notes }
-                } label: {
-                    Label("Notes", systemImage: "doc.text")
-                }
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { viewMode = .likes }
-                    fetchMissingLikedNotes()
-                } label: {
-                    Label("Likes", systemImage: "heart.fill")
-                }
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) { viewMode = .zaps }
-                } label: {
-                    Label("Zaps", systemImage: "bolt.fill")
-                }
-            } else {
-                Button(action: selectAllMediaTypes) {
-                    Label("All Media", systemImage: "circle.grid.2x2.fill")
-                }
-                Button { toggleMediaTypeFilter(.photo) } label: {
-                    Label("Photos", systemImage: "photo")
-                }
-                Button { toggleMediaTypeFilter(.video) } label: {
-                    Label("Videos", systemImage: "video")
-                }
-                Button { toggleMediaTypeFilter(.gif) } label: {
-                    Label("GIFs", systemImage: "photo.stack")
-                }
-                Button { toggleMediaTypeFilter(.other) } label: {
-                    Label("Documents", systemImage: "doc")
-                }
-            }
-        } label: {
-            Image(systemName: mediaOnly ? "line.3.horizontal.decrease" : "doc.text")
-                .font(.appSystem(size: 15, weight: .semibold))
-                .foregroundColor(.havenPurple)
-                .frame(width: 36, height: 36)
-                .contentShape(Rectangle())
         }
     }
 
@@ -1278,10 +1247,7 @@ struct ViewerView: View {
         viewContentPlatform
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                ViewThatFits {
-                    leadingToolbarInline
-                    leadingToolbarMenu
-                }
+                leadingToolbarInline
             }
             #if os(iOS)
             ToolbarItem(placement: .navigationBarTrailing) {
@@ -1373,6 +1339,7 @@ struct ViewerView: View {
             blacklistedNpubs: configService.config.blockedNpubsPerAccount[configService.config.activeAccountNpub.isEmpty ? configService.config.ownerNpub : configService.config.activeAccountNpub] ?? (configService.config.activeAccountNpub.isEmpty ? configService.config.blacklistedNpubs : []),
             activeAccountNpub: configService.config.activeAccountNpub,
             blossomCount: blossomCache.items.count,
+            wotCount: feedService.wotPubkeys.count,
             onResetAndUpdate: {
                 maxDisplayedItems = 50
                 notesHasLoadedOnce = false
@@ -1998,6 +1965,7 @@ struct ViewerView: View {
             blacklistedNpubs: configService.config.blockedNpubsPerAccount[configService.config.activeAccountNpub.isEmpty ? configService.config.ownerNpub : configService.config.activeAccountNpub] ?? (configService.config.activeAccountNpub.isEmpty ? configService.config.blacklistedNpubs : []),
             activeAccountNpub: configService.config.activeAccountNpub,
             blossomCount: blossomCache.items.count,
+            wotCount: feedService.wotPubkeys.count,
             onResetAndUpdate: {
                 maxDisplayedItems = 50
                 notesHasLoadedOnce = false
@@ -6158,6 +6126,7 @@ struct ViewerChangeHandlers: ViewModifier {
     let blacklistedNpubs: [String]
     let activeAccountNpub: String
     let blossomCount: Int
+    let wotCount: Int
     let onResetAndUpdate: () -> Void
     let onUpdate: () -> Void
     let onViewModeChange: (ViewerView.ViewMode) -> Void
@@ -6179,6 +6148,7 @@ struct ViewerChangeHandlers: ViewModifier {
             .onChange(of: blacklistedNpubs) { _, _ in onUpdate() }
             .onChange(of: activeAccountNpub) { _, _ in onResetAndUpdate() }
             .onChange(of: blossomCount) { _, _ in onUpdate() }
+            .onChange(of: wotCount) { _, _ in onUpdate() }
     }
 }
 
