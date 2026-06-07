@@ -106,6 +106,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             NIP46Service.shared.disconnect()
         }
 
+        // Persist the current feed to disk so the next cold launch can restore
+        // it instantly. Must run before pauseFeed() while notes are still in
+        // memory; the encode + write happens off-main inside the background-task
+        // window opened below.
+        FeedService.shared.persistCurrentSnapshot()
+
         // Pause feed & reset viewer connections when entering background
         FeedService.shared.pauseFeed()
         NostrService.shared.resetConnections()

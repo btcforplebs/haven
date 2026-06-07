@@ -994,6 +994,74 @@ class FeedService: ObservableObject {
         return modDate.timeIntervalSinceNow >= -DiskFeedSnapshot.maxAge
     }
 
+    /// Apply an on-disk snapshot for `key` into the published feed state.
+    /// Mirrors the in-memory `restoreSnapshot` but sources from disk. Returns
+    /// true when a (non-stale) snapshot existed and was applied. Does NOT start
+    /// any relay traffic — the caller decides whether to top up or cold-load.
+    @discardableResult
+    private func applyDiskSnapshot(forKey key: String) -> Bool {
+        guard let diskSnap = loadDiskSnapshot(forKey: key) else { return false }
+        notes = diskSnap.notes
+        followedPubkeys = diskSnap.followedPubkeys
+        extendedNetworkPubkeys = diskSnap.extendedNetworkPubkeys
+        if !diskSnap.extendedNetworkPubkeys.isEmpty {
+            extendedNetworkComputedAt = diskSnap.capturedAt
+        }
+        noteStats = diskSnap.noteStats
+        contactListContent = diskSnap.contactListContent
+        contactListPTags = diskSnap.contactListPTags
+        lastFetchedContactCount = diskSnap.lastFetchedContactCount
+        seenIds = Set(diskSnap.notes.map { $0.id })
+        lastEventTimestamp = diskSnap.lastEventTimestamp
+        pendingNotes.removeAll()
+        noteBuffer.removeAll()
+        loadInteractionState(forKey: key)
+        recomputeFilteredNotes()
+        return true
+    }
+
+    /// Cold-launch restore. When the feed is empty (fresh process) and a
+    /// non-stale disk snapshot exists for the active account, restore it so the
+    /// user sees their previous feed instantly. Returns true when restored — the
+    /// caller should then run `topUpFromRelays()` to stream newer notes on top
+    /// without a full reload. Returns false on first-ever launch (no snapshot),
+    /// where the caller should fall back to `refresh()`.
+    @discardableResult
+    private func restoreFromDiskIfAvailable() -> Bool {
+        guard notes.isEmpty else { return false }
+        let key = currentSnapshotKey()
+        loadedSnapshotNpub = key
+        return applyDiskSnapshot(forKey: key)
+    }
+
+    /// Cold-launch entry point used by FeedView when the feed first appears with
+    /// no notes. Restores the cached feed instantly when a disk snapshot exists,
+    /// then streams newer notes on top via `topUpFromRelays()` (preserves scroll
+    /// position and shows the inline "Syncing…" pill). Falls back to a full cold
+    /// `refresh()` on first-ever launch or when no snapshot is available.
+    func startInitialLoad() {
+        if feedMode == .popular {
+            // Popular feed is ephemeral — never restored from a snapshot.
+            refresh()
+            return
+        }
+        if restoreFromDiskIfAvailable() {
+            topUpFromRelays()
+        } else {
+            refresh()
+        }
+    }
+
+    /// Persist the current feed to disk so the next cold launch can restore it
+    /// instantly (see `restoreFromDiskIfAvailable`). Call from app background /
+    /// terminate hooks while notes are still in memory. No-op when the feed is
+    /// empty. The actual encode + write runs off the main thread.
+    func persistCurrentSnapshot() {
+        guard !notes.isEmpty else { return }
+        let key = loadedSnapshotNpub.isEmpty ? currentSnapshotKey() : loadedSnapshotNpub
+        saveDiskSnapshot(forKey: key)
+    }
+
     /// Snapshot the old account, restore (or cold-load) the new account, then
     /// kick off a relay top-up against the now-current state.
     private func handleAccountSwitch() {
@@ -1033,26 +1101,12 @@ class FeedService: ObservableObject {
         withAnimation(.easeInOut(duration: 0.25)) {
             loadedSnapshotNpub = newKey
             restored = restoreSnapshot(forKey: newKey)
-            if !restored, let diskSnap = loadDiskSnapshot(forKey: newKey) {
-                // Restore from disk — faster than a full cold load.
-                notes = diskSnap.notes
-                followedPubkeys = diskSnap.followedPubkeys
-                extendedNetworkPubkeys = diskSnap.extendedNetworkPubkeys
-                if !diskSnap.extendedNetworkPubkeys.isEmpty {
-                    extendedNetworkComputedAt = diskSnap.capturedAt
-                }
-                noteStats = diskSnap.noteStats
-                contactListContent = diskSnap.contactListContent
-                contactListPTags = diskSnap.contactListPTags
-                lastFetchedContactCount = diskSnap.lastFetchedContactCount
-                seenIds = Set(diskSnap.notes.map { $0.id })
-                lastEventTimestamp = diskSnap.lastEventTimestamp
-                pendingNotes.removeAll()
-                noteBuffer.removeAll()
-                loadInteractionState(forKey: newKey)
-                recomputeFilteredNotes()
-                restored = true
-            } else if !restored {
+            if !restored {
+                // No in-memory snapshot — fall back to the on-disk snapshot
+                // (faster than a full cold load).
+                restored = applyDiskSnapshot(forKey: newKey)
+            }
+            if !restored {
                 // No cached feed — load persisted interaction state for this
                 // account from disk so likes/zaps appear correctly even on first
                 // visit after launch.
@@ -3212,6 +3266,18 @@ class FeedService: ObservableObject {
     }
 
     // MARK: - Local Relay Injection
+
+    /// Injects an external event into the local relay. Safe to call from any
+    /// context — hops to MainActor internally. Filters to feed-relevant kinds
+    /// (1, 6, 7, 30023, 9735) and deduplicates via the shared injectedEventIds set.
+    nonisolated func injectExternalEvent(_ eventDict: [String: Any], eventId: String) {
+        guard let kind = eventDict["kind"] as? Int,
+              [1, 6, 7, 30023, 9735].contains(kind) else { return }
+
+        DispatchQueue.main.async { [weak self] in
+            self?.injectIntoLocalRelay(eventDict, eventId: eventId)
+        }
+    }
 
     /// Parses an external relay message and injects the event into the local relay.
     /// Called on `processingQueue` — must be thread-safe.

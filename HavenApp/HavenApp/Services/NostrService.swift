@@ -24,6 +24,12 @@ class NostrService: ObservableObject {
     var lastForegroundReconnectTime: Date?
 
     private var seenEventIds = Set<String>()
+    /// Guards `seenEventIds`, which is read/written from BOTH the background
+    /// `processingQueue` (processMessage) and the main thread (postEvent,
+    /// injectEvent, handleAccountSwitch). Without it the concurrent non-atomic
+    /// Set mutations corrupt its storage → random EXC_BAD_ACCESS. Always go
+    /// through markSeen/hasSeen/clearSeen; never touch `seenEventIds` directly.
+    private let seenLock = NSLock()
     private var clients: [String: WebSocketClient] = [:]
     private var activeSubscriptions: [String: String] = [:] // [RelayURL: SubID]
     private var cancellables = Set<AnyCancellable>()
@@ -52,6 +58,10 @@ class NostrService: ObservableObject {
 
     // Pagination tracking
     private var activeSubscriptionCount = 0
+    /// Safety net for `fetchNotes`: force-clears `isFetching` if subscription
+    /// EOSEs never arrive (unreachable relay, or a socket torn down mid-fetch),
+    /// so the Viewer/Relay "Loading notes…" overlay can never latch indefinitely.
+    private var fetchWatchdogTask: Task<Void, Never>?
     private var profilesInFlight = Set<String>()
     private var profileFetchQueue = Set<String>()
     private var profileFlushCancellable: AnyCancellable?
@@ -113,6 +123,41 @@ class NostrService: ObservableObject {
 
     @Published var profiles: [String: FeedProfile] = [:]
     private(set) var ownerHexPubkey: String = ""
+
+    /// Lightweight signal published when profile metadata changes, so views can
+    /// re-resolve ONLY the affected rows instead of rebuilding everything.
+    /// `generation` increments on every flush so SwiftUI's `onChange` always
+    /// fires — even when the same pubkey set updates in consecutive batches —
+    /// and `pubkeys` carries exactly which profiles changed. This also fixes a
+    /// long-standing bug where in-place profile updates (same pubkey, new
+    /// name/avatar) never refreshed the feed because they don't change
+    /// `profiles.count`.
+    struct ProfileUpdateSignal: Equatable {
+        var generation: Int = 0
+        var pubkeys: Set<String> = []
+    }
+    @Published private(set) var profileUpdates = ProfileUpdateSignal()
+    private var pendingProfileUpdates: Set<String> = []
+    private var profileUpdateFlushScheduled = false
+    private var profileUpdateGeneration = 0
+
+    /// Records that `pubkey`'s profile changed and schedules a coalesced flush
+    /// of `profileUpdates`. Must be called on the main thread (all call sites
+    /// already are, inside `DispatchQueue.main.async`).
+    func noteProfileUpdated(_ pubkey: String) {
+        pendingProfileUpdates.insert(pubkey)
+        guard !profileUpdateFlushScheduled else { return }
+        profileUpdateFlushScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self = self else { return }
+            self.profileUpdateFlushScheduled = false
+            guard !self.pendingProfileUpdates.isEmpty else { return }
+            let batch = self.pendingProfileUpdates
+            self.pendingProfileUpdates.removeAll(keepingCapacity: true)
+            self.profileUpdateGeneration &+= 1
+            self.profileUpdates = ProfileUpdateSignal(generation: self.profileUpdateGeneration, pubkeys: batch)
+        }
+    }
 
     /// The active browsing identity hex pubkey. Falls back to owner if no override is set.
     var activeHexPubkey: String {
@@ -569,7 +614,7 @@ class NostrService: ObservableObject {
         // 2. Clear Viewer tab event state — these belong to the previous account
         events.removeAll()
         noteMedia.removeAll()
-        seenEventIds.removeAll()
+        clearSeen()
 
         // 3. Flush pending event buffer
         bufferFlushTimer?.invalidate()
@@ -581,6 +626,7 @@ class NostrService: ObservableObject {
         // 4. Reset fetch/subscription tracking
         isFetching = false
         activeSubscriptionCount = 0
+        cancelFetchWatchdog()
 
         // 5. Clear reconnect backoff state
         relayReconnectAttempts.removeAll()
@@ -617,13 +663,13 @@ class NostrService: ObservableObject {
     ///   - tags: The event tags
     ///   - password: Optional password for NIP-49 encrypted keys. If not provided, will attempt to retrieve from Keychain.
     /// - Returns: The signed NostrEvent, or nil if signing fails
-    func signEvent(kind: Int, content: String, tags: [[String]] = [], password: String? = nil) -> NostrEvent? {
+    func signEvent(kind: Int, content: String, tags: [[String]] = [], password: String? = nil, forceOwner: Bool = false) -> NostrEvent? {
         var sk: String?
         let config = ConfigService.shared.config
-        
+
         // Determine which account is signing
         let activeNpub = config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
-        let signingAsOwner = activeNpub.isEmpty || activeNpub == config.ownerNpub
+        let signingAsOwner = forceOwner || activeNpub.isEmpty || activeNpub == config.ownerNpub
         
         if signingAsOwner {
             // ── Owner signing path (existing logic) ──────────────────────────
@@ -721,14 +767,14 @@ class NostrService: ObservableObject {
 
     /// Async variant of signEvent that supports both local key and NIP-46 remote signing.
     /// When signingMode is "nip46", delegates to NIP46Service. Otherwise wraps the local signEvent().
-    func signEventAsync(kind: Int, content: String, tags: [[String]] = [], password: String? = nil) async -> NostrEvent? {
+    func signEventAsync(kind: Int, content: String, tags: [[String]] = [], password: String? = nil, forceOwner: Bool = false) async -> NostrEvent? {
         let config = ConfigService.shared.config
         let mode = config.activeSigningMode()
-        print("NostrService: signEventAsync mode=\(mode) activeNpub=\(config.activeAccountNpub.prefix(20)) ownerNpub=\(config.ownerNpub.prefix(20))")
+        print("NostrService: signEventAsync mode=\(mode) activeNpub=\(config.activeAccountNpub.prefix(20)) ownerNpub=\(config.ownerNpub.prefix(20)) forceOwner=\(forceOwner)")
 
         if mode == "nip46" {
-            // Determine the signing pubkey from the active account
-            let signingPubkey = activeHexPubkey
+            // Determine the signing pubkey from the active account (or owner if forced)
+            let signingPubkey = forceOwner ? ownerHexPubkey : activeHexPubkey
 
             guard !signingPubkey.isEmpty else {
                 print("NostrService: NIP-46 sign failed - no pubkey available")
@@ -784,7 +830,7 @@ class NostrService: ObservableObject {
                 return nil
             }
         } else {
-            return signEvent(kind: kind, content: content, tags: tags, password: password)
+            return signEvent(kind: kind, content: content, tags: tags, password: password, forceOwner: forceOwner)
         }
     }
 
@@ -792,12 +838,12 @@ class NostrService: ObservableObject {
 
     /// Signs an event with NIP-13 Proof of Work mining via the Go backend.
     /// When difficulty > 0, mines a nonce tag before signing. Falls back to plain signing on failure.
-    func mineAndSignEvent(kind: Int, content: String, tags: [[String]] = [], difficulty: Int = 0, maxAttempts: Int = 10_000_000, password: String? = nil) -> NostrEvent? {
+    func mineAndSignEvent(kind: Int, content: String, tags: [[String]] = [], difficulty: Int = 0, maxAttempts: Int = 10_000_000, password: String? = nil, forceOwner: Bool = false) -> NostrEvent? {
         var sk: String?
         let config = ConfigService.shared.config
 
         let activeNpub = config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
-        let signingAsOwner = activeNpub.isEmpty || activeNpub == config.ownerNpub
+        let signingAsOwner = forceOwner || activeNpub.isEmpty || activeNpub == config.ownerNpub
 
         if signingAsOwner {
             if !config.ownerNcryptsec.isEmpty {
@@ -1079,8 +1125,7 @@ class NostrService: ObservableObject {
         // Update local state immediately for instant feedback
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            if !self.seenEventIds.contains(event.id) {
-                self.seenEventIds.insert(event.id)
+            if self.markSeen(event.id) {
                 self.events.insert(event, at: 0)
                 self.events.sort(by: { $0.created_at > $1.created_at })
 
@@ -1342,10 +1387,14 @@ class NostrService: ObservableObject {
     }
 
     func fetchNotes(from relayURLs: [URL], until: Int64? = nil, authors: [String]? = nil) {
-        DispatchQueue.main.async {
-            self.isFetching = true
-            self.activeSubscriptionCount = relayURLs.count
-        }
+        // Count only the subscriptions we actually open/request below — NOT every
+        // URL passed in. Skipped URLs (local relay not ready, already connecting,
+        // reconnecting, or backing off) never deliver an EOSE, so pre-counting
+        // them with `relayURLs.count` left `activeSubscriptionCount` stuck above 0
+        // and wedged `isFetching` true forever — the "Loading notes…" overlay that
+        // hangs after an account switch. `awaiting` is tallied as we go and the
+        // fetch state is committed once, after the loop.
+        var awaiting = 0
         for url in relayURLs {
             let urlString = url.absoluteString
 
@@ -1363,8 +1412,11 @@ class NostrService: ObservableObject {
             if let existing = clients[urlString] {
                 if existing.connectionState == .connected {
                     sendRequest(to: existing, url: url, until: until, authors: authors)
+                    awaiting += 1
                     continue
                 } else if existing.connectionState == .connecting {
+                    // Its own connectionState sink will send the request once
+                    // connected and produce an EOSE — don't double-count it here.
                     continue
                 }
             }
@@ -1447,6 +1499,14 @@ class NostrService: ObservableObject {
                             #if DEBUG
                             print("NostrService: Max reconnect attempts reached for \(urlString), giving up")
                             #endif
+                            // This subscription will never EOSE — release its slot
+                            // so a dead relay can't hold `isFetching` true.
+                            self.activeSubscriptionCount -= 1
+                            if self.activeSubscriptionCount <= 0 {
+                                self.isFetching = false
+                                self.activeSubscriptionCount = 0
+                                self.cancelFetchWatchdog()
+                            }
                             return
                         }
 
@@ -1467,7 +1527,43 @@ class NostrService: ObservableObject {
                 .store(in: &cancellables)
 
             client.connect(url: url)
+            awaiting += 1
         }
+
+        // Commit fetch state once, now that we know how many subscriptions will
+        // actually report EOSE, and arm the watchdog. If nothing was opened
+        // (awaiting == 0) there is nothing to wait for — don't latch isFetching.
+        isFetching = awaiting > 0
+        activeSubscriptionCount = awaiting
+        if awaiting > 0 {
+            armFetchWatchdog()
+        } else {
+            cancelFetchWatchdog()
+        }
+    }
+
+    /// Arms (or re-arms) the fetch watchdog. If `isFetching` is still true after
+    /// the timeout — some subscription never delivered EOSE (unreachable relay or
+    /// a socket torn down mid-fetch) — force it off so the Viewer/Relay
+    /// "Loading notes…" overlay can never hang. Cancelled on real completion.
+    private func armFetchWatchdog() {
+        fetchWatchdogTask?.cancel()
+        fetchWatchdogTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 8_000_000_000) // 8s safety net
+            guard let self = self, !Task.isCancelled, self.isFetching else { return }
+            #if DEBUG
+            print("NostrService: fetch watchdog fired — forcing isFetching=false (\(self.activeSubscriptionCount) subscription(s) never EOSE'd)")
+            #endif
+            self.flushEventBuffer()
+            self.activeSubscriptionCount = 0
+            self.isFetching = false
+            self.eventUpdateSubject.send()
+        }
+    }
+
+    private func cancelFetchWatchdog() {
+        fetchWatchdogTask?.cancel()
+        fetchWatchdogTask = nil
     }
 
 
@@ -1608,6 +1704,7 @@ class NostrService: ObservableObject {
                 if self.activeSubscriptionCount <= 0 {
                     self.isFetching = false
                     self.activeSubscriptionCount = 0
+                    self.cancelFetchWatchdog()
                 }
                 self.events.sort(by: { $0.created_at > $1.created_at })
                 self.eventUpdateSubject.send()
@@ -1622,10 +1719,16 @@ class NostrService: ObservableObject {
            let eventData = try? JSONSerialization.data(withJSONObject: eventDict),
            let event = try? JSONDecoder().decode(NostrEvent.self, from: eventData) {
 
+            // Inject feed-relevant events from external relays into the local relay
+            // so they persist beyond the current session (e.g. mac relay events).
+            if let sourceURL = URL(string: urlString), !isLocalRelay(sourceURL) {
+                FeedService.shared.injectExternalEvent(eventDict, eventId: event.id)
+            }
+
             // Early dedup for replaceable events (kind 3 contact lists, etc.)
             // that flood on every re-subscription. Skip before any expensive processing.
             let replaceableKinds: Set<Int> = [3]
-            if replaceableKinds.contains(event.kind) && seenEventIds.contains(event.id) {
+            if replaceableKinds.contains(event.kind) && hasSeen(event.id) {
                 return
             }
 
@@ -1684,6 +1787,7 @@ class NostrService: ObservableObject {
                             self.profilesInFlight.remove(event.pubkey)
                             self.saveProfilesThrottled()
                             self.eventUpdateSubject.send()
+                            self.noteProfileUpdated(event.pubkey)
                         }
                     }
                 }
@@ -1801,13 +1905,7 @@ class NostrService: ObservableObject {
                 return
             }
 
-            if seenEventIds.contains(event.id) { return }
-            seenEventIds.insert(event.id)
-            // Prevent unbounded memory growth — trim oldest entries when the set gets large
-            if seenEventIds.count > 50_000 {
-                let excess = seenEventIds.count - 40_000
-                seenEventIds = Set(seenEventIds.dropFirst(excess))
-            }
+            if !markSeen(event.id) { return }
 
             var items: [MediaItem] = []
 
@@ -1837,6 +1935,39 @@ class NostrService: ObservableObject {
         }
     }
 
+
+    // MARK: - Seen-event dedup (thread-safe)
+
+    /// Atomically records `id`: returns true if it was NOT seen before (and
+    /// inserts it), false if already seen. Also trims the set when it grows
+    /// large. Replaces the racy contains()/insert() pairs that previously ran on
+    /// both the background processing queue and the main thread.
+    private func markSeen(_ id: String) -> Bool {
+        seenLock.lock()
+        defer { seenLock.unlock() }
+        if seenEventIds.contains(id) { return false }
+        seenEventIds.insert(id)
+        // Prevent unbounded memory growth — trim oldest entries when large.
+        if seenEventIds.count > 50_000 {
+            let excess = seenEventIds.count - 40_000
+            seenEventIds = Set(seenEventIds.dropFirst(excess))
+        }
+        return true
+    }
+
+    /// Thread-safe membership check.
+    private func hasSeen(_ id: String) -> Bool {
+        seenLock.lock()
+        defer { seenLock.unlock() }
+        return seenEventIds.contains(id)
+    }
+
+    /// Thread-safe clear (used on account switch).
+    private func clearSeen() {
+        seenLock.lock()
+        seenEventIds.removeAll()
+        seenLock.unlock()
+    }
 
     // MARK: - Batched Event Flushing
 
@@ -1888,8 +2019,7 @@ class NostrService: ObservableObject {
     /// Inject an externally-received event into the shared events array.
     /// Used by FeedService to forward zap receipts (Kind 9735) so the Viewer can display them.
     func injectEvent(_ event: NostrEvent) {
-        guard !seenEventIds.contains(event.id) else { return }
-        seenEventIds.insert(event.id)
+        guard markSeen(event.id) else { return }
         bufferLock.lock()
         eventBuffer.append((event, []))
         bufferLock.unlock()

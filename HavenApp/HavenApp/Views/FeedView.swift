@@ -30,10 +30,21 @@ private struct ScrollDirectionModifier: ViewModifier {
                         feedService.feedScrollingDown = scrollingDown
                     }
                 }
-                // Only force-expand when truly scrolled back to the very top
+                // Only force-expand when truly scrolled back to the very top.
+                // Guard both writes: `onScrollGeometryChange` fires every frame
+                // while the offset changes, and near the top (including the iOS
+                // rubber-band bounce) `newValue` oscillates around 0 every frame.
+                // Writing `feedScrollingDown` unconditionally would publish
+                // `objectWillChange` on the shared FeedService each frame —
+                // re-rendering the tab bar and every feed row dozens of times a
+                // second, the framerate glitch seen at the top of every feed.
                 if newValue <= 0 {
-                    feedService.feedScrollingDown = false
-                    isScrollingDown = false
+                    if feedService.feedScrollingDown {
+                        feedService.feedScrollingDown = false
+                    }
+                    if isScrollingDown {
+                        isScrollingDown = false
+                    }
                 }
 
                 // Track whether the user is at the top of the feed
@@ -55,6 +66,35 @@ extension View {
         } else {
             self
         }
+    }
+}
+
+/// Observes the feed/profile state that drives the per-row data cache and routes
+/// each change to a targeted incremental updater. Extracted into its own
+/// `ViewModifier` so the (large) `FeedView` body stays within the Swift
+/// type-checker's budget — the `onChange` type inference happens in this tiny
+/// body instead of inline in the main chain.
+private struct RowDataCacheObservers: ViewModifier {
+    @ObservedObject var feedService: FeedService
+    @ObservedObject var nostrService: NostrService
+    let onFiltered: () -> Void
+    let onLikes: (Set<String>, Set<String>) -> Void
+    let onReposts: (Set<String>, Set<String>) -> Void
+    let onZaps: ([String: Int], [String: Int]) -> Void
+    let onProfiles: (Set<String>) -> Void
+    let onFollowsChanged: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: feedService.filteredNotes) { _, _ in onFiltered() }
+            .onChange(of: feedService.likedEventIds) { old, new in onLikes(old, new) }
+            .onChange(of: feedService.repostedEventIds) { old, new in onReposts(old, new) }
+            .onChange(of: feedService.zappedEventIds) { old, new in onZaps(old, new) }
+            .onChange(of: nostrService.profileUpdates) { _, signal in onProfiles(signal.pubkeys) }
+            // Follow-list changes (follow/unfollow, or an account switch swapping
+            // in a different follow list) flip isFollowed/isParentFollowed on
+            // potentially every row, so fall back to a full rebuild. Rare event.
+            .onChange(of: feedService.followedPubkeys) { _, _ in onFollowsChanged() }
     }
 }
 
@@ -98,9 +138,31 @@ struct FeedView: View {
 
     // MARK: - Helper Properties
 
+    /// Whether compact ("condensed") mode is enabled for the current feed, honoring
+    /// the per-feed user override and falling back to per-feed defaults: Following
+    /// defaults OFF, all other timeline feeds default ON.
+    private var compactModeEnabledForCurrentFeed: Bool {
+        if let stored = configService.config.feedCompactModes[feedService.feedMode.rawValue] {
+            return stored
+        }
+        switch feedService.feedMode {
+        case .following:
+            return false
+        case .discovery, .global, .popular, .media:
+            return configService.config.useFeedCompactMode
+        }
+    }
+
+    /// Toggle and persist compact mode for the current feed.
+    private func toggleCompactModeForCurrentFeed() {
+        configService.config.feedCompactModes[feedService.feedMode.rawValue] = !compactModeEnabledForCurrentFeed
+        configService.save()
+        expandedNoteId = nil
+    }
+
     /// Compact mode is active for all feeds except Media grid
     private var isCompactModeActive: Bool {
-        guard configService.config.useFeedCompactMode else { return false }
+        guard compactModeEnabledForCurrentFeed else { return false }
         switch feedService.feedMode {
         case .following, .discovery, .global, .popular:
             return true
@@ -305,16 +367,14 @@ struct FeedView: View {
 
                 // Compact mode toggle
                 Button(action: {
-                    configService.config.useFeedCompactMode.toggle()
-                    configService.save()
-                    expandedNoteId = nil
+                    toggleCompactModeForCurrentFeed()
                 }) {
-                    Image(systemName: configService.config.useFeedCompactMode ? "rectangle.compress.vertical" : "rectangle.expand.vertical")
+                    Image(systemName: compactModeEnabledForCurrentFeed ? "rectangle.compress.vertical" : "rectangle.expand.vertical")
                         .font(.appSystem(size: 15, weight: .semibold))
-                        .foregroundColor(configService.config.useFeedCompactMode ? Color.havenPurple : .secondary)
+                        .foregroundColor(compactModeEnabledForCurrentFeed ? Color.havenPurple : .secondary)
                 }
                 .buttonStyle(.plain)
-                .help(configService.config.useFeedCompactMode ? "Compact view" : "Enable compact view")
+                .help(compactModeEnabledForCurrentFeed ? "Compact view" : "Enable compact view")
             }
         }
         .padding(.horizontal, 16)
@@ -397,11 +457,8 @@ struct FeedView: View {
             ToolbarItem(placement: .navigationBarTrailing) {
                 HStack(spacing: 4) {
                     // Compact mode toggle
-                    IconFilterButton(icon: configService.config.useFeedCompactMode ? "rectangle.compress.vertical" : "rectangle.expand.vertical", tooltip: "Compact View", isSelected: configService.config.useFeedCompactMode, color: .havenPurple) {
-                        configService.config.useFeedCompactMode.toggle()
-                        configService.save()
-                        // Clear expansion when switching modes
-                        expandedNoteId = nil
+                    IconFilterButton(icon: compactModeEnabledForCurrentFeed ? "rectangle.compress.vertical" : "rectangle.expand.vertical", tooltip: "Compact View", isSelected: compactModeEnabledForCurrentFeed, color: .havenPurple) {
+                        toggleCompactModeForCurrentFeed()
                     }
 
                     // Divider to separate compact toggle from other filters
@@ -410,40 +467,40 @@ struct FeedView: View {
                         .padding(.horizontal, 4)
 
                     if feedService.feedMode == .media {
-                        IconFilterButton(icon: feedService.mediaFeedMode == .following ? "person.2.fill" : "person.2", tooltip: "Following", isSelected: feedService.mediaFeedMode == .following, color: .havenPurple) {
-                            feedService.mediaFeedMode = .following
-                            feedService.refresh()
-                        }
-                        IconFilterButton(icon: "globe", tooltip: "Global", isSelected: feedService.mediaFeedMode == .global, color: .havenPurple) {
-                            showingGlobalMediaWarning = true
-                        }
-                    } else if feedService.feedMode == .popular {
-                        IconFilterButton(icon: feedService.popularFilter == .follows ? "person.2.fill" : "person.2", tooltip: "Follows", isSelected: feedService.popularFilter == .follows, color: .havenPurple) {
-                            feedService.popularFilter = feedService.popularFilter == .follows ? .all : .follows
-                            feedService.recomputeFilteredNotes()
-                        }
-                        IconFilterButton(icon: feedService.popularFilter == .nonFollows ? "globe.americas.fill" : "globe.americas", tooltip: "Non-Follows", isSelected: feedService.popularFilter == .nonFollows, color: .havenPurple) {
-                            feedService.popularFilter = feedService.popularFilter == .nonFollows ? .all : .nonFollows
-                            feedService.recomputeFilteredNotes()
-                        }
-                        IconFilterButton(icon: feedService.showPopularEngagement ? "chart.bar.fill" : "chart.bar", tooltip: "Engagement", isSelected: feedService.showPopularEngagement, color: .havenPurple) {
-                            feedService.showPopularEngagement.toggle()
-                        }
-                    } else {
-                        IconFilterButton(icon: configService.config.autoLoadNewPosts ? "bolt.circle.fill" : "bolt.circle", tooltip: "Auto-load", isSelected: configService.config.autoLoadNewPosts, color: .havenPurple) {
-                            configService.config.autoLoadNewPosts.toggle()
-                            configService.save()
-                        }
-                        IconFilterButton(icon: "arrow.2.squarepath", tooltip: "Reposts", isSelected: configService.config.showReposts, color: .havenPurple) {
-                            configService.config.showReposts.toggle()
-                            configService.save()
-                            feedService.recomputeFilteredNotes()
-                        }
-                        IconFilterButton(icon: configService.config.showReplies ? "message.fill" : "message", tooltip: "Replies", isSelected: configService.config.showReplies, color: .havenPurple) {
-                            configService.config.showReplies.toggle()
-                            configService.save()
-                            feedService.recomputeFilteredNotes()
-                        }
+                    IconFilterButton(icon: feedService.mediaFeedMode == .following ? "person.2.fill" : "person.2", tooltip: "Following", isSelected: feedService.mediaFeedMode == .following, color: .havenPurple) {
+                        feedService.mediaFeedMode = .following
+                        feedService.refresh()
+                    }
+                    IconFilterButton(icon: "globe", tooltip: "Global", isSelected: feedService.mediaFeedMode == .global, color: .havenPurple) {
+                        showingGlobalMediaWarning = true
+                    }
+                } else if feedService.feedMode == .popular {
+                    IconFilterButton(icon: feedService.popularFilter == .follows ? "person.2.fill" : "person.2", tooltip: "Follows", isSelected: feedService.popularFilter == .follows, color: .havenPurple) {
+                        feedService.popularFilter = feedService.popularFilter == .follows ? .all : .follows
+                        feedService.recomputeFilteredNotes()
+                    }
+                    IconFilterButton(icon: feedService.popularFilter == .nonFollows ? "globe.americas.fill" : "globe.americas", tooltip: "Non-Follows", isSelected: feedService.popularFilter == .nonFollows, color: .havenPurple) {
+                        feedService.popularFilter = feedService.popularFilter == .nonFollows ? .all : .nonFollows
+                        feedService.recomputeFilteredNotes()
+                    }
+                    IconFilterButton(icon: feedService.showPopularEngagement ? "chart.bar.fill" : "chart.bar", tooltip: "Engagement", isSelected: feedService.showPopularEngagement, color: .havenPurple) {
+                        feedService.showPopularEngagement.toggle()
+                    }
+                } else {
+                    IconFilterButton(icon: configService.config.autoLoadNewPosts ? "bolt.circle.fill" : "bolt.circle", tooltip: "Auto-load", isSelected: configService.config.autoLoadNewPosts, color: .havenPurple) {
+                        configService.config.autoLoadNewPosts.toggle()
+                        configService.save()
+                    }
+                    IconFilterButton(icon: "arrow.2.squarepath", tooltip: "Reposts", isSelected: configService.config.showReposts, color: .havenPurple) {
+                        configService.config.showReposts.toggle()
+                        configService.save()
+                        feedService.recomputeFilteredNotes()
+                    }
+                    IconFilterButton(icon: configService.config.showReplies ? "message.fill" : "message", tooltip: "Replies", isSelected: configService.config.showReplies, color: .havenPurple) {
+                        configService.config.showReplies.toggle()
+                        configService.save()
+                        feedService.recomputeFilteredNotes()
+                    }
                     }
                 }
             }
@@ -461,7 +518,9 @@ struct FeedView: View {
             // localRelayURL returns nil during boot so no WebSocket errors occur;
             // external relays are contacted right away instead of waiting ~3 minutes.
             if feedService.notes.isEmpty && !feedService.isLoadingContacts {
-                feedService.refresh()
+                // Cold launch: restore the cached feed instantly when available
+                // (jump right back in + background top-up), else a full cold load.
+                feedService.startInitialLoad()
             }
         }
         .onChange(of: relayManager.isRunning) { _, running in
@@ -915,6 +974,127 @@ struct FeedView: View {
         }
     }
 
+    // MARK: - Incremental row-data cache updates
+    //
+    // `rebuildRowDataCache` (above) re-resolves EVERY visible note and is kept
+    // only for the initial on-appear build. Steady-state changes (a like, a zap,
+    // one profile arriving) used to trigger that full rebuild too — re-resolving
+    // up to 800 rows to reflect a one-row change, ~100+ times during boot as
+    // profile metadata streams in one pubkey at a time. The handlers below update
+    // only the rows that actually changed. `resolve()` is reused verbatim, so the
+    // resulting rowData is identical to a full rebuild.
+
+    /// Reconcile the cache against `filteredNotes` after the visible set changes:
+    /// keep entries for notes still present, resolve only newly-added notes, drop
+    /// removed ones, and repair rows whose parent / reposted-original dependency
+    /// has just arrived (the only way an existing row's resolved data can change
+    /// without its own id changing). Debounced like the full rebuild.
+    private func reconcileRowDataCache() {
+        cacheRebuildWork?.cancel()
+        let work = DispatchWorkItem { [self] in
+            let notes = feedService.filteredNotes
+            var newCache: [String: FeedNoteRowData] = [:]
+            newCache.reserveCapacity(notes.count)
+            for note in notes {
+                if let existing = rowDataCache[note.id] {
+                    // A previously-unresolved cross-note dependency (the parent
+                    // note, or a kind-6 repost's original) may now resolve.
+                    let needsParent = note.parentEventId != nil && existing.parentNote == nil
+                    let needsOriginal = note.kind == 6 && note.content.isEmpty
+                        && note.repostedEventId != nil && existing.resolvedOriginal == nil
+                    if needsParent || needsOriginal {
+                        newCache[note.id] = FeedNoteRowData.resolve(for: note, feedService: feedService, nostrService: nostrService)
+                    } else {
+                        newCache[note.id] = existing
+                    }
+                } else {
+                    newCache[note.id] = FeedNoteRowData.resolve(for: note, feedService: feedService, nostrService: nostrService)
+                }
+            }
+            rowDataCache = newCache
+        }
+        cacheRebuildWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
+    }
+
+    /// Re-resolve only the cached rows whose id is in `ids`. Reassigns the cache
+    /// (triggering a SwiftUI update) only if something actually changed —
+    /// `FeedNoteRowData: Equatable` makes that comparison free.
+    private func resolveRows(matching ids: Set<String>) {
+        guard !ids.isEmpty else { return }
+        var updated = rowDataCache
+        var didChange = false
+        for id in ids {
+            guard rowDataCache[id] != nil, let note = feedService.findNote(id: id) else { continue }
+            let resolved = FeedNoteRowData.resolve(for: note, feedService: feedService, nostrService: nostrService)
+            if updated[id] != resolved {
+                updated[id] = resolved
+                didChange = true
+            }
+        }
+        if didChange { rowDataCache = updated }
+    }
+
+    /// likedEventIds is keyed by `note.id`, so the symmetric difference is exactly
+    /// the set of affected rows.
+    private func updateRowDataForLikes(old: Set<String>, new: Set<String>) {
+        resolveRows(matching: old.symmetricDifference(new))
+    }
+
+    /// zappedEventIds is a `[noteID: amount]` dict; collect ids whose amount was
+    /// added, removed, or changed.
+    private func updateRowDataForZaps(old: [String: Int], new: [String: Int]) {
+        var changed = Set<String>()
+        for (id, amount) in new where old[id] != amount { changed.insert(id) }
+        for id in old.keys where new[id] == nil { changed.insert(id) }
+        resolveRows(matching: changed)
+    }
+
+    /// repostedEventIds is keyed by `repostCheckId = repostedEventId ?? id`, which
+    /// differs from `note.id` for kind-6 repost rows. Map the changed keys back to
+    /// the affected row ids with the same expression `resolve()` uses.
+    private func updateRowDataForReposts(old: Set<String>, new: Set<String>) {
+        let changedKeys = old.symmetricDifference(new)
+        guard !changedKeys.isEmpty else { return }
+        var ids = Set<String>()
+        for note in feedService.filteredNotes {
+            let repostCheckId = note.repostedEventId ?? note.id
+            if changedKeys.contains(repostCheckId) { ids.insert(note.id) }
+        }
+        resolveRows(matching: ids)
+    }
+
+    /// A batch of profiles changed. Re-resolve only rows that reference any of
+    /// those pubkeys as author, displayPubkey, parent author, reposter, or
+    /// replyTo — every profile-dependent field `resolve()` reads.
+    private func refreshRowsForPubkeys(_ pubkeys: Set<String>) {
+        guard !pubkeys.isEmpty else { return }
+        var ids = Set<String>()
+        for note in feedService.filteredNotes {
+            if pubkeys.contains(note.pubkey)
+                || (note.repostedBy.map(pubkeys.contains) ?? false)
+                || (note.replyToPubkey.map(pubkeys.contains) ?? false) {
+                ids.insert(note.id)
+                continue
+            }
+            // parent author
+            if let parentId = note.parentEventId,
+               let parent = feedService.findNote(id: parentId),
+               pubkeys.contains(parent.pubkey) {
+                ids.insert(note.id)
+                continue
+            }
+            // kind-6 repost: original author drives displayPubkey/displayProfile
+            if note.kind == 6, note.content.isEmpty,
+               let refId = note.repostedEventId,
+               let original = feedService.findNote(id: refId),
+               pubkeys.contains(original.pubkey) {
+                ids.insert(note.id)
+            }
+        }
+        resolveRows(matching: ids)
+    }
+
     // MARK: - Auto-load debounce
 
     /// Schedules a debounced `applyPendingNotes()` call, cancelling any
@@ -1063,11 +1243,16 @@ struct FeedView: View {
                         scheduleAutoLoad(delay: 0.5)
                     }
                 }
-                .onChange(of: feedService.filteredNotes) { _, _ in rebuildRowDataCache() }
-                .onChange(of: feedService.likedEventIds) { _, _ in rebuildRowDataCache() }
-                .onChange(of: feedService.repostedEventIds) { _, _ in rebuildRowDataCache() }
-                .onChange(of: feedService.zappedEventIds) { _, _ in rebuildRowDataCache() }
-                .onChange(of: nostrService.profiles.count) { _, _ in rebuildRowDataCache() }
+                .modifier(RowDataCacheObservers(
+                    feedService: feedService,
+                    nostrService: nostrService,
+                    onFiltered: { reconcileRowDataCache() },
+                    onLikes: { updateRowDataForLikes(old: $0, new: $1) },
+                    onReposts: { updateRowDataForReposts(old: $0, new: $1) },
+                    onZaps: { updateRowDataForZaps(old: $0, new: $1) },
+                    onProfiles: { refreshRowsForPubkeys($0) },
+                    onFollowsChanged: { rebuildRowDataCache() }
+                ))
 
                 // Floating "New Posts" indicator — shown when auto-load is off,
                 // or when auto-load is on but the user has scrolled down.
@@ -1128,6 +1313,9 @@ struct FeedView: View {
                 }
             }
             .onChange(of: configService.activeAccountHexPubkey) { _, _ in
+                // Identity change flips isOwnNote on every row; rebuild fully so
+                // overlapping notes (global/popular feeds) reflect the new account.
+                rebuildRowDataCache()
                 withAnimation(.easeInOut(duration: 0.2)) {
                     proxy.scrollTo("top", anchor: .top)
                 }

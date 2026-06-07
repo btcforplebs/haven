@@ -2,6 +2,64 @@ import SwiftUI
 import AVKit
 import AVFoundation
 
+#if os(iOS)
+import UIKit
+#endif
+
+// MARK: - Audio Session Manager
+
+/// Manages audio session configuration for video playback.
+/// Switches between ambient (mixing with background music) and playback (taking over audio) modes.
+class AudioSessionManager {
+    static let shared = AudioSessionManager()
+
+    #if os(iOS)
+    /// Configure audio session to allow background music to continue (for muted videos)
+    func enableMixingWithOthers() {
+        do {
+            let audioSession = AVAudioSession.sharedInstance()
+            // Deactivate the active playback session so background music can resume
+            try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+
+            // Set category to ambient with mixing - don't activate yet, let AVPlayer handle it
+            try audioSession.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+            #if DEBUG
+            print("AudioSession: Configured for ambient playback (mixing with background music)")
+            #endif
+        } catch {
+            #if DEBUG
+            print("AudioSession: Failed to enable mixing: \(error)")
+            #endif
+        }
+    }
+
+    /// Configure audio session to take over audio (for unmuted full-screen videos)
+    func enablePlayback() {
+        do {
+            let audioSession = AVAudioSession.sharedInstance()
+            // Deactivate current session first to ensure clean transition
+            try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
+
+            // Use .playback category which ignores the hardware mute switch
+            // Use .moviePlayback mode for optimal video playback
+            try audioSession.setCategory(.playback, mode: .moviePlayback, options: [])
+            try audioSession.setActive(true)
+            #if DEBUG
+            print("AudioSession: Configured for playback (taking over audio, ignoring mute switch)")
+            #endif
+        } catch {
+            #if DEBUG
+            print("AudioSession: Failed to enable playback: \(error)")
+            #endif
+        }
+    }
+    #else
+    // macOS doesn't need audio session management
+    func enableMixingWithOthers() {}
+    func enablePlayback() {}
+    #endif
+}
+
 // MARK: - VideoPlayerCache
 
 class VideoPlayerCache: ObservableObject {
@@ -67,7 +125,10 @@ class VideoPlayerCache: ObservableObject {
         let playerItem = AVPlayerItem(asset: asset)
         let player = AVPlayer(playerItem: playerItem)
         player.isMuted = true
-        
+
+        // Configure audio session to mix with background music since player starts muted
+        AudioSessionManager.shared.enableMixingWithOthers()
+
         // Auto-looping logic
         let observer = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
@@ -472,6 +533,10 @@ struct InlineFeedVideoPlayer: View {
                         deferredSetup = work
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
                     } else {
+                        // Ensure audio session is configured for mixing when resuming muted playback
+                        if isMuted {
+                            AudioSessionManager.shared.enableMixingWithOthers()
+                        }
                         player?.play()
                         isPlaying = true
                     }
@@ -484,6 +549,11 @@ struct InlineFeedVideoPlayer: View {
                     player?.pause()
                     isPlaying = false
                     isReadyToPlay = false
+                    // Restore mixing mode when video leaves screen (in case it was unmuted)
+                    if !isMuted {
+                        AudioSessionManager.shared.enableMixingWithOthers()
+                        isMuted = true
+                    }
                 }
             }
         }
@@ -492,6 +562,13 @@ struct InlineFeedVideoPlayer: View {
     private func toggleMute() {
         isMuted.toggle()
         player?.isMuted = isMuted
+
+        // Update audio session based on mute state
+        if isMuted {
+            AudioSessionManager.shared.enableMixingWithOthers()
+        } else {
+            AudioSessionManager.shared.enablePlayback()
+        }
     }
 
     private func loadThumbnail() {
@@ -517,6 +594,12 @@ struct InlineFeedVideoPlayer: View {
     }
 
     private func initializePlayer() {
+        // Configure audio session before initializing player
+        // Since videos start muted by default, enable mixing with background music
+        if isMuted {
+            AudioSessionManager.shared.enableMixingWithOthers()
+        }
+
         let cachedPlayer = VideoPlayerCache.shared.player(for: url)
         cachedPlayer.isMuted = isMuted
         self.player = cachedPlayer
@@ -695,6 +778,8 @@ struct FullScreenVideoPlayer: View {
         }
         .onAppear {
             VideoPlayerCache.shared.activeFullScreenURL = url
+            // Configure audio session to take over playback for unmuted full-screen video
+            AudioSessionManager.shared.enablePlayback()
             setupPlayer()
         }
         .onDisappear {
@@ -702,6 +787,8 @@ struct FullScreenVideoPlayer: View {
             // Restore standard inline muted play
             player?.isMuted = true
             player = nil
+            // Restore audio session to allow mixing with background music
+            AudioSessionManager.shared.enableMixingWithOthers()
         }
     }
 
@@ -720,8 +807,12 @@ struct FullScreenVideoPlayer: View {
     }
 
     private func initializePlayer() {
+        // Ensure audio session is ready for unmuted playback (ignores hardware mute switch)
+        AudioSessionManager.shared.enablePlayback()
+
         let cachedPlayer = VideoPlayerCache.shared.player(for: url)
         cachedPlayer.isMuted = false
+        cachedPlayer.volume = 1.0 // Ensure player volume is at maximum
         self.player = cachedPlayer
         cachedPlayer.play()
     }

@@ -796,7 +796,8 @@ class DMService: ObservableObject {
         ]
 
         Task {
-            guard let authEvent = await NostrService.shared.signEventAsync(kind: 22242, content: "", tags: tags) else {
+            // Always sign AUTH with owner's key since the local relay is owned by the owner account
+            guard let authEvent = await NostrService.shared.signEventAsync(kind: 22242, content: "", tags: tags, forceOwner: true) else {
                 print("Failed to sign NIP-42 AUTH event")
                 return
             }

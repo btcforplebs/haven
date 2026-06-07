@@ -36,8 +36,10 @@ struct HavenConfig: Codable, Equatable {
     var showReposts: Bool = true
     var useOLED: Bool = false
     var textSizeScale: Double = 1.0
-    var useFeedCompactMode: Bool = true // Compact Reddit-style feed view
+    var useFeedCompactMode: Bool = true // Legacy global default; per-feed overrides live in feedCompactModes
+    var feedCompactModes: [String: Bool] = [:] // Per-feed compact-mode overrides, keyed by FeedMode.rawValue
     var defaultReactionEmoji: String = "❤️" // Default emoji for quick reactions
+    var appIcon: String = "Default" // Selected app icon name
 
     // Mac Relay Sync (iOS only)
     var macRelayURL: String = "" // wss:// URL to a remote Mac Haven relay to sync missed notes
@@ -190,7 +192,7 @@ struct HavenConfig: Codable, Equatable {
     enum CodingKeys: String, CodingKey {
         case ownerNpub, relayURL, relayPort, dbEngine, blossomPath, logLevel
         case launchAtLogin, autoStartRelay, hasCompletedSetup, hasSeenWelcome, hasAcceptedToS, setupMode, disableMediaCache, autoplayVideos, cacheTTLDays, prefetchProfilePictures, allowNetworkAccess, ownerNcryptsec, ownerNsec, showReplies, nwcURI, defaultZapAmount, themeColor, autoLoadNewPosts, showReposts, showBitcoinWallet, cashuMintURL
-        case useOLED, textSizeScale, useFeedCompactMode, defaultReactionEmoji
+        case useOLED, textSizeScale, useFeedCompactMode, feedCompactModes, defaultReactionEmoji, appIcon
         case signingMode, nip46BunkerURI, nip46SignerPubkey, nip46RelayURL, nip46Secret, nip46ClientSecretKey, nip46ClientPubkey
         case pushServerURL, enableRemotePushServer, enablePushNotifications, notificationPrefsPerAccount
         case macRelayURL
@@ -253,7 +255,9 @@ struct HavenConfig: Codable, Equatable {
         useOLED = try container.decodeIfPresent(Bool.self, forKey: .useOLED) ?? defaults.useOLED
         textSizeScale = try container.decodeIfPresent(Double.self, forKey: .textSizeScale) ?? defaults.textSizeScale
         useFeedCompactMode = try container.decodeIfPresent(Bool.self, forKey: .useFeedCompactMode) ?? defaults.useFeedCompactMode
+        feedCompactModes = try container.decodeIfPresent([String: Bool].self, forKey: .feedCompactModes) ?? defaults.feedCompactModes
         defaultReactionEmoji = try container.decodeIfPresent(String.self, forKey: .defaultReactionEmoji) ?? defaults.defaultReactionEmoji
+        appIcon = try container.decodeIfPresent(String.self, forKey: .appIcon) ?? defaults.appIcon
 
         signingMode = try container.decodeIfPresent(String.self, forKey: .signingMode) ?? defaults.signingMode
         nip46BunkerURI = try container.decodeIfPresent(String.self, forKey: .nip46BunkerURI) ?? defaults.nip46BunkerURI

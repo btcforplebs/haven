@@ -27,7 +27,11 @@ struct FeedMediaViewer: View {
 
     @State private var isMirroring: Bool = false
     @State private var mirrorStatus: MirrorStatus? = nil
-    @State private var hasJustMirrored: Bool = false
+    /// Whether the user has their own backup of this specific blob — i.e. its sha256
+    /// is present in the local relay's Blossom store. Determined by a per-blob check in
+    /// `updateMirrorStatus()`, not by the URL's host: media served from a shared public
+    /// server the user happens to list as a mirror is NOT their backup.
+    @State private var isOnMirror: Bool = false
     @State private var isDeleting: Bool = false
     @State private var deleteStatus: DeleteStatus? = nil
     @State private var isCopied: Bool = false
@@ -284,6 +288,9 @@ struct FeedMediaViewer: View {
                 deleteStatusView(status)
             }
         }
+        .task(id: url) {
+            updateMirrorStatus()
+        }
         #if os(iOS)
         .onAppear {
             AppDelegate.allowLandscape = true
@@ -394,7 +401,7 @@ struct FeedMediaViewer: View {
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                         if saved {
                             mirrorStatus = .success
-                            hasJustMirrored = true
+                            isOnMirror = true
                         } else {
                             mirrorStatus = .failed("Failed to save to local relay")
                         }
@@ -431,7 +438,7 @@ struct FeedMediaViewer: View {
                     deleteStatus = success ? .success : .failed("Failed to delete from mirrors")
                     isDeleting = false
                     if success {
-                        hasJustMirrored = false
+                        isOnMirror = false
                     }
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
@@ -465,10 +472,10 @@ struct FeedMediaViewer: View {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                     if localSuccess && mirrorsSuccess {
                         deleteStatus = .success
-                        hasJustMirrored = false
+                        isOnMirror = false
                     } else if localSuccess {
                         deleteStatus = .failed("Deleted locally, mirror deletion failed")
-                        hasJustMirrored = false
+                        isOnMirror = false
                     } else if mirrorsSuccess {
                         deleteStatus = .failed("Deleted from mirrors, local failed")
                     } else {
@@ -531,29 +538,23 @@ struct FeedMediaViewer: View {
         return url.absoluteString
     }
 
-    private var isOnMirror: Bool {
-        if hasJustMirrored { return true }
-
-        let currentMirrorHosts: Set<String> = Set(
-            configService.config.activeBlossomMirrors.compactMap {
-                URL(string: $0)?.host?.lowercased()
-            }
-        )
-        guard let host = url.host?.lowercased() else { return false }
-
-        // Also check if the blob exists in the local Blossom directory
+    /// Recomputes whether the user has their own backup of this blob — i.e. its sha256
+    /// is present in the local relay's Blossom store. Replaces the old host-matching
+    /// heuristic, which falsely flagged any media served from a host that also happened
+    /// to be a configured mirror (e.g. the default cdn.satellite.earth) as "mirrored"
+    /// even when the user had never mirrored it. A blob living on a shared public server
+    /// is not the user's backup, so only a copy in the local store counts here.
+    private func updateMirrorStatus() {
         let hash = extractSHA256FromURL()
-        if !hash.isEmpty {
-            let relayDataDir = configService.relayDataDir
-            let blossomPath = configService.config.blossomPath
-            let blossomDir = relayDataDir.appendingPathComponent(blossomPath)
-            let fileURL = blossomDir.appendingPathComponent(hash)
-            if FileManager.default.fileExists(atPath: fileURL.path) {
-                return true
-            }
+        guard hash.count == 64, hash.allSatisfy({ $0.isHexDigit }) else {
+            isOnMirror = false
+            return
         }
 
-        return currentMirrorHosts.contains(host) || host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0"
+        let fileURL = configService.relayDataDir
+            .appendingPathComponent(configService.config.blossomPath)
+            .appendingPathComponent(hash)
+        isOnMirror = FileManager.default.fileExists(atPath: fileURL.path)
     }
 
     /// Downloads media data and returns it along with the server's Content-Type (if available).

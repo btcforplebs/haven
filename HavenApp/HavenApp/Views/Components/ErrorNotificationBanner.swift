@@ -54,7 +54,7 @@ struct ErrorNotificationBanner: View {
                     ))
             }
         }
-        .padding(.top, 12)
+        .padding(.top, manager.notifications.isEmpty ? 0 : 12)
         .animation(.spring(response: 0.35, dampingFraction: 0.75), value: manager.notifications.map(\.id))
     }
 }

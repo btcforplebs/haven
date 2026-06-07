@@ -2892,6 +2892,19 @@ struct AppearanceSettingsView: View {
             } footer: {
                 Text("Choose your default reaction emoji. This emoji will be used when you tap the heart button on a note.")
             }
+
+            #if os(iOS)
+            Section {
+                AppIconPicker(selectedIcon: $configService.config.appIcon) { iconName in
+                    configService.save()
+                    setAppIcon(iconName)
+                }
+            } header: {
+                Text("App Icon")
+            } footer: {
+                Text("Choose your app icon. Changes take effect immediately.")
+            }
+            #endif
         }
         .groupedFormStyleCompat()
         .sheet(isPresented: $showEmojiPicker) {
@@ -2905,7 +2918,24 @@ struct AppearanceSettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         #endif
     }
-    
+
+    #if os(iOS)
+    private func setAppIcon(_ iconName: String) {
+        let iconToSet = iconName == "Default" ? nil : iconName
+
+        guard UIApplication.shared.supportsAlternateIcons else {
+            print("Alternate icons not supported")
+            return
+        }
+
+        UIApplication.shared.setAlternateIconName(iconToSet) { error in
+            if let error = error {
+                print("Error setting alternate icon: \(error.localizedDescription)")
+            }
+        }
+    }
+    #endif
+
     #if os(macOS)
     private var macOSGrid: some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 16)], spacing: 16) {
@@ -2951,7 +2981,7 @@ struct AppearanceSettingsView: View {
         }
     }
 }
-
+ 
 #if os(macOS)
 struct ThemeCard: View {
     let theme: AppTheme
@@ -3492,6 +3522,70 @@ struct BlossomSettingsView: View {
         }
     }
 }
+
+#if os(iOS)
+// MARK: - App Icon Selection
+
+enum AppIconOption: String, CaseIterable, Identifiable {
+    case `default` = "Default"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .default: return "Vault (Default)"
+        }
+    }
+
+    var iconName: String? {
+        switch self {
+        case .default: return nil  // nil means the primary app icon
+        }
+    }
+
+    var previewImageName: String {
+        "AppIcon"  // All variants use the same preview for now
+    }
+}
+
+struct AppIconPicker: View {
+    @Binding var selectedIcon: String
+    let onChange: (String) -> Void
+
+    var body: some View {
+        ForEach(AppIconOption.allCases) { option in
+            Button(action: {
+                selectedIcon = option.rawValue
+                onChange(option.rawValue)
+            }) {
+                HStack(spacing: 12) {
+                    // App icon preview
+                    Image("AppIcon")
+                        .resizable()
+                        .frame(width: 60, height: 60)
+                        .cornerRadius(13.5)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 13.5)
+                                .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+                        )
+
+                    Text(option.displayName)
+                        .foregroundColor(.primary)
+
+                    Spacer()
+
+                    if selectedIcon == option.rawValue {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.havenPurple)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+#endif
 
 // RelayListEditor and LogsView moved to separate files
 

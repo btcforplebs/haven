@@ -52,6 +52,12 @@ class AppDelegate: NSObject, ObservableObject {
         #if DEBUG
         print("Application terminating, stopping relay...")
         #endif
+
+        // Persist the current feed so the next cold launch restores it instantly.
+        // The encode + write runs off-main; the relay-stop semaphore wait below
+        // gives it time to flush before the process exits.
+        FeedService.shared.persistCurrentSnapshot()
+
         // Stop background services before relay shutdown
         NetworkSyncService.shared.stop()
         NIP46Service.shared.disconnect()

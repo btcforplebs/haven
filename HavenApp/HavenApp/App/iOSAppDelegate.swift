@@ -1,6 +1,7 @@
 import SwiftUI
 #if os(iOS)
 import UIKit
+import AVFoundation
 
 @MainActor
 class iOSAppDelegate: NSObject, UIApplicationDelegate, ObservableObject {
@@ -9,6 +10,10 @@ class iOSAppDelegate: NSObject, UIApplicationDelegate, ObservableObject {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // Ignore SIGPIPE so broken pipe writes don't kill the process
         signal(SIGPIPE, SIG_IGN)
+
+        // Configure audio session to allow mixing with other apps (e.g., Music)
+        // This prevents muted videos from interrupting background music playback
+        configureAudioSession()
 
         // Auto-start relay on launch
         Task { @MainActor in
@@ -43,6 +48,9 @@ class iOSAppDelegate: NSObject, UIApplicationDelegate, ObservableObject {
         #if DEBUG
         print("iOS: App entering background - requesting background time to keep relay alive")
         #endif
+
+        // Persist the current feed so the next cold launch restores it instantly.
+        FeedService.shared.persistCurrentSnapshot()
 
         // Request background time to keep relay running
         backgroundTask = application.beginBackgroundTask { [weak self] in
@@ -88,6 +96,22 @@ class iOSAppDelegate: NSObject, UIApplicationDelegate, ObservableObject {
 
         UIApplication.shared.endBackgroundTask(backgroundTask)
         backgroundTask = .invalid
+    }
+
+    private func configureAudioSession() {
+        do {
+            let audioSession = AVAudioSession.sharedInstance()
+            // Set category to .ambient with .mixWithOthers so muted videos don't interrupt music
+            // Don't activate the session yet - let AVPlayer activate it only when needed
+            try audioSession.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+            #if DEBUG
+            print("iOS: Audio session category configured for ambient playback (won't interrupt background music)")
+            #endif
+        } catch {
+            #if DEBUG
+            print("iOS: Failed to configure audio session: \(error)")
+            #endif
+        }
     }
 }
 #endif

@@ -105,7 +105,10 @@ struct FeedMediaView: View {
     private var videoView: some View {
         Group {
             if isThumbnail || !configService.config.autoplayVideos {
-                FeedVideoThumbnailView(url: url, showPlayOverlay: !isThumbnail)
+                // In condensed/thumbnail contexts, never autoload the full video just
+                // to make a small still — extract the frame from the remote asset
+                // instead of downloading the whole file.
+                FeedVideoThumbnailView(url: url, showPlayOverlay: !isThumbnail, avoidFullDownload: isThumbnail)
                     .aspectRatio(1, contentMode: .fill)
             } else {
                 InlineFeedVideoPlayer(url: url, onTap: onTap)
@@ -331,7 +334,12 @@ private struct FeedGIFView: View {
 private struct FeedVideoThumbnailView: View {
     let url: URL
     var showPlayOverlay: Bool = false
+    /// When true, the preview frame is extracted from the remote asset via
+    /// byte-range requests instead of downloading the entire video first. Used by
+    /// condensed views so scrolling past a video never autoloads it.
+    var avoidFullDownload: Bool = false
     @State private var thumbnail: PlatformImage? = nil
+    @State private var loadFailed = false
 
     var body: some View {
         ZStack {
@@ -342,12 +350,18 @@ private struct FeedVideoThumbnailView: View {
                     .resizable()
                     .scaledToFill()
                     .transition(.opacity.animation(.easeIn(duration: 0.15)))
+            } else if loadFailed {
+                // Couldn't extract a frame without a full download — show a video
+                // glyph rather than spinning forever.
+                Image(systemName: "video.fill")
+                    .font(.appSystem(size: 22))
+                    .foregroundColor(Color.havenPurple.opacity(0.5))
             } else {
                 ProgressView()
                     .tint(Color.havenPurple.opacity(0.6))
             }
 
-            if showPlayOverlay {
+            if showPlayOverlay && thumbnail != nil {
                 Image(systemName: "play.circle.fill")
                     .font(.appSystem(size: 44))
                     .foregroundColor(.white.opacity(0.85))
@@ -363,8 +377,13 @@ private struct FeedVideoThumbnailView: View {
             return
         }
         Task {
-            if let thumb = await MediaCacheService.shared.generateThumbnail(for: url) {
-                await MainActor.run { self.thumbnail = thumb }
+            let thumb = await MediaCacheService.shared.generateThumbnail(for: url, allowFullDownload: !avoidFullDownload)
+            await MainActor.run {
+                if let thumb = thumb {
+                    self.thumbnail = thumb
+                } else {
+                    self.loadFailed = true
+                }
             }
         }
     }

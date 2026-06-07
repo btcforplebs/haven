@@ -439,7 +439,12 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
     /// 3. Build a properly-extensioned local file URL so AVFoundation accepts the container.
     /// 4. Try several time points with loose tolerance; first success wins.
     /// 5. Persist to memory + disk so subsequent renders are instant.
-    func generateThumbnail(for url: URL, mimeType: String? = nil) async -> PlatformImage? {
+    /// - Parameter allowFullDownload: When `true` (default) a remote video that
+    ///   isn't cached is downloaded in full before the frame is extracted. Pass
+    ///   `false` from condensed/thumbnail contexts so a tiny preview never pulls an
+    ///   entire video over the network — the frame is then extracted directly from
+    ///   the remote asset via byte-range requests instead.
+    func generateThumbnail(for url: URL, mimeType: String? = nil, allowFullDownload: Bool = true) async -> PlatformImage? {
         if let cached = cachedThumbnail(for: url) {
             return cached
         }
@@ -463,14 +468,18 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
                     continuation.resume(returning: nil)
                     return
                 }
-                await self.runThumbnailJob(url: url, key: key, mimeType: mimeType, leader: continuation)
+                await self.runThumbnailJob(url: url, key: key, mimeType: mimeType, allowFullDownload: allowFullDownload, leader: continuation)
             }
         }
     }
 
-    private func runThumbnailJob(url: URL, key: String, mimeType: String?, leader: CheckedContinuation<PlatformImage?, Never>) async {
-        // 1. Ensure the file is on disk. For remote URLs that aren't cached, pull them down.
-        if internalLocalFileURL(for: url) == nil, !isLocalURL(url) {
+    private func runThumbnailJob(url: URL, key: String, mimeType: String?, allowFullDownload: Bool, leader: CheckedContinuation<PlatformImage?, Never>) async {
+        // 1. Ensure the file is on disk. For remote URLs that aren't cached, pull them
+        // down — but only when the caller permits a full download. Condensed/thumbnail
+        // contexts pass allowFullDownload:false so generating a small preview never
+        // autoloads an entire video; renderThumbnail then extracts the frame directly
+        // from the remote asset via byte-range requests.
+        if allowFullDownload, internalLocalFileURL(for: url) == nil, !isLocalURL(url) {
             _ = await fetchData(url: url)
         }
 

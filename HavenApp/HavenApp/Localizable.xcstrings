@@ -243,6 +243,9 @@
     "Amount: %@ sats" : {
 
     },
+    "App Icon" : {
+
+    },
     "As long as your Haven relay is running and you have your nsec, your ecash is recoverable." : {
 
     },
@@ -346,6 +349,9 @@
 
     },
     "Choose an accent color for the Nostr Vault interface. This will change the primary color and gradients across the application." : {
+
+    },
+    "Choose your app icon. Changes take effect immediately." : {
 
     },
     "Choose your default reaction emoji. This emoji will be used when you tap the heart button on a note." : {

@@ -140,52 +140,63 @@ struct MessageComposerView: View {
                 Divider()
 
                 // Message Content
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        ZStack(alignment: .topLeading) {
-                            TextEditor(text: $messageText)
-                                .textEditorStyle(.plain)
-                                .font(.appSystem(size: 15))
-                                .scrollContentBackground(.hidden)
-                                .frame(minHeight: 120)
-
-                            if messageText.isEmpty {
-                                Text("Write a message...")
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            ZStack(alignment: .topLeading) {
+                                TextEditor(text: $messageText)
+                                    .textEditorStyle(.plain)
                                     .font(.appSystem(size: 15))
-                                    .foregroundColor(.secondary.opacity(0.5))
-                                    .padding(.horizontal, 5)
-                                    .padding(.vertical, 8)
-                                    .allowsHitTesting(false)
-                            }
-                        }
-                        .padding(12)
+                                    .scrollContentBackground(.hidden)
+                                    .frame(minHeight: 120)
 
-                        // Image preview
-                        if let image = selectedImage {
-                            ZStack(alignment: .topTrailing) {
-                                Image(uiImage: image)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(maxHeight: 200)
-                                    .clipShape(RoundedRectangle(cornerRadius: 10))
-
-                                Button(action: {
-                                    selectedImage = nil
-                                    selectedImageData = nil
-                                }) {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.appSystem(size: 22))
-                                        .foregroundColor(.white)
-                                        .shadow(radius: 2)
+                                if messageText.isEmpty {
+                                    Text("Write a message...")
+                                        .font(.appSystem(size: 15))
+                                        .foregroundColor(.secondary.opacity(0.5))
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 8)
+                                        .allowsHitTesting(false)
                                 }
-                                .padding(8)
                             }
-                            .padding(.horizontal, 12)
-                        }
+                            .padding(12)
 
-                        Spacer()
+                            // Image preview
+                            if let image = selectedImage {
+                                ZStack(alignment: .topTrailing) {
+                                    Image(uiImage: image)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(maxHeight: 200)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                                    Button(action: {
+                                        selectedImage = nil
+                                        selectedImageData = nil
+                                    }) {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .font(.appSystem(size: 22))
+                                            .foregroundColor(.white)
+                                            .shadow(radius: 2)
+                                    }
+                                    .padding(8)
+                                }
+                                .padding(.horizontal, 12)
+                                .id("imagePreview")
+                            }
+
+                            Spacer()
+                        }
+                        .padding(.horizontal, 4)
                     }
-                    .padding(.horizontal, 4)
+                    .onChange(of: selectedImage) { oldValue, newValue in
+                        // Scroll to show image when one is added
+                        if oldValue == nil && newValue != nil {
+                            withAnimation {
+                                proxy.scrollTo("imagePreview", anchor: .bottom)
+                            }
+                        }
+                    }
                 }
 
                 // Actions

@@ -126,7 +126,7 @@ struct ZapNotificationBanner: View {
                     ))
             }
         }
-        .padding(.top, 12)
+        .padding(.top, (unlikeManager.isShowing || !zapManager.notifications.isEmpty) ? 12 : 0)
         .animation(.spring(response: 0.35, dampingFraction: 0.75), value: zapManager.notifications.map(\.id))
         .animation(.spring(response: 0.35, dampingFraction: 0.75), value: unlikeManager.isShowing)
     }
@@ -290,7 +290,7 @@ struct FollowNotificationBanner: View {
                     ))
             }
         }
-        .padding(.top, 12)
+        .padding(.top, manager.notifications.isEmpty ? 0 : 12)
         .animation(.spring(response: 0.35, dampingFraction: 0.75), value: manager.notifications.map(\.id))
     }
 }
@@ -430,7 +430,7 @@ struct MediaUploadNotificationBanner: View {
                     ))
             }
         }
-        .padding(.top, 12)
+        .padding(.top, manager.notifications.isEmpty ? 0 : 12)
         .animation(.spring(response: 0.35, dampingFraction: 0.75), value: manager.notifications.map(\.id))
     }
 }
@@ -455,7 +455,7 @@ struct PostActionNotificationBanner: View {
                 ))
             }
         }
-        .padding(.top, 12)
+        .padding(.top, manager.isShowing ? 12 : 0)
         .animation(.spring(response: 0.35, dampingFraction: 0.75), value: manager.isShowing)
     }
 }
@@ -654,7 +654,7 @@ struct ActionToastBanner: View {
                 ))
             }
         }
-        .padding(.top, 12)
+        .padding(.top, manager.notifications.isEmpty ? 0 : 12)
         .animation(.spring(response: 0.35, dampingFraction: 0.75), value: manager.notifications.map(\.id))
     }
 }

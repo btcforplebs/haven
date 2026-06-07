@@ -296,7 +296,6 @@ struct iPadSidebarView: View {
                 ErrorNotificationBanner()
             }
             .padding(.top, 4)
-            .allowsHitTesting(true)
         }
         .sheet(isPresented: $showingAccountSwitcher) {
             AccountSwitcherView(configService: configService)
@@ -386,7 +385,6 @@ struct iPhoneTabView: View {
                 ErrorNotificationBanner()
             }
             .padding(.top, 4)
-            .allowsHitTesting(true)
         }
         .onAppear {
             if configService.config.hasCompletedSetup && relayManager.state == .idle {

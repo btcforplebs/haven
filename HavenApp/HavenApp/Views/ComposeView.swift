@@ -112,73 +112,84 @@ struct ComposeView: View {
             header
             #endif
 
-            ScrollView {
-                VStack(spacing: 16) {
-                    if let parent = effectiveReplyTo {
-                        replyHeader(parent: parent)
-                    }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 16) {
+                        if let parent = effectiveReplyTo {
+                            replyHeader(parent: parent)
+                        }
 
-                    HStack(alignment: .top, spacing: 12) {
-                        AvatarView(
-                            url: nostrService.profiles[configService.activeAccountHexPubkey]?.pictureURL,
-                            pubkey: configService.activeAccountHexPubkey
-                        )
-                        .frame(width: 36, height: 36)
-                        .contextMenu {
-                            if configService.allAccountNpubs.count > 1 {
-                                ForEach(configService.allAccountNpubs, id: \.self) { npub in
-                                    let isOwner = npub == configService.config.ownerNpub
-                                    let activeAccountNpub = configService.config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
-                                    let isActive = activeAccountNpub.isEmpty ? isOwner : npub == activeAccountNpub
-                                    let hex = Bech32.decode(npub)?.hexString ?? ""
-                                    let name = nostrService.profiles[hex]?.bestName ?? (isOwner ? "Owner" : String(npub.prefix(8)))
+                        HStack(alignment: .top, spacing: 12) {
+                            AvatarView(
+                                url: nostrService.profiles[configService.activeAccountHexPubkey]?.pictureURL,
+                                pubkey: configService.activeAccountHexPubkey
+                            )
+                            .frame(width: 36, height: 36)
+                            .contextMenu {
+                                if configService.allAccountNpubs.count > 1 {
+                                    ForEach(configService.allAccountNpubs, id: \.self) { npub in
+                                        let isOwner = npub == configService.config.ownerNpub
+                                        let activeAccountNpub = configService.config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
+                                        let isActive = activeAccountNpub.isEmpty ? isOwner : npub == activeAccountNpub
+                                        let hex = Bech32.decode(npub)?.hexString ?? ""
+                                        let name = nostrService.profiles[hex]?.bestName ?? (isOwner ? "Owner" : String(npub.prefix(8)))
 
-                                    Button {
-                                        configService.switchActiveAccount(to: npub)
-                                    } label: {
-                                        if isActive {
-                                            Label(name, systemImage: "checkmark")
-                                        } else {
-                                            Text(name)
+                                        Button {
+                                            configService.switchActiveAccount(to: npub)
+                                        } label: {
+                                            if isActive {
+                                                Label(name, systemImage: "checkmark")
+                                            } else {
+                                                Text(name)
+                                            }
                                         }
                                     }
+                                } else {
+                                    Text("No other accounts")
                                 }
-                            } else {
-                                Text("No other accounts")
+                            }
+
+                            ZStack(alignment: .topLeading) {
+                                if content.isEmpty {
+                                    Text("What's happening?")
+                                        .foregroundColor(.secondary.opacity(0.6))
+                                        .padding(.top, 10)
+                                        .padding(.leading, 4)
+                                }
+
+                                TextEditor(text: $content)
+                                    .focused($isTextEditorFocused)
+                                    .font(.appSystem(size: 16))
+                                    .frame(minHeight: 200)
+                                    .scrollContentBackground(.hidden)
+                                    .accessibilityLabel("Post content")
+                                    .onChange(of: content) { _, newValue in
+                                        updateMentionQuery(in: newValue)
+                                        scheduleAutoSave(newValue)
+                                    }
                             }
                         }
 
-                        ZStack(alignment: .topLeading) {
-                            if content.isEmpty {
-                                Text("What's happening?")
-                                    .foregroundColor(.secondary.opacity(0.6))
-                                    .padding(.top, 10)
-                                    .padding(.leading, 4)
-                            }
+                        if !attachments.isEmpty {
+                            attachmentGrid
+                                .id("attachmentGrid")
+                        }
 
-                            TextEditor(text: $content)
-                                .focused($isTextEditorFocused)
-                                .font(.appSystem(size: 16))
-                                .frame(minHeight: 200)
-                                .scrollContentBackground(.hidden)
-                                .accessibilityLabel("Post content")
-                                .onChange(of: content) { _, newValue in
-                                    updateMentionQuery(in: newValue)
-                                    scheduleAutoSave(newValue)
-                                }
+                        if let quoted = effectiveQuoteTo {
+                            QuotedNoteView(note: quoted)
+                                .environmentObject(nostrService)
                         }
                     }
-
-                    if !attachments.isEmpty {
-                        attachmentGrid
-                    }
-
-                    if let quoted = effectiveQuoteTo {
-                        QuotedNoteView(note: quoted)
-                            .environmentObject(nostrService)
+                    .padding(20)
+                }
+                .onChange(of: attachments.count) { oldCount, newCount in
+                    // Scroll to show attachments when a new one is added
+                    if newCount > oldCount && newCount > 0 {
+                        withAnimation {
+                            proxy.scrollTo("attachmentGrid", anchor: .bottom)
+                        }
                     }
                 }
-                .padding(20)
             }
 
             // @mention popup — inline above footer so it stays visible above the keyboard
