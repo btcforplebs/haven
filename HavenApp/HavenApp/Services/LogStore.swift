@@ -35,6 +35,13 @@ class LogStore: ObservableObject {
     /// Queue entries from a background thread (via Task { @MainActor })
     func enqueue(_ entries: [RelayProcessManager.LogEntry]) {
         pendingLogs.append(contentsOf: entries)
+        // If the throttler isn't running (e.g. popover closed / background),
+        // schedule a one-shot flush so entries still appear in the Logs view.
+        if logUpdateTimer == nil {
+            DispatchQueue.main.async { [weak self] in
+                self?.flush()
+            }
+        }
     }
 
     /// Queue a single entry for the next throttled flush instead of

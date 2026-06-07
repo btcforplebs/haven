@@ -226,10 +226,16 @@ class WebSocketClient: NSObject, ObservableObject, URLSessionWebSocketDelegate, 
                         print("WebSocketClient: Received: \(text.prefix(80))")
                     }
                     #endif
-                    self.messageSubject.send(text)
+                    // Dispatch to main thread — PassthroughSubject.send() is not
+                    // thread-safe and subscribers observe on MainActor.
+                    DispatchQueue.main.async {
+                        self.messageSubject.send(text)
+                    }
                 case .data(let data):
                     if let text = String(data: data, encoding: .utf8) {
-                        self.messageSubject.send(text)
+                        DispatchQueue.main.async {
+                            self.messageSubject.send(text)
+                        }
                     }
                 @unknown default:
                     break
@@ -275,6 +281,16 @@ class WebSocketClient: NSObject, ObservableObject, URLSessionWebSocketDelegate, 
     }
 
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        handleTLSChallenge(challenge, completionHandler: completionHandler)
+    }
+
+    // Task-level TLS challenge — iOS delivers WebSocket auth challenges here
+    // rather than the session-level delegate, so both must be implemented.
+    func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        handleTLSChallenge(challenge, completionHandler: completionHandler)
+    }
+
+    private func handleTLSChallenge(_ challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         let host = challenge.protectionSpace.host
         if isLocalNetworkHost(host) {
             if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,

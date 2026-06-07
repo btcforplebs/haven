@@ -69,9 +69,7 @@ class ConfigService: ObservableObject {
                     #endif
                 }
             } catch {
-                #if DEBUG
-                print("ConfigService: Error decoding configuration: \(error)")
-                #endif
+                RelayProcessManager.shared.addLog("Error decoding configuration: \(error.localizedDescription)", level: "ERROR")
                 config = HavenConfig.default
             }
         } else {
@@ -148,9 +146,7 @@ class ConfigService: ObservableObject {
 
                 refreshActiveAccountHex()
             } catch {
-                #if DEBUG
-                print("ConfigService: Error reloading configuration: \(error)")
-                #endif
+                RelayProcessManager.shared.addLog("Error reloading configuration: \(error.localizedDescription)", level: "ERROR")
             }
         }
     }
@@ -206,9 +202,7 @@ class ConfigService: ObservableObject {
             // Update launch at login if changed
             updateLaunchAtLogin()
         } catch {
-            #if DEBUG
-            print("Failed to save config: \(error)")
-            #endif
+            RelayProcessManager.shared.addLog("Failed to save config: \(error.localizedDescription)", level: "ERROR")
         }
     }
     

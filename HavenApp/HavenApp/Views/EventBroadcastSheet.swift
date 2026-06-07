@@ -201,46 +201,66 @@ struct EventBroadcastSheet: View {
     }
 
     private func fetchFullEvent() {
-        guard let localURL = URL(string: configService.config.nostrURL) else {
+        // 1. Check FeedService's in-memory raw event cache (includes sig)
+        if let cached = FeedService.shared.rawEventCache[note.id],
+           let jsonData = cached.data(using: .utf8),
+           let dict = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+            self.fullEventDict = dict
+            self.isFetchingEvent = false
+            return
+        }
+
+        // 2. Query both outbox (/) and inbox (/inbox) paths — notes from others
+        //    live in inbox, own notes live in outbox.
+        let subId = "broadcast-fetch-\(UUID().uuidString.prefix(8))"
+        let filter: [String: Any] = ["ids": [self.note.id], "limit": 1]
+        let req = ["REQ", subId, filter] as [Any]
+
+        guard let data = try? JSONSerialization.data(withJSONObject: req),
+              let str = String(data: data, encoding: .utf8) else {
             isFetchingEvent = false
             return
         }
 
-        let client = WebSocketClient()
-        client.isTemporary = true
+        let baseURL = configService.config.nostrURL
+        let paths = [baseURL, baseURL + "/inbox"]
+        var found = false
 
-        client.messageSubject
-            .receive(on: DispatchQueue.main)
-            .sink { msg in
-                guard let data = msg.data(using: .utf8),
-                      let json = try? JSONSerialization.jsonObject(with: data) as? [Any],
-                      let type = json[0] as? String,
-                      type == "EVENT", json.count >= 3,
-                      let ev = json[2] as? [String: Any] else { return }
-                self.fullEventDict = ev
-                self.isFetchingEvent = false
-                client.disconnect()
-            }
-            .store(in: &cancellables)
+        for path in paths {
+            guard let url = URL(string: path) else { continue }
+            let client = WebSocketClient()
+            client.isTemporary = true
 
-        client.$connectionState
-            .receive(on: DispatchQueue.main)
-            .sink { state in
-                if state == .connected {
-                    let filter: [String: Any] = ["ids": [self.note.id], "limit": 1]
-                    let req = ["REQ", "broadcast-fetch-\(UUID().uuidString.prefix(8))", filter] as [Any]
-                    if let data = try? JSONSerialization.data(withJSONObject: req),
-                       let str = String(data: data, encoding: .utf8) {
+            client.messageSubject
+                .receive(on: DispatchQueue.main)
+                .sink { msg in
+                    guard !found,
+                          let msgData = msg.data(using: .utf8),
+                          let json = try? JSONSerialization.jsonObject(with: msgData) as? [Any],
+                          let type = json[0] as? String,
+                          type == "EVENT", json.count >= 3,
+                          let ev = json[2] as? [String: Any] else { return }
+                    found = true
+                    self.fullEventDict = ev
+                    self.isFetchingEvent = false
+                    client.disconnect()
+                }
+                .store(in: &cancellables)
+
+            client.$connectionState
+                .receive(on: DispatchQueue.main)
+                .sink { state in
+                    if state == .connected {
                         client.send(text: str)
                     }
                 }
-            }
-            .store(in: &cancellables)
+                .store(in: &cancellables)
 
-        client.connect(url: localURL)
+            client.connect(url: url)
+        }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-            self.isFetchingEvent = false
+            if self.isFetchingEvent { self.isFetchingEvent = false }
         }
     }
 

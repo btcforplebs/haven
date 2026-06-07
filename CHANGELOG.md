@@ -5,9 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased] - 2026-06-07
+## [2.5.1 (7) macOS / 1.1.1 (7) iOS] - 2026-06-07
 
-> **Performance, Stability & Cold-Launch Restore Release**: Instant feed restore on cold launch from persisted snapshots; thread-safe event deduplication eliminating EXC_BAD_ACCESS crashes; incremental row-data cache updates for buttery feed scrolling; audio session management so muted videos never interrupt background music; per-feed compact mode; and a fetch watchdog preventing the "Loading notes…" overlay from hanging forever.
+> **FIPS Publishing, Responsive Toolbars & Connection Reuse Release**: FIPS overlay network Blossom publishing with auto-detection of nostr-vpn; responsive toolbar menus that collapse gracefully on narrow screens; event publishing reuses the existing feed socket instead of opening throwaway connections; log-level filtering in the Logs view; macOS keyboard shortcuts for all tabs; and broad thread-safety and lock-correctness fixes.
 
 ### Added
 - **Instant Cold-Launch Feed Restore**: Feed state is persisted to disk on app background/terminate and restored instantly on next cold launch — users see their previous feed immediately with a background top-up from relays, eliminating the blank-screen wait. New `persistCurrentSnapshot()` called from SceneDelegate, AppDelegate, and iOSAppDelegate lifecycle hooks; `startInitialLoad()` entry point in FeedView restores or falls back to a full refresh.
@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Global Search (NIP-50)**: SearchView gains a relay/global toggle. Global mode queries public NIP-50 search relays (`relay.nostr.band`, `relay.noswhere.com`) for notes (kind 1) and profiles (kind 0), deduplicates results across relays via a thread-safe `GlobalSearchCollector`, merges discovered profiles into the shared cache, and returns after a 4-second window. In-flight searches are cancelled on mode switch or cancel.
 - **Profile "Tagged" Tab**: ProfileView adds a "Tagged" section listing kind 1/6/30023 notes from other users that mention, reply to, or tag the profile (`#p`), with its own infinite-scroll pagination and tagger-profile display.
 - **Condensed Note View**: A persistent compact/condensed layout (32pt avatar, name · time, two-line content, thumbnail) is available in ViewerView via a toolbar toggle (persisted with `@AppStorage`) and applied to FeedView and NoteDetailView reply threads.
+- **FIPS Blossom Publishing (macOS)**: New `FIPSDetectionService` detects whether nostr-vpn (nvpn) is running by reading its file-based IPC (`config.toml` + `daemon.state.json`). A new "FIPS" section in Blossom Settings lets users publish their `.fips` Blossom address in their server list (kind 10063). Address source options: owner npub, auto-detected from nostr-vpn, or custom npub. FIPS URL is appended last in the mirror list (clearnet-first per BUD-14). iOS shows VPN detection status and guidance for accessing `.fips` servers.
+- **macOS Keyboard Shortcuts**: Cmd+1–6 switches between tabs (Feed, Search, Profile, Relay, Notes, Media), Cmd+, opens Settings, Cmd+N opens Compose.
+- **Blossom Media Picker Filters**: The Blossom media picker sheet now has a segmented filter bar (All/Photo/Video/GIF) in the toolbar with empty-state messaging per filter type.
+- **Broadcast Button in Thread View**: NoteDetailView toolbar gains a broadcast button to open the EventBroadcastSheet directly from a thread context.
+- **Log Level Filter**: LogsView adds a segmented filter picker (All/Info+/Warn+/Errors) to filter displayed log entries by minimum severity. macOS header also shows an inline relay log level picker for the Go process.
+- **Responsive Toolbar Menus**: FeedView, ViewerView, and SearchView toolbars now use `ViewThatFits` — filters render as inline icon buttons when space permits, collapsing to a single overflow menu on narrow windows/screens.
 
 ### Changed
 - **Incremental Feed Row-Data Cache**: Profile updates, likes, zaps, and reposts now trigger targeted row-level cache updates (`reconcileRowDataCache`, `resolveRows`, per-signal handlers) instead of full-rebuild passes. Extracted `RowDataCacheObservers` ViewModifier keeps the main FeedView body within the Swift type-checker's budget. Dramatically reduces frame drops during profile-metadata streaming at boot.
@@ -35,6 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Search & Discovery UI**: On iOS, result-type filters and the search-mode toggle moved into a glass toolbar. Trending hashtags and suggested profiles are now cached and refresh-throttled (5s) to stop UI thrashing as the feed streams events.
 - **Thread & Compact Styling**: NoteDetailView compact replies use larger avatars (28pt), card-style parent notes, and stronger purple focus highlighting. Compact notes resolve mentions to plain `@name` text via the new `NostrContentFormatter.resolveMentionsPlainText()`, avoiding AttributedString/link overhead in dense layouts.
 - **Whitelisted Media Scope**: Whitelisted accounts now see only their own media in the relay media grid (the "tagged by" exemption was removed).
+- **Event Publishing Reuses Feed Connection**: `NostrService.publishEvent()` now sends events through the existing feed relay socket (`FeedService.sendToLocalRelay`) instead of opening a temporary WebSocket for each publish — falling back to existing `clients[]` or a temporary client only as a last resort. Eliminates redundant TLS handshakes on every note/reaction/repost.
+- **Event Broadcast Fetches from Outbox + Inbox**: `EventBroadcastSheet.fetchFullEvent()` queries both the relay's outbox (`/`) and inbox (`/inbox`) paths and checks `FeedService.rawEventCache` first, fixing broadcast failures for notes from other users stored only in the inbox relay.
+- **WebSocket Message Dispatch**: `WebSocketClient.messageSubject.send()` is now dispatched to the main thread, preventing race conditions from concurrent non-main-thread sends to `PassthroughSubject`.
+- **Task-Level TLS Challenge Handling**: `WebSocketClient` now implements the task-level `urlSession(_:task:didReceive:)` delegate — iOS delivers WebSocket auth challenges at the task level rather than the session level, fixing TLS certificate trust failures on some iOS versions.
+- **LogStore Background Flush**: When the throttle timer isn't running (popover closed), `LogStore.enqueue()` schedules a one-shot flush so entries still appear when the Logs view is reopened.
+- **Config/Service Error Logging**: `ConfigService`, `FollowingBackupService`, and `MediaCacheService` now route decode/save/cache errors through `RelayProcessManager.addLog()` (visible in System Logs) instead of silent `#if DEBUG` print statements.
+- **RelayProcessManager Buffer Lock Safety**: Replaced manual lock/unlock pairs with `defer { bufferLock.unlock() }` in the stdout pipe handler, preventing potential deadlocks on early return.
+- **NostrService OK Response Bounds Check**: Smart broadcast `OK` message parsing checks `json.count >= 3` before accessing array indices, preventing potential out-of-bounds crashes.
+- **Log Level Picker Moved**: Relay log level picker moved from Advanced Settings to the LogsView header (macOS) for contextual access alongside the new filter controls.
 
 ### Fixed
 - **Thread-Safe Event Deduplication (EXC_BAD_ACCESS)**: `seenEventIds` in `NostrService` is now guarded by `NSLock` via `markSeen`/`hasSeen`/`clearSeen` helpers. Eliminates random EXC_BAD_ACCESS crashes from concurrent non-atomic Set mutations between the background `processingQueue` and the main thread.
@@ -48,6 +63,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Relay Note Search Bar**: Removed the inline search bar and toggle for local relay notes in ViewerView; global search via SearchView supersedes it.
 - **Dashboard Compact Stats Toggle**: Removed the compact-view toggle and compact stats layout from DashboardView — statistics now always render in the full layout.
 - **Apple Sign In Identity Backup (Experimental)**: Removed incomplete Apple Sign In integration that was developed as a proof-of-concept for NIP-OAUTH-IDENTITY-BACKUP. Deleted `AppleSignInManager.swift`, `BackupCryptoService.swift`, and `iCloudKeychainService.swift` from codebase. NIP specification and reference implementation preserved in `/nips/` directory for future consideration pending community adoption. Feature was never released to users.
+- **Lightning Balance in Profile**: Removed NWC lightning balance display from ProfileView — balance stat cell, inline sats text, `fetchLightningBalance()`, and associated state variables.
+- **Log Level in Advanced Settings**: Moved to the LogsView header; no longer in the Advanced Settings section.
 
 ## [2.5.1 (6) macOS / 1.1.1 (6) iOS] - 2026-06-04
 

@@ -885,6 +885,31 @@ struct MenuBarView: View {
         .onReceive(NotificationCenter.default.publisher(for: .havenOpenSettings)) { _ in
             selectedTab = .settings
         }
+        // MARK: - Keyboard Shortcuts
+        .background {
+            Group {
+                Button("") { selectedTab = .feed }
+                    .keyboardShortcut("1", modifiers: .command)
+                Button("") { selectedTab = .search }
+                    .keyboardShortcut("2", modifiers: .command)
+                Button("") { selectedTab = .profile }
+                    .keyboardShortcut("3", modifiers: .command)
+                Button("") { selectedTab = .relay }
+                    .keyboardShortcut("4", modifiers: .command)
+                Button("") { selectedTab = .notes }
+                    .keyboardShortcut("5", modifiers: .command)
+                Button("") { selectedTab = .media }
+                    .keyboardShortcut("6", modifiers: .command)
+                Button("") { selectedTab = .settings }
+                    .keyboardShortcut(",", modifiers: .command)
+                Button("") {
+                    NotificationCenter.default.post(name: .composeFromTabBar, object: 1)
+                }
+                    .keyboardShortcut("n", modifiers: .command)
+            }
+            .frame(width: 0, height: 0)
+            .opacity(0)
+        }
         #endif
         .onReceive(ConfigService.shared.$activeAccountHexPubkey) { newHex in
             if activeHex != newHex {
@@ -1535,33 +1560,71 @@ struct SearchView: View {
         .toolbar {
             // Left glass pill: result-type filters
             ToolbarItem(placement: .navigationBarLeading) {
-                HStack(spacing: 8) {
-                    ForEach(ResultTypeFilter.allCases, id: \.self) { filter in
-                        IconFilterButton(
-                            icon: filter.icon,
-                            tooltip: filter.label,
-                            isSelected: resultTypeFilter == filter,
-                            color: .havenPurple
-                        ) {
-                            resultTypeFilter = filter
+                ViewThatFits {
+                    HStack(spacing: 8) {
+                        ForEach(ResultTypeFilter.allCases, id: \.self) { filter in
+                            IconFilterButton(
+                                icon: filter.icon,
+                                tooltip: filter.label,
+                                isSelected: resultTypeFilter == filter,
+                                color: .havenPurple
+                            ) {
+                                resultTypeFilter = filter
+                            }
                         }
+                    }
+
+                    Menu {
+                        ForEach(ResultTypeFilter.allCases, id: \.self) { filter in
+                            Button {
+                                resultTypeFilter = filter
+                            } label: {
+                                Label(filter.label, systemImage: filter.icon)
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "line.3.horizontal.decrease")
+                            .font(.appSystem(size: 15, weight: .semibold))
+                            .foregroundColor(.havenPurple)
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
                     }
                 }
             }
             // Right glass pill: search source (relay vs global)
             ToolbarItem(placement: .navigationBarTrailing) {
-                HStack(spacing: 8) {
-                    ForEach(SearchMode.allCases, id: \.self) { mode in
-                        IconFilterButton(
-                            icon: mode.icon,
-                            tooltip: mode.label,
-                            isSelected: searchMode == mode,
-                            color: .havenPurple
-                        ) {
-                            guard searchMode != mode else { return }
-                            searchMode = mode
-                            rerunSearch()
+                ViewThatFits {
+                    HStack(spacing: 8) {
+                        ForEach(SearchMode.allCases, id: \.self) { mode in
+                            IconFilterButton(
+                                icon: mode.icon,
+                                tooltip: mode.label,
+                                isSelected: searchMode == mode,
+                                color: .havenPurple
+                            ) {
+                                guard searchMode != mode else { return }
+                                searchMode = mode
+                                rerunSearch()
+                            }
                         }
+                    }
+
+                    Menu {
+                        ForEach(SearchMode.allCases, id: \.self) { mode in
+                            Button {
+                                guard searchMode != mode else { return }
+                                searchMode = mode
+                                rerunSearch()
+                            } label: {
+                                Label(mode.label, systemImage: mode.icon)
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "line.3.horizontal.decrease")
+                            .font(.appSystem(size: 15, weight: .semibold))
+                            .foregroundColor(.havenPurple)
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
                     }
                 }
             }

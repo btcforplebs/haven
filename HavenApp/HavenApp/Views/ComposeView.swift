@@ -1344,12 +1344,33 @@ struct BlossomMediaPickerSheet: View {
     let onSelect: (MediaItem) -> Void
     let onAppearLoad: () -> Void
     @Environment(\.dismiss) var dismiss
+    @State private var selectedFilter: BlossomMediaFilter = .all
+
+    enum BlossomMediaFilter: String, CaseIterable {
+        case all = "All"
+        case photo = "Photo"
+        case video = "Video"
+        case gif = "GIF"
+    }
 
     #if os(macOS)
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 4)
     #else
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 3)
     #endif
+
+    private var filteredMedia: [MediaItem] {
+        switch selectedFilter {
+        case .all:
+            return blossomMedia
+        case .photo:
+            return blossomMedia.filter { $0.type == .image && !$0.isAnimatedGIF }
+        case .video:
+            return blossomMedia.filter { $0.type == .video }
+        case .gif:
+            return blossomMedia.filter { $0.isAnimatedGIF }
+        }
+    }
 
     var body: some View {
         NavigationView {
@@ -1361,6 +1382,16 @@ struct BlossomMediaPickerSheet: View {
                             .tint(Color.havenPurple)
                         Text("Loading media...")
                             .font(.appSystem(size: 14, weight: .medium))
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if filteredMedia.isEmpty && !blossomMedia.isEmpty {
+                    VStack(spacing: 16) {
+                        Image(systemName: "camera.macro")
+                            .font(.appSystem(size: 48, weight: .thin))
+                            .foregroundColor(Color.havenPurple.opacity(0.6))
+                        Text("No \(selectedFilter.rawValue.lowercased()) media")
+                            .font(.appSystem(size: 16, weight: .medium))
                             .foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1377,7 +1408,7 @@ struct BlossomMediaPickerSheet: View {
                 } else {
                     ScrollView {
                         LazyVGrid(columns: columns, spacing: 6) {
-                            ForEach(blossomMedia) { item in
+                            ForEach(filteredMedia) { item in
                                 BlossomPickerGridItem(item: item)
                                     .onTapGesture { onSelect(item) }
                             }
@@ -1387,13 +1418,35 @@ struct BlossomMediaPickerSheet: View {
                 }
             }
             .background(Color.platformSecondaryGroupedBackground)
-            .navigationTitle("Blossom Media")
+            .navigationTitle("")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 4) {
+                        ForEach(BlossomMediaFilter.allCases, id: \.self) { filter in
+                            Button {
+                                selectedFilter = filter
+                            } label: {
+                                Text(filter.rawValue)
+                                    .font(.appSystem(size: 13, weight: selectedFilter == filter ? .semibold : .regular))
+                                    .foregroundColor(selectedFilter == filter ? .white : .secondary)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(
+                                        selectedFilter == filter
+                                            ? Color.havenPurple
+                                            : Color.secondary.opacity(0.15)
+                                    )
+                                    .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
                 }
             }
         }

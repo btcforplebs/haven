@@ -183,6 +183,9 @@
     "A" : {
 
     },
+    "A FIPS transport (e.g. nostr-vpn) must be running to make this address reachable." : {
+
+    },
     "A previous Nostr Vault process is still running. Run the following command in Terminal to stop it, then relaunch the app." : {
 
     },
@@ -235,6 +238,12 @@
 
     },
     "Adjust the size of text across the app — feeds, note details, profiles, DM inbox, message threads, and compose editors." : {
+
+    },
+    "Advertise your FIPS address in your Blossom server list (kind 10063)" : {
+
+    },
+    "All" : {
 
     },
     "All media is already backed up!" : {
@@ -408,6 +417,9 @@
     "Current" : {
 
     },
+    "Custom" : {
+
+    },
     "Danger Zone" : {
 
     },
@@ -433,6 +445,9 @@
 
     },
     "Destination address" : {
+
+    },
+    "Detected (nostr-vpn)" : {
 
     },
     "Digital cash backed by your relay" : {
@@ -656,6 +671,9 @@
     "Error 404" : {
 
     },
+    "Errors" : {
+
+    },
     "EVENT ID" : {
 
     },
@@ -678,6 +696,9 @@
 
     },
     "Export Notes" : {
+
+    },
+    "Expose your Blossom server over the FIPS overlay network. Clients with a FIPS transport can reach your media without a public IP or domain." : {
 
     },
     "Failed to load image" : {
@@ -1157,6 +1178,9 @@
     "Find users, notes, hashtags and links\nOr paste a note1 or nevent1 ID" : {
 
     },
+    "FIPS" : {
+
+    },
     "FOLLOWING" : {
 
     },
@@ -1241,6 +1265,9 @@
     "Info" : {
 
     },
+    "Info+" : {
+
+    },
     "Insufficient funds after fees" : {
 
     },
@@ -1293,6 +1320,9 @@
 
     },
     "LOCAL RELAY SERVER CONSOLE" : {
+
+    },
+    "Logs will appear here once the relay is running." : {
 
     },
     "Look for the" : {
@@ -1353,6 +1383,9 @@
     "MUTUAL" : {
 
     },
+    "My Nostr npub" : {
+
+    },
     "My Profile" : {
 
     },
@@ -1374,6 +1407,12 @@
     "NIP-17 encrypted DMs are sent to these relays. Your local Haven relay and Mac relay (if configured) are automatically added when publishing." : {
 
     },
+    "No %@ logs" : {
+
+    },
+    "No %@ media" : {
+
+    },
     "No additional Blossom servers configured." : {
 
     },
@@ -1384,6 +1423,9 @@
 
     },
     "No ecash tokens stored on relay." : {
+
+    },
+    "No logs yet" : {
 
     },
     "No Longer Following (%@)" : {
@@ -1551,6 +1593,9 @@
     "Proof of Work mines a hash prefix on your events, acting as a spam deterrent. Higher difficulty takes longer but signals more effort." : {
 
     },
+    "Publish .fips Blossom Address" : {
+
+    },
     "Publishes this relay as the account's inbox so other clients know where to send events." : {
 
     },
@@ -1612,6 +1657,9 @@
 
     },
     "RELAY STATUS" : {
+
+    },
+    "Relay:" : {
 
     },
     "Remote" : {
@@ -3033,6 +3081,9 @@
     "This will stop the relay, delete all data (database, logs), and reset settings to default." : {
 
     },
+    "To access media from .fips servers, enable your FIPS VPN (e.g. nostr-vpn) and add the server's .fips address as an Additional Server above." : {
+
+    },
     "To keep the tunnel running in the background, use `brew services start cloudflared` or add it to your login items." : {
 
     },
@@ -3061,6 +3112,9 @@
 
     },
     "Try a different search term" : {
+
+    },
+    "Try a less restrictive filter level." : {
 
     },
     "Try Again" : {
@@ -3111,7 +3165,10 @@
     "Waiting for payment to confirm..." : {
 
     },
-    "Warning" : {
+    "Warn" : {
+
+    },
+    "Warn+" : {
 
     },
     "Welcome to Nostr Vault" : {

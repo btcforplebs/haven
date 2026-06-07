@@ -1523,6 +1523,31 @@ class FeedService: ObservableObject {
         }
     }
 
+    /// Send a raw Nostr message through the already-connected local relay client.
+    /// Returns true if sent, false if no connected local client exists.
+    func sendToLocalRelay(_ text: String) -> Bool {
+        guard let key = localRelayURL?.absoluteString,
+              let client = feedClients[key],
+              client.connectionState == .connected else {
+            return false
+        }
+        client.send(text: text)
+        return true
+    }
+
+    /// Subscribe to raw messages on the local relay connection.
+    /// Returns a cancellable, or nil if no local client is connected.
+    func subscribeToLocalRelay(_ handler: @escaping (String) -> Void) -> AnyCancellable? {
+        guard let key = localRelayURL?.absoluteString,
+              let client = feedClients[key],
+              client.connectionState == .connected else {
+            return nil
+        }
+        return client.messageSubject
+            .receive(on: DispatchQueue.main)
+            .sink { msg in handler(msg) }
+    }
+
     /// Background refresh against an already-rendered snapshot. Re-subscribes
     /// to relays so newer notes stream in on top of the cached feed, and
     /// kicks off a contact-list re-fetch in parallel so a stale follow set

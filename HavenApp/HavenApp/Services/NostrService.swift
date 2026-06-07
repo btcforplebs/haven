@@ -994,9 +994,10 @@ class NostrService: ObservableObject {
 
     /// BUD-03: Publishes a Kind 10063 (User Server List) event advertising Blossom mirrors.
     /// Call whenever blossomMirrors changes (settings, setup wizard).
+    /// Pass fipsDetectedNpub when available to include the detected .fips address.
     @MainActor
-    func publishServerList() {
-        let mirrors = ConfigService.shared.config.activeBlossomMirrors
+    func publishServerList(fipsDetectedNpub: String? = nil) {
+        let mirrors = ConfigService.shared.config.activeBlossomMirrors(detectedNpub: fipsDetectedNpub)
         guard !mirrors.isEmpty else {
             #if DEBUG
             print("NostrService: No Blossom mirrors configured, skipping Kind 10063 publish")
@@ -1157,26 +1158,34 @@ class NostrService: ObservableObject {
         guard let data = try? JSONSerialization.data(withJSONObject: msg),
               let str = String(data: data, encoding: .utf8) else { return }
 
-        // 1. Post to local relay (blastr broadcasting is triggered by the Go relay's
-        // StoreEvent handler, so the event must reach the local relay to be blasted)
+        // 1. Post to local relay — reuse the feed's already-connected socket
+        // (the nostr way: one connection, send EVENT through it, no new TLS handshake)
         let relayReady = RelayProcessManager.shared.isRunning && !RelayProcessManager.shared.isBooting
-        if relayReady, let localURL = URL(string: ConfigService.shared.config.nostrURL) {
-            let localClient = WebSocketClient()
-            localClient.isTemporary = true
+        if relayReady {
+            let localURLString = ConfigService.shared.config.nostrURL
+            if FeedService.shared.sendToLocalRelay(str) {
+                // Sent through existing feed connection
+            } else if let existing = clients[localURLString], existing.connectionState == .connected {
+                existing.send(text: str)
+            } else if let localURL = URL(string: localURLString) {
+                // Last resort: temporary client
+                let localClient = WebSocketClient()
+                localClient.isTemporary = true
 
-            localClient.$connectionState
-                .receive(on: DispatchQueue.main)
-                .sink { state in
-                    if state == .connected {
-                        localClient.send(text: str)
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                            localClient.disconnect()
+                localClient.$connectionState
+                    .receive(on: DispatchQueue.main)
+                    .sink { state in
+                        if state == .connected {
+                            localClient.send(text: str)
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                                localClient.disconnect()
+                            }
                         }
                     }
-                }
-                .store(in: &cancellables)
+                    .store(in: &cancellables)
 
-            localClient.connect(url: localURL)
+                localClient.connect(url: localURL)
+            }
         } else {
             print("NostrService: ⚠️ Local relay not ready — event \(event.id.prefix(8)) will only reach smart broadcast relays")
         }
@@ -1253,8 +1262,9 @@ class NostrService: ObservableObject {
                     guard !hasReported,
                           let msgData = message.data(using: .utf8),
                           let json = try? JSONSerialization.jsonObject(with: msgData) as? [Any],
+                          json.count >= 3,
                           let type = json[0] as? String,
-                          type == "OK", json.count >= 3 else { return }
+                          type == "OK" else { return }
                     hasReported = true
                     let success = json[2] as? Bool ?? false
                     let relayMsg = json.count >= 4 ? (json[3] as? String ?? "") : ""
@@ -1965,8 +1975,8 @@ class NostrService: ObservableObject {
     /// Thread-safe clear (used on account switch).
     private func clearSeen() {
         seenLock.lock()
+        defer { seenLock.unlock() }
         seenEventIds.removeAll()
-        seenLock.unlock()
     }
 
     // MARK: - Batched Event Flushing

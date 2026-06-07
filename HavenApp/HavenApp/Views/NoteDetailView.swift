@@ -207,6 +207,16 @@ struct NoteDetailView: View {
                         }()
                         composeContext = ComposeContext(replyTo: replyTarget, quoteTo: nil)
                     }
+
+                    // Event info / re-broadcast
+                    IconFilterButton(
+                        icon: "antenna.radiowaves.left.and.right",
+                        tooltip: "Broadcast",
+                        isSelected: false,
+                        color: .havenPurple
+                    ) {
+                        showingBroadcastSheet = true
+                    }
                 }
             }
         }

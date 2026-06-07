@@ -201,9 +201,7 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
             print("MediaCacheService: Cached \(url.lastPathComponent) to \(path.path)")
             #endif
         } catch {
-            #if DEBUG
-            print("MediaCacheService: Failed to cache \(url.absoluteString): \(error.localizedDescription)")
-            #endif
+            RelayProcessManager.shared.addLog("MediaCache: Failed to cache \(url.lastPathComponent): \(error.localizedDescription)", level: "WARN")
         }
     }
 
@@ -722,9 +720,7 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
             print("MediaCacheService: Cleared \(deletedCount) cached files + thumbnails (Blossom data preserved)")
             #endif
         } catch {
-            #if DEBUG
-            print("MediaCacheService: Failed to clear cache: \(error.localizedDescription)")
-            #endif
+            RelayProcessManager.shared.addLog("MediaCache: Failed to clear cache: \(error.localizedDescription)", level: "ERROR")
         }
     }
 

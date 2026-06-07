@@ -1010,6 +1010,267 @@ struct ViewerView: View {
         #endif
     }
 
+    // MARK: - Leading Toolbar (inline vs. compact menu)
+
+    @ViewBuilder
+    private var leadingToolbarInline: some View {
+        if !mediaOnly {
+            HStack(spacing: 12) {
+                IconFilterButton(icon: "doc.text", tooltip: "Notes", isSelected: viewMode == .notes, color: .havenPurple) {
+                    withAnimation(.easeInOut(duration: 0.15)) { viewMode = .notes }
+                }
+                IconFilterButton(icon: "heart.fill", tooltip: "Likes", isSelected: viewMode == .likes, color: .havenPurple) {
+                    withAnimation(.easeInOut(duration: 0.15)) { viewMode = .likes }
+                    fetchMissingLikedNotes()
+                }
+                IconFilterButton(icon: "bolt.fill", tooltip: "Zaps", isSelected: viewMode == .zaps, color: .havenPurple) {
+                    withAnimation(.easeInOut(duration: 0.15)) { viewMode = .zaps }
+                }
+            }
+        } else {
+            HStack(spacing: 12) {
+                let allSelected = mediaTypeFilter.count == MediaTypeFilter.allCases.count
+                let photoSelected = mediaTypeFilter.contains(.photo)
+                let videoSelected = mediaTypeFilter.contains(.video)
+                let gifSelected = mediaTypeFilter.contains(.gif)
+                let otherSelected = mediaTypeFilter.contains(.other)
+
+                IconFilterButton(
+                    icon: allSelected ? "circle.grid.2x2.fill" : "circle.grid.2x2",
+                    tooltip: "All Media",
+                    isSelected: allSelected,
+                    color: .havenPurple,
+                    action: selectAllMediaTypes
+                )
+                IconFilterButton(
+                    icon: photoSelected ? "photo.fill" : "photo",
+                    tooltip: "Photos",
+                    isSelected: photoSelected,
+                    color: .primary
+                ) { toggleMediaTypeFilter(.photo) }
+                IconFilterButton(
+                    icon: videoSelected ? "video.fill" : "video",
+                    tooltip: "Videos",
+                    isSelected: videoSelected,
+                    color: .primary
+                ) { toggleMediaTypeFilter(.video) }
+                IconFilterButton(
+                    icon: "GIF",
+                    tooltip: "GIFs",
+                    isSelected: gifSelected,
+                    color: .primary
+                ) { toggleMediaTypeFilter(.gif) }
+                IconFilterButton(
+                    icon: otherSelected ? "doc.fill" : "doc",
+                    tooltip: "Documents",
+                    isSelected: otherSelected,
+                    color: .primary
+                ) { toggleMediaTypeFilter(.other) }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var leadingToolbarMenu: some View {
+        Menu {
+            if !mediaOnly {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { viewMode = .notes }
+                } label: {
+                    Label("Notes", systemImage: "doc.text")
+                }
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { viewMode = .likes }
+                    fetchMissingLikedNotes()
+                } label: {
+                    Label("Likes", systemImage: "heart.fill")
+                }
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { viewMode = .zaps }
+                } label: {
+                    Label("Zaps", systemImage: "bolt.fill")
+                }
+            } else {
+                Button(action: selectAllMediaTypes) {
+                    Label("All Media", systemImage: "circle.grid.2x2.fill")
+                }
+                Button { toggleMediaTypeFilter(.photo) } label: {
+                    Label("Photos", systemImage: "photo")
+                }
+                Button { toggleMediaTypeFilter(.video) } label: {
+                    Label("Videos", systemImage: "video")
+                }
+                Button { toggleMediaTypeFilter(.gif) } label: {
+                    Label("GIFs", systemImage: "photo.stack")
+                }
+                Button { toggleMediaTypeFilter(.other) } label: {
+                    Label("Documents", systemImage: "doc")
+                }
+            }
+        } label: {
+            Image(systemName: mediaOnly ? "line.3.horizontal.decrease" : "doc.text")
+                .font(.appSystem(size: 15, weight: .semibold))
+                .foregroundColor(.havenPurple)
+                .frame(width: 36, height: 36)
+                .contentShape(Rectangle())
+        }
+    }
+
+    // MARK: - Trailing Toolbar (inline vs. compact menu)
+
+    @ViewBuilder
+    private var trailingToolbarInline: some View {
+        HStack(spacing: 4) {
+            if !mediaOnly && viewMode != .media {
+                IconFilterButton(
+                    icon: "rectangle.compress.vertical",
+                    tooltip: "Condensed View",
+                    isSelected: noteLayoutMode == .compact,
+                    color: .havenPurple
+                ) {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        noteLayoutMode = noteLayoutMode == .compact ? .expanded : .compact
+                    }
+                }
+            }
+            if viewMode == .notes {
+                IconFilterButton(icon: "square.stack", tooltip: "All", isSelected: contentFilter == .all, color: .havenPurple) { contentFilter = .all }
+                IconFilterButton(icon: "person.fill", tooltip: "My Notes", isSelected: contentFilter == .mine, color: .havenPurple) { contentFilter = .mine }
+                IconFilterButton(icon: "at", tooltip: "Tagged", isSelected: contentFilter == .tagged, color: .havenPurple) { contentFilter = .tagged }
+                IconFilterButton(icon: "checkmark.seal.fill", tooltip: "Whitelisted", isSelected: contentFilter == .whitelist, color: .havenPurple) { contentFilter = .whitelist }
+            } else if viewMode == .media && !mediaOnly {
+                IconFilterButton(icon: "plus", tooltip: "Upload", isSelected: true, color: .havenPurple) {
+                    showingUploadOptions = true
+                }
+                .confirmationDialog("Upload Media", isPresented: $showingUploadOptions) {
+                    Button("Photos") { photosPickerFilter = .images; showingPhotoPicker = true }
+                    Button("Videos") { photosPickerFilter = .videos; showingPhotoPicker = true }
+                    Button("Files") { showingFileImporter = true }
+                    Button("Magic Paste") { handlePasteFromClipboard() }
+                    Button("Cancel", role: .cancel) { }
+                }
+            } else if mediaOnly {
+                IconFilterButton(
+                    icon: mediaLayoutMode == .grid ? "list.bullet" : "square.grid.2x2.fill",
+                    tooltip: mediaLayoutMode == .grid ? "List View" : "Grid View",
+                    isSelected: false,
+                    color: .havenPurple
+                ) {
+                    withAnimation { mediaLayoutMode = mediaLayoutMode == .grid ? .list : .grid }
+                }
+                IconFilterButton(icon: "plus", tooltip: "Upload Options", isSelected: true, color: .havenPurple) {
+                    showingUploadOptions = true
+                }
+                .confirmationDialog("Upload Media", isPresented: $showingUploadOptions) {
+                    Button("Photos") { photosPickerFilter = .images; showingPhotoPicker = true }
+                    Button("Videos") { photosPickerFilter = .videos; showingPhotoPicker = true }
+                    Button("Files") { showingFileImporter = true }
+                    Button("Magic Paste") { handlePasteFromClipboard() }
+                    Button("Cancel", role: .cancel) { }
+                }
+            } else if viewMode == .likes {
+                IconFilterButton(icon: "person.fill", tooltip: "My Notes", isSelected: likesFilter == .onMyNotes, color: .havenPurple) { likesFilter = .onMyNotes }
+                IconFilterButton(icon: "at", tooltip: "Tagged", isSelected: likesFilter == .onTagged, color: .havenPurple) { likesFilter = .onTagged }
+                IconFilterButton(icon: "checkmark.seal.fill", tooltip: "Whitelisted", isSelected: likesFilter == .onWhitelisted, color: .havenPurple) { likesFilter = .onWhitelisted }
+                IconFilterButton(icon: "heart", tooltip: "My Likes", isSelected: likesFilter == .myLikes, color: .havenPurple) { likesFilter = .myLikes }
+            } else if viewMode == .zaps && !mediaOnly {
+                IconFilterButton(icon: "person.fill", tooltip: "My Notes", isSelected: zapsFilter == .onMyNotes, color: .havenPurple) { zapsFilter = .onMyNotes }
+                IconFilterButton(icon: "at", tooltip: "Tagged", isSelected: zapsFilter == .onTagged, color: .havenPurple) { zapsFilter = .onTagged }
+                IconFilterButton(icon: "checkmark.seal.fill", tooltip: "Whitelisted", isSelected: zapsFilter == .onWhitelisted, color: .havenPurple) { zapsFilter = .onWhitelisted }
+                IconFilterButton(icon: "bolt", tooltip: "My Zaps", isSelected: zapsFilter == .myZaps, color: .havenPurple) { zapsFilter = .myZaps }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var trailingToolbarMenu: some View {
+        Menu {
+            if !mediaOnly && viewMode != .media {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        noteLayoutMode = noteLayoutMode == .compact ? .expanded : .compact
+                    }
+                } label: {
+                    Label(
+                        noteLayoutMode == .compact ? "Expanded View" : "Condensed View",
+                        systemImage: noteLayoutMode == .compact ? "rectangle.expand.vertical" : "rectangle.compress.vertical"
+                    )
+                }
+                Divider()
+            }
+
+            if viewMode == .notes {
+                Button { contentFilter = .all } label: {
+                    Label("All Notes", systemImage: "square.stack")
+                }
+                Button { contentFilter = .mine } label: {
+                    Label("My Notes", systemImage: "person.fill")
+                }
+                Button { contentFilter = .tagged } label: {
+                    Label("Tagged", systemImage: "at")
+                }
+                Button { contentFilter = .whitelist } label: {
+                    Label("Whitelisted", systemImage: "checkmark.seal.fill")
+                }
+            } else if viewMode == .media && !mediaOnly {
+                Button { showingUploadOptions = true } label: {
+                    Label("Upload", systemImage: "plus")
+                }
+            } else if mediaOnly {
+                Button {
+                    withAnimation { mediaLayoutMode = mediaLayoutMode == .grid ? .list : .grid }
+                } label: {
+                    Label(
+                        mediaLayoutMode == .grid ? "List View" : "Grid View",
+                        systemImage: mediaLayoutMode == .grid ? "list.bullet" : "square.grid.2x2.fill"
+                    )
+                }
+                Button { showingUploadOptions = true } label: {
+                    Label("Upload", systemImage: "plus")
+                }
+            } else if viewMode == .likes {
+                Button { likesFilter = .onMyNotes } label: {
+                    Label("My Notes", systemImage: "person.fill")
+                }
+                Button { likesFilter = .onTagged } label: {
+                    Label("Tagged", systemImage: "at")
+                }
+                Button { likesFilter = .onWhitelisted } label: {
+                    Label("Whitelisted", systemImage: "checkmark.seal.fill")
+                }
+                Button { likesFilter = .myLikes } label: {
+                    Label("My Likes", systemImage: "heart")
+                }
+            } else if viewMode == .zaps && !mediaOnly {
+                Button { zapsFilter = .onMyNotes } label: {
+                    Label("My Notes", systemImage: "person.fill")
+                }
+                Button { zapsFilter = .onTagged } label: {
+                    Label("Tagged", systemImage: "at")
+                }
+                Button { zapsFilter = .onWhitelisted } label: {
+                    Label("Whitelisted", systemImage: "checkmark.seal.fill")
+                }
+                Button { zapsFilter = .myZaps } label: {
+                    Label("My Zaps", systemImage: "bolt")
+                }
+            }
+        } label: {
+            Image(systemName: "line.3.horizontal.decrease")
+                .font(.appSystem(size: 15, weight: .semibold))
+                .foregroundColor(.havenPurple)
+                .frame(width: 36, height: 36)
+                .contentShape(Rectangle())
+        }
+        .confirmationDialog("Upload Media", isPresented: $showingUploadOptions) {
+            Button("Photos") { photosPickerFilter = .images; showingPhotoPicker = true }
+            Button("Videos") { photosPickerFilter = .videos; showingPhotoPicker = true }
+            Button("Files") { showingFileImporter = true }
+            Button("Magic Paste") { handlePasteFromClipboard() }
+            Button("Cancel", role: .cancel) { }
+        }
+    }
+
     // MARK: - iOS Root Content
     /// Flat content view matching FeedView's rootContent pattern:
     /// toolbar + handlers first, navigation modifiers applied in body.
@@ -1017,162 +1278,27 @@ struct ViewerView: View {
         viewContentPlatform
         .toolbar {
             ToolbarItem(placement: .cancellationAction) {
-                if !mediaOnly {
-                    HStack(spacing: 12) {
-                        IconFilterButton(icon: "doc.text", tooltip: "Notes", isSelected: viewMode == .notes, color: .havenPurple) {
-                            withAnimation(.easeInOut(duration: 0.15)) { viewMode = .notes }
-                        }
-                        IconFilterButton(icon: "heart.fill", tooltip: "Likes", isSelected: viewMode == .likes, color: .havenPurple) {
-                            withAnimation(.easeInOut(duration: 0.15)) { viewMode = .likes }
-                            fetchMissingLikedNotes()
-                        }
-                        IconFilterButton(icon: "bolt.fill", tooltip: "Zaps", isSelected: viewMode == .zaps, color: .havenPurple) {
-                            withAnimation(.easeInOut(duration: 0.15)) { viewMode = .zaps }
-                        }
-                    }
-                } else {
-                    HStack(spacing: 12) {
-                        let allSelected = mediaTypeFilter.count == MediaTypeFilter.allCases.count
-                        let photoSelected = mediaTypeFilter.contains(.photo)
-                        let videoSelected = mediaTypeFilter.contains(.video)
-                        let gifSelected = mediaTypeFilter.contains(.gif)
-                        let otherSelected = mediaTypeFilter.contains(.other)
-
-                        IconFilterButton(
-                            icon: allSelected ? "circle.grid.2x2.fill" : "circle.grid.2x2",
-                            tooltip: "All Media",
-                            isSelected: allSelected,
-                            color: .havenPurple,
-                            action: selectAllMediaTypes
-                        )
-                        IconFilterButton(
-                            icon: photoSelected ? "photo.fill" : "photo",
-                            tooltip: "Photos",
-                            isSelected: photoSelected,
-                            color: .primary
-                        ) { toggleMediaTypeFilter(.photo) }
-                        IconFilterButton(
-                            icon: videoSelected ? "video.fill" : "video",
-                            tooltip: "Videos",
-                            isSelected: videoSelected,
-                            color: .primary
-                        ) { toggleMediaTypeFilter(.video) }
-                        IconFilterButton(
-                            icon: "GIF",
-                            tooltip: "GIFs",
-                            isSelected: gifSelected,
-                            color: .primary
-                        ) { toggleMediaTypeFilter(.gif) }
-                        IconFilterButton(
-                            icon: otherSelected ? "doc.fill" : "doc",
-                            tooltip: "Documents",
-                            isSelected: otherSelected,
-                            color: .primary
-                        ) { toggleMediaTypeFilter(.other) }
-                    }
+                ViewThatFits {
+                    leadingToolbarInline
+                    leadingToolbarMenu
                 }
             }
-            ToolbarItem(placement: .primaryAction) {
-                HStack(spacing: 4) {
-                    if !mediaOnly && viewMode != .media {
-                        IconFilterButton(
-                            icon: "rectangle.compress.vertical",
-                            tooltip: "Condensed View",
-                            isSelected: noteLayoutMode == .compact,
-                            color: .havenPurple
-                        ) {
-                            withAnimation(.easeInOut(duration: 0.15)) {
-                                noteLayoutMode = noteLayoutMode == .compact ? .expanded : .compact
-                            }
-                        }
-                    }
-                    if viewMode == .notes {
-                        HStack(spacing: 4) {
-                            IconFilterButton(icon: "square.stack", tooltip: "All", isSelected: contentFilter == .all, color: .havenPurple) { contentFilter = .all }
-                            IconFilterButton(icon: "person.fill", tooltip: "My Notes", isSelected: contentFilter == .mine, color: .havenPurple) { contentFilter = .mine }
-                            IconFilterButton(icon: "at", tooltip: "Tagged", isSelected: contentFilter == .tagged, color: .havenPurple) { contentFilter = .tagged }
-                            IconFilterButton(icon: "checkmark.seal.fill", tooltip: "Whitelisted", isSelected: contentFilter == .whitelist, color: .havenPurple) { contentFilter = .whitelist }
-                        }
-                        .transition(.opacity)
-                    } else if viewMode == .media && !mediaOnly {
-                        HStack(spacing: 4) {
-                            IconFilterButton(icon: "plus", tooltip: "Upload", isSelected: true, color: .havenPurple) {
-                                showingUploadOptions = true
-                            }
-                            .confirmationDialog("Upload Media", isPresented: $showingUploadOptions) {
-                                Button("Photos") {
-                                    photosPickerFilter = .images
-                                    showingPhotoPicker = true
-                                }
-                                Button("Videos") {
-                                    photosPickerFilter = .videos
-                                    showingPhotoPicker = true
-                                }
-                                Button("Files") {
-                                    showingFileImporter = true
-                                }
-                                Button("Magic Paste") {
-                                    handlePasteFromClipboard()
-                                }
-                                Button("Cancel", role: .cancel) { }
-                            }
-                        }
-                        .transition(.opacity)
-                    } else if mediaOnly {
-                        HStack(spacing: 4) {
-                            IconFilterButton(
-                                icon: mediaLayoutMode == .grid ? "list.bullet" : "square.grid.2x2.fill",
-                                tooltip: mediaLayoutMode == .grid ? "List View" : "Grid View",
-                                isSelected: false,
-                                color: .havenPurple
-                            ) {
-                                withAnimation {
-                                    mediaLayoutMode = mediaLayoutMode == .grid ? .list : .grid
-                                }
-                            }
-
-                            IconFilterButton(icon: "plus", tooltip: "Upload Options", isSelected: true, color: .havenPurple) {
-                                showingUploadOptions = true
-                            }
-                            .confirmationDialog("Upload Media", isPresented: $showingUploadOptions) {
-                                Button("Photos") {
-                                    photosPickerFilter = .images
-                                    showingPhotoPicker = true
-                                }
-                                Button("Videos") {
-                                    photosPickerFilter = .videos
-                                    showingPhotoPicker = true
-                                }
-                                Button("Files") {
-                                    showingFileImporter = true
-                                }
-                                Button("Magic Paste") {
-                                    handlePasteFromClipboard()
-                                }
-                                Button("Cancel", role: .cancel) { }
-                            }
-                        }
-                        .transition(.opacity)
-                    } else if viewMode == .likes {
-                        HStack(spacing: 4) {
-                            IconFilterButton(icon: "person.fill", tooltip: "My Notes", isSelected: likesFilter == .onMyNotes, color: .havenPurple) { likesFilter = .onMyNotes }
-                            IconFilterButton(icon: "at", tooltip: "Tagged", isSelected: likesFilter == .onTagged, color: .havenPurple) { likesFilter = .onTagged }
-                            IconFilterButton(icon: "checkmark.seal.fill", tooltip: "Whitelisted", isSelected: likesFilter == .onWhitelisted, color: .havenPurple) { likesFilter = .onWhitelisted }
-                            IconFilterButton(icon: "heart", tooltip: "My Likes", isSelected: likesFilter == .myLikes, color: .havenPurple) { likesFilter = .myLikes }
-                        }
-                        .transition(.opacity)
-                    } else if viewMode == .zaps && !mediaOnly {
-                        HStack(spacing: 4) {
-                            IconFilterButton(icon: "person.fill", tooltip: "My Notes", isSelected: zapsFilter == .onMyNotes, color: .havenPurple) { zapsFilter = .onMyNotes }
-                            IconFilterButton(icon: "at", tooltip: "Tagged", isSelected: zapsFilter == .onTagged, color: .havenPurple) { zapsFilter = .onTagged }
-                            IconFilterButton(icon: "checkmark.seal.fill", tooltip: "Whitelisted", isSelected: zapsFilter == .onWhitelisted, color: .havenPurple) { zapsFilter = .onWhitelisted }
-                            IconFilterButton(icon: "bolt", tooltip: "My Zaps", isSelected: zapsFilter == .myZaps, color: .havenPurple) { zapsFilter = .myZaps }
-                        }
-                        .transition(.opacity)
-                    }
+            #if os(iOS)
+            ToolbarItem(placement: .navigationBarTrailing) {
+                ViewThatFits {
+                    // Preferred: full inline icon buttons
+                    trailingToolbarInline
+                    // Fallback: compact menu with labeled items
+                    trailingToolbarMenu
                 }
                 .animation(.easeInOut(duration: 0.15), value: viewMode)
             }
+            #else
+            ToolbarItem(placement: .automatic) {
+                trailingToolbarInline
+                    .animation(.easeInOut(duration: 0.15), value: viewMode)
+            }
+            #endif
         }
         // -- handlers from viewContentBase --
         .onAppear {

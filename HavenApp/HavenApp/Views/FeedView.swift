@@ -171,6 +171,131 @@ struct FeedView: View {
         }
     }
 
+    // MARK: - Feed Trailing Toolbar (inline vs. compact menu)
+
+    @ViewBuilder
+    private var feedTrailingToolbarInline: some View {
+        HStack(spacing: 4) {
+            IconFilterButton(icon: compactModeEnabledForCurrentFeed ? "rectangle.compress.vertical" : "rectangle.expand.vertical", tooltip: "Compact View", isSelected: compactModeEnabledForCurrentFeed, color: .havenPurple) {
+                toggleCompactModeForCurrentFeed()
+            }
+
+            Divider()
+                .frame(height: 20)
+                .padding(.horizontal, 4)
+
+            if feedService.feedMode == .media {
+                IconFilterButton(icon: feedService.mediaFeedMode == .following ? "person.2.fill" : "person.2", tooltip: "Following", isSelected: feedService.mediaFeedMode == .following, color: .havenPurple) {
+                    feedService.mediaFeedMode = .following
+                    feedService.refresh()
+                }
+                IconFilterButton(icon: "globe", tooltip: "Global", isSelected: feedService.mediaFeedMode == .global, color: .havenPurple) {
+                    showingGlobalMediaWarning = true
+                }
+            } else if feedService.feedMode == .popular {
+                IconFilterButton(icon: feedService.popularFilter == .follows ? "person.2.fill" : "person.2", tooltip: "Follows", isSelected: feedService.popularFilter == .follows, color: .havenPurple) {
+                    feedService.popularFilter = feedService.popularFilter == .follows ? .all : .follows
+                    feedService.recomputeFilteredNotes()
+                }
+                IconFilterButton(icon: feedService.popularFilter == .nonFollows ? "globe.americas.fill" : "globe.americas", tooltip: "Non-Follows", isSelected: feedService.popularFilter == .nonFollows, color: .havenPurple) {
+                    feedService.popularFilter = feedService.popularFilter == .nonFollows ? .all : .nonFollows
+                    feedService.recomputeFilteredNotes()
+                }
+                IconFilterButton(icon: feedService.showPopularEngagement ? "chart.bar.fill" : "chart.bar", tooltip: "Engagement", isSelected: feedService.showPopularEngagement, color: .havenPurple) {
+                    feedService.showPopularEngagement.toggle()
+                }
+            } else {
+                IconFilterButton(icon: configService.config.autoLoadNewPosts ? "bolt.circle.fill" : "bolt.circle", tooltip: "Auto-load", isSelected: configService.config.autoLoadNewPosts, color: .havenPurple) {
+                    configService.config.autoLoadNewPosts.toggle()
+                    configService.save()
+                }
+                IconFilterButton(icon: "arrow.2.squarepath", tooltip: "Reposts", isSelected: configService.config.showReposts, color: .havenPurple) {
+                    configService.config.showReposts.toggle()
+                    configService.save()
+                    feedService.recomputeFilteredNotes()
+                }
+                IconFilterButton(icon: configService.config.showReplies ? "message.fill" : "message", tooltip: "Replies", isSelected: configService.config.showReplies, color: .havenPurple) {
+                    configService.config.showReplies.toggle()
+                    configService.save()
+                    feedService.recomputeFilteredNotes()
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var feedTrailingToolbarMenu: some View {
+        Menu {
+            Button {
+                toggleCompactModeForCurrentFeed()
+            } label: {
+                Label(
+                    compactModeEnabledForCurrentFeed ? "Expanded View" : "Compact View",
+                    systemImage: compactModeEnabledForCurrentFeed ? "rectangle.expand.vertical" : "rectangle.compress.vertical"
+                )
+            }
+
+            Divider()
+
+            if feedService.feedMode == .media {
+                Button {
+                    feedService.mediaFeedMode = .following
+                    feedService.refresh()
+                } label: {
+                    Label("Following", systemImage: "person.2.fill")
+                }
+                Button { showingGlobalMediaWarning = true } label: {
+                    Label("Global", systemImage: "globe")
+                }
+            } else if feedService.feedMode == .popular {
+                Button {
+                    feedService.popularFilter = feedService.popularFilter == .follows ? .all : .follows
+                    feedService.recomputeFilteredNotes()
+                } label: {
+                    Label("Follows", systemImage: "person.2.fill")
+                }
+                Button {
+                    feedService.popularFilter = feedService.popularFilter == .nonFollows ? .all : .nonFollows
+                    feedService.recomputeFilteredNotes()
+                } label: {
+                    Label("Non-Follows", systemImage: "globe.americas")
+                }
+                Button {
+                    feedService.showPopularEngagement.toggle()
+                } label: {
+                    Label("Engagement", systemImage: "chart.bar")
+                }
+            } else {
+                Button {
+                    configService.config.autoLoadNewPosts.toggle()
+                    configService.save()
+                } label: {
+                    Label("Auto-load", systemImage: configService.config.autoLoadNewPosts ? "bolt.circle.fill" : "bolt.circle")
+                }
+                Button {
+                    configService.config.showReposts.toggle()
+                    configService.save()
+                    feedService.recomputeFilteredNotes()
+                } label: {
+                    Label("Reposts", systemImage: "arrow.2.squarepath")
+                }
+                Button {
+                    configService.config.showReplies.toggle()
+                    configService.save()
+                    feedService.recomputeFilteredNotes()
+                } label: {
+                    Label("Replies", systemImage: configService.config.showReplies ? "message.fill" : "message")
+                }
+            }
+        } label: {
+            Image(systemName: "line.3.horizontal.decrease")
+                .font(.appSystem(size: 15, weight: .semibold))
+                .foregroundColor(.havenPurple)
+                .frame(width: 36, height: 36)
+                .contentShape(Rectangle())
+        }
+    }
+
     // MARK: - Helper Functions
 
     @ViewBuilder
@@ -455,53 +580,9 @@ struct FeedView: View {
             }
 
             ToolbarItem(placement: .navigationBarTrailing) {
-                HStack(spacing: 4) {
-                    // Compact mode toggle
-                    IconFilterButton(icon: compactModeEnabledForCurrentFeed ? "rectangle.compress.vertical" : "rectangle.expand.vertical", tooltip: "Compact View", isSelected: compactModeEnabledForCurrentFeed, color: .havenPurple) {
-                        toggleCompactModeForCurrentFeed()
-                    }
-
-                    // Divider to separate compact toggle from other filters
-                    Divider()
-                        .frame(height: 20)
-                        .padding(.horizontal, 4)
-
-                    if feedService.feedMode == .media {
-                    IconFilterButton(icon: feedService.mediaFeedMode == .following ? "person.2.fill" : "person.2", tooltip: "Following", isSelected: feedService.mediaFeedMode == .following, color: .havenPurple) {
-                        feedService.mediaFeedMode = .following
-                        feedService.refresh()
-                    }
-                    IconFilterButton(icon: "globe", tooltip: "Global", isSelected: feedService.mediaFeedMode == .global, color: .havenPurple) {
-                        showingGlobalMediaWarning = true
-                    }
-                } else if feedService.feedMode == .popular {
-                    IconFilterButton(icon: feedService.popularFilter == .follows ? "person.2.fill" : "person.2", tooltip: "Follows", isSelected: feedService.popularFilter == .follows, color: .havenPurple) {
-                        feedService.popularFilter = feedService.popularFilter == .follows ? .all : .follows
-                        feedService.recomputeFilteredNotes()
-                    }
-                    IconFilterButton(icon: feedService.popularFilter == .nonFollows ? "globe.americas.fill" : "globe.americas", tooltip: "Non-Follows", isSelected: feedService.popularFilter == .nonFollows, color: .havenPurple) {
-                        feedService.popularFilter = feedService.popularFilter == .nonFollows ? .all : .nonFollows
-                        feedService.recomputeFilteredNotes()
-                    }
-                    IconFilterButton(icon: feedService.showPopularEngagement ? "chart.bar.fill" : "chart.bar", tooltip: "Engagement", isSelected: feedService.showPopularEngagement, color: .havenPurple) {
-                        feedService.showPopularEngagement.toggle()
-                    }
-                } else {
-                    IconFilterButton(icon: configService.config.autoLoadNewPosts ? "bolt.circle.fill" : "bolt.circle", tooltip: "Auto-load", isSelected: configService.config.autoLoadNewPosts, color: .havenPurple) {
-                        configService.config.autoLoadNewPosts.toggle()
-                        configService.save()
-                    }
-                    IconFilterButton(icon: "arrow.2.squarepath", tooltip: "Reposts", isSelected: configService.config.showReposts, color: .havenPurple) {
-                        configService.config.showReposts.toggle()
-                        configService.save()
-                        feedService.recomputeFilteredNotes()
-                    }
-                    IconFilterButton(icon: configService.config.showReplies ? "message.fill" : "message", tooltip: "Replies", isSelected: configService.config.showReplies, color: .havenPurple) {
-                        configService.config.showReplies.toggle()
-                        configService.save()
-                        feedService.recomputeFilteredNotes()
-                    }
-                    }
+                ViewThatFits {
+                    feedTrailingToolbarInline
+                    feedTrailingToolbarMenu
                 }
             }
         }

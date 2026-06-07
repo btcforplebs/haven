@@ -114,6 +114,11 @@ struct HavenConfig: Codable, Equatable {
     var blossomMirrors: [String] = []
     var autoMirrorMedia: Bool = false
 
+    // FIPS Blossom Publishing
+    var fipsPublishEnabled: Bool = false
+    var fipsAddressSource: String = "detected"  // "detected" | "owner" | "custom"
+    var fipsCustomNpub: String = ""
+
     // Blastr
     var blastrRelaysFile: String = "relays_blastr.json"
     var blastrRelays: [String] = [
@@ -202,6 +207,7 @@ struct HavenConfig: Codable, Equatable {
         case inboxRelayName, inboxRelayDescription, inboxRelayIcon, inboxPullIntervalSeconds
         case importStartDate, importSeedRelaysFile, importSeedRelays, importOwnerNotesFetchTimeoutSeconds, importTaggedNotesFetchTimeoutSeconds
         case blossomMirrors, autoMirrorMedia
+        case fipsPublishEnabled, fipsAddressSource, fipsCustomNpub
         case blastrRelaysFile, blastrRelays
         case feedRelays
         case whitelistedNpubs, whitelistedNpubsFile
@@ -310,6 +316,10 @@ struct HavenConfig: Codable, Equatable {
         blossomMirrors = try container.decodeIfPresent([String].self, forKey: .blossomMirrors) ?? defaults.blossomMirrors
         autoMirrorMedia = try container.decodeIfPresent(Bool.self, forKey: .autoMirrorMedia) ?? defaults.autoMirrorMedia
 
+        fipsPublishEnabled = try container.decodeIfPresent(Bool.self, forKey: .fipsPublishEnabled) ?? defaults.fipsPublishEnabled
+        fipsAddressSource = try container.decodeIfPresent(String.self, forKey: .fipsAddressSource) ?? defaults.fipsAddressSource
+        fipsCustomNpub = try container.decodeIfPresent(String.self, forKey: .fipsCustomNpub) ?? defaults.fipsCustomNpub
+
         blastrRelaysFile = try container.decodeIfPresent(String.self, forKey: .blastrRelaysFile) ?? defaults.blastrRelaysFile
         blastrRelays = try container.decodeIfPresent([String].self, forKey: .blastrRelays) ?? defaults.blastrRelays
         
@@ -416,16 +426,40 @@ struct HavenConfig: Codable, Equatable {
 
     // MARK: - Blossom Mirrors Configuration
 
-    /// Active Blossom mirrors, including the automatically applied Mac relay Blossom server if configured.
-    var activeBlossomMirrors: [String] {
+    /// Builds the .fips Blossom URL from the configured source, or nil if FIPS publishing is disabled.
+    func fipsBlossomURL(detectedNpub: String? = nil) -> String? {
+        guard fipsPublishEnabled else { return nil }
+        let npub: String
+        switch fipsAddressSource {
+        case "detected":
+            guard let detected = detectedNpub, !detected.isEmpty else { return nil }
+            npub = detected
+        case "custom":
+            npub = fipsCustomNpub.trimmingCharacters(in: .whitespacesAndNewlines)
+        default:
+            npub = ownerNpub
+        }
+        let clean = npub.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard clean.hasPrefix("npub1") else { return nil }
+        return "http://\(clean).fips:\(relayPort)"
+    }
+
+    /// Active Blossom mirrors with optional FIPS URL appended last (clearnet-first per BUD-14).
+    func activeBlossomMirrors(detectedNpub: String? = nil) -> [String] {
         var mirrors = blossomMirrors
         let macHttps = macRelayHttpsURL
-        if !macHttps.isEmpty {
-            if !mirrors.contains(macHttps) {
-                mirrors.insert(macHttps, at: 0)
-            }
+        if !macHttps.isEmpty, !mirrors.contains(macHttps) {
+            mirrors.insert(macHttps, at: 0)
+        }
+        if let fipsURL = fipsBlossomURL(detectedNpub: detectedNpub), !mirrors.contains(fipsURL) {
+            mirrors.append(fipsURL)
         }
         return mirrors
+    }
+
+    /// Active Blossom mirrors (convenience, no detected FIPS npub).
+    var activeBlossomMirrors: [String] {
+        activeBlossomMirrors(detectedNpub: nil)
     }
 
     /// Active feed relays, including the Mac relay if configured.
@@ -497,7 +531,6 @@ struct HavenConfig: Codable, Equatable {
             #if os(macOS)
             return "ws://127.0.0.1:\(relayPort)"
             #else
-            // Use wss:// (secure WebSocket) for local HTTPS relay server on iOS
             return "wss://127.0.0.1:\(relayPort)"
             #endif
         } else {
@@ -505,13 +538,12 @@ struct HavenConfig: Codable, Equatable {
         }
     }
 
-    /// Returns the appropriate Web/Blossom URL (https:// for both local and remote)
+    /// Returns the appropriate Web/Blossom URL (https:// on iOS for Blossom, http:// on macOS)
     var webURL: String {
         if isLocal {
             #if os(macOS)
             return "http://127.0.0.1:\(relayPort)"
             #else
-            // Use https:// for local relay server (self-signed cert)
             return "https://127.0.0.1:\(relayPort)"
             #endif
         } else {

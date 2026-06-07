@@ -33,10 +33,6 @@ struct ProfileView: View {
     @State private var zapSheetContext: ZapSheetContext?
     @State private var copiedNpub = false
     @State private var copiedLightning = false
-    // Lightning (NWC) balance — own profile only
-    @State private var lightningBalanceSats: Int? = nil
-    @State private var isLoadingLightningBalance = false
-    @State private var lightningBalanceError = false
 
     // Edit profile
     @State private var showingEditProfile = false
@@ -246,7 +242,6 @@ struct ProfileView: View {
         .onAppear {
             nostrService.fetchMissingProfiles(for: [pubkey])
             fetchAuthorNotes()
-            fetchLightningBalance()
             fetchLocalRelayCounts()
             #if os(macOS)
             installKeyMonitor()
@@ -835,14 +830,6 @@ struct ProfileView: View {
                     value: shortInt(feedService.followedPubkeys.filter { $0 != pubkey }.count),
                     label: "FOLLOWING"
                 )
-                if isOwnerProfile {
-                    statDivider
-                    statCell(
-                        value: lightningBalanceSats.map(shortSats) ?? (isLoadingLightningBalance ? "…" : (lightningBalanceError ? "⚠" : "—")),
-                        label: "⚡ LIGHTNING",
-                        tint: lightningBalanceError ? .red : (lightningBalanceSats != nil ? .orange : .secondary)
-                    )
-                }
             } else {
                 statCell(
                     value: followingCount.map(shortInt) ?? "—",
@@ -930,13 +917,6 @@ struct ProfileView: View {
 
     private func zapInlineButton(lud16: String) -> AnyView {
         if isOwnerProfile {
-            if let bal = lightningBalanceSats {
-                return AnyView(
-                    Text("\(shortSats(bal)) sats")
-                        .font(.appSystem(size: 12, weight: .semibold, design: .monospaced))
-                        .foregroundColor(.orange)
-                )
-            }
             return AnyView(EmptyView())
         }
         guard !ConfigService.shared.config.nwcURI.isEmpty else { return AnyView(EmptyView()) }
@@ -1432,7 +1412,6 @@ struct ProfileView: View {
         totalMediaCount = nil
 
         fetchAuthorNotes()
-        fetchLightningBalance()
         fetchLocalRelayCounts()
 
         try? await Task.sleep(nanoseconds: 500_000_000)
@@ -1470,31 +1449,6 @@ struct ProfileView: View {
         }
     }
 
-    // MARK: - Lightning balance (own profile)
-
-    private func fetchLightningBalance() {
-        guard isOwnerProfile, !ConfigService.shared.config.nwcURI.isEmpty else { return }
-        guard !isLoadingLightningBalance else { return }
-        isLoadingLightningBalance = true
-        Task {
-            do {
-                let msats = try await NWCService.getBalance()
-                let sats = msats / 1000
-                await MainActor.run {
-                    lightningBalanceSats = sats
-                    isLoadingLightningBalance = false
-                }
-            } catch {
-                await MainActor.run {
-                    isLoadingLightningBalance = false
-                    lightningBalanceError = true
-                }
-                #if DEBUG
-                print("ProfileView: lightning balance fetch failed: \(error)")
-                #endif
-            }
-        }
-    }
 
     // MARK: - Profile editing
 
@@ -1802,15 +1756,6 @@ struct ProfileView: View {
         formatter.usesGroupingSeparator = true
         let formatted = formatter.string(from: NSNumber(value: sats)) ?? "\(sats)"
         return "\(formatted) sats"
-    }
-
-    private func shortSats(_ sats: Int) -> String {
-        if sats >= 1_000_000 {
-            return String(format: "%.1fM", Double(sats) / 1_000_000)
-        } else if sats >= 1_000 {
-            return String(format: "%.1fk", Double(sats) / 1_000)
-        }
-        return "\(sats)"
     }
 
     private func shortInt(_ n: Int) -> String {

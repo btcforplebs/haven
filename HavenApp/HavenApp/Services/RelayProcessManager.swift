@@ -760,6 +760,7 @@ class RelayProcessManager: ObservableObject {
                     fileHandle?.write(data)
 
                     bufferLock.lock()
+                    defer { bufferLock.unlock() }
                     localBuffer.append(data)
 
                     // Safety valve: drop oldest data if buffer grows too large
@@ -774,7 +775,6 @@ class RelayProcessManager: ObservableObject {
 
                     // Find the last newline character
                     guard let range = localBuffer.range(of: Data([0x0A]), options: .backwards) else {
-                        bufferLock.unlock()
                         return
                     }
 
@@ -783,7 +783,6 @@ class RelayProcessManager: ObservableObject {
 
                     // Keep the remainder in the buffer
                     localBuffer = localBuffer.subdata(in: range.upperBound..<localBuffer.endIndex)
-                    bufferLock.unlock()
 
                     if let output = String(data: validData, encoding: .utf8) {
                         self?.processOutputInBackground(output)
@@ -1141,7 +1140,7 @@ class RelayProcessManager: ObservableObject {
         let cleanNpub = config.ownerNpub.trimmingCharacters(in: .whitespacesAndNewlines)
             .filter { "abcdefghijklmnopqrstuvwxyz0123456789".contains($0.lowercased()) }
 
-        // TLS — only enable HTTPS on iOS (ATS requires it); macOS uses plain HTTP locally
+        // TLS — enable HTTPS on iOS (required for Blossom); macOS uses plain HTTP locally
         #if os(iOS)
         let enableTLS = "1"
         #else

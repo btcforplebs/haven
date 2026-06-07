@@ -23,9 +23,7 @@ class FollowingBackupService: ObservableObject {
             let store = try JSONDecoder().decode(FollowingSnapshotStore.self, from: data)
             snapshots = store.snapshots
         } catch {
-            #if DEBUG
-            print("FollowingBackupService: Failed to load snapshots: \(error)")
-            #endif
+            RelayProcessManager.shared.addLog("Failed to load following snapshots: \(error.localizedDescription)", level: "ERROR")
             snapshots = []
         }
     }
