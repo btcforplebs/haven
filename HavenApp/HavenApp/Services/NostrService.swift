@@ -695,14 +695,8 @@ class NostrService: ObservableObject {
     private func reconnectForActiveAccount() {
         let config = ConfigService.shared.config
 
-        var urls = [config.nostrURL, config.nostrURL + "/inbox"]
+        let urls = [config.nostrURL, config.nostrURL + "/inbox"]
             .compactMap { URL(string: $0) }
-
-        let macURL = config.macRelayURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !macURL.isEmpty {
-            if let macRelay = URL(string: macURL) { urls.append(macRelay) }
-            if let macInbox = URL(string: macURL + "/inbox") { urls.append(macInbox) }
-        }
 
         guard !urls.isEmpty else { return }
 
@@ -715,6 +709,11 @@ class NostrService: ObservableObject {
         }
 
         fetchNotes(from: urls, authors: Array(authorsSet))
+
+        #if os(iOS)
+        // Sync missed events from Mac relay via Negentropy
+        NegentropySyncService.shared.sync()
+        #endif
     }
 
     private func setupThrottling() {
@@ -1302,9 +1301,11 @@ class NostrService: ObservableObject {
             }
         }
 
-        // 3. Profile Broadcast: Send Kind 0 to blastr relays directly
-        //    (replaceable events don't trigger the Go relay's StoreEvent blast)
-        if event.kind == 0 {
+        // 3. Broadcast to blastr relays directly from Swift.
+        //    The Go relay also blasts via StoreEvent, but that can fail if the
+        //    relay is still booting or the pool hasn't warmed up connections yet.
+        //    Publishing from both sides is idempotent (relays dedup by event ID).
+        if event.kind == 0 || event.kind == 1 || event.kind == 6 {
             let eventDict: [String: Any] = [
                 "id": event.id,
                 "pubkey": event.pubkey,

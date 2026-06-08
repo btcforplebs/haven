@@ -36,6 +36,10 @@ class iOSAppDelegate: NSObject, UIApplicationDelegate, ObservableObject {
             try? await Task.sleep(for: .seconds(5))
             NostrService.shared.publishRelayListsForEnabledAccounts()
 
+            // Sync missed events from Mac relay via Negentropy
+            try? await Task.sleep(for: .seconds(3))
+            NegentropySyncService.shared.sync()
+
             // Start profile picture prefetch service (runs once per day on Wi-Fi)
             try? await Task.sleep(for: .seconds(5))
             ProfilePicturePrefetchService.shared.start()

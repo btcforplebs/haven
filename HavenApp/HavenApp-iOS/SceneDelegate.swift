@@ -73,13 +73,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             // doesn't redundantly call refreshAll() on its next onAppear.
             NostrService.shared.lastForegroundReconnectTime = Date()
             let config = ConfigService.shared.config
-            var urls = [config.nostrURL, config.nostrURL + "/inbox"].compactMap { URL(string: $0) }
+            let urls = [config.nostrURL, config.nostrURL + "/inbox"].compactMap { URL(string: $0) }
             guard !urls.isEmpty else { return }
-            let macURL = config.macRelayURL.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !macURL.isEmpty, let macInbox = URL(string: macURL + "/inbox") {
-                urls.append(macInbox)
-            }
             NostrService.shared.fetchNotes(from: urls)
+
+            // Sync missed events from Mac relay via Negentropy
+            NegentropySyncService.shared.sync()
 
             // Rescan blossom directory for media that arrived while backgrounded
             NotificationCenter.default.post(name: .blossomDirectoryChanged, object: nil)

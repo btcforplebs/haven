@@ -1942,7 +1942,9 @@ class FeedService: ObservableObject {
     }
 
     /// Opens a connection to every candidate relay simultaneously and fires `completion`
-    /// as soon as any relay returns a kind-3 event with at least one follow.
+    /// once all relays have responded (or a settle timeout fires), using the **newest**
+    /// kind-3 event by `created_at`. This prevents stale contact lists from overwriting
+    /// recent follow/unfollow actions.
     private func fetchContactListInParallel(from relays: [URL], ownerHex: String, completion: @escaping () -> Void) {
         guard !relays.isEmpty else {
             contactLoadingTimeout?.invalidate()
@@ -1956,20 +1958,37 @@ class FeedService: ObservableObject {
         var eoseCount = 0
         var clients: [WebSocketClient] = []
 
-        let finish: ([[String]], String, WebSocketClient) -> Void = { [weak self] pTags, content, winner in
+        // Track the newest kind-3 event seen across all relays.
+        var bestCreatedAt: Int64 = 0
+        var bestPTags: [[String]] = []
+        var bestContent: String = ""
+        var settleTimer: Timer?
+
+        let finish: () -> Void = { [weak self] in
             guard let self = self, !completed else { return }
             // Discard responses that raced past an account switch.
             guard ownerHex == ConfigService.shared.activeAccountHexPubkey else {
+                completed = true
                 clients.forEach { $0.disconnect() }
                 return
             }
             completed = true
+            settleTimer?.invalidate()
             self.contactLoadingTimeout?.invalidate()
-            // Disconnect all clients including the winner
+            // Disconnect all clients
             clients.forEach { $0.disconnect() }
 
-            var finalPTags = pTags
-            let existingPubkeys = Set(pTags.map { $0[1] })
+            guard !bestPTags.isEmpty else {
+                // No usable contact list from any relay
+                self.isLoadingContacts = false
+                self.hasAttemptedContactLoad = true
+                self.connectionStatus = self.followedPubkeys.isEmpty ? "No contacts found" : "Loaded \(self.followedPubkeys.count) contacts"
+                completion()
+                return
+            }
+
+            var finalPTags = bestPTags
+            let existingPubkeys = Set(bestPTags.map { $0[1] })
 
             // Ensure owner is in the list
             if !existingPubkeys.contains(ownerHex) {
@@ -1985,22 +2004,21 @@ class FeedService: ObservableObject {
 
             self.contactListPTags = finalPTags
             self.followedPubkeys = finalPTags.map { $0[1] }
-            self.contactListContent = content
-            self.lastFetchedContactCount = pTags.count
+            self.contactListContent = bestContent
+            self.lastFetchedContactCount = bestPTags.count
             self.isLoadingContacts = false
             self.hasAttemptedContactLoad = true
-            self.connectionStatus = pTags.isEmpty ? "No contacts found" : "Loaded \(pTags.count) contacts"
+            self.connectionStatus = bestPTags.isEmpty ? "No contacts found" : "Loaded \(bestPTags.count) contacts"
 
             // Automatically snapshot the contact list for backup/recovery
             FollowingBackupService.shared.maybeCreateSnapshot(
                 pubkeys: self.followedPubkeys,
                 pTags: finalPTags,
-                contactListContent: content,
+                contactListContent: bestContent,
                 forAccountKey: self.currentSnapshotKey()
             )
 
             completion()
-
         }
 
         for url in relays {
@@ -2011,7 +2029,7 @@ class FeedService: ObservableObject {
             c.messageSubject
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] msg in
-                    guard !completed, let self = self else { return }
+                    guard !completed, self != nil else { return }
                     guard let data = msg.data(using: .utf8),
                           let json = try? JSONSerialization.jsonObject(with: data) as? [Any],
                           let type = json[0] as? String else { return }
@@ -2022,24 +2040,29 @@ class FeedService: ObservableObject {
                        let tags = eventDict["tags"] as? [[String]] {
                         let pTags = tags.filter { $0.count >= 2 && $0[0] == "p" }
                         guard !pTags.isEmpty else { return }
+                        let createdAt = eventDict["created_at"] as? Int64 ?? 0
                         let content = eventDict["content"] as? String ?? ""
-                        finish(pTags, content, c)
+
+                        // Keep only the newest kind-3 event
+                        if createdAt > bestCreatedAt {
+                            bestCreatedAt = createdAt
+                            bestPTags = pTags
+                            bestContent = content
+                        }
+
+                        // Start a settle timer on the first event so we don't wait
+                        // forever for slow relays, but still give faster relays a
+                        // chance to deliver a newer event.
+                        if settleTimer == nil {
+                            settleTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: false) { _ in
+                                Task { @MainActor in finish() }
+                            }
+                        }
                     } else if type == "EOSE" {
                         eoseCount += 1
-                        // All relays returned EOSE with no usable contact list
-                        if eoseCount >= relays.count && !completed {
-                            guard ownerHex == ConfigService.shared.activeAccountHexPubkey else {
-                                completed = true
-                                clients.forEach { $0.disconnect() }
-                                return
-                            }
-                            completed = true
-                            self.contactLoadingTimeout?.invalidate()
-                            clients.forEach { $0.disconnect() }
-                            self.isLoadingContacts = false
-                            self.hasAttemptedContactLoad = true
-                            self.connectionStatus = self.followedPubkeys.isEmpty ? "No contacts found" : "Loaded \(self.followedPubkeys.count) contacts"
-                            completion()
+                        // All relays have finished — finalize with the best event
+                        if eoseCount >= relays.count {
+                            finish()
                         }
                     }
                 }

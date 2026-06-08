@@ -3211,13 +3211,10 @@ struct ViewerView: View {
         var urls = [configService.config.nostrURL, configService.config.nostrURL + "/inbox"].compactMap { URL(string: $0) }
         guard !urls.isEmpty else { return }
 
-        // Also query the Mac relay for tagged notes the local relay may
-        // not have (e.g. due to shorter WoT depth or notes missed while suspended).
-        let macURL = configService.config.macRelayURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !macURL.isEmpty {
-            if let macRelay = URL(string: macURL) { urls.append(macRelay) }
-            if let macInbox = URL(string: macURL + "/inbox") { urls.append(macInbox) }
-        }
+        #if os(iOS)
+        // Sync missed events from Mac relay via Negentropy set reconciliation
+        NegentropySyncService.shared.sync()
+        #endif
 
         var authorsSet = Set<String>()
         if let ownerHex = Bech32.decode(configService.config.ownerNpub)?.hexString {
@@ -3266,12 +3263,8 @@ struct ViewerView: View {
         guard !hasFetchedZapReceipts else { return }
         hasFetchedZapReceipts = true
 
-        var urls = [configService.config.nostrURL, configService.config.nostrURL + "/inbox"].compactMap { URL(string: $0) }
+        let urls = [configService.config.nostrURL, configService.config.nostrURL + "/inbox"].compactMap { URL(string: $0) }
         guard !urls.isEmpty else { return }
-        let macURL = configService.config.macRelayURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !macURL.isEmpty, let macRelay = URL(string: macURL) {
-            urls.append(macRelay)
-        }
 
         #if DEBUG
         print("ViewerView: Fetching extended zap receipts history")
@@ -3338,12 +3331,8 @@ struct ViewerView: View {
         #if DEBUG
         print("ViewerView: Requesting older events until: \(oldestTimestamp - 1)")
         #endif
-        var urls = [configService.config.nostrURL, configService.config.nostrURL + "/inbox"].compactMap { URL(string: $0) }
+        let urls = [configService.config.nostrURL, configService.config.nostrURL + "/inbox"].compactMap { URL(string: $0) }
         guard !urls.isEmpty else { return }
-        let macURL = configService.config.macRelayURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !macURL.isEmpty, let macInbox = URL(string: macURL + "/inbox") {
-            urls.append(macInbox)
-        }
 
         var authorsSet = Set<String>()
         if let ownerHex = Bech32.decode(configService.config.ownerNpub)?.hexString {
@@ -3351,7 +3340,7 @@ struct ViewerView: View {
         }
         for pk in configService.whitelistedHexPubkeys { authorsSet.insert(pk) }
         let authors = Array(authorsSet)
-        
+
         nostrService.fetchNotes(from: urls, until: oldestTimestamp - 1, authors: authors)
     }
     

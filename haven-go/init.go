@@ -316,6 +316,7 @@ func initRelays(ctx context.Context) error {
 	outboxRelay.Info.Version = config.RelayVersion
 	outboxRelay.Info.Software = config.RelaySoftware
 	outboxRelay.ServiceURL = "https://" + config.RelayURL
+	outboxRelay.Negentropy = true
 
 	if !outboxRelayLimits.AllowEmptyFilters {
 		outboxRelay.RejectFilter = append(outboxRelay.RejectFilter, policies.NoEmptyFilters)
@@ -413,6 +414,7 @@ func initRelays(ctx context.Context) error {
 	inboxRelay.Info.Version = config.RelayVersion
 	inboxRelay.Info.Software = config.RelaySoftware
 	inboxRelay.ServiceURL = "https://" + config.RelayURL + "/inbox"
+	inboxRelay.Negentropy = true
 
 	if !inboxRelayLimits.AllowEmptyFilters {
 		inboxRelay.RejectFilter = append(inboxRelay.RejectFilter, policies.NoEmptyFilters)

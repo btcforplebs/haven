@@ -85,6 +85,9 @@ class DMService: ObservableObject {
     private var injectedDmIds = Set<String>()
     private let maxInjectedDmIds = 5_000
 
+    /// Guards against concurrent `fetchFromExternalRelays()` calls.
+    private var isFetchingExternal = false
+
     /// Persisted timestamp for efficient DM catch-up from external relays.
     private let lastExternalFetchKey = "com.haven.dm.lastExternalFetchTimestamp"
     var lastExternalFetchTimestamp: Int64 {
@@ -470,6 +473,8 @@ class DMService: ObservableObject {
     func fetchFromExternalRelays() {
         let ownPubkey = loadedAccountPubkey
         guard !ownPubkey.isEmpty else { return }
+        guard !isFetchingExternal else { return }
+        isFetchingExternal = true
 
         let generation = self.switchGeneration
 
@@ -527,16 +532,21 @@ class DMService: ObservableObject {
                         return
                     }
                     if state == .connected {
-                        // Use 1-hour overlap for clock drift safety
-                        let since = max(0, self.lastExternalFetchTimestamp - 3600)
+                        // Use 1-hour overlap for clock drift safety.
+                        // On fresh install (timestamp == 0), cap to 30 days to avoid
+                        // fetching entire DM history and flooding the relay.
+                        var since = max(0, self.lastExternalFetchTimestamp - 3600)
+                        if since == 0 {
+                            since = Int64(Date().timeIntervalSince1970) - 30 * 86400
+                        }
 
                         // NIP-17 gift wraps
-                        var nip17Filter: [String: Any] = [
+                        let nip17Filter: [String: Any] = [
                             "kinds": [1059],
                             "#p": [ownPubkey],
-                            "limit": 500
+                            "limit": 500,
+                            "since": since
                         ]
-                        if since > 0 { nip17Filter["since"] = since }
                         let req1 = ["REQ", "ext-nip17-\(UUID().uuidString.prefix(6))", nip17Filter] as [Any]
                         if let data = try? JSONSerialization.data(withJSONObject: req1),
                            let str = String(data: data, encoding: .utf8) {
@@ -544,12 +554,12 @@ class DMService: ObservableObject {
                         }
 
                         // NIP-04 legacy DMs (received)
-                        var nip04FilterReceived: [String: Any] = [
+                        let nip04FilterReceived: [String: Any] = [
                             "kinds": [4],
                             "#p": [ownPubkey],
-                            "limit": 500
+                            "limit": 500,
+                            "since": since
                         ]
-                        if since > 0 { nip04FilterReceived["since"] = since }
                         let req2 = ["REQ", "ext-nip04-in-\(UUID().uuidString.prefix(6))", nip04FilterReceived] as [Any]
                         if let data = try? JSONSerialization.data(withJSONObject: req2),
                            let str = String(data: data, encoding: .utf8) {
@@ -557,12 +567,12 @@ class DMService: ObservableObject {
                         }
 
                         // NIP-04 legacy DMs (sent)
-                        var nip04FilterSent: [String: Any] = [
+                        let nip04FilterSent: [String: Any] = [
                             "kinds": [4],
                             "authors": [ownPubkey],
-                            "limit": 500
+                            "limit": 500,
+                            "since": since
                         ]
-                        if since > 0 { nip04FilterSent["since"] = since }
                         let req3 = ["REQ", "ext-nip04-out-\(UUID().uuidString.prefix(6))", nip04FilterSent] as [Any]
                         if let data = try? JSONSerialization.data(withJSONObject: req3),
                            let str = String(data: data, encoding: .utf8) {
@@ -576,6 +586,7 @@ class DMService: ObservableObject {
                             // Update timestamp and tear down injection clients when the last external client disconnects
                             if self?.externalClients.isEmpty == true {
                                 self?.lastExternalFetchTimestamp = Int64(Date().timeIntervalSince1970)
+                                self?.isFetchingExternal = false
                                 self?.disconnectInjectionClients()
                             }
                         }
