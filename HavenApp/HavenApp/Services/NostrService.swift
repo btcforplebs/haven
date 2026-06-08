@@ -39,6 +39,7 @@ class NostrService: ObservableObject {
 
     // Relay List Metadata Cache (Kind 10002)
     @Published var relayLists: [String: [String]] = [:] // [Pubkey: [InboxRelayURLs]]
+    @Published var outboxRelays: [String: [String]] = [:] // [Pubkey: [WriteRelayURLs]]
     private var relaysInFlight = Set<String>()
 
     // DM Relay List Cache (Kind 10050 - NIP-17)
@@ -276,6 +277,16 @@ class NostrService: ObservableObject {
             #endif
         }
 
+        // Load Outbox Relay Lists (Kind 10002 write relays)
+        let outboxRelaysURL = havenDir.appendingPathComponent("outbox_relays.json")
+        if let data = try? Data(contentsOf: outboxRelaysURL),
+           let loaded = try? JSONDecoder().decode([String: [String]].self, from: data) {
+            self.outboxRelays = loaded
+            #if DEBUG
+            print("NostrService: Loaded \(outboxRelays.count) outbox relay lists from cache")
+            #endif
+        }
+
         // Load Server Lists (BUD-03)
         let serverListsURL = havenDir.appendingPathComponent("server_lists.json")
         if let data = try? Data(contentsOf: serverListsURL),
@@ -303,12 +314,13 @@ class NostrService: ObservableObject {
     private var lastProfileSave: Date = .distantPast
     private let profileSaveThrottle: TimeInterval = 5.0
 
-    private func saveProfilesThrottled() {
+    func saveProfilesThrottled() {
         let now = Date()
         if now.timeIntervalSince(lastProfileSave) > profileSaveThrottle {
             lastProfileSave = now
             saveProfiles()
             saveRelayLists()
+            saveOutboxRelays()
             saveDMRelayLists()
             saveServerLists()
         }
@@ -323,6 +335,19 @@ class NostrService: ObservableObject {
 
             if let data = try? JSONEncoder().encode(listsCopy) {
                 try? data.write(to: relayListsURL)
+            }
+        }
+    }
+
+    private func saveOutboxRelays() {
+        let listsCopy = outboxRelays
+        DispatchQueue.global(qos: .utility).async {
+            guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
+            let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
+            let outboxRelaysURL = havenDir.appendingPathComponent("outbox_relays.json")
+
+            if let data = try? JSONEncoder().encode(listsCopy) {
+                try? data.write(to: outboxRelaysURL)
             }
         }
     }
@@ -404,7 +429,7 @@ class NostrService: ObservableObject {
     }
 
     func fetchRelayList(for pubkey: String) {
-        guard relayLists[pubkey] == nil && !relaysInFlight.contains(pubkey) else { return }
+        guard (relayLists[pubkey] == nil || dmRelayLists[pubkey] == nil) && !relaysInFlight.contains(pubkey) else { return }
         relaysInFlight.insert(pubkey)
 
         // Use blastr relays or defaults if empty
@@ -413,8 +438,16 @@ class NostrService: ObservableObject {
             relays = ["wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"]
         }
 
+        // Include cached outbox (write) relays for this user — their kind 10002/10050
+        // is most likely to be found on their own write relays.
+        if let cachedOutbox = outboxRelays[pubkey] {
+            for relay in cachedOutbox where !relays.contains(relay) {
+                relays.append(relay)
+            }
+        }
+
         #if DEBUG
-        print("NostrService: Fetching relay list (10002) for \(pubkey.prefix(8))...")
+        print("NostrService: Fetching relay list (10002/10050) for \(pubkey.prefix(8))...")
         #endif
 
         let uniqueRelays = Array(Set(relays)).compactMap { URL(string: $0) }
@@ -443,9 +476,9 @@ class NostrService: ObservableObject {
                     if state == .connected {
                         let subscriptionId = "relays-\(UUID().uuidString.prefix(8))"
                         let filter: [String: Any] = [
-                            "kinds": [10002],
+                            "kinds": [10002, 10050],
                             "authors": [pubkey],
-                            "limit": 1
+                            "limit": 2
                         ]
 
                         let req = ["REQ", subscriptionId, filter] as [Any]
@@ -611,6 +644,13 @@ class NostrService: ObservableObject {
         activeSubscriptions.removeAll()
         relaysReconnecting.removeAll()
 
+        // Cancel stale connection-state sinks from the previous account's
+        // WebSocket clients. Without this, orphaned sinks fire
+        // updateAggregatedStatus() with dead clients and can trigger phantom
+        // reconnection attempts for URLs that no longer exist.
+        cancellables.removeAll()
+        setupThrottling()
+
         // 2. Clear Viewer tab event state — these belong to the previous account
         events.removeAll()
         noteMedia.removeAll()
@@ -639,9 +679,42 @@ class NostrService: ObservableObject {
         updateOwnerHex()
         prefetchWhitelistedProfiles()
 
+        // 8. Re-establish relay connections for the new account.
+        // Previously this step was missing — the teardown above left the
+        // Viewer tab with zero WebSocket clients, so the relay indicator
+        // went yellow → red and the feed stayed empty until pull-to-refresh.
+        reconnectForActiveAccount()
+
         #if DEBUG
-        print("NostrService: Account switch — reset all connections and event state")
+        print("NostrService: Account switch — reset connections and reconnected for new account")
         #endif
+    }
+
+    /// Builds relay URLs and author filters from the current config and
+    /// opens fresh WebSocket connections for the Viewer tab.
+    private func reconnectForActiveAccount() {
+        let config = ConfigService.shared.config
+
+        var urls = [config.nostrURL, config.nostrURL + "/inbox"]
+            .compactMap { URL(string: $0) }
+
+        let macURL = config.macRelayURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !macURL.isEmpty {
+            if let macRelay = URL(string: macURL) { urls.append(macRelay) }
+            if let macInbox = URL(string: macURL + "/inbox") { urls.append(macInbox) }
+        }
+
+        guard !urls.isEmpty else { return }
+
+        var authorsSet = Set<String>()
+        if !ownerHexPubkey.isEmpty {
+            authorsSet.insert(ownerHexPubkey)
+        }
+        for pk in ConfigService.shared.whitelistedHexPubkeys {
+            authorsSet.insert(pk)
+        }
+
+        fetchNotes(from: urls, authors: Array(authorsSet))
     }
 
     private func setupThrottling() {
@@ -1229,12 +1302,21 @@ class NostrService: ObservableObject {
             }
         }
 
-        // Refresh stats after a short delay so the backend database has processed the event
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            let config = ConfigService.shared.config
-            let urlString = config.relayURL.isEmpty ? "localhost:\(config.relayPort)" : config.relayURL
-            StatsService.shared.refreshStats(relayURLString: urlString)
+        // 3. Profile Broadcast: Send Kind 0 to blastr relays directly
+        //    (replaceable events don't trigger the Go relay's StoreEvent blast)
+        if event.kind == 0 {
+            let eventDict: [String: Any] = [
+                "id": event.id,
+                "pubkey": event.pubkey,
+                "created_at": event.created_at,
+                "kind": event.kind,
+                "tags": event.tags,
+                "content": event.content,
+                "sig": event.sig
+            ]
+            broadcastRawEvent(eventDict)
         }
+
     }
 
     /// Broadcasts a raw signed event dict (including sig) to configured Blastr relays.
@@ -1807,11 +1889,15 @@ class NostrService: ObservableObject {
             if event.kind == 10002 {
                 // NIP-65: ["r", relay_url, "read" | "write"], no marker = both
                 var inboxRelays: [String] = []
+                var writeRelays: [String] = []
                 for tag in event.tags {
                     if tag.count >= 2 && tag[0] == "r" {
                         let type = tag.count >= 3 ? tag[2] : ""
                         if type == "read" || type == "" {
                             inboxRelays.append(tag[1])
+                        }
+                        if type == "write" || type == "" {
+                            writeRelays.append(tag[1])
                         }
                     }
                 }
@@ -1821,6 +1907,9 @@ class NostrService: ObservableObject {
                     guard let self = self else { return }
                     if !inboxRelays.isEmpty {
                         self.relayLists[pubkey] = inboxRelays
+                    }
+                    if !writeRelays.isEmpty {
+                        self.outboxRelays[pubkey] = writeRelays
                     }
                     self.relaysInFlight.remove(pubkey)
                     self.saveProfilesThrottled()

@@ -285,50 +285,11 @@ class DMService: ObservableObject {
         guard !ownHexPubkey.isEmpty else {
             throw NSError(domain: "DMService", code: -1, userInfo: [NSLocalizedDescriptionKey: "No active account loaded"])
         }
-        let isNIP46 = ConfigService.shared.config.activeSigningMode() == "nip46"
 
-        // Get sender's private key (nil for NIP-46 mode)
-        let senderPrivkey: String? = isNIP46 ? nil : try getActivePrivateKey()
-
-        // Create gift wrap for recipient
-        let rumorPTags = [["p", recipientHexPubkey]]
-        let giftWrap = try await NIP17Service.createGiftWrapAsync(
-            content: content,
-            rumorPTags: rumorPTags,
-            giftWrapRecipient: recipientHexPubkey,
-            senderHexPrivkey: senderPrivkey,
-            senderHexPubkey: ownHexPubkey
-        )
-
-        // Publish to local inbox
-        await publishToInbox(giftWrap)
-
-        // Publish to recipient's DM relays (kind 10050) or fallback to read relays (kind 10002)
-        let relays = await fetchRecipientDMRelays(recipientHexPubkey)
-        for relayURL in relays {
-            await publishToRelay(giftWrap, url: relayURL)
-        }
-
-        // Create a copy for self — rumor p-tags still point to the actual recipient
-        // so we can identify the conversation partner when unwrapping later
-        let selfGiftWrap = try await NIP17Service.createGiftWrapAsync(
-            content: content,
-            rumorPTags: rumorPTags,
-            giftWrapRecipient: ownHexPubkey,
-            senderHexPrivkey: senderPrivkey,
-            senderHexPubkey: ownHexPubkey
-        )
-        await publishToInbox(selfGiftWrap)
-
-        // Publish self-copy to own DM relays for cross-device sync
-        let ownRelays = await fetchRecipientDMRelays(ownHexPubkey)
-        for relayURL in ownRelays {
-            await publishToRelay(selfGiftWrap, url: relayURL)
-        }
-
-        // Add message to conversation optimistically
+        // ── Step 1: Optimistic UI update (instant) ──
+        let optimisticId = UUID().uuidString
         let message = DMMessage(
-            id: giftWrap.id,
+            id: optimisticId,
             senderPubkey: ownHexPubkey,
             content: content,
             timestamp: Date(),
@@ -345,9 +306,60 @@ class DMService: ObservableObject {
             )
             conversations.append(conversation)
         }
-
         sortConversations()
         saveConversations()
+
+        // ── Step 2: Background crypto + network I/O ──
+        let isNIP46 = ConfigService.shared.config.activeSigningMode() == "nip46"
+        let senderPrivkey: String? = isNIP46 ? nil : try getActivePrivateKey()
+        let rumorPTags = [["p", recipientHexPubkey]]
+        let generation = self.switchGeneration
+
+        Task { [weak self] in
+            guard let self = self else { return }
+
+            do {
+                // Create both gift wraps concurrently
+                async let recipientWrap = NIP17Service.createGiftWrapAsync(
+                    content: content,
+                    rumorPTags: rumorPTags,
+                    giftWrapRecipient: recipientHexPubkey,
+                    senderHexPrivkey: senderPrivkey,
+                    senderHexPubkey: ownHexPubkey
+                )
+                async let selfWrap = NIP17Service.createGiftWrapAsync(
+                    content: content,
+                    rumorPTags: rumorPTags,
+                    giftWrapRecipient: ownHexPubkey,
+                    senderHexPrivkey: senderPrivkey,
+                    senderHexPubkey: ownHexPubkey
+                )
+
+                let (giftWrap, selfGiftWrap) = try await (recipientWrap, selfWrap)
+
+                guard self.switchGeneration == generation else { return }
+
+                // Publish both to local relay (non-blocking, reuses persistent connection)
+                self.publishToInbox(giftWrap)
+                self.publishToInbox(selfGiftWrap)
+
+                // Fetch relay lists concurrently, then fire-and-forget to external relays
+                async let recipientRelays = self.fetchRecipientDMRelays(recipientHexPubkey)
+                async let ownRelays = self.fetchRecipientDMRelays(ownHexPubkey)
+
+                let rRelays = await recipientRelays
+                let oRelays = await ownRelays
+
+                for relayURL in rRelays {
+                    self.fireAndForgetPublish(giftWrap, url: relayURL)
+                }
+                for relayURL in oRelays {
+                    self.fireAndForgetPublish(selfGiftWrap, url: relayURL)
+                }
+            } catch {
+                print("DMService: Background DM publish failed: \(error)")
+            }
+        }
     }
 
     /// Send a NIP-04 legacy DM (for compatibility with older clients)
@@ -373,24 +385,7 @@ class DMService: ObservableObject {
             throw NSError(domain: "DMService", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to sign NIP-04 event"])
         }
 
-        // Publish to local inbox
-        if let inboxURL = inboxRelayURL()?.absoluteString {
-            await publishToRelay(event, url: inboxURL)
-        }
-
-        // Publish to recipient's relays
-        let recipientRelays = await fetchRecipientDMRelays(recipientHexPubkey)
-        for relayURL in recipientRelays {
-            await publishToRelay(event, url: relayURL)
-        }
-
-        // Publish to own relays for cross-device sync
-        let ownRelays = await fetchRecipientDMRelays(ownHexPubkey)
-        for relayURL in ownRelays where !recipientRelays.contains(relayURL) {
-            await publishToRelay(event, url: relayURL)
-        }
-
-        // Add message to conversation optimistically
+        // ── Optimistic UI update (uses real event ID since crypto is already done) ──
         let message = DMMessage(
             id: event.id,
             senderPubkey: ownHexPubkey,
@@ -410,9 +405,35 @@ class DMService: ObservableObject {
             )
             conversations.append(conversation)
         }
-
         sortConversations()
         saveConversations()
+
+        // ── Background network I/O ──
+        let generation = self.switchGeneration
+
+        Task { [weak self] in
+            guard let self = self else { return }
+            guard self.switchGeneration == generation else { return }
+
+            // Publish to local inbox relay
+            if let inboxURL = self.inboxRelayURL()?.absoluteString {
+                self.fireAndForgetPublish(event, url: inboxURL)
+            }
+
+            // Fetch relay lists concurrently, then fire-and-forget to external relays
+            async let recipientRelays = self.fetchRecipientDMRelays(recipientHexPubkey)
+            async let ownRelays = self.fetchRecipientDMRelays(ownHexPubkey)
+
+            let rRelays = await recipientRelays
+            let oRelays = await ownRelays
+
+            for relayURL in rRelays {
+                self.fireAndForgetPublish(event, url: relayURL)
+            }
+            for relayURL in oRelays where !rRelays.contains(relayURL) {
+                self.fireAndForgetPublish(event, url: relayURL)
+            }
+        }
     }
 
     func markRead(conversationWith pubkey: String) {
@@ -461,6 +482,18 @@ class DMService: ObservableObject {
         if let ownDMRelays = NostrService.shared.dmRelayLists[ownPubkey] {
             for relay in ownDMRelays where !relays.contains(relay) {
                 relays.append(relay)
+            }
+        }
+
+        // Include counterpart DM relays — messages to us are published there
+        let maxRelays = 15
+        for conversation in conversations {
+            guard relays.count < maxRelays else { break }
+            if let counterpartRelays = NostrService.shared.dmRelayLists[conversation.id] {
+                for relay in counterpartRelays where !relays.contains(relay) {
+                    relays.append(relay)
+                    if relays.count >= maxRelays { break }
+                }
             }
         }
 
@@ -971,6 +1004,21 @@ class DMService: ObservableObject {
 
             if let idx = conversations.firstIndex(where: { $0.id == counterpartyPubkey }) {
                 guard !conversations[idx].messages.contains(where: { $0.id == event.id }) else { return }
+
+                // If this is our own message returning from the relay, replace the
+                // optimistic placeholder (which has a UUID id) with the real event.
+                if isFromMe {
+                    let recentThreshold = Date().addingTimeInterval(-30)
+                    if let msgIdx = conversations[idx].messages.lastIndex(where: {
+                        $0.isFromMe && $0.content == content && $0.timestamp > recentThreshold
+                    }) {
+                        conversations[idx].messages[msgIdx] = message
+                        seenGiftWrapIds.insert(event.id)
+                        saveConversations()
+                        return
+                    }
+                }
+
                 conversations[idx].messages.append(message)
                 conversations[idx].messages.sort { $0.timestamp < $1.timestamp }
                 if !isFromMe {
@@ -1085,9 +1133,20 @@ class DMService: ObservableObject {
         return fallbackRelays
     }
 
-    private func publishToInbox(_ event: NostrEvent) async {
-        guard let chatURL = chatRelayURL() else { return }
-        await publishToRelay(event, url: chatURL.absoluteString)
+    /// Publishes an event to the local /chat relay.
+    /// Reuses the persistent inboxClient when connected (zero latency).
+    /// Falls back to the injection client pattern (queues + sends on connect).
+    private func publishToInbox(_ event: NostrEvent) {
+        let eventDict = eventToDict(event)
+
+        // Fast path: reuse the already-connected persistent inbox client
+        if let client = inboxClient, client.connectionState == .connected {
+            sendEventToClient(client, eventDict)
+            return
+        }
+
+        // Fallback: queue via injection client (sends on connect)
+        injectViaChatClient(eventDict)
     }
 
     private func eventToDict(_ event: NostrEvent) -> [String: Any] {
@@ -1102,56 +1161,48 @@ class DMService: ObservableObject {
         ]
     }
 
-    private func publishToRelay(_ event: NostrEvent, url: String) async {
+    /// Fire-and-forget publish to an external relay.
+    /// Connects, sends EVENT, and disconnects after a short flush window.
+    /// Does NOT block the caller — errors are logged but not propagated.
+    private func fireAndForgetPublish(_ event: NostrEvent, url: String) {
         guard let urlObj = URL(string: url) else { return }
 
         let client = WebSocketClient()
         client.isTemporary = true
-
         let eventDict = eventToDict(event)
 
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            var resumed = false
-
-            let sub = client.$connectionState
-                .receive(on: DispatchQueue.main)
-                .sink { state in
-                    if state == .connected && !resumed {
-                        resumed = true
-
-                        let msg = ["EVENT", eventDict] as [Any]
-                        if let data = try? JSONSerialization.data(withJSONObject: msg),
-                           let str = String(data: data, encoding: .utf8) {
-                            print("📤 Publishing DM to \(url)")
-                            client.send(text: str)
-                        }
-
-                        // Give the relay a moment to process, then disconnect
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                            client.disconnect()
-                            continuation.resume()
-                        }
-                    } else if case .error = state, !resumed {
-                        resumed = true
-                        print("❌ Failed to connect to \(url)")
-                        continuation.resume()
+        let sub = client.$connectionState
+            .receive(on: DispatchQueue.main)
+            .sink { state in
+                if state == .connected {
+                    let msg = ["EVENT", eventDict] as [Any]
+                    if let data = try? JSONSerialization.data(withJSONObject: msg),
+                       let str = String(data: data, encoding: .utf8) {
+                        client.send(text: str)
                     }
-                }
-
-            // Retain the subscription
-            self.cancellables.insert(sub)
-
-            // Timeout: resume after 5s if nothing happened
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
-                if !resumed {
-                    resumed = true
+                    // Short flush window for TCP send buffer, then disconnect
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        client.disconnect()
+                    }
+                } else if case .error = state {
                     client.disconnect()
-                    continuation.resume()
                 }
             }
+        self.cancellables.insert(sub)
 
-            client.connect(url: urlObj)
+        // Connect timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+            if client.connectionState != .connected {
+                client.disconnect()
+            }
         }
+
+        client.connect(url: urlObj)
+    }
+
+    /// Async wrapper around fireAndForgetPublish for call sites that use `await`.
+    private func publishToRelay(_ event: NostrEvent, url: String) async {
+        fireAndForgetPublish(event, url: url)
     }
 
     private func setupThrottling() {

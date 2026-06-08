@@ -4,78 +4,41 @@ struct DMInboxView: View {
     @EnvironmentObject var nostrService: NostrService
     @EnvironmentObject var configService: ConfigService
     @StateObject private var dmService = DMService.shared
+    @StateObject private var groupService = GroupService.shared
     @Environment(\.dismiss) private var dismiss
 
     @State private var selectedConversation: String?
     @State private var showingDMThread = false
     @State private var showingCompose = false
+    @State private var showingGroupBrowser = false
+    @State private var showingGroupCreate = false
+    @State private var selectedTab: InboxTab = .dms
+
+    enum InboxTab: String, CaseIterable {
+        case dms = "DMs"
+        case groups = "Groups"
+    }
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if dmService.conversations.isEmpty {
-                    GeometryReader { geometry in
-                        ScrollView(.vertical, showsIndicators: false) {
-                            VStack(spacing: 20) {
-                                Spacer()
-
-                                ZStack {
-                                    Circle()
-                                        .fill(Color.havenPurple.opacity(0.08))
-                                        .frame(width: 100, height: 100)
-                                    Circle()
-                                        .fill(Color.havenPurple.opacity(0.05))
-                                        .frame(width: 130, height: 130)
-                                    Image(systemName: "bubble.left.and.bubble.right")
-                                        .font(.appSystem(size: 36, weight: .light))
-                                        .foregroundStyle(
-                                            LinearGradient(
-                                                colors: [.havenPurple, .havenPurpleLight],
-                                                startPoint: .topLeading,
-                                                endPoint: .bottomTrailing
-                                            )
-                                        )
-                                }
-
-                                VStack(spacing: 8) {
-                                    Text(String(localized: "dm.inbox.empty.title"))
-                                        .font(.appSystem(size: 18, weight: .semibold))
-                                        .foregroundColor(.primary)
-                                    Text(String(localized: "dm.inbox.empty.subtitle"))
-                                        .font(.appSystem(size: 14))
-                                        .foregroundColor(.secondary)
-                                        .multilineTextAlignment(.center)
-                                        .lineSpacing(2)
-                                }
-
-                                Spacer()
-                            }
-                            .frame(width: geometry.size.width, height: geometry.size.height)
-                        }
-                        .refreshable {
-                            dmService.refresh()
-                        }
+                // Segmented picker
+                Picker("", selection: $selectedTab) {
+                    ForEach(InboxTab.allCases, id: \.self) { tab in
+                        Text(tab.rawValue).tag(tab)
                     }
-                    .background(Color.platformWindowBackground.ignoresSafeArea())
-                } else {
-                    List {
-                        ForEach(dmService.conversations) { conversation in
-                            NavigationLink(destination: DMThreadView(counterpartyPubkey: conversation.id)
-                                .environmentObject(nostrService)
-                                .environmentObject(configService)) {
-                                ConversationRow(conversation: conversation, nostrService: nostrService)
-                            }
-                            .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-                            .listRowBackground(Color.platformSecondaryGroupedBackground)
-                            .listRowSeparator(.hidden)
-                        }
-                    }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                    .background(Color.platformWindowBackground.ignoresSafeArea())
-                    .refreshable {
-                        dmService.refresh()
-                    }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+
+                switch selectedTab {
+                case .dms:
+                    dmContentView
+                case .groups:
+                    GroupListView()
+                        .environmentObject(nostrService)
+                        .environmentObject(configService)
                 }
             }
             .navigationTitle(String(localized: "dm.inbox.title"))
@@ -89,17 +52,31 @@ struct DMInboxView: View {
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack(spacing: 16) {
-                        Button(action: { dmService.markAllAsRead() }) {
-                            Image(systemName: "checkmark.circle")
-                                .font(.appSystem(size: 16, weight: .semibold))
-                                .foregroundColor(.havenPurple)
-                        }
-                        .help(String(localized: "dm.inbox.markAllRead"))
+                        if selectedTab == .dms {
+                            Button(action: { dmService.markAllAsRead() }) {
+                                Image(systemName: "checkmark.circle")
+                                    .font(.appSystem(size: 16, weight: .semibold))
+                                    .foregroundColor(.havenPurple)
+                            }
+                            .help(String(localized: "dm.inbox.markAllRead"))
 
-                        Button(action: { showingCompose = true }) {
-                            Image(systemName: "square.and.pencil")
-                                .font(.appSystem(size: 16, weight: .semibold))
-                                .foregroundColor(.havenPurple)
+                            Button(action: { showingCompose = true }) {
+                                Image(systemName: "square.and.pencil")
+                                    .font(.appSystem(size: 16, weight: .semibold))
+                                    .foregroundColor(.havenPurple)
+                            }
+                        } else {
+                            Button(action: { showingGroupBrowser = true }) {
+                                Image(systemName: "magnifyingglass")
+                                    .font(.appSystem(size: 16, weight: .semibold))
+                                    .foregroundColor(.havenPurple)
+                            }
+
+                            Button(action: { showingGroupCreate = true }) {
+                                Image(systemName: "plus")
+                                    .font(.appSystem(size: 16, weight: .semibold))
+                                    .foregroundColor(.havenPurple)
+                            }
                         }
                     }
                 }
@@ -109,23 +86,48 @@ struct DMInboxView: View {
                     .environmentObject(nostrService)
                     .environmentObject(configService)
             }
+            .sheet(isPresented: $showingGroupBrowser) {
+                GroupBrowserView()
+                    .environmentObject(nostrService)
+                    .environmentObject(configService)
+            }
+            .sheet(isPresented: $showingGroupCreate) {
+                GroupCreateView()
+                    .environmentObject(configService)
+            }
             #else
             .toolbar {
                 ToolbarItem(placement: .automatic) {
                     HStack(spacing: 12) {
-                        Button(action: { dmService.markAllAsRead() }) {
-                            Image(systemName: "checkmark.circle")
-                                .font(.appSystem(size: 15, weight: .semibold))
-                                .foregroundColor(.havenPurple)
-                        }
-                        .help(String(localized: "dm.inbox.markAllRead"))
+                        if selectedTab == .dms {
+                            Button(action: { dmService.markAllAsRead() }) {
+                                Image(systemName: "checkmark.circle")
+                                    .font(.appSystem(size: 15, weight: .semibold))
+                                    .foregroundColor(.havenPurple)
+                            }
+                            .help(String(localized: "dm.inbox.markAllRead"))
 
-                        Button(action: { showingCompose = true }) {
-                            Image(systemName: "square.and.pencil")
-                                .font(.appSystem(size: 15, weight: .semibold))
-                                .foregroundColor(.havenPurple)
+                            Button(action: { showingCompose = true }) {
+                                Image(systemName: "square.and.pencil")
+                                    .font(.appSystem(size: 15, weight: .semibold))
+                                    .foregroundColor(.havenPurple)
+                            }
+                            .help(String(localized: "dm.inbox.newMessage"))
+                        } else {
+                            Button(action: { showingGroupBrowser = true }) {
+                                Image(systemName: "magnifyingglass")
+                                    .font(.appSystem(size: 15, weight: .semibold))
+                                    .foregroundColor(.havenPurple)
+                            }
+                            .help(String(localized: "group.toolbar.browse"))
+
+                            Button(action: { showingGroupCreate = true }) {
+                                Image(systemName: "plus")
+                                    .font(.appSystem(size: 15, weight: .semibold))
+                                    .foregroundColor(.havenPurple)
+                            }
+                            .help(String(localized: "group.toolbar.create"))
                         }
-                        .help(String(localized: "dm.inbox.newMessage"))
                     }
                 }
             }
@@ -135,7 +137,88 @@ struct DMInboxView: View {
                     .environmentObject(configService)
                     .frame(minWidth: 400, minHeight: 350)
             }
+            .sheet(isPresented: $showingGroupBrowser) {
+                GroupBrowserView()
+                    .environmentObject(nostrService)
+                    .environmentObject(configService)
+                    .frame(minWidth: 450, minHeight: 400)
+            }
+            .sheet(isPresented: $showingGroupCreate) {
+                GroupCreateView()
+                    .environmentObject(configService)
+                    .frame(minWidth: 400, minHeight: 350)
+            }
             #endif
+        }
+    }
+
+    // MARK: - DM Content
+
+    @ViewBuilder
+    private var dmContentView: some View {
+        if dmService.conversations.isEmpty {
+            GeometryReader { geometry in
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 20) {
+                        Spacer()
+
+                        ZStack {
+                            Circle()
+                                .fill(Color.havenPurple.opacity(0.08))
+                                .frame(width: 100, height: 100)
+                            Circle()
+                                .fill(Color.havenPurple.opacity(0.05))
+                                .frame(width: 130, height: 130)
+                            Image(systemName: "bubble.left.and.bubble.right")
+                                .font(.appSystem(size: 36, weight: .light))
+                                .foregroundStyle(
+                                    LinearGradient(
+                                        colors: [.havenPurple, .havenPurpleLight],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    )
+                                )
+                        }
+
+                        VStack(spacing: 8) {
+                            Text(String(localized: "dm.inbox.empty.title"))
+                                .font(.appSystem(size: 18, weight: .semibold))
+                                .foregroundColor(.primary)
+                            Text(String(localized: "dm.inbox.empty.subtitle"))
+                                .font(.appSystem(size: 14))
+                                .foregroundColor(.secondary)
+                                .multilineTextAlignment(.center)
+                                .lineSpacing(2)
+                        }
+
+                        Spacer()
+                    }
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                }
+                .refreshable {
+                    dmService.refresh()
+                }
+            }
+            .background(Color.platformWindowBackground.ignoresSafeArea())
+        } else {
+            List {
+                ForEach(dmService.conversations) { conversation in
+                    NavigationLink(destination: DMThreadView(counterpartyPubkey: conversation.id)
+                        .environmentObject(nostrService)
+                        .environmentObject(configService)) {
+                        ConversationRow(conversation: conversation, nostrService: nostrService)
+                    }
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                    .listRowBackground(Color.platformSecondaryGroupedBackground)
+                    .listRowSeparator(.hidden)
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color.platformWindowBackground.ignoresSafeArea())
+            .refreshable {
+                dmService.refresh()
+            }
         }
     }
 }

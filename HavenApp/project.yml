@@ -86,7 +86,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         "CODE_SIGN_IDENTITY[sdk=macosx*]": "Apple Development"
         ENABLE_USER_SCRIPT_SANDBOXING: NO
-        CURRENT_PROJECT_VERSION: "1"
+        CURRENT_PROJECT_VERSION: "7"
         MARKETING_VERSION: "2.5.1"
 
     preBuildScripts:
@@ -137,7 +137,7 @@ targets:
         GENERATE_INFOPLIST_FILE: false
         HEADER_SEARCH_PATHS: ["$(inherited)", "$(SRCROOT)/build", "$(SRCROOT)/build/ios"]
         TARGETED_DEVICE_FAMILY: "1,2"
-        CURRENT_PROJECT_VERSION: "1"
+        CURRENT_PROJECT_VERSION: "7"
         MARKETING_VERSION: "1.1.1"
 
     preBuildScripts:

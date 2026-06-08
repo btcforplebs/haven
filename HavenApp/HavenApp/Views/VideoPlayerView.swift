@@ -416,9 +416,9 @@ private struct VideoShimmerPlaceholder: View {
             // Subtle gradient shimmer sweep
             LinearGradient(
                 stops: [
-                    .init(color: .white.opacity(0), location: max(0, phase - 0.3)),
-                    .init(color: .white.opacity(0.06), location: phase),
-                    .init(color: .white.opacity(0), location: min(1, phase + 0.3))
+                    .init(color: .white.opacity(0), location: max(0, min(1, phase - 0.3))),
+                    .init(color: .white.opacity(0.06), location: max(0, min(1, phase))),
+                    .init(color: .white.opacity(0), location: max(0, min(1, phase + 0.3)))
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing

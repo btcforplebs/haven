@@ -12,35 +12,32 @@ class StatsService: ObservableObject {
     @Published var loadedEventsCount: Int = UserDefaults.standard.integer(forKey: "haven.stats.eventCount")
     @Published var isUpdatingCount: Bool = false
     
-    private var nostrService = NostrService.shared
     private var relayManager = RelayProcessManager.shared
     private var cancellables = Set<AnyCancellable>()
-    
+
     // Tracking for real-time updates
     private var baseDbCount: Int = 0
     private var baseRelayNotesStored: Int = 0
-    /// Prevents the observer from overwriting the UserDefaults-loaded count
-    /// before `refreshStats` has fetched the real DB count at least once.
-    private var hasEstablishedBaseline: Bool = false
-    /// Counts consecutive refreshes where the confirmed DB count was lower than
-    /// the persisted floor. After enough consistent reads the floor is assumed
-    /// stale (e.g. after a database prune) and is replaced with the real count.
-    private var consecutiveLowerCount: Int = 0
-    
+
     init() {
+        // Establish baseline from persisted count — the delta observer
+        // tracks all changes from here forward.
+        baseDbCount = loadedEventsCount
+        baseRelayNotesStored = relayManager.eventsStored
+
         // Observe RelayProcessManager for new incoming events (real-time updates)
         relayManager.$eventsStored
             .receive(on: DispatchQueue.main)
             .sink { [weak self] (newNoteCount: Int) in
-                guard let self = self, self.hasEstablishedBaseline else { return }
-                
+                guard let self = self else { return }
+
                 // If eventsStored was reset (e.g. after import),
                 // realign the baselines so the diff tracking starts fresh.
                 if newNoteCount < self.baseRelayNotesStored {
                     self.baseRelayNotesStored = 0
                     self.baseDbCount = self.loadedEventsCount
                 }
-                
+
                 // diff is how many new events came in since we last fetched the DB count
                 let diff = newNoteCount - self.baseRelayNotesStored
                 if diff >= 0 {
@@ -50,26 +47,15 @@ class StatsService: ObservableObject {
                 }
             }
             .store(in: &cancellables)
-        
-        // Refresh counts from database when feed injection completes
-        NotificationCenter.default.publisher(for: .feedInjectionComplete)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                guard let self = self else { return }
-                let config = ConfigService.shared.config
-                let urlString = config.relayURL.isEmpty ? "localhost:\(config.relayPort)" : config.relayURL
-                self.refreshStats(relayURLString: urlString)
-            }
-            .store(in: &cancellables)
     }
     
-    func refreshStats(relayURLString: String? = nil) {
+    func refreshStats() {
         if isUpdatingCount { return }
         self.isUpdatingCount = true
-        
+
         Task { @MainActor in
             defer { self.isUpdatingCount = false }
-            
+
             let relayDir = ConfigService.shared.relayDataDir
             let blossomDir = relayDir.appendingPathComponent("blossom")
             let cacheDir = relayDir.appendingPathComponent("cache")
@@ -88,109 +74,6 @@ class StatsService: ObservableObject {
             self.blossomSize = blossom
             self.cacheSize = cache
             self.thumbnailSize = thumbnails
-            
-            // Fetch persistent count if URL provided
-            if let _ = relayURLString {
-                let config = ConfigService.shared.config
-                
-                // Construct internal URLs for Outbox (root) and Inbox (tagged notes)
-                // We ALWAYS use 127.0.0.1 for the internal stats fetch to bypass loopback/domain issues
-                // even if config.nostrURL is set to a public domain.
-                // macOS relay runs plain HTTP/WS; iOS relay runs HTTPS/WSS (self-signed cert)
-                #if os(macOS)
-                let baseURLString = "ws://127.0.0.1:\(config.relayPort)"
-                #else
-                let baseURLString = "wss://127.0.0.1:\(config.relayPort)"
-                #endif
-                guard let baseURL = URL(string: baseURLString) else {
-                    #if DEBUG
-                    print("StatsService: ❌ Invalid baseURL for stats: \(baseURLString)")
-                    #endif
-                    return
-                }
-                
-                let relayURLs = [
-                    baseURL,
-                    baseURL.appendingPathComponent("inbox"),
-                    baseURL.appendingPathComponent("private"),
-                    baseURL.appendingPathComponent("chat")
-                ]
-                
-                #if DEBUG
-                print("StatsService: 🔄 Starting full count refresh from: \(relayURLs.map { $0.absoluteString })")
-                #endif
-                
-                // Now on MainActor, we can safely access RelayProcessManager.shared
-                if RelayProcessManager.shared.isRunning {
-                    #if DEBUG
-                    print("StatsService: 📡 Calling fetchCount for all events...")
-                    #endif
-                    
-                    var count = await self.nostrService.fetchCount(from: relayURLs, filter: [:])
-                    
-                    #if DEBUG
-                    print("StatsService: 📩 fetchCount returned: events=\(String(describing: count))")
-                    #endif
-                    
-                    // If we get 0 but previously had a count, retry once after a short delay
-                    if (count ?? 0) == 0 && (self.loadedEventsCount > 0 || !RelayProcessManager.shared.isBooting) {
-                        #if DEBUG
-                        print("StatsService: ⚠️ Fetch returned 0 for events. Retrying once...")
-                        #endif
-                        try? await Task.sleep(nanoseconds: 2_000_000_000)
-                        count = await self.nostrService.fetchCount(from: relayURLs, filter: [:])
-                    }
-                    
-                    // Guard: Only update events if we have a valid non-zero count, or if our current count is 0
-                    if let confirmedCount = count, (confirmedCount > 0 || self.loadedEventsCount == 0) {
-                        let effectiveCount: Int
-                        if confirmedCount >= self.loadedEventsCount {
-                            // Normal case: count grew or stayed the same
-                            effectiveCount = confirmedCount
-                            self.consecutiveLowerCount = 0
-                        } else {
-                            // Confirmed count is lower than persisted floor.
-                            // A single low read is likely a stale/incomplete relay
-                            // response, but 3+ consecutive low reads means the
-                            // floor itself is stale (e.g. after a database prune).
-                            self.consecutiveLowerCount += 1
-                            if self.consecutiveLowerCount >= 3 {
-                                effectiveCount = confirmedCount
-                                self.consecutiveLowerCount = 0
-                            } else {
-                                effectiveCount = self.loadedEventsCount
-                            }
-                        }
-                        #if DEBUG
-                        print("StatsService: ✨ Total aggregated events count: \(confirmedCount)" +
-                              (effectiveCount != confirmedCount ? " (floored to \(effectiveCount))" : ""))
-                        #endif
-                        self.baseDbCount = effectiveCount
-                        self.baseRelayNotesStored = RelayProcessManager.shared.eventsStored
-                        self.hasEstablishedBaseline = true
-
-                        self.loadedEventsCount = effectiveCount
-                        UserDefaults.standard.set(effectiveCount, forKey: "haven.stats.eventCount")
-                    } else {
-                        #if DEBUG
-                        print("StatsService: ❌ Fetch failed or returned 0 for events. Keeping old count: \(self.loadedEventsCount)")
-                        #endif
-                    }
-                } else {
-                    #if DEBUG
-                    print("StatsService: ⏭️ Skipping fetch - relay not running (State: \(RelayProcessManager.shared.state))")
-                    #endif
-                    
-                    // If it's NOT running but we are still updating, let's at least clear the spinner if count is 0
-                    if self.loadedEventsCount == 0 {
-                        // Keep it 0 but stop the loading state
-                    }
-                }
-            } else {
-                #if DEBUG
-                print("StatsService: ℹ️ refreshStats called without relayURLString, only updated disk sizes.")
-                #endif
-            }
         }
     }
     

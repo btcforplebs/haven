@@ -36,23 +36,11 @@ struct DashboardView: View {
             #endif
         }
         .onAppear {
-            if relayManager.isRunning && !relayManager.isBooting {
-                // Relay ready: single combined refresh (disk sizes + relay COUNT)
-                let urlString = configService.config.relayURL.isEmpty ? "localhost:\(configService.config.relayPort)" : configService.config.relayURL
-                statsService.refreshStats(relayURLString: urlString)
-            } else {
-                // Relay not ready: disk-only refresh; full refresh fires from onChange after boot
-                statsService.refreshStats()
-            }
+            statsService.refreshStats()
         }
         .onChange(of: relayManager.isBooting) { _, isBooting in
-            // When booting finishes, refresh the full stats including remote relay counts
             if !isBooting && relayManager.isRunning {
-                let urlString = configService.config.relayURL.isEmpty ? "localhost:\(configService.config.relayPort)" : configService.config.relayURL
-                // Delay slightly to ensure WebSocket connections can bind successfully
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                    statsService.refreshStats(relayURLString: urlString)
-                }
+                statsService.refreshStats()
             }
         }
         #if os(iOS)

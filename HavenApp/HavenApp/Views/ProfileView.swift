@@ -1454,6 +1454,7 @@ struct ProfileView: View {
 
     private func applyProfileUpdate(_ updated: FeedProfile) {
         nostrService.profiles[pubkey] = updated
+        nostrService.saveProfilesThrottled()
     }
 
     // MARK: - Note streaming

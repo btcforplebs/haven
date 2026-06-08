@@ -1,30 +1,44 @@
-# Haven App v2.5.1 (macOS) / v1.1.1 (iOS) Release Notes
+# Haven App v2.5.1 Build 7 (macOS) / v1.1.1 Build 7 (iOS) Release Notes
 
-This update introduces major performance and experience enhancements to media feeds and full-screen video playback across macOS, iOS, and iPadOS. We have resolved critical gesture swallowing bugs, redesigned full-screen video controls with high-fidelity glassmorphic overlays, and optimized playback transitions via shared players.
+This update adds Web of Trust media filtering, FIPS overlay network publishing, outbox relay model support, instant cold-launch feed restore, proof of work mining, global search, and dozens of performance and reliability improvements across macOS, iOS, and iPadOS.
 
-> [!IMPORTANT]
-> **Performance Tip**: When viewing videos in the feed, you can now tap once to open full-screen playback instantly, or long-press (0.5s) to view the note's detail tree. Tapping inside the full-screen player also supports native hardware keyboard shortcuts on iPad and macOS!
+## Key Features
 
-## Key Features & Improvements
+*   **WoT Media Filtering**: The Media tab now shows only media from Web of Trust members (plus the owner's own), reducing noise and spam from unknown accounts. Falls back to showing everything if the WoT graph hasn't loaded yet.
+*   **FIPS Blossom Publishing (macOS)**: Detects whether nostr-vpn (nvpn) is running and lets users publish their `.fips` Blossom address in their server list (kind 10063). FIPS URL is appended last in the mirror list (clearnet-first per BUD-14).
+*   **Instant Cold-Launch Feed Restore**: Feed state is persisted to disk on app background/terminate and restored instantly on next cold launch, eliminating the blank-screen wait.
+*   **Proof of Work (NIP-13)**: Optional proof-of-work mining for notes, replies, reactions, reposts, and DMs. Configurable per-category difficulty (8–32 bits) in Settings.
+*   **Global Search (NIP-50)**: Search gains a relay/global toggle. Global mode queries public NIP-50 search relays with deduplication and a 4-second collection window.
+*   **Profile "Tagged" Tab**: Profile view adds a "Tagged" section listing notes from other users that mention, reply to, or tag the profile.
+*   **Outbox Relay Model (NIP-65)**: Write-side relay URLs from kind 10002 events are now parsed and cached, improving relay list discovery and DM relay routing.
 
-*   **Shared Video Player Cache (`VideoPlayerCache`)**: Implemented a size-limited LRU pool (up to 10 instances) of `AVPlayer`. Inline feed playback now transitions seamlessly into full-screen without stopping or restarting the track, preserving the exact current playhead.
-*   **Premium Glassmorphic Playback Controls**: Built a stunning, floating controls console utilizing an `.ultraThinMaterial` pill with a soft reflective border. Features a high-fidelity seek scrubber, monospace timecode display, play/pause and mute/unmute buttons.
-*   **iPad & Wide-Screen Scaling**: The floating media controls panel automatically adapts, centers, and scales dynamically on large canvas screens and landscape devices.
-*   **Hardware Keyboard Mappings**: Standardized desktop/iPad hardware keys inside the media viewer—press **Spacebar** to toggle play/pause, **M** to mute/unmute, and **Left / Right Arrow Keys** to skip 5 seconds backward/forward.
-*   **Buffer Thumbnail Overlays**: Eliminated empty black boxes during video initialization by overlaying static thumbnails that fade out smoothly once the active player frame starts rendering.
-*   **Grid Navigation & Swipe Carousel**: Tapping media cells launches a swipeable, full-screen horizontal paging view (`TabView`) populated by a static snapshot (`gridMediaSnapshot`) captured at tap-time, safeguarding your swiping position against background feed syncs.
+## Improvements
 
-## Bug Fixes & Refinement
+*   **Event Publishing Reuses Feed Connection**: Publishes go through the existing feed WebSocket instead of opening a temporary connection per event.
+*   **Responsive Toolbar Menus**: Feed toolbars use `ViewThatFits` — filters render inline when space permits, collapsing to an overflow menu on narrow windows.
+*   **Video Shimmer Placeholder**: Animated gradient shimmer replaces the generic spinner while video thumbnails load.
+*   **Incremental Feed Row-Data Cache**: Profile updates, likes, zaps, and reposts trigger targeted row-level cache updates instead of full rebuilds, reducing frame drops.
+*   **Condensed Note View**: Per-feed compact mode with independent toggles per feed tab.
+*   **Audio Session Management**: Muted video autoplay no longer interrupts background music; unmuted playback properly takes over audio.
+*   **Counterpart DM Relay Inclusion**: DM fetching now includes relays from conversation counterparts for better message discovery.
+*   **Account Switch Reconnection**: Switching accounts now properly rebuilds WebSocket connections, fixing the stale relay indicator and empty feed.
+*   **Blossom Mirror Detection**: Mirror status checks blob SHA-256 against the local store instead of matching URL hosts.
+*   **macOS Keyboard Shortcuts**: Cmd+1–6 for tabs, Cmd+, for Settings, Cmd+N for Compose.
+*   **Log Level Filter**: Filter logs by severity (All/Info+/Warn+/Errors) in the Logs view.
 
-*   **Gesture Conflict Resolution**: Resolved native `AVPlayerLayer` gesture capturing issues by bypassing hit-testing on the core layer. This allows scroll and drag-to-dismiss gestures to flow seamlessly to parent SwiftUI views.
-*   **Horizontal Media Swiping**: Restricted the drag-to-dismiss gesture inside the full-screen `FeedMediaViewer` to the vertical axis when unzoomed. This prevents visual conflicts and enables smooth, native horizontal swiping between images and videos in the sheet carousel.
-*   **Video Swiping & Tap-to-Pause**: Placed an `.allowsHitTesting(false)` overlay on the native full-screen video layer and paired it with a transparent tap-capturing ZStack, allowing swipes to bubble up natively to the paging container while preserving play/pause tapping.
-*   **Global Feed Sensitive Content Warning**: Overhauled warning flow to display a Sensitive Content Warning confirmation dialog every single time the user clicks or switches to the Global Media Feed, enforcing continuous compliance.
-*   **Horizontal Swipe Carousel Dismissal**: Fixed sheet presentation conflict in `FeedView` where horizontal swiping triggered immediate page dismiss-and-reappear animations, by transitioning the sheet container to be presented via a simple boolean `isShowingGridMediaViewer` rather than the active selection's identity.
-*   **Conditional Tap Event Swallowing**: Standardized dynamic touch handling with a custom `.onTapGestureIfSome` helper, ensuring standard cell interaction is preserved without intercepting parent lists.
-*   **Full-Screen Video Aspect Ratio**: Fixed aspect ratio calculation inside `FullScreenVideoPlayer` by replacing generic fill bounds with `.resizeAspect` (letterbox) to render wide videos perfectly, while keeping `.resizeAspectFill` for inline feed cards.
-*   **Blossom Mirroring Spec Compliance**: Aligned authorization HTTP headers with the canonical BUD-02 standard using the correct `Nostr` token prefix, standardizing JSON response parsing, and enabling trust bypass for local Tailscale/LAN IP ranges.
-*   **NIP-18 Reposts Formatting**: Standardized kind 6 repost publication structure to stringify root event contents inside `content` and attach correct `e`/`p` markers.
-*   **Account Switching Safety**: Prevented flight crosstalk and visual corruption during active account shifts by discarding pending contact lists and background relay requests dynamically.
+## Bug Fixes
 
-Thank you for being part of the Haven community!
+*   **Thread-Safe Event Deduplication**: `seenEventIds` guarded by `NSLock`, eliminating EXC_BAD_ACCESS crashes from concurrent Set mutations.
+*   **"Loading Notes…" Stuck Forever**: Fetch count now tracks only actually-opened subscriptions; 8-second watchdog force-clears stale fetches.
+*   **NIP-42 AUTH Signing**: DM NIP-42 AUTH now always uses the local relay's owner key.
+*   **Max Reconnect Slot Leak**: Dead relays release their slot from `activeSubscriptionCount`.
+*   **Go Relay File Descriptor Leak**: `initRelays` now defers `file.Close()` after copying downloaded data.
+*   **Relay List Fetch Broadened**: Queries both kind 10002 and 10050 in a single subscription; re-fetches when DM relay data is missing.
+*   **Profile Update Persistence**: In-place profile edits now persist immediately instead of waiting for the next periodic save.
+
+## Removed
+
+*   Relay Note Search Bar (superseded by Global Search)
+*   Dashboard Compact Stats Toggle
+*   Apple Sign In Identity Backup (experimental, never released)
+*   Lightning Balance in Profile

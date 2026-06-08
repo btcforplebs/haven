@@ -145,6 +145,10 @@ struct HavenConfig: Codable, Equatable {
         "wss://relay.btcforplebs.com"
     ]
 
+    // NIP-29: Group Relays
+    var groupRelayURLs: [String] = []
+    var joinedGroups: [JoinedGroup] = []
+
     // Whitelisted Npubs (multi-npub support)
     var whitelistedNpubs: [String] = []
     var whitelistedNpubsFile: String = "whitelisted_npubs.json"
@@ -209,7 +213,7 @@ struct HavenConfig: Codable, Equatable {
         case blossomMirrors, autoMirrorMedia
         case fipsPublishEnabled, fipsAddressSource, fipsCustomNpub
         case blastrRelaysFile, blastrRelays
-        case feedRelays
+        case feedRelays, dmRelays
         case whitelistedNpubs, whitelistedNpubsFile
         case blacklistedNpubs, blacklistedNpubsFile
         case blockedNpubsPerAccount
@@ -222,6 +226,7 @@ struct HavenConfig: Codable, Equatable {
         case publishRelayListPerAccount
         case backupProvider, backupIntervalHours
         case s3AccessKeyId, s3SecretKey, s3Endpoint, s3Region, s3BucketName
+        case groupRelayURLs, joinedGroups
     }
     
     init() {}
@@ -324,6 +329,10 @@ struct HavenConfig: Codable, Equatable {
         blastrRelays = try container.decodeIfPresent([String].self, forKey: .blastrRelays) ?? defaults.blastrRelays
         
         feedRelays = try container.decodeIfPresent([String].self, forKey: .feedRelays) ?? defaults.feedRelays
+        dmRelays = try container.decodeIfPresent([String].self, forKey: .dmRelays) ?? defaults.dmRelays
+
+        groupRelayURLs = try container.decodeIfPresent([String].self, forKey: .groupRelayURLs) ?? defaults.groupRelayURLs
+        joinedGroups = try container.decodeIfPresent([JoinedGroup].self, forKey: .joinedGroups) ?? defaults.joinedGroups
         
         whitelistedNpubs = try container.decodeIfPresent([String].self, forKey: .whitelistedNpubs) ?? defaults.whitelistedNpubs
         whitelistedNpubsFile = try container.decodeIfPresent(String.self, forKey: .whitelistedNpubsFile) ?? defaults.whitelistedNpubsFile

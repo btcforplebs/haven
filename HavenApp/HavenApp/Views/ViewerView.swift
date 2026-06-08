@@ -394,7 +394,6 @@ struct ViewerView: View {
         let macRelayHttps = configService.config.macRelayHttpsURL
         let currentNotFound = MediaCacheService.shared.known404Set()
         let currentMaxDisplayed = maxDisplayedItems
-        let currentMediaOnly = mediaOnly
         let gen = updateGeneration
 
         Task.detached(priority: .userInitiated) {
