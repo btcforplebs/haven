@@ -105,6 +105,18 @@ class WebSocketClient: NSObject, ObservableObject, URLSessionWebSocketDelegate, 
     /// are suffixed `…Locked`.
     private let stateQueue = DispatchQueue(label: "com.havenapp.websocketclient.state")
 
+    deinit {
+        // Cancel the resumed timer BEFORE the OS_dispatch_source is freed.
+        // At deinit time no other thread holds a strong ref, so direct access
+        // is safe — there's no concurrent mutation to race against.
+        pingTimer?.cancel()
+        pingTimer = nil
+        webSocketTask?.cancel(with: .goingAway, reason: nil)
+        webSocketTask = nil
+        session?.invalidateAndCancel()
+        session = nil
+    }
+
     private func makeSession() -> URLSession {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 10
@@ -124,8 +136,8 @@ class WebSocketClient: NSObject, ObservableObject, URLSessionWebSocketDelegate, 
                 #endif
             }
 
-            DispatchQueue.main.async {
-                self.connectionState = .connecting
+            DispatchQueue.main.async { [weak self] in
+                self?.connectionState = .connecting
             }
 
             var request = URLRequest(url: url)
@@ -157,8 +169,8 @@ class WebSocketClient: NSObject, ObservableObject, URLSessionWebSocketDelegate, 
         // Invalidate the per-instance session to break the URLSession→delegate retain cycle
         session?.invalidateAndCancel()
         session = nil
-        DispatchQueue.main.async {
-            self.connectionState = .disconnected
+        DispatchQueue.main.async { [weak self] in
+            self?.connectionState = .disconnected
         }
         isClosing = false
     }
@@ -186,15 +198,15 @@ class WebSocketClient: NSObject, ObservableObject, URLSessionWebSocketDelegate, 
         timer.setEventHandler { [weak self] in
             guard let self = self else { return }
             // Read the socket on the state queue so we never race `webSocketTask`.
-            self.stateQueue.async {
-                guard let task = self.webSocketTask else { return }
-                task.sendPing { error in
+            self.stateQueue.async { [weak self] in
+                guard let self = self, let task = self.webSocketTask else { return }
+                task.sendPing { [weak self] error in
                     if let error = error {
                         #if DEBUG
                         print("WebSocketClient: Ping failed (\(error.localizedDescription)) — marking error")
                         #endif
-                        DispatchQueue.main.async {
-                            self.connectionState = .error
+                        DispatchQueue.main.async { [weak self] in
+                            self?.connectionState = .error
                         }
                     }
                 }
@@ -228,31 +240,31 @@ class WebSocketClient: NSObject, ObservableObject, URLSessionWebSocketDelegate, 
                     #endif
                     // Dispatch to main thread — PassthroughSubject.send() is not
                     // thread-safe and subscribers observe on MainActor.
-                    DispatchQueue.main.async {
-                        self.messageSubject.send(text)
+                    DispatchQueue.main.async { [weak self] in
+                        self?.messageSubject.send(text)
                     }
                 case .data(let data):
                     if let text = String(data: data, encoding: .utf8) {
-                        DispatchQueue.main.async {
-                            self.messageSubject.send(text)
+                        DispatchQueue.main.async { [weak self] in
+                            self?.messageSubject.send(text)
                         }
                     }
                 @unknown default:
                     break
                 }
                 // Continue receiving — hop back onto stateQueue to read `webSocketTask` safely.
-                self.stateQueue.async { self.receiveMessagesLocked() }
+                self.stateQueue.async { [weak self] in self?.receiveMessagesLocked() }
             case .failure(let error):
-                self.stateQueue.async {
-                    guard !self.isClosing else { return }
+                self.stateQueue.async { [weak self] in
+                    guard let self = self, !self.isClosing else { return }
                     #if DEBUG
                     if self.shouldLogClosed() {
                         print("WebSocketClient: Receive error: \(error.localizedDescription)")
                     }
                     #endif
-                    DispatchQueue.main.async {
-                        self.connectionState = .error
-                        self.lastError = error.localizedDescription
+                    DispatchQueue.main.async { [weak self] in
+                        self?.connectionState = .error
+                        self?.lastError = error.localizedDescription
                     }
                 }
             }
@@ -305,15 +317,16 @@ class WebSocketClient: NSObject, ObservableObject, URLSessionWebSocketDelegate, 
     // MARK: - URLSessionWebSocketDelegate
 
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
-        #if DEBUG
-        if !isTemporary {
-            stateQueue.async { [weak self] in
-                print("WebSocketClient: Connected to \(self?.url?.absoluteString ?? "unknown")")
+        stateQueue.async { [weak self] in
+            guard let self = self else { return }
+            #if DEBUG
+            if !self.isTemporary {
+                print("WebSocketClient: Connected to \(self.url?.absoluteString ?? "unknown")")
             }
-        }
-        #endif
-        DispatchQueue.main.async {
-            self.connectionState = .connected
+            #endif
+            DispatchQueue.main.async { [weak self] in
+                self?.connectionState = .connected
+            }
         }
     }
 
@@ -327,8 +340,8 @@ class WebSocketClient: NSObject, ObservableObject, URLSessionWebSocketDelegate, 
                 print("WebSocketClient: Closed with code \(closeCode)")
             }
             #endif
-            DispatchQueue.main.async {
-                self.connectionState = .disconnected
+            DispatchQueue.main.async { [weak self] in
+                self?.connectionState = .disconnected
             }
         }
     }
@@ -343,9 +356,9 @@ class WebSocketClient: NSObject, ObservableObject, URLSessionWebSocketDelegate, 
                 print("WebSocketClient: Completed with error: \(error.localizedDescription)")
             }
             #endif
-            DispatchQueue.main.async {
-                self.connectionState = .error
-                self.lastError = error.localizedDescription
+            DispatchQueue.main.async { [weak self] in
+                self?.connectionState = .error
+                self?.lastError = error.localizedDescription
             }
         }
     }

@@ -295,7 +295,7 @@ class RelayProcessManager: ObservableObject {
                 free(cValue)
             }
         }
-        let bindAddress = config.allowNetworkAccess ? "0.0.0.0" : "127.0.0.1"
+        let bindAddress = config.allowNetworkAccess ? "::" : "127.0.0.1"
         setenv("RELAY_BIND_ADDRESS", bindAddress, 1)
         if let cKey = strdup("RELAY_BIND_ADDRESS"), let cValue = strdup(bindAddress) {
             SetHavenEnvC(cKey, cValue)
@@ -638,7 +638,7 @@ class RelayProcessManager: ObservableObject {
                 free(cValue)
             }
         }
-        let bindAddress = config.allowNetworkAccess ? "0.0.0.0" : "127.0.0.1"
+        let bindAddress = config.allowNetworkAccess ? "::" : "127.0.0.1"
         setenv("RELAY_BIND_ADDRESS", bindAddress, 1)
         if let cKey = strdup("RELAY_BIND_ADDRESS"), let cValue = strdup(bindAddress) {
             SetHavenEnvC(cKey, cValue)
@@ -1146,7 +1146,7 @@ class RelayProcessManager: ObservableObject {
         #else
         let enableTLS = "0"
         #endif
-        let relayBindAddress = config.allowNetworkAccess ? "0.0.0.0" : "127.0.0.1"
+        let relayBindAddress = config.allowNetworkAccess ? "::" : "127.0.0.1"
 
         return [
             "OWNER_NPUB": cleanNpub,
@@ -1304,9 +1304,9 @@ class RelayProcessManager: ObservableObject {
             setenv(key, value, 1)
         }
         #if os(macOS)
-        setenv("RELAY_BIND_ADDRESS", "0.0.0.0", 1)
+        setenv("RELAY_BIND_ADDRESS", "::", 1)
         #else
-        setenv("RELAY_BIND_ADDRESS", config.allowNetworkAccess ? "0.0.0.0" : "127.0.0.1", 1)
+        setenv("RELAY_BIND_ADDRESS", config.allowNetworkAccess ? "::" : "127.0.0.1", 1)
         #endif
 
         FileManager.default.changeCurrentDirectoryPath(relayDataDir.path)

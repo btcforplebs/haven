@@ -33,6 +33,10 @@ class NostrService: ObservableObject {
     private var clients: [String: WebSocketClient] = [:]
     private var activeSubscriptions: [String: String] = [:] // [RelayURL: SubID]
     private var cancellables = Set<AnyCancellable>()
+    /// Temporary WebSocketClient instances that aren't stored in `clients`.
+    /// Held here to give them a predictable lifetime: they are removed
+    /// when they disconnect, rather than relying on Combine sink captures.
+    private var temporaryClients: Set<WebSocketClient> = []
     private var configCancellable: AnyCancellable? // Stored separately so resetConnections() doesn't destroy it
     private var statusDowngradeTask: Task<Void, Never>?
     private let processingQueue = DispatchQueue(label: "com.haven.nostr-processing", qos: .userInitiated)
@@ -251,6 +255,7 @@ class NostrService: ObservableObject {
                 .store(in: &cancellables)
 
             client.connect(url: url)
+            trackTemporaryClient(client)
         }
     }
 
@@ -496,6 +501,7 @@ class NostrService: ObservableObject {
                 .store(in: &cancellables)
 
             client.connect(url: url)
+            trackTemporaryClient(client)
         }
     }
 
@@ -598,6 +604,21 @@ class NostrService: ObservableObject {
         globalSearchCancellables.removeAll()
     }
 
+    /// Registers a temporary client in `temporaryClients` and arranges
+    /// for it to be removed when it disconnects or errors out.
+    private func trackTemporaryClient(_ client: WebSocketClient) {
+        temporaryClients.insert(client)
+        client.$connectionState
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self, weak client] state in
+                guard let self = self, let client = client else { return }
+                if state == .disconnected || state == .error {
+                    self.temporaryClients.remove(client)
+                }
+            }
+            .store(in: &cancellables)
+    }
+
     func resetConnections() {
         for (urlString, subId) in activeSubscriptions {
             if let client = clients[urlString] {
@@ -614,6 +635,10 @@ class NostrService: ObservableObject {
         clients.removeAll()
         activeSubscriptions.removeAll()
         relaysReconnecting.removeAll()
+        // Disconnect temporary clients BEFORE clearing cancellables so their
+        // ping timers are cancelled via the normal disconnectLocked() path.
+        for client in temporaryClients { client.disconnect() }
+        temporaryClients.removeAll()
         cancellables.removeAll()
         bufferFlushTimer?.invalidate()
         bufferFlushTimer = nil
@@ -643,6 +668,11 @@ class NostrService: ObservableObject {
         clients.removeAll()
         activeSubscriptions.removeAll()
         relaysReconnecting.removeAll()
+
+        // Disconnect temporary clients BEFORE clearing cancellables so their
+        // ping timers are cancelled via the normal disconnectLocked() path.
+        for client in temporaryClients { client.disconnect() }
+        temporaryClients.removeAll()
 
         // Cancel stale connection-state sinks from the previous account's
         // WebSocket clients. Without this, orphaned sinks fire
@@ -1218,7 +1248,7 @@ class NostrService: ObservableObject {
             }
         }
 
-        let msg = ["EVENT", [
+        let eventDict: [String: Any] = [
             "id": event.id,
             "pubkey": event.pubkey,
             "created_at": event.created_at,
@@ -1226,10 +1256,21 @@ class NostrService: ObservableObject {
             "tags": event.tags,
             "content": event.content,
             "sig": event.sig
-        ] as [String : Any]] as [Any]
+        ]
+
+        let msg = ["EVENT", eventDict] as [Any]
 
         guard let data = try? JSONSerialization.data(withJSONObject: msg),
               let str = String(data: data, encoding: .utf8) else { return }
+
+        // Cache raw event JSON immediately so rebroadcast + NIP-18 repost embedding
+        // work without waiting for the event to echo back from the relay.
+        if event.kind == 1 || event.kind == 6 || event.kind == 30023 {
+            if let evData = try? JSONSerialization.data(withJSONObject: eventDict, options: []),
+               let evJSON = String(data: evData, encoding: .utf8) {
+                FeedService.shared.cacheRawEvent(id: event.id, json: evJSON)
+            }
+        }
 
         // 1. Post to local relay — reuse the feed's already-connected socket
         // (the nostr way: one connection, send EVENT through it, no new TLS handshake)
@@ -1258,9 +1299,10 @@ class NostrService: ObservableObject {
                     .store(in: &cancellables)
 
                 localClient.connect(url: localURL)
+                trackTemporaryClient(localClient)
             }
         } else {
-            print("NostrService: ⚠️ Local relay not ready — event \(event.id.prefix(8)) will only reach smart broadcast relays")
+            print("NostrService: ⚠️ Local relay not ready — event \(event.id.prefix(8)) will reach network via direct blast only")
         }
 
         // 2. Smart Broadcast: Send to author's inbox relays if it's a reply or reaction
@@ -1275,7 +1317,7 @@ class NostrService: ObservableObject {
 
                 let blastrRelays = ConfigService.shared.config.activeBlastrRelays
                 for relayURLString in targetRelays {
-                    // Skip relays that the Go relay will blast to
+                    // Skip relays already covered by the direct blast
                     if blastrRelays.contains(relayURLString) { continue }
 
                     guard let url = URL(string: relayURLString) else { continue }
@@ -1295,6 +1337,7 @@ class NostrService: ObservableObject {
                         .store(in: &cancellables)
 
                     smartClient.connect(url: url)
+                    trackTemporaryClient(smartClient)
                 }
             } else if let targetPubkey = targetPubkey {
                 // We don't have their relays yet, fetch for next time
@@ -1305,15 +1348,6 @@ class NostrService: ObservableObject {
         // 3. Profile Broadcast: Send Kind 0 to blastr relays directly
         //    (replaceable events don't trigger the Go relay's StoreEvent blast)
         if event.kind == 0 {
-            let eventDict: [String: Any] = [
-                "id": event.id,
-                "pubkey": event.pubkey,
-                "created_at": event.created_at,
-                "kind": event.kind,
-                "tags": event.tags,
-                "content": event.content,
-                "sig": event.sig
-            ]
             broadcastRawEvent(eventDict)
         }
 
@@ -1376,6 +1410,7 @@ class NostrService: ObservableObject {
                 .store(in: &cancellables)
 
             client.connect(url: url)
+            trackTemporaryClient(client)
         }
     }
 

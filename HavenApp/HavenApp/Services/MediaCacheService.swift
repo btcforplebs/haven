@@ -68,6 +68,9 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
     private let notFoundLock = NSLock()
     private let notFoundDefaultsKey = "MediaCacheService.notFoundURLs"
 
+    #if !os(iOS)
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
+    #endif
 
     private init() {
         guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
@@ -97,6 +100,7 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
             self?.handleMemoryPressure()
         }
         source.resume()
+        self.memoryPressureSource = source
         #endif
 
         // Evict expired cache files on launch (read config on main, evict on background)
