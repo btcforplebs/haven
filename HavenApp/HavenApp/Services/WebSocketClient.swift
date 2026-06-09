@@ -106,13 +106,18 @@ class WebSocketClient: NSObject, ObservableObject, URLSessionWebSocketDelegate, 
     private let stateQueue = DispatchQueue(label: "com.havenapp.websocketclient.state")
 
     deinit {
-        // Cancel the resumed timer BEFORE the OS_dispatch_source is freed.
-        // At deinit time no other thread holds a strong ref, so direct access
-        // is safe — there's no concurrent mutation to race against.
+        // disconnect()'s strong self-capture ensures disconnectLocked() runs
+        // before we get here. The session is only nil'd here (or in
+        // didBecomeInvalidWithError) — never in disconnectLocked() — so the
+        // session stays alive through its internal mach-port teardown.
         pingTimer?.cancel()
         pingTimer = nil
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
+        // Safe to nil here: deinit means no other thread holds a strong ref,
+        // so no concurrent mutation. If the session was already invalidated
+        // by disconnectLocked(), this drops the last external ref and the
+        // session finishes cleanup on its own internal retain.
         session?.invalidateAndCancel()
         session = nil
     }
@@ -155,8 +160,16 @@ class WebSocketClient: NSObject, ObservableObject, URLSessionWebSocketDelegate, 
     }
 
     func disconnect() {
-        stateQueue.async { [weak self] in
-            self?.disconnectLocked()
+        // Strong capture: keeps the client alive until disconnectLocked()
+        // actually runs and tears down the timer + session on stateQueue.
+        // Without this, callers that drop their reference right after
+        // disconnect() (NostrService.resetConnections / handleAccountSwitch)
+        // can trigger deinit before the async block executes — the deinit
+        // then tears down dispatch/URLSession objects outside stateQueue
+        // serialization, racing with the session's internal mach-port
+        // cleanup and causing an OS_dispatch_mach_msg use-after-free.
+        stateQueue.async {
+            self.disconnectLocked()
         }
     }
 
@@ -166,9 +179,16 @@ class WebSocketClient: NSObject, ObservableObject, URLSessionWebSocketDelegate, 
         stopPingTimerLocked()
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
-        // Invalidate the per-instance session to break the URLSession→delegate retain cycle
+        // Invalidate the per-instance session to start async cleanup.
+        // Do NOT nil session here — invalidateAndCancel() tears down the
+        // session's internal dispatch_mach channels asynchronously. Dropping
+        // our reference immediately can free the session mid-cleanup, causing
+        // an OS_dispatch_mach_msg use-after-free crash. The session retains
+        // us as its delegate; once invalidation completes it calls
+        // urlSession(_:didBecomeInvalidWithError:) and releases the delegate
+        // ref, which naturally breaks the temporary retain cycle. The session
+        // property is then nil'd in that callback (or in deinit as a safety net).
         session?.invalidateAndCancel()
-        session = nil
         DispatchQueue.main.async { [weak self] in
             self?.connectionState = .disconnected
         }
@@ -359,6 +379,17 @@ class WebSocketClient: NSObject, ObservableObject, URLSessionWebSocketDelegate, 
             DispatchQueue.main.async { [weak self] in
                 self?.connectionState = .error
                 self?.lastError = error.localizedDescription
+            }
+        }
+    }
+
+    func urlSession(_ session: URLSession, didBecomeInvalidWithError error: Error?) {
+        stateQueue.async { [weak self] in
+            guard let self = self else { return }
+            // Only nil the session if it's the one that just invalidated
+            // (connect() may have already replaced it with a new one).
+            if self.session === session {
+                self.session = nil
             }
         }
     }

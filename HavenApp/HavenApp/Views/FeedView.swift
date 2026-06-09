@@ -83,6 +83,7 @@ private struct RowDataCacheObservers: ViewModifier {
     let onZaps: ([String: Int], [String: Int]) -> Void
     let onProfiles: (Set<String>) -> Void
     let onFollowsChanged: () -> Void
+    let onNoteStats: ([String: NoteStats], [String: NoteStats]) -> Void
 
     func body(content: Content) -> some View {
         content
@@ -95,6 +96,7 @@ private struct RowDataCacheObservers: ViewModifier {
             // in a different follow list) flip isFollowed/isParentFollowed on
             // potentially every row, so fall back to a full rebuild. Rare event.
             .onChange(of: feedService.followedPubkeys) { _, _ in onFollowsChanged() }
+            .onChange(of: feedService.noteStats) { old, new in onNoteStats(old, new) }
     }
 }
 
@@ -1176,6 +1178,13 @@ struct FeedView: View {
         resolveRows(matching: ids)
     }
 
+    /// noteStats changed — re-resolve rows whose stats actually differ.
+    private func updateRowDataForNoteStats(old: [String: NoteStats], new: [String: NoteStats]) {
+        var changed = Set<String>()
+        for (id, stats) in new where old[id] != stats { changed.insert(id) }
+        resolveRows(matching: changed)
+    }
+
     // MARK: - Auto-load debounce
 
     /// Schedules a debounced `applyPendingNotes()` call, cancelling any
@@ -1332,7 +1341,8 @@ struct FeedView: View {
                     onReposts: { updateRowDataForReposts(old: $0, new: $1) },
                     onZaps: { updateRowDataForZaps(old: $0, new: $1) },
                     onProfiles: { refreshRowsForPubkeys($0) },
-                    onFollowsChanged: { rebuildRowDataCache() }
+                    onFollowsChanged: { rebuildRowDataCache() },
+                    onNoteStats: { updateRowDataForNoteStats(old: $0, new: $1) }
                 ))
 
                 // Floating "New Posts" indicator — shown when auto-load is off,
@@ -1736,6 +1746,31 @@ struct FeedNoteRow: View {
                         .foregroundColor(.white)
                         .lineLimit(2)
                         .lineSpacing(1)
+                }
+
+                // Compact engagement stats
+                if rowData.stats.reactions > 0 || rowData.stats.reposts > 0 {
+                    HStack(spacing: 6) {
+                        if rowData.stats.reactions > 0 {
+                            HStack(spacing: 1) {
+                                Text("❤️").font(.appSystem(size: 9))
+                                Text("\(rowData.stats.reactions)")
+                                    .font(.appSystem(size: 8, weight: .bold, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        if rowData.stats.reposts > 0 {
+                            HStack(spacing: 1) {
+                                Image(systemName: "arrow.2.squarepath")
+                                    .font(.appSystem(size: 7, weight: .bold))
+                                    .foregroundColor(.green)
+                                Text("\(rowData.stats.reposts)")
+                                    .font(.appSystem(size: 8, weight: .bold, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    .padding(.top, 2)
                 }
             }
 
@@ -2163,6 +2198,7 @@ struct FeedNoteRow: View {
             }
             .padding(.top, 4)
         }
+
 
         // Actions row - minimal and clean
         HStack(spacing: 12) {

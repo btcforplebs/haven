@@ -259,7 +259,7 @@ struct iPadSidebarView: View {
                 }
             case 4:
                 NavigationStack(path: $relayPath) {
-                    ViewerView()
+                    VaultView()
                         .navigationTitle("")
                         .navigationBarTitleDisplayMode(.inline)
                         .toolbarBackground(.hidden, for: .navigationBar)
@@ -355,7 +355,7 @@ struct iPhoneTabView: View {
                 .toolbar(.hidden, for: .tabBar)
                 .tag(3)
 
-            ViewerView()
+            VaultView()
                 .toolbar(.hidden, for: .tabBar)
                 .tag(4)
         }

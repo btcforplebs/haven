@@ -33,7 +33,7 @@ struct NoteDetailView: View {
     @State private var showingReactorsSheet = false
     @State private var showingRepostersSheet = false
 
-    // Expanded engagement across all thread notes
+    // Expanded engagement across all thread notes (initialized from config in onAppear)
     @State private var expandedEngagement = false
     @State private var perNoteReactions: [String: [NostrEvent]] = [:]
     @State private var perNoteReposts: [String: [NostrEvent]] = [:]
@@ -42,7 +42,7 @@ struct NoteDetailView: View {
 
     @State private var focusedNoteId: String = ""
 
-    // Compact mode for entire thread (parents, main note, and replies)
+    // Compact mode for entire thread (initialized from config in onAppear)
     @State private var isCompactView = false
 
     private var threadRootId: String {
@@ -174,6 +174,8 @@ struct NoteDetailView: View {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
                             isCompactView.toggle()
                         }
+                        configService.config.noteDetailCompactView = isCompactView
+                        configService.save()
                     }
 
                     // Stats toggle
@@ -186,6 +188,8 @@ struct NoteDetailView: View {
                         withAnimation(.easeInOut(duration: 0.25)) {
                             expandedEngagement.toggle()
                         }
+                        configService.config.noteDetailExpandedEngagement = expandedEngagement
+                        configService.save()
                         if expandedEngagement {
                             fetchAllThreadEngagement()
                         }
@@ -234,6 +238,11 @@ struct NoteDetailView: View {
             .environmentObject(configService)
         }
         .onAppear {
+            isCompactView = configService.config.noteDetailCompactView
+            expandedEngagement = configService.config.noteDetailExpandedEngagement
+            if expandedEngagement {
+                fetchAllThreadEngagement()
+            }
             detailedReactions.removeAll()
             detailedReposts.removeAll()
             detailedZaps.removeAll()
@@ -1248,7 +1257,7 @@ struct NoteDetailView: View {
         if feedService.likedEventIds.contains(noteId) {
             UnlikeNotificationManager.shared.startCountdown {
                 self.feedService.likedEventIds.remove(noteId)
-                var stats = self.feedService.noteStats[noteId] ?? NoteStats(replies: 0, reactions: 0, reposts: 0)
+                var stats = self.feedService.noteStats[noteId] ?? NoteStats()
                 stats.reactions = max(0, stats.reactions - 1)
                 self.feedService.noteStats[noteId] = stats
                 self.feedService.saveInteractionState()
@@ -1256,7 +1265,7 @@ struct NoteDetailView: View {
             return
         }
         feedService.likedEventIds.insert(noteId)
-        var currentStats = feedService.noteStats[noteId] ?? NoteStats(replies: 0, reactions: 0, reposts: 0)
+        var currentStats = feedService.noteStats[noteId] ?? NoteStats()
         currentStats.reactions += 1
         feedService.noteStats[noteId] = currentStats
         feedService.saveInteractionState()
@@ -1272,7 +1281,7 @@ struct NoteDetailView: View {
             feedService.likedEventIds.insert(note.id)
 
             // Proactively update stats locally
-            var currentStats = feedService.noteStats[note.id] ?? NoteStats(replies: 0, reactions: 0, reposts: 0)
+            var currentStats = feedService.noteStats[note.id] ?? NoteStats()
             currentStats.reactions += 1
             feedService.noteStats[note.id] = currentStats
 

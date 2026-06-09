@@ -1,0 +1,40 @@
+import SwiftUI
+
+struct ModeButton: View {
+    let title: String
+    let icon: String
+    let isSelected: Bool
+    var hasNotification: Bool = false
+    let action: () -> Void
+
+    private var accentTint: Color {
+        Color.havenPurple
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.appSystem(size: 14, weight: .semibold))
+                    .foregroundColor(isSelected ? .white : (hasNotification ? accentTint : .white))
+                Text(title)
+                    .font(.appSystem(size: 13, weight: .semibold, design: .default))
+                    .lineLimit(1)
+                    .foregroundColor(isSelected ? .white : (hasNotification ? accentTint : .white))
+            }
+            .fixedSize()
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(isSelected ? .havenPurple : (hasNotification ? accentTint.opacity(0.15) : Color.clear))
+            .cornerRadius(20)
+            .overlay(
+                RoundedRectangle(cornerRadius: 20)
+                    .stroke(isSelected ? .havenPurple.opacity(0.5) : (hasNotification ? accentTint.opacity(0.4) : Color.clear), lineWidth: 0.8)
+            )
+            .contentShape(Rectangle())
+            .animation(.easeInOut(duration: 0.2), value: isSelected)
+            .animation(.easeInOut(duration: 0.3), value: hasNotification)
+        }
+        .buttonStyle(.plain)
+    }
+}

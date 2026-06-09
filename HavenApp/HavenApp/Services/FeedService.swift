@@ -12,7 +12,6 @@ extension Notification.Name {
 
 /// Lightweight engagement counts per note, populated from relay data.
 struct NoteStats: Equatable, Codable {
-    var replies: Int = 0
     var reactions: Int = 0
     var reposts: Int = 0
     var zaps: Int = 0
@@ -361,8 +360,6 @@ final class BackgroundAccumulator: @unchecked Sendable {
     /// Reaction events: (target note ID, reactor pubkey). Used for both self-like
     /// detection and per-note reaction counting.
     var reactionEvents: [(targetId: String, pubkey: String)] = []
-    /// Parent note IDs that received a reply (from kind 1 events with e-tags).
-    var replyTargets: [String] = []
     /// Note IDs that were reposted (from kind 6 events).
     var repostTargets: [String] = []
     /// Raw event JSON strings for NIP-18 repost embedding (id → stringified JSON with sig).
@@ -395,7 +392,6 @@ final class BackgroundAccumulator: @unchecked Sendable {
         let notes: [FeedNote]
         let profiles: [String]
         let reactionEvents: [(targetId: String, pubkey: String)]
-        let replyTargets: [String]
         let repostTargets: [String]
         let rawEventEntries: [(id: String, json: String)]
     }
@@ -405,14 +401,12 @@ final class BackgroundAccumulator: @unchecked Sendable {
             notes: notes,
             profiles: profiles,
             reactionEvents: reactionEvents,
-            replyTargets: replyTargets,
             repostTargets: repostTargets,
             rawEventEntries: rawEventEntries
         )
         notes.removeAll(keepingCapacity: true)
         profiles.removeAll(keepingCapacity: true)
         reactionEvents.removeAll(keepingCapacity: true)
-        replyTargets.removeAll(keepingCapacity: true)
         repostTargets.removeAll(keepingCapacity: true)
         rawEventEntries.removeAll(keepingCapacity: true)
         flushScheduled = false
@@ -673,6 +667,16 @@ class FeedService: ObservableObject {
     /// Key: event ID, Value: complete stringified JSON of the event (includes sig).
     private(set) var rawEventCache: [String: String] = [:]
     private static let maxRawEventCacheSize = 1000
+
+    /// Insert a raw event JSON string into the cache (for own posts / rebroadcast).
+    func cacheRawEvent(id: String, json: String) {
+        rawEventCache[id] = json
+        if rawEventCache.count > Self.maxRawEventCacheSize {
+            let overflow = rawEventCache.count - Self.maxRawEventCacheSize
+            let keysToRemove = rawEventCache.keys.sorted().prefix(overflow)
+            for key in keysToRemove { rawEventCache.removeValue(forKey: key) }
+        }
+    }
 
     // Preserve the original kind 3 content (relay hints) to avoid wiping it on follow/unfollow
     private var contactListContent: String = ""
@@ -2493,16 +2497,27 @@ class FeedService: ObservableObject {
     /// (mentions, reactions, zaps) are deferred until this relay's primary EOSE.
     private func sendPrimaryFeedSubscription(client: WebSocketClient, label: String) {
         let (since, limitVal) = feedSinceAndLimit()
+        let isInbox = label == localInboxURL?.absoluteString
+
         var filter: [String: Any] = [
             "kinds": [1, 6, 30023],
             "since": since,
             "limit": limitVal
         ]
-        if feedMode == .following || (feedMode == .media && mediaFeedMode == .following) {
+
+        if isInbox {
+            // The inbox stores events that TAG the owner (replies, mentions) — query
+            // by #p rather than authors, since the authors are external users.
+            let ownerHex = NostrService.shared.activeHexPubkey
+            if !ownerHex.isEmpty {
+                filter["#p"] = [ownerHex]
+            }
+        } else if feedMode == .following || (feedMode == .media && mediaFeedMode == .following) {
             filter["authors"] = followedPubkeys
         } else if feedMode == .discovery {
             filter["authors"] = extendedNetworkPubkeys
         }
+
         let subId = feedSubId(for: label)
         subIdToRelayKey[subId] = label
 
@@ -2800,17 +2815,8 @@ class FeedService: ObservableObject {
             // Fetch their profile too so the reposted card renders with the right name/avatar.
             if note.pubkey != pubkey { acc.profiles.append(note.pubkey) }
 
-            // Track engagement: replies (kind 1 with parent) and reposts (kind 6)
-            if kind == 1 {
-                let eTags = tags.filter { $0.count >= 2 && $0[0] == "e" }
-                let nonMentionETags = eTags.filter { tag in
-                    guard tag.count >= 4 else { return true }
-                    return tag[3] != "mention"
-                }
-                if let parentId = nonMentionETags.last?[1] {
-                    acc.replyTargets.append(parentId)
-                }
-            } else if kind == 6 {
+            // Track engagement: reposts (kind 6)
+            if kind == 6 {
                 if let targetId = tags.first(where: { $0.count >= 2 && $0[0] == "e" })?[1] {
                     acc.repostTargets.append(targetId)
                 }
@@ -2839,7 +2845,7 @@ class FeedService: ObservableObject {
         dispatchPrecondition(condition: .onQueue(processingQueue))
         let snap = bgAccumulator.drain()
 
-        guard !snap.notes.isEmpty || !snap.reactionEvents.isEmpty || !snap.replyTargets.isEmpty || !snap.repostTargets.isEmpty else { return }
+        guard !snap.notes.isEmpty || !snap.reactionEvents.isEmpty || !snap.repostTargets.isEmpty else { return }
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
@@ -2886,7 +2892,7 @@ class FeedService: ObservableObject {
         }
 
         // Process reaction events: self-like detection + per-note counting
-        let hasEngagement = !snap.reactionEvents.isEmpty || !snap.replyTargets.isEmpty || !snap.repostTargets.isEmpty
+        let hasEngagement = !snap.reactionEvents.isEmpty || !snap.repostTargets.isEmpty
         if hasEngagement {
             let ownerHex = NostrService.shared.activeHexPubkey
 
@@ -2908,11 +2914,6 @@ class FeedService: ObservableObject {
                 var s = updated[targetId] ?? NoteStats()
                 s.reactions += 1
                 updated[targetId] = s
-            }
-            for parentId in snap.replyTargets {
-                var s = updated[parentId] ?? NoteStats()
-                s.replies += 1
-                updated[parentId] = s
             }
             for targetId in snap.repostTargets {
                 var s = updated[targetId] ?? NoteStats()
@@ -3180,7 +3181,7 @@ class FeedService: ObservableObject {
 
     // MARK: - Per-Note Stats Fetch (NoteDetailView)
 
-    /// Fetches accurate reply / repost / reaction / zap counts for a single note
+    /// Fetches accurate repost / reaction / zap counts for a single note
     /// by querying all configured relays in parallel. Results are deduped by event
     /// ID so counts are never inflated when the same event arrives from multiple
     /// relays. Writes the final tally to `noteStats[noteId]` on the main thread.
@@ -3201,13 +3202,12 @@ class FeedService: ObservableObject {
         // Shared mutable state — all mutations happen on the main thread via
         // DispatchQueue.main.async so no locks are needed.
         var seenEventIds = Set<String>()
-        var replies  = 0
         var reposts  = 0
         var reactions = 0
         var zaps     = 0
         var eoseReceived = 0
-        // Each relay sends EOSE for each of the 4 subscriptions
-        let expectedEOSE = allURLs.count * 4
+        // Each relay sends EOSE for each of the 3 subscriptions
+        let expectedEOSE = allURLs.count * 3
         var finished = false
         var tempClients: [WebSocketClient] = []
 
@@ -3216,7 +3216,6 @@ class FeedService: ObservableObject {
             finished = true
             tempClients.forEach { $0.disconnect() }
             var stats = self.noteStats[noteId] ?? NoteStats()
-            stats.replies   = replies
             stats.reposts   = reposts
             stats.reactions = reactions
             stats.zaps      = zaps
@@ -3256,7 +3255,6 @@ class FeedService: ObservableObject {
                     seenEventIds.insert(evId)
 
                     switch kind {
-                    case 1:    replies   += 1
                     case 6:    reposts   += 1
                     case 7:    reactions += 1
                     case 9735: zaps      += 1
@@ -3271,7 +3269,6 @@ class FeedService: ObservableObject {
                     guard state == .connected, !finished else { return }
                     let p = "\(subPrefix)-\(i)"
                     let filters: [[String: Any]] = [
-                        ["kinds": [1],    "#e": [noteId], "limit": 100],
                         ["kinds": [6],    "#e": [noteId], "limit": 100],
                         ["kinds": [7],    "#e": [noteId], "limit": 100],
                         ["kinds": [9735], "#e": [noteId], "limit": 100],

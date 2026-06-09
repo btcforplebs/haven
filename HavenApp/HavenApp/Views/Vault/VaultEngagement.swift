@@ -1,0 +1,369 @@
+import SwiftUI
+
+// MARK: - LikedByRow
+
+struct LikedByRow: View {
+    let reactors: [(pubkey: String, emoji: String)]
+    var latestDate: Date? = nil
+    @EnvironmentObject var nostrService: NostrService
+    @State private var showingReactors = false
+
+    private var uniqueReactors: [(pubkey: String, emoji: String)] {
+        var seen = Set<String>()
+        return reactors.filter { seen.insert($0.pubkey).inserted }
+    }
+
+    var body: some View {
+        let unique = uniqueReactors
+        HStack(spacing: 6) {
+            Image(systemName: "heart.fill")
+                .font(.appSystem(size: 12, weight: .bold))
+                .foregroundColor(.pink)
+
+            HStack(spacing: -6) {
+                ForEach(Array(unique.prefix(5).enumerated()), id: \.offset) { _, reactor in
+                    let profile = nostrService.profiles[reactor.pubkey]
+                    AvatarView(url: profile?.pictureURL, pubkey: reactor.pubkey, size: 22)
+                        .overlay(Circle().stroke(Color.platformSecondaryGroupedBackground, lineWidth: 1.5))
+                        .shadow(color: Color.black.opacity(0.1), radius: 2)
+                }
+            }
+
+            let names = unique.prefix(3).map { r -> String in
+                nostrService.profiles[r.pubkey]?.bestName ?? "npub…" + String(r.pubkey.suffix(4))
+            }
+            let remaining = unique.count - names.count
+
+            Text(likedByText(names: names, remaining: remaining))
+                .font(.appSystem(size: 13, weight: .medium))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+
+            if let date = latestDate {
+                Text(timeAgo(from: date))
+                    .font(.appSystem(size: 12, weight: .regular))
+                    .foregroundColor(.secondary.opacity(0.7))
+            }
+
+            Spacer()
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            showingReactors = true
+        }
+        .sheet(isPresented: $showingReactors) {
+            ReactorsListView(reactors: unique, onDismiss: { showingReactors = false })
+                .environmentObject(nostrService)
+        }
+        .onAppear {
+            let missing = unique.map(\.pubkey).filter { nostrService.profiles[$0] == nil }
+            if !missing.isEmpty {
+                nostrService.fetchMissingProfiles(for: missing)
+            }
+        }
+    }
+
+    private func likedByText(names: [String], remaining: Int) -> String {
+        if names.isEmpty { return "" }
+        var text = names.joined(separator: ", ")
+        if remaining > 0 {
+            text += " +\(remaining) more"
+        }
+        text += " liked"
+        return text
+    }
+
+    private func timeAgo(from date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+// MARK: - ReactorsListView
+
+struct ReactorsListView: View {
+    let reactors: [(pubkey: String, emoji: String)]
+    var onDismiss: (() -> Void)? = nil
+    @EnvironmentObject var nostrService: NostrService
+    @Environment(\.presentationMode) var presentationMode
+    @State private var selectedProfilePubkey: String?
+
+    var body: some View {
+        NavigationView {
+            List(Array(reactors.enumerated()), id: \.offset) { _, reactor in
+                let profile = nostrService.profiles[reactor.pubkey]
+                Button {
+                    selectedProfilePubkey = reactor.pubkey
+                } label: {
+                    HStack(spacing: 12) {
+                        AvatarView(url: profile?.pictureURL, pubkey: reactor.pubkey, size: 40)
+                            .overlay(Circle().stroke(Color.platformSecondaryGroupedBackground, lineWidth: 2))
+                            .shadow(color: Color.black.opacity(0.1), radius: 3)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(profile?.bestName ?? "npub…" + String(reactor.pubkey.suffix(6)))
+                                .font(.appSystem(size: 16, weight: .semibold))
+                                .foregroundColor(.primary)
+                            if let nip05 = profile?.nip05, !nip05.isEmpty {
+                                Text(nip05)
+                                    .font(.appSystem(size: 13))
+                                    .foregroundColor(Color.havenPurple)
+                            }
+                        }
+
+                        Spacer()
+
+                        Text(reactor.emoji)
+                            .font(.appSystem(size: 20))
+
+                        Image(systemName: "chevron.right")
+                            .font(.appSystem(size: 12, weight: .semibold))
+                            .foregroundColor(.secondary.opacity(0.5))
+                    }
+                }
+                .buttonStyle(.plain)
+                .padding(.vertical, 4)
+            }
+            .listStyle(.plain)
+            .navigationTitle("Liked By")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") {
+                        if let onDismiss = onDismiss {
+                            onDismiss()
+                        } else {
+                            presentationMode.wrappedValue.dismiss()
+                        }
+                    }
+                }
+            }
+            .sheet(item: Binding<IdentifiableString?>(
+                get: { selectedProfilePubkey.map { IdentifiableString(id: $0) } },
+                set: { selectedProfilePubkey = $0?.id }
+            )) { p in
+                ProfileView(pubkey: p.id, onDismiss: { selectedProfilePubkey = nil })
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 300, minHeight: 400)
+        #endif
+    }
+}
+
+// MARK: - RepostersListView
+
+struct RepostersListView: View {
+    let pubkeys: [String]
+    var onDismiss: (() -> Void)? = nil
+    @EnvironmentObject var nostrService: NostrService
+    @Environment(\.presentationMode) var presentationMode
+    @State private var selectedProfilePubkey: String?
+
+    var body: some View {
+        NavigationView {
+            List(pubkeys, id: \.self) { pubkey in
+                let profile = nostrService.profiles[pubkey]
+                Button {
+                    selectedProfilePubkey = pubkey
+                } label: {
+                    HStack(spacing: 12) {
+                        AvatarView(url: profile?.pictureURL, pubkey: pubkey, size: 40)
+                            .overlay(Circle().stroke(Color.platformSecondaryGroupedBackground, lineWidth: 2))
+                            .shadow(color: Color.black.opacity(0.1), radius: 3)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(profile?.bestName ?? "npub\u{2026}" + String(pubkey.suffix(6)))
+                                .font(.appSystem(size: 16, weight: .semibold))
+                                .foregroundColor(.primary)
+                            if let nip05 = profile?.nip05, !nip05.isEmpty {
+                                Text(nip05)
+                                    .font(.appSystem(size: 13))
+                                    .foregroundColor(Color.havenPurple)
+                            }
+                        }
+
+                        Spacer()
+
+                        Image(systemName: "chevron.right")
+                            .font(.appSystem(size: 12, weight: .semibold))
+                            .foregroundColor(.secondary.opacity(0.5))
+                    }
+                }
+                .buttonStyle(.plain)
+                .padding(.vertical, 4)
+            }
+            .listStyle(.plain)
+            .navigationTitle("Reposted By")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") {
+                        if let onDismiss = onDismiss {
+                            onDismiss()
+                        } else {
+                            presentationMode.wrappedValue.dismiss()
+                        }
+                    }
+                }
+            }
+            .sheet(item: Binding<IdentifiableString?>(
+                get: { selectedProfilePubkey.map { IdentifiableString(id: $0) } },
+                set: { selectedProfilePubkey = $0?.id }
+            )) { p in
+                ProfileView(pubkey: p.id, onDismiss: { selectedProfilePubkey = nil })
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 300, minHeight: 400)
+        #endif
+    }
+}
+
+// MARK: - QuotersListView
+
+struct QuotersListView: View {
+    let pubkeys: [String]
+    var onDismiss: (() -> Void)? = nil
+    @EnvironmentObject var nostrService: NostrService
+    @Environment(\.presentationMode) var presentationMode
+    @State private var selectedProfilePubkey: String?
+
+    var body: some View {
+        NavigationView {
+            List(pubkeys, id: \.self) { pubkey in
+                let profile = nostrService.profiles[pubkey]
+                Button {
+                    selectedProfilePubkey = pubkey
+                } label: {
+                    HStack(spacing: 12) {
+                        AvatarView(url: profile?.pictureURL, pubkey: pubkey, size: 40)
+                            .overlay(Circle().stroke(Color.platformSecondaryGroupedBackground, lineWidth: 2))
+                            .shadow(color: Color.black.opacity(0.1), radius: 3)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(profile?.bestName ?? "npub\u{2026}" + String(pubkey.suffix(6)))
+                                .font(.appSystem(size: 16, weight: .semibold))
+                                .foregroundColor(.primary)
+                            if let nip05 = profile?.nip05, !nip05.isEmpty {
+                                Text(nip05)
+                                    .font(.appSystem(size: 13))
+                                    .foregroundColor(Color.havenPurple)
+                            }
+                        }
+
+                        Spacer()
+
+                        Image(systemName: "chevron.right")
+                            .font(.appSystem(size: 12, weight: .semibold))
+                            .foregroundColor(.secondary.opacity(0.5))
+                    }
+                }
+                .buttonStyle(.plain)
+                .padding(.vertical, 4)
+            }
+            .listStyle(.plain)
+            .navigationTitle("Quoted By")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") {
+                        if let onDismiss = onDismiss {
+                            onDismiss()
+                        } else {
+                            presentationMode.wrappedValue.dismiss()
+                        }
+                    }
+                }
+            }
+            .sheet(item: Binding<IdentifiableString?>(
+                get: { selectedProfilePubkey.map { IdentifiableString(id: $0) } },
+                set: { selectedProfilePubkey = $0?.id }
+            )) { p in
+                ProfileView(pubkey: p.id, onDismiss: { selectedProfilePubkey = nil })
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 300, minHeight: 400)
+        #endif
+    }
+}
+
+// MARK: - ZappedByRow
+
+struct ZappedByRow: View {
+    let zappers: [(pubkey: String, amount: Int64)]
+    @EnvironmentObject var nostrService: NostrService
+
+    private var uniqueZappers: [String] {
+        var seen = Set<String>()
+        return zappers.compactMap { z in
+            if seen.contains(z.pubkey) { return nil }
+            seen.insert(z.pubkey)
+            return z.pubkey
+        }
+    }
+
+    private var totalSats: Int64 {
+        zappers.reduce(0) { $0 + $1.amount }
+    }
+
+    var body: some View {
+        let unique = uniqueZappers
+        HStack(spacing: 6) {
+            Image(systemName: "bolt.fill")
+                .font(.appSystem(size: 11, weight: .bold))
+                .foregroundColor(.orange)
+
+            HStack(spacing: -6) {
+                ForEach(unique.prefix(5), id: \.self) { pubkey in
+                    let profile = nostrService.profiles[pubkey]
+                    AvatarView(url: profile?.pictureURL, pubkey: pubkey, size: 20)
+                        .overlay(Circle().stroke(Color.platformSecondaryGroupedBackground, lineWidth: 1.5))
+                }
+            }
+
+            let names = unique.prefix(3).map { pk -> String in
+                nostrService.profiles[pk]?.bestName ?? "npub…" + String(pk.suffix(4))
+            }
+            let remaining = unique.count - names.count
+
+            Text(zappedByText(names: names, remaining: remaining))
+                .font(.appSystem(size: 12, weight: .medium))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+
+            Spacer()
+        }
+        .onAppear {
+            let missing = unique.filter { nostrService.profiles[$0] == nil }
+            if !missing.isEmpty {
+                nostrService.fetchMissingProfiles(for: missing)
+            }
+        }
+    }
+
+    private func zappedByText(names: [String], remaining: Int) -> String {
+        if names.isEmpty { return "" }
+        var text = names.joined(separator: ", ")
+        if remaining > 0 {
+            text += " +\(remaining) more"
+        }
+        text += " zapped"
+        if totalSats > 0 {
+            let formatter = NumberFormatter()
+            formatter.numberStyle = .decimal
+            let formatted = formatter.string(from: NSNumber(value: totalSats)) ?? "\(totalSats)"
+            text += " · \(formatted) sats"
+        }
+        return text
+    }
+}

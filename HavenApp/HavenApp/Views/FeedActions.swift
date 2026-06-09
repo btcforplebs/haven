@@ -223,6 +223,7 @@ struct FeedNoteRowData: Equatable {
     let isOwnNote: Bool
     let isFollowed: Bool
     let isParentFollowed: Bool
+    let stats: NoteStats
 
     /// Convenience factory to avoid duplicating resolution logic across call sites
     /// (FeedView, NoteDetailView, ProfileView, MenuBarView).
@@ -267,7 +268,8 @@ struct FeedNoteRowData: Equatable {
             replyToName: note.replyToPubkey.flatMap { nostrService.profiles[$0]?.bestName },
             isOwnNote: note.pubkey == nostrService.activeHexPubkey,
             isFollowed: feedService.followedPubkeys.contains(displayPubkey),
-            isParentFollowed: parentNote.map { feedService.followedPubkeys.contains($0.pubkey) } ?? false
+            isParentFollowed: parentNote.map { feedService.followedPubkeys.contains($0.pubkey) } ?? false,
+            stats: feedService.noteStats[note.id] ?? NoteStats()
         )
     }
 }
