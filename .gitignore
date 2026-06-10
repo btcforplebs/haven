@@ -25,5 +25,14 @@ DM_PLAN.md
 # Go vendor (managed by go modules)
 /haven-go/vendor/
 
+# Android (NostrVault)
+/NostrVault/local.properties
+/NostrVault/.gradle/
+/NostrVault/.kotlin/
+/NostrVault/build/
+/NostrVault/app/build/
+/NostrVault/app/.cxx/
+/NostrVault/app/src/main/jniLibs/
+
 # Environment secrets
 push-server/.env

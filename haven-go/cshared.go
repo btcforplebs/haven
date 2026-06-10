@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,6 +41,38 @@ var (
 	csharedCancel context.CancelFunc
 	globalServer  *http.Server
 )
+
+// Import log bridge: lets the host app poll for Go log messages during import.
+var importLogLatest atomic.Value // stores string
+
+// importLogWriter intercepts log.Println output and stores the latest message
+// so the host app (Android/iOS) can poll for progress updates.
+type importLogWriter struct {
+	original io.Writer
+}
+
+func (w *importLogWriter) Write(p []byte) (n int, err error) {
+	msg := strings.TrimSpace(string(p))
+	if msg != "" {
+		importLogLatest.Store(msg)
+	}
+	return w.original.Write(p)
+}
+
+//export GetImportLogC
+func GetImportLogC() *C.char {
+	val := importLogLatest.Load()
+	if val == nil {
+		return nil
+	}
+	msg, ok := val.(string)
+	if !ok || msg == "" {
+		return nil
+	}
+	// Consume on read so the same message isn't returned twice
+	importLogLatest.Store("")
+	return C.CString(msg)
+}
 
 // NIP-46 remote signer state (independent of relay lifecycle)
 var (
@@ -70,6 +103,19 @@ func StartRelayC(importMode bool) {
 		}
 	}()
 
+	// On Android (and other embedded hosts), the process CWD is NOT the relay
+	// data directory.  DATABASE_PATH is set to <relayDataDir>/data/ — derive
+	// the relay data root and chdir so that relative paths (db/*, wot_cache.json,
+	// relays_*.json) resolve correctly, matching the iOS subprocess behaviour.
+	if dbPath := os.Getenv("DATABASE_PATH"); dbPath != "" {
+		relayRoot := filepath.Dir(strings.TrimRight(dbPath, "/"))
+		if err := os.Chdir(relayRoot); err != nil {
+			log.Printf("⚠️ Failed to chdir to relay data root %s: %v", relayRoot, err)
+		} else {
+			log.Printf("📂 CWD set to relay data root: %s", relayRoot)
+		}
+	}
+
 	config = loadConfig() // reload config dynamically
 
 	nostr.InfoLogger = log.New(io.Discard, "", 0)
@@ -94,6 +140,11 @@ func StartRelayC(importMode bool) {
 	log.Println("🚀 HAVEN", config.RelayVersion, "is booting up (C-Shared Mode) [1/3]")
 
 	if importMode {
+		// Install log interceptor so the host app can poll progress
+		origWriter := log.Writer()
+		log.SetOutput(&importLogWriter{original: origWriter})
+		defer log.SetOutput(origWriter)
+
 		defer CloseDBs()
 		if !ensureImportRelays() {
 			log.Println("🚫 Import aborted: could not connect to any seed relays")

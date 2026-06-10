@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Nostr Vault</string>
+
+    <!-- Relay -->
+    <string name="relay_notification_channel">Relay Service</string>
+    <string name="relay_notification_title">Nostr Vault Relay</string>
+    <string name="relay_status_booting">Booting relay&#8230;</string>
+    <string name="relay_status_importing">Importing notes&#8230;</string>
+    <string name="relay_status_running">Relay running</string>
+    <string name="relay_status_offline">Relay offline</string>
+    <string name="relay_action_stop">Stop Relay</string>
+    <string name="relay_action_open">Open App</string>
+
+    <!-- Navigation -->
+    <string name="nav_feed">Feed</string>
+    <string name="nav_search">Search</string>
+    <string name="nav_media">Media</string>
+    <string name="nav_dms">DMs</string>
+    <string name="nav_profile">Profile</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_accounts">Accounts</string>
+    <string name="settings_relays">Relays</string>
+    <string name="settings_appearance">Appearance</string>
+    <string name="settings_notifications">Notifications</string>
+    <string name="settings_backup">Backup</string>
+    <string name="settings_about">About</string>
+
+    <!-- General -->
+    <string name="ok">OK</string>
+    <string name="cancel">Cancel</string>
+    <string name="save">Save</string>
+    <string name="delete">Delete</string>
+    <string name="copy">Copy</string>
+    <string name="share">Share</string>
+    <string name="loading">Loading&#8230;</string>
+    <string name="error_generic">Something went wrong</string>
+    <string name="retry">Retry</string>
+</resources>

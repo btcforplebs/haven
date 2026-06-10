@@ -2,6 +2,8 @@ module github.com/barrydeen/haven
 
 go 1.24.1
 
+toolchain go1.24.4
+
 require (
 	github.com/dgraph-io/badger/v4 v4.9.1
 	github.com/fiatjaf/eventstore v0.17.5

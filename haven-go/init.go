@@ -12,8 +12,8 @@ import (
 	"time"
 
 	badgerdb "github.com/dgraph-io/badger/v4"
+	badgeropts "github.com/dgraph-io/badger/v4/options"
 	"github.com/fiatjaf/eventstore/badger"
-	"github.com/fiatjaf/eventstore/lmdb"
 	"github.com/fiatjaf/khatru"
 	"github.com/fiatjaf/khatru/blossom"
 	"github.com/fiatjaf/khatru/policies"
@@ -66,41 +66,57 @@ type DBBackend interface {
 	Serial() []byte
 }
 
-func newDBBackend(path string) DBBackend {
-	switch config.DBEngine {
-	case "lmdb":
-		return newLMDBBackend(path)
-	case "badger":
-		return &badger.BadgerBackend{
-			Path: path,
-			// Limit vlog file size to 64 MB so iOS can mmap them.
-			// BadgerDB's default is ~2 GB which exceeds the virtual
-			// address space available to sandboxed iOS processes.
-			BadgerOptionsModifier: func(opts badgerdb.Options) badgerdb.Options {
-				return opts.WithValueLogFileSize(1 << 26) // 64 MiB
-			},
-		}
-	default:
-		return newLMDBBackend(path)
+// lmdbFactory is set by init_lmdb.go on platforms that support LMDB.
+// On Android (cshared builds), it remains nil and we fall back to Badger.
+var lmdbFactory func(path string) DBBackend
+
+func newBadgerBackend(path string) DBBackend {
+	return &badger.BadgerBackend{
+		Path: path,
+		BadgerOptionsModifier: func(opts badgerdb.Options) badgerdb.Options {
+			if runtime.GOOS == "android" {
+				// Android shares ~3-4 GB RAM with the JVM. With 5 databases
+				// running, every MB counts. These settings reduce per-DB
+				// memory from ~60-80 MB (server defaults) to ~8-12 MB:
+				//   - 16 MiB vlog files (vs 2 GB default)
+				//   - 1 memtable (vs 5): saves ~4 × 64 MB per DB
+				//   - Fewer L0 tables: reduces open file handles and mmap
+				//   - 2 compactor threads (vs 4): fewer goroutines (BadgerDB requires >= 2)
+				//   - No compression: saves CPU and allows BlockCacheSize=0
+				//   - Disabled block/index caches: OS page cache is enough
+				return opts.
+					WithMemTableSize(8 << 20).             // 8 MiB (default 64 MiB)
+					WithValueLogFileSize(1 << 24).         // 16 MiB
+					WithNumMemtables(1).                   // default 5
+					WithNumLevelZeroTables(1).             // default 5
+					WithNumLevelZeroTablesStall(2).        // default 15
+					WithNumCompactors(2).                  // default 4, minimum 2
+					WithCompression(badgeropts.None).      // disable compression (saves CPU + allows no block cache)
+					WithBlockCacheSize(0).                 // disable (requires compression=None)
+					WithIndexCacheSize(0).                 // disable
+					WithValueThreshold(1 << 10)            // 1 KB: inline small values
+			}
+			// iOS / macOS / desktop: only limit vlog size for iOS mmap safety
+			return opts.WithValueLogFileSize(1 << 26) // 64 MiB
+		},
 	}
 }
 
-func newLMDBBackend(path string) *lmdb.LMDBBackend {
-	mapSize := config.LmdbMapSize
-	if mapSize == 0 {
-		switch runtime.GOOS {
-		case "ios":
-			// iOS has strict memory mapping limits per process
-			mapSize = 256 << 20 // 256 MB
-		case "darwin":
-			// macOS App Sandbox can reject very large mmap regions;
-			// default to 1 GB which is safe and sufficient for most relays.
-			mapSize = 1 << 30 // 1 GB
+func newDBBackend(path string) DBBackend {
+	switch config.DBEngine {
+	case "lmdb":
+		if lmdbFactory != nil {
+			return lmdbFactory(path)
 		}
-	}
-	return &lmdb.LMDBBackend{
-		Path:    path,
-		MapSize: mapSize,
+		slog.Warn("LMDB not available in this build, using Badger")
+		return newBadgerBackend(path)
+	case "badger":
+		return newBadgerBackend(path)
+	default:
+		if lmdbFactory != nil {
+			return lmdbFactory(path)
+		}
+		return newBadgerBackend(path)
 	}
 }
 

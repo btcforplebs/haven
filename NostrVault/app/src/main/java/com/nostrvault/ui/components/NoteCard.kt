@@ -1,0 +1,502 @@
+package com.nostrvault.ui.components
+
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.nostrvault.data.model.FeedNote
+import com.nostrvault.data.model.FeedProfile
+import com.nostrvault.data.model.NoteStats
+import com.nostrvault.ui.theme.*
+
+/**
+ * Reusable note card used across Feed, Profile, Search, and NoteDetail screens.
+ * Renders author header, content, media thumbnails, and engagement actions.
+ */
+@Composable
+fun NoteCard(
+    note: FeedNote,
+    profile: FeedProfile?,
+    stats: NoteStats?,
+    profiles: Map<String, FeedProfile> = emptyMap(),
+    quotedNotes: Map<String, FeedNote> = emptyMap(),
+    isLiked: Boolean = false,
+    isZapped: Boolean = false,
+    showReplyContext: Boolean = false,
+    parentIsNext: Boolean = false,
+    hasReplyBelow: Boolean = false,
+    parentNote: FeedNote? = null,
+    repostedByProfile: FeedProfile? = null,
+    replyToProfile: FeedProfile? = null,
+    onNoteClick: (String) -> Unit,
+    onProfileClick: (String) -> Unit,
+    onLike: ((String) -> Unit)? = null,
+    onRepost: ((String) -> Unit)? = null,
+    onZap: ((String) -> Unit)? = null,
+    onReply: ((String) -> Unit)? = null,
+    onShare: ((String) -> Unit)? = null,
+    onMore: ((String) -> Unit)? = null,
+    modifier: Modifier = Modifier,
+) {
+    val colors = LocalNostrVaultColors.current
+    val connectorColor = colors.primary.copy(alpha = 0.3f)
+
+    // Thread connector lines drawn behind the card
+    val drawConnectors = parentIsNext || hasReplyBelow
+    val connectorModifier = if (drawConnectors) {
+        // Avatar center X = 14dp padding + 20dp (half avatar) = 34dp
+        // Avatar center Y = 14dp padding + repost row height (if any) + 20dp (half avatar)
+        Modifier.drawBehind {
+            val lineX = 34.dp.toPx()
+            val lineWidth = 2.dp.toPx()
+            val avatarTop = 14.dp.toPx() + if (note.repostedBy != null) 24.dp.toPx() else 0f
+            val avatarCenter = avatarTop + 20.dp.toPx()
+
+            // Line from card top down to avatar center (connects to card above)
+            if (parentIsNext) {
+                drawLine(
+                    color = connectorColor,
+                    start = Offset(lineX, 0f),
+                    end = Offset(lineX, avatarCenter),
+                    strokeWidth = lineWidth,
+                )
+            }
+            // Line from avatar bottom down to card bottom (connects to card below)
+            if (hasReplyBelow) {
+                drawLine(
+                    color = connectorColor,
+                    start = Offset(lineX, avatarCenter),
+                    end = Offset(lineX, size.height),
+                    strokeWidth = lineWidth,
+                )
+            }
+        }
+    } else {
+        Modifier
+    }
+
+    // Parent note preview (when this note is a reply and parent isn't the card above)
+    if (note.isReply && !parentIsNext && parentNote != null) {
+        ParentNotePreview(
+            parentNote = parentNote,
+            parentProfile = profiles[parentNote.pubkey],
+            connectorColor = connectorColor,
+            onClick = { onNoteClick(parentNote.id) },
+            modifier = modifier.padding(start = 24.dp),
+        )
+    }
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = SecondaryGroupedBg.copy(alpha = 0.85f),
+        border = BorderStroke(0.8.dp, colors.primary.copy(alpha = 0.12f)),
+        modifier = modifier
+            .fillMaxWidth()
+            .then(connectorModifier)
+            .clickable { onNoteClick(note.id) },
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+        ) {
+            // Repost attribution
+            if (note.repostedBy != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(bottom = 6.dp, start = 40.dp),
+                ) {
+                    Icon(
+                        imageVector = NostrVaultIcons.Repost,
+                        contentDescription = null,
+                        tint = RepostGreen,
+                        modifier = Modifier.size(12.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = "${repostedByProfile?.bestName ?: note.repostedBy!!.take(8) + "..."} reposted",
+                        color = SecondaryText,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+
+            // Author header
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                // Avatar
+                AvatarImage(
+                    url = profile?.pictureURL,
+                    pubkey = note.pubkey,
+                    size = 40.dp,
+                    displayName = profile?.bestName,
+                    modifier = Modifier.clickable { onProfileClick(note.pubkey) },
+                )
+
+                Spacer(Modifier.width(10.dp))
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = profile?.bestName ?: note.pubkey.take(8) + "...",
+                            color = PrimaryText,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 15.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+
+                        // NIP-05 verification badge
+                        if (!profile?.nip05.isNullOrBlank()) {
+                            Spacer(Modifier.width(4.dp))
+                            Icon(
+                                imageVector = NostrVaultIcons.Verified,
+                                contentDescription = "Verified",
+                                tint = Color(0xFF33CC99),
+                                modifier = Modifier.size(14.dp),
+                            )
+                        }
+                    }
+                    Text(
+                        text = formatTimestamp(note.createdAt.time / 1000),
+                        color = SecondaryText,
+                        fontSize = 13.sp,
+                    )
+                }
+
+                // More menu
+                onMore?.let { handler ->
+                    IconButton(onClick = { handler(note.id) }) {
+                        Icon(
+                            imageVector = NostrVaultIcons.More,
+                            contentDescription = "More",
+                            tint = SecondaryText,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
+            }
+
+            // Reply indicator
+            if (note.isReply && note.replyToPubkey != null) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(top = 4.dp, start = 50.dp),
+                ) {
+                    Icon(
+                        imageVector = NostrVaultIcons.Reply,
+                        contentDescription = null,
+                        tint = SecondaryText,
+                        modifier = Modifier.size(12.dp),
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = "replying to ${replyToProfile?.bestName ?: note.replyToPubkey!!.take(8) + "..."}",
+                        color = SecondaryText,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            // Content text (rich: clickable mentions, links, hashtags)
+            if (note.content.isNotBlank()) {
+                NostrContentText(
+                    content = note.content,
+                    profiles = profiles,
+                    mediaURLs = note.mediaURLs.toSet(),
+                    onProfileClick = onProfileClick,
+                    onNoteClick = onNoteClick,
+                    modifier = Modifier.padding(start = 50.dp),
+                )
+            }
+
+            // Quoted notes
+            if (note.quotedEventIds.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                for (qid in note.quotedEventIds) {
+                    val quotedNote = quotedNotes[qid]
+                    if (quotedNote != null) {
+                        QuotedNoteCard(
+                            note = quotedNote,
+                            profile = profiles[quotedNote.pubkey],
+                            onClick = onNoteClick,
+                            modifier = Modifier.padding(start = 50.dp),
+                        )
+                    } else {
+                        QuotedNotePlaceholder(
+                            identifier = qid,
+                            onClick = onNoteClick,
+                            modifier = Modifier.padding(start = 50.dp),
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                }
+            }
+
+            // Link preview (first non-media URL, only if no quoted notes)
+            if (note.quotedEventIds.isEmpty() && note.linkURLs.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                LinkPreviewCard(
+                    url = note.linkURLs.first(),
+                    modifier = Modifier.padding(start = 50.dp),
+                )
+            }
+
+            // Media thumbnails
+            if (note.mediaURLs.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                MediaPreviewRow(
+                    urls = note.mediaURLs,
+                    modifier = Modifier.padding(start = 50.dp),
+                )
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            // Engagement bar
+            EngagementBar(
+                noteId = note.id,
+                stats = stats,
+                isLiked = isLiked,
+                isZapped = isZapped,
+                onReply = onReply,
+                onRepost = onRepost,
+                onLike = onLike,
+                onZap = onZap,
+                onShare = onShare,
+                modifier = Modifier.padding(start = 50.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun EngagementBar(
+    noteId: String,
+    stats: NoteStats?,
+    isLiked: Boolean,
+    isZapped: Boolean,
+    onReply: ((String) -> Unit)?,
+    onRepost: ((String) -> Unit)?,
+    onLike: ((String) -> Unit)?,
+    onZap: ((String) -> Unit)?,
+    onShare: ((String) -> Unit)?,
+    modifier: Modifier = Modifier,
+) {
+    val colors = LocalNostrVaultColors.current
+
+    Row(
+        horizontalArrangement = Arrangement.SpaceBetween,
+        modifier = modifier.fillMaxWidth(),
+    ) {
+        // Reply
+        EngagementButton(
+            icon = NostrVaultIcons.Reply,
+            count = null,
+            isActive = false,
+            activeColor = colors.primary,
+            onClick = { onReply?.invoke(noteId) },
+        )
+
+        // Repost
+        EngagementButton(
+            icon = NostrVaultIcons.Repost,
+            count = stats?.reposts?.takeIf { it > 0 },
+            isActive = false,
+            activeColor = RepostGreen,
+            onClick = { onRepost?.invoke(noteId) },
+        )
+
+        // Like
+        EngagementButton(
+            icon = if (isLiked) NostrVaultIcons.HeartFilled else NostrVaultIcons.Heart,
+            count = stats?.reactions?.takeIf { it > 0 },
+            isActive = isLiked,
+            activeColor = LikeRed,
+            onClick = { onLike?.invoke(noteId) },
+        )
+
+        // Zap
+        EngagementButton(
+            icon = NostrVaultIcons.Zap,
+            count = stats?.zaps?.takeIf { it > 0 },
+            isActive = isZapped,
+            activeColor = ZapOrange,
+            onClick = { onZap?.invoke(noteId) },
+        )
+
+        // Share
+        EngagementButton(
+            icon = NostrVaultIcons.Share,
+            count = null,
+            isActive = false,
+            activeColor = colors.primary,
+            onClick = { onShare?.invoke(noteId) },
+        )
+    }
+}
+
+@Composable
+private fun EngagementButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    count: Int?,
+    isActive: Boolean,
+    activeColor: androidx.compose.ui.graphics.Color,
+    onClick: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.clickable(onClick = onClick),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = if (isActive) activeColor else SecondaryText,
+            modifier = Modifier.size(18.dp),
+        )
+        if (count != null) {
+            Spacer(Modifier.width(4.dp))
+            Text(
+                text = formatCount(count),
+                color = if (isActive) activeColor else SecondaryText,
+                fontSize = 13.sp,
+            )
+        }
+    }
+}
+
+@Composable
+fun MediaPreviewRow(
+    urls: List<String>,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = modifier,
+    ) {
+        for (url in urls.take(4)) {
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(url)
+                    .size(160) // ~80dp at 2x density — sufficient for square thumbnails in a 4-up grid
+                    .crossfade(100)
+                    .build(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .weight(1f)
+                    .aspectRatio(1f)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(TertiaryGroupedBg),
+            )
+        }
+    }
+}
+
+// ── Parent note preview ──────────────────────────────────────────
+
+/**
+ * Collapsed parent note preview shown above a reply card when the parent
+ * is not the immediately preceding card in the feed.
+ */
+@Composable
+private fun ParentNotePreview(
+    parentNote: FeedNote,
+    parentProfile: FeedProfile?,
+    connectorColor: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .drawBehind {
+                // Vertical connector line from this preview down to the card below
+                val lineX = 10.dp.toPx() // 24dp avatar center - 14dp card padding
+                drawLine(
+                    color = connectorColor,
+                    start = Offset(lineX, size.height * 0.5f),
+                    end = Offset(lineX, size.height),
+                    strokeWidth = 2.dp.toPx(),
+                )
+            }
+            .padding(vertical = 4.dp),
+    ) {
+        AvatarImage(
+            url = parentProfile?.pictureURL,
+            pubkey = parentNote.pubkey,
+            size = 24.dp,
+            displayName = parentProfile?.bestName,
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = parentProfile?.bestName ?: parentNote.pubkey.take(8) + "...",
+            color = SecondaryText,
+            fontWeight = FontWeight.Medium,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = parentNote.content.take(80).replace("\n", " "),
+            color = TertiaryText,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+    }
+}
+
+// ── Formatting helpers ────────────────────────────────────────────
+
+internal fun formatTimestamp(epochSecs: Long): String {
+    val now = System.currentTimeMillis() / 1000
+    val diff = now - epochSecs
+    return when {
+        diff < 60 -> "now"
+        diff < 3600 -> "${diff / 60}m"
+        diff < 86400 -> "${diff / 3600}h"
+        diff < 604800 -> "${diff / 86400}d"
+        else -> "${diff / 604800}w"
+    }
+}
+
+internal fun formatCount(count: Int): String {
+    return when {
+        count < 1000 -> count.toString()
+        count < 10_000 -> "%.1fk".format(count / 1000.0)
+        count < 1_000_000 -> "${count / 1000}k"
+        else -> "%.1fM".format(count / 1_000_000.0)
+    }
+}

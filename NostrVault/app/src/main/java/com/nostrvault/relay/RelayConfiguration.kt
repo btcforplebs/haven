@@ -1,0 +1,424 @@
+package com.nostrvault.relay
+
+import java.io.File
+
+/**
+ * Relay environment configuration -- port of RelayConfiguration.swift.
+ * Generates the environment dictionary consumed by the Go relay via
+ * HavenBridge.setEnv() before calling startRelay().
+ *
+ * No Android framework dependencies beyond java.io.File.
+ */
+object RelayConfiguration {
+
+    /** Top-level subdirectories created under the relay data root. */
+    val dataSubdirs = listOf("data", "blossom", "cache", "db")
+
+    /** Individual database subdirectories under db/. */
+    val dbSubdirs = listOf("private", "chat", "outbox", "inbox", "blossom")
+
+    /** Create all required relay directories under the given root. */
+    fun ensureDirectories(root: File) {
+        root.mkdirs()
+        for (sub in dataSubdirs) {
+            File(root, sub).mkdirs()
+        }
+        for (db in dbSubdirs) {
+            File(root, "db/$db").mkdirs()
+        }
+    }
+
+    /**
+     * Build the full environment dictionary from a HavenConfig.
+     *
+     * @param config The relay configuration
+     * @param relayDataDir Absolute path to the relay data directory
+     * @param allowNetworkAccess Whether to bind to all interfaces (::) or localhost only
+     */
+    fun generateEnvDictionary(
+        config: HavenConfig,
+        relayDataDir: File,
+        allowNetworkAccess: Boolean = false,
+    ): Map<String, String> {
+        val cleanNpub = config.ownerNpub
+            .trim()
+            .filter { it.isLetterOrDigit() }
+
+        val relayBindAddress = if (allowNetworkAccess) "::" else "127.0.0.1"
+
+        // Disable TLS for local relay -- localhost (127.0.0.1) is exempt from
+        // Android's cleartext traffic restrictions, and the self-signed cert
+        // generation can fail on some devices/Android versions, causing the
+        // Go relay to fall back to HTTP while the client expects WSS.
+        // When network access is enabled (remote), TLS should be re-enabled.
+        val enableTLS = if (allowNetworkAccess) "1" else "0"
+
+        return mapOf(
+            "OWNER_NPUB" to cleanNpub,
+            "RELAY_URL" to config.relayURL,
+            "RELAY_PORT" to config.relayPort.toString(),
+            "RELAY_BIND_ADDRESS" to relayBindAddress,
+            "DB_ENGINE" to config.dbEngine,
+            "LMDB_MAPSIZE" to "0",
+            "DATABASE_PATH" to "${File(relayDataDir, "data").absolutePath}/",
+            "BLOSSOM_PATH" to "${File(relayDataDir, config.blossomPath).absolutePath}/",
+            "HAVEN_LOG_LEVEL" to config.logLevel,
+            "LOG_FORMAT" to "\$\$host \$\$remote_addr - \$\$remote_user [\$\$time_local] \"\$\$request\" \$\$status \$\$body_bytes_sent \"\$\$http_referer\" \"\$\$http_user_agent\" \"\$\$upstream_addr\"",
+            "TZ" to "UTC",
+
+            // Whitelisted Npubs
+            "WHITELISTED_NPUBS_FILE" to config.whitelistedNpubsFile,
+
+            // Blacklisted Npubs
+            "BLACKLISTED_NPUBS_FILE" to config.blacklistedNpubsFile,
+
+            // Private Relay
+            "PRIVATE_RELAY_NAME" to config.privateRelayName,
+            "PRIVATE_RELAY_NPUB" to config.ownerNpub,
+            "PRIVATE_RELAY_DESCRIPTION" to config.privateRelayDescription,
+            "PRIVATE_RELAY_ICON" to config.privateRelayIcon,
+            "PRIVATE_RELAY_EVENT_IP_LIMITER_TOKENS_PER_INTERVAL" to "50",
+            "PRIVATE_RELAY_EVENT_IP_LIMITER_INTERVAL" to "1",
+            "PRIVATE_RELAY_EVENT_IP_LIMITER_MAX_TOKENS" to "100",
+            "PRIVATE_RELAY_ALLOW_EMPTY_FILTERS" to "true",
+            "PRIVATE_RELAY_ALLOW_COMPLEX_FILTERS" to "true",
+            "PRIVATE_RELAY_CONNECTION_RATE_LIMITER_TOKENS_PER_INTERVAL" to "3",
+            "PRIVATE_RELAY_CONNECTION_RATE_LIMITER_INTERVAL" to "5",
+            "PRIVATE_RELAY_CONNECTION_RATE_LIMITER_MAX_TOKENS" to "9",
+
+            // Chat Relay
+            "CHAT_RELAY_NAME" to config.chatRelayName,
+            "CHAT_RELAY_NPUB" to config.ownerNpub,
+            "CHAT_RELAY_DESCRIPTION" to config.chatRelayDescription,
+            "CHAT_RELAY_ICON" to config.chatRelayIcon,
+            "CHAT_RELAY_WOT_DEPTH" to config.chatRelayWotDepth.toString(),
+            "CHAT_RELAY_WOT_REFRESH_INTERVAL_HOURS" to config.chatRelayWotRefreshHours.toString(),
+            "WOT_REFRESH_INTERVAL" to config.wotRefreshInterval,
+            "WOT_DEPTH" to config.chatRelayWotDepth.toString(),
+            "WOT_MINIMUM_FOLLOWERS" to config.chatRelayMinFollowers.toString(),
+            "CHAT_RELAY_MINIMUM_FOLLOWERS" to config.chatRelayMinFollowers.toString(),
+            "CHAT_RELAY_EVENT_IP_LIMITER_TOKENS_PER_INTERVAL" to "50",
+            "CHAT_RELAY_EVENT_IP_LIMITER_INTERVAL" to "1",
+            "CHAT_RELAY_EVENT_IP_LIMITER_MAX_TOKENS" to "100",
+            "CHAT_RELAY_ALLOW_EMPTY_FILTERS" to "true",
+            "CHAT_RELAY_ALLOW_COMPLEX_FILTERS" to "false",
+            "CHAT_RELAY_CONNECTION_RATE_LIMITER_TOKENS_PER_INTERVAL" to "3",
+            "CHAT_RELAY_CONNECTION_RATE_LIMITER_INTERVAL" to "3",
+            "CHAT_RELAY_CONNECTION_RATE_LIMITER_MAX_TOKENS" to "9",
+
+            // Outbox Relay
+            "OUTBOX_RELAY_NAME" to config.outboxRelayName,
+            "OUTBOX_RELAY_NPUB" to config.ownerNpub,
+            "OUTBOX_RELAY_DESCRIPTION" to config.outboxRelayDescription,
+            "OUTBOX_RELAY_ICON" to config.outboxRelayIcon,
+            "OUTBOX_MAX_EVENTS_PER_MINUTE" to config.outboxMaxEventsPerMinute.toString(),
+            "OUTBOX_MAX_CONNECTIONS_PER_MINUTE" to config.outboxMaxConnectionsPerMinute.toString(),
+            "OUTBOX_RELAY_EVENT_IP_LIMITER_TOKENS_PER_INTERVAL" to "10",
+            "OUTBOX_RELAY_EVENT_IP_LIMITER_INTERVAL" to "60",
+            "OUTBOX_RELAY_EVENT_IP_LIMITER_MAX_TOKENS" to "100",
+            "OUTBOX_RELAY_ALLOW_EMPTY_FILTERS" to "true",
+            "OUTBOX_RELAY_ALLOW_COMPLEX_FILTERS" to "false",
+            "OUTBOX_RELAY_CONNECTION_RATE_LIMITER_TOKENS_PER_INTERVAL" to "3",
+            "OUTBOX_RELAY_CONNECTION_RATE_LIMITER_INTERVAL" to "1",
+            "OUTBOX_RELAY_CONNECTION_RATE_LIMITER_MAX_TOKENS" to "9",
+
+            // Inbox Relay
+            "INBOX_RELAY_NAME" to config.inboxRelayName,
+            "INBOX_RELAY_NPUB" to config.ownerNpub,
+            "INBOX_RELAY_DESCRIPTION" to config.inboxRelayDescription,
+            "INBOX_RELAY_ICON" to config.inboxRelayIcon,
+            "INBOX_PULL_INTERVAL_SECONDS" to config.inboxPullIntervalSeconds.toString(),
+            "INBOX_RELAY_EVENT_IP_LIMITER_TOKENS_PER_INTERVAL" to "10",
+            "INBOX_RELAY_EVENT_IP_LIMITER_INTERVAL" to "1",
+            "INBOX_RELAY_EVENT_IP_LIMITER_MAX_TOKENS" to "20",
+            "INBOX_RELAY_ALLOW_EMPTY_FILTERS" to "true",
+            "INBOX_RELAY_ALLOW_COMPLEX_FILTERS" to "false",
+            "INBOX_RELAY_CONNECTION_RATE_LIMITER_TOKENS_PER_INTERVAL" to "3",
+            "INBOX_RELAY_CONNECTION_RATE_LIMITER_INTERVAL" to "1",
+            "INBOX_RELAY_CONNECTION_RATE_LIMITER_MAX_TOKENS" to "9",
+
+            // Import
+            "IMPORT_START_DATE" to config.importStartDate,
+            "IMPORT_SEED_RELAYS_FILE" to config.importSeedRelaysFile,
+            "IMPORT_QUERY_INTERVAL_SECONDS" to "600",
+            "IMPORT_OWNER_NOTES_FETCH_TIMEOUT_SECONDS" to "300",
+            "IMPORT_TAGGED_NOTES_FETCH_TIMEOUT_SECONDS" to "600",
+
+            // DM Relays
+            "DM_RELAYS_FILE" to "relays_dm.json",
+
+            // Backup
+            "BACKUP_PROVIDER" to config.backupProvider,
+            "BACKUP_INTERVAL_HOURS" to config.backupIntervalHours.toString(),
+            "S3_ACCESS_KEY_ID" to config.s3AccessKeyId,
+            "S3_SECRET_KEY" to config.s3SecretKey,
+            "S3_ENDPOINT" to config.s3Endpoint,
+            "S3_REGION" to config.s3Region,
+            "S3_BUCKET_NAME" to config.s3BucketName,
+
+            // Blastr
+            "BLASTR_RELAYS_FILE" to config.blastrRelaysFile,
+
+            // WoT
+            "WOT_FETCH_TIMEOUT_SECONDS" to "60",
+
+            // TLS
+            "HAVEN_ENABLE_TLS" to enableTLS,
+        )
+    }
+
+    /** Format an environment dictionary as a .env file string. */
+    fun formatEnvFile(envDict: Map<String, String>): String = buildString {
+        for ((key, value) in envDict.toSortedMap()) {
+            when {
+                value.contains(" ") || value.contains("\"") -> {
+                    val escaped = value.replace("\"", "\\\"")
+                    appendLine("$key=\"$escaped\"")
+                }
+                value.isEmpty() -> appendLine("$key=\"\"")
+                else -> appendLine("$key=$value")
+            }
+        }
+    }
+}
+
+/**
+ * Relay configuration data class -- Kotlin equivalent of the Swift HavenConfig struct.
+ * Contains all fields needed by RelayConfiguration, services, and UI.
+ */
+@kotlinx.serialization.Serializable
+data class HavenConfig(
+    val ownerNpub: String = "",
+    val relayURL: String = "ws://127.0.0.1:3355",
+    val relayPort: Int = 3355,
+    val dbEngine: String = "badger",
+    val blossomPath: String = "blossom",
+    val logLevel: String = "info",
+    val allowNetworkAccess: Boolean = false,
+
+    // Setup
+    val hasCompletedSetup: Boolean = false,
+    val setupMode: String = "full", // "full" or "browse"
+    val hasCompletedInitialImport: Boolean = false, // Browse mode: tracks if first background import has run
+
+    // Account management
+    val activeAccountNpub: String? = null,
+    val ownerHexKey: String? = null,
+    val ownerNcryptsec: String? = null,
+    val signingMode: String = "local", // "local", "nip46", "amber"
+    val amberSignerPackage: String = "com.greenart7c3.nostrsigner",
+
+    // Whitelisted / Blacklisted
+    val whitelistedNpubsFile: String = "",
+    val blacklistedNpubsFile: String = "",
+    val whitelistedNpubs: List<String>? = null,
+    val blockedNpubs: List<String>? = null,
+
+    // Private Relay
+    val privateRelayName: String = "Nostr Vault Private",
+    val privateRelayDescription: String = "Private relay",
+    val privateRelayIcon: String = "",
+
+    // Chat Relay
+    val chatRelayName: String = "Nostr Vault Chat",
+    val chatRelayDescription: String = "Chat relay",
+    val chatRelayIcon: String = "",
+    val chatRelayWotDepth: Int = 2,
+    val chatRelayWotRefreshHours: Int = 24,
+    val chatRelayMinFollowers: Int = 3,
+    val wotRefreshInterval: String = "24h",
+
+    // Outbox Relay
+    val outboxRelayName: String = "Nostr Vault Outbox",
+    val outboxRelayDescription: String = "Outbox relay",
+    val outboxRelayIcon: String = "",
+    val outboxMaxEventsPerMinute: Int = 100,
+    val outboxMaxConnectionsPerMinute: Int = 30,
+
+    // Inbox Relay
+    val inboxRelayName: String = "Nostr Vault Inbox",
+    val inboxRelayDescription: String = "Inbox relay",
+    val inboxRelayIcon: String = "",
+    val inboxPullIntervalSeconds: Int = 300,
+
+    // Import
+    val importStartDate: String = "2023-01-01",
+    val importSeedRelaysFile: String = "relays_import.json",
+    val importSeedRelays: List<String> = listOf(
+        "wss://relay.damus.io",
+        "wss://relay.primal.net",
+        "wss://relay.snort.social",
+        "wss://nos.social",
+        "wss://relay.btcforplebs.com",
+        "wss://nostr.land",
+    ),
+
+    // Backup
+    val backupProvider: String = "",
+    val backupIntervalHours: Int = 24,
+    val s3AccessKeyId: String = "",
+    val s3SecretKey: String = "",
+    val s3Endpoint: String = "",
+    val s3Region: String = "",
+    val s3BucketName: String = "",
+
+    // Blastr
+    val blastrRelaysFile: String = "relays_blastr.json",
+    val blastrRelays: List<String> = listOf(
+        "wss://nostr.mutinywallet.com",
+        "wss://relay.damus.io",
+        "wss://nos.lol",
+    ),
+
+    // Relay URLs
+    val inboxRelays: List<String>? = listOf(
+        "wss://relay.damus.io",
+        "wss://relay.primal.net",
+        "wss://nos.lol",
+        "wss://relay.btcforplebs.com",
+    ),
+    val feedRelays: List<String>? = listOf(
+        "wss://relay.damus.io",
+        "wss://relay.primal.net",
+        "wss://nos.lol",
+        "wss://relay.btcforplebs.com",
+    ),
+
+    // Mac Relay (wss:// URL to a remote Mac Haven relay to sync missed notes)
+    val macRelayURL: String = "",
+
+    // Blossom
+    val blossomMirrors: List<String> = emptyList(),
+
+    // Paths (set at runtime by app)
+    val relayDataDir: String? = null,
+    val appSupportDir: String? = null,
+
+    // NIP-29 Groups (serialized as list of {relayURL, groupId, displayName})
+    val joinedGroups: List<JoinedGroupConfig>? = null,
+
+    // NWC (Nostr Wallet Connect)
+    val nwcURI: String? = null,
+
+    // Cashu Ecash
+    val cashuMintURL: String = "",
+
+    // Appearance
+    val themeColor: String = "orange",
+    val textSizeScale: Float = 1.0f,
+    val oledMode: Boolean = false,
+    val useFeedCompactMode: Boolean = true,
+    val feedCompactModes: Map<String, Boolean> = emptyMap(),
+
+    // Performance
+    val prefetchAvatars: Boolean = true,
+) {
+    /** Computed local relay WebSocket URL.
+     *  Always uses ws:// for localhost since the local relay runs without TLS.
+     *  Handles persisted configs that still have wss://127.0.0.1. */
+    val nostrURL: String?
+        get() {
+            if (ownerNpub.isEmpty()) return null
+            // Local relay runs without TLS; convert any persisted wss:// to ws://
+            return relayURL
+                .replace("wss://127.0.0.1", "ws://127.0.0.1")
+                .replace("wss://localhost", "ws://localhost")
+        }
+
+    /** Computed local inbox relay URL. */
+    val localInboxURL: String?
+        get() = nostrURL?.let { "$it/inbox" }
+
+    // ── Mac Relay Derived URLs ──────────────────────────────────
+
+    /** Strips any scheme and trailing slashes from macRelayURL to give the bare host[:port]. */
+    val macRelayNormalizedBase: String
+        get() {
+            var url = macRelayURL.trim()
+            for (scheme in listOf("wss://", "ws://", "https://", "http://")) {
+                if (url.lowercase().startsWith(scheme)) {
+                    url = url.drop(scheme.length)
+                }
+            }
+            while (url.endsWith("/")) url = url.dropLast(1)
+            // Reject hostnames with spaces or other invalid characters
+            if (url.contains(' ') || url.isEmpty()) return ""
+            return url
+        }
+
+    /** Always returns the wss:// form of macRelayURL (empty string if macRelayURL is empty). */
+    val macRelayWssURL: String
+        get() = macRelayNormalizedBase.let { if (it.isEmpty()) "" else "wss://$it" }
+
+    /** Always returns the https:// form of macRelayURL (empty string if macRelayURL is empty). */
+    val macRelayHttpsURL: String
+        get() = macRelayNormalizedBase.let { if (it.isEmpty()) "" else "https://$it" }
+
+    // ── Active Relay Lists (with Mac relay prepended) ───────────
+
+    /** Active inbox/feed relays (user-configured or defaults). */
+    val activeInboxRelays: List<String>
+        get() = inboxRelays ?: listOf(
+            "wss://relay.damus.io",
+            "wss://relay.primal.net",
+            "wss://nos.lol",
+            "wss://relay.btcforplebs.com",
+        )
+
+    /** Active feed relays, including the Mac relay if configured. */
+    val activeFeedRelays: List<String>
+        get() {
+            val relays = (feedRelays ?: activeInboxRelays).toMutableList()
+            val macWss = macRelayWssURL
+            if (macWss.isNotEmpty() && macWss !in relays) {
+                relays.add(0, macWss)
+            }
+            return relays
+        }
+
+    /** Active blastr relays, including the Mac relay if configured. */
+    val activeBlastrRelays: List<String>
+        get() {
+            val relays = blastrRelays.ifEmpty {
+                listOf("wss://nostr.mutinywallet.com", "wss://relay.damus.io", "wss://nos.lol")
+            }.toMutableList()
+            val macWss = macRelayWssURL
+            if (macWss.isNotEmpty() && macWss !in relays) {
+                relays.add(0, macWss)
+            }
+            return relays
+        }
+
+    /** Active import seed relays, including the Mac relay if configured. */
+    val activeImportSeedRelays: List<String>
+        get() {
+            val relays = importSeedRelays.toMutableList()
+            val macWss = macRelayWssURL
+            if (macWss.isNotEmpty() && macWss !in relays) {
+                relays.add(0, macWss)
+            }
+            return relays
+        }
+
+    /** Active blossom mirror servers, including the Mac relay if configured. */
+    val activeBlossomMirrors: List<String>
+        get() {
+            val mirrors = blossomMirrors.toMutableList()
+            val macHttps = macRelayHttpsURL
+            if (macHttps.isNotEmpty() && macHttps !in mirrors) {
+                mirrors.add(0, macHttps)
+            }
+            return mirrors
+        }
+
+    /** Current signing mode for the active account. */
+    fun activeSigningMode(): String = signingMode
+}
+
+/** Config-level joined group (no dependency on service layer). */
+@kotlinx.serialization.Serializable
+data class JoinedGroupConfig(
+    val relayURL: String,
+    val groupId: String,
+    val displayName: String? = null,
+)
