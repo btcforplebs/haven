@@ -23,6 +23,7 @@ struct HavenConfig: Codable, Equatable {
     var hasSeenWelcome: Bool = false
     var hasAcceptedToS: Bool = false
     var setupMode: String = "full" // "full" or "browse"
+    var hasCompletedInitialImport: Bool = false // Browse mode: tracks if first background import has run
     var disableMediaCache: Bool = false
     var autoplayVideos: Bool = true
     var cacheTTLDays: Int = 7
@@ -202,7 +203,7 @@ struct HavenConfig: Codable, Equatable {
     
     enum CodingKeys: String, CodingKey {
         case ownerNpub, relayURL, relayPort, dbEngine, blossomPath, logLevel
-        case launchAtLogin, autoStartRelay, hasCompletedSetup, hasSeenWelcome, hasAcceptedToS, setupMode, disableMediaCache, autoplayVideos, cacheTTLDays, prefetchProfilePictures, allowNetworkAccess, ownerNcryptsec, ownerNsec, showReplies, nwcURI, defaultZapAmount, themeColor, autoLoadNewPosts, showReposts, showBitcoinWallet, cashuMintURL
+        case launchAtLogin, autoStartRelay, hasCompletedSetup, hasSeenWelcome, hasAcceptedToS, setupMode, hasCompletedInitialImport, disableMediaCache, autoplayVideos, cacheTTLDays, prefetchProfilePictures, allowNetworkAccess, ownerNcryptsec, ownerNsec, showReplies, nwcURI, defaultZapAmount, themeColor, autoLoadNewPosts, showReposts, showBitcoinWallet, cashuMintURL
         case useOLED, textSizeScale, useFeedCompactMode, feedCompactModes, noteDetailCompactView, noteDetailExpandedEngagement, defaultReactionEmoji, appIcon
         case signingMode, nip46BunkerURI, nip46SignerPubkey, nip46RelayURL, nip46Secret, nip46ClientSecretKey, nip46ClientPubkey
         case pushServerURL, enableRemotePushServer, enablePushNotifications, notificationPrefsPerAccount
@@ -249,6 +250,7 @@ struct HavenConfig: Codable, Equatable {
         hasSeenWelcome = try container.decodeIfPresent(Bool.self, forKey: .hasSeenWelcome) ?? defaults.hasSeenWelcome
         hasAcceptedToS = try container.decodeIfPresent(Bool.self, forKey: .hasAcceptedToS) ?? defaults.hasAcceptedToS
         setupMode = try container.decodeIfPresent(String.self, forKey: .setupMode) ?? defaults.setupMode
+        hasCompletedInitialImport = try container.decodeIfPresent(Bool.self, forKey: .hasCompletedInitialImport) ?? defaults.hasCompletedInitialImport
         disableMediaCache = try container.decodeIfPresent(Bool.self, forKey: .disableMediaCache) ?? defaults.disableMediaCache
         autoplayVideos = try container.decodeIfPresent(Bool.self, forKey: .autoplayVideos) ?? defaults.autoplayVideos
         cacheTTLDays = try container.decodeIfPresent(Int.self, forKey: .cacheTTLDays) ?? defaults.cacheTTLDays

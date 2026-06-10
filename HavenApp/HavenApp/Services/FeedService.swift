@@ -8,483 +8,6 @@ extension Notification.Name {
     static let feedInjectionComplete = Notification.Name("feedInjectionComplete")
 }
 
-// MARK: - Models
-
-/// Lightweight engagement counts per note, populated from relay data.
-struct NoteStats: Equatable, Codable {
-    var reactions: Int = 0
-    var reposts: Int = 0
-    var zaps: Int = 0
-}
-
-/// JSON result from the Go DVM's ComputePopularNotesC function.
-private struct PopularNoteResult: Codable {
-    let id: String
-    let pubkey: String
-    let content: String
-    let created_at: Int64
-    let tags: [[String]]
-    let kind: Int
-    let score: Double
-}
-
-struct FeedNote: Identifiable, Hashable, Equatable, Codable {
-    let id: String
-    let pubkey: String
-    let content: String
-    let createdAt: Date
-    let tags: [[String]]
-    let kind: Int
-    let repostedBy: String?
-
-    static func == (lhs: FeedNote, rhs: FeedNote) -> Bool {
-        lhs.id == rhs.id
-    }
-
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
-
-    // Cached at init to avoid recomputing on every SwiftUI render
-    let isReply: Bool
-    let replyToPubkey: String?
-    let parentEventId: String?
-    let mediaURLs: [URL]
-    let linkURLs: [URL]
-    let quotedEventIds: [String]
-
-    /// The event ID of the original note referenced by a kind 6 repost (from e-tags).
-    let repostedEventId: String?
-
-    init(id: String, pubkey: String, content: String, createdAt: Date, tags: [[String]], kind: Int, repostedBy: String? = nil) {
-        // NIP-18: a kind 6 repost SHOULD embed the full original event as stringified JSON
-        // in `content`. When present, swap to the inner author/content/tags so the UI renders
-        // the reposted note directly. The outer pubkey becomes `repostedBy`.
-        // Always compute `repostedEventId` from the OUTER e-tag before any swap.
-        let outerETags = tags.filter { $0.count >= 2 && $0[0] == "e" }
-        let outerRepostedEventId = kind == 6 ? outerETags.first?[1] : nil
-
-        var resolvedPubkey = pubkey
-        var resolvedContent = content
-        var resolvedTags = tags
-        var resolvedRepostedBy = repostedBy
-
-        if kind == 6,
-           let data = content.data(using: .utf8),
-           let inner = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let innerContent = inner["content"] as? String,
-           let innerPubkey = inner["pubkey"] as? String {
-            resolvedPubkey = innerPubkey
-            resolvedContent = innerContent
-            if let innerTags = inner["tags"] as? [[String]] {
-                resolvedTags = innerTags
-            }
-            if resolvedRepostedBy == nil { resolvedRepostedBy = pubkey }
-        }
-
-        self.id = id
-        self.pubkey = resolvedPubkey
-        self.content = resolvedContent
-        self.createdAt = createdAt
-        self.tags = resolvedTags
-        self.kind = kind
-        self.repostedBy = resolvedRepostedBy
-
-        // Cache tag-derived properties (use resolved tags so inner imeta/reply data wins)
-        let eTags = resolvedTags.filter { $0.count >= 2 && $0[0] == "e" }
-        let nonMentionETags = eTags.filter { tag in
-            guard tag.count >= 4 else { return true }
-            return tag[3] != "mention"
-        }
-        // Kind 6 reposts have e-tags but are not replies
-        self.isReply = kind != 6 && !nonMentionETags.isEmpty
-        self.replyToPubkey = kind != 6 ? resolvedTags.first { $0.count >= 2 && $0[0] == "p" }?[1] : nil
-        self.parentEventId = kind != 6 ? resolvedTags.last { $0.count >= 2 && $0[0] == "e" }?[1] : nil
-
-        self.repostedEventId = outerRepostedEventId
-
-        // Cache regex-derived properties (expensive — only compute once)
-        let contentURLs = Self.parseMediaURLs(from: resolvedContent)
-        // NIP-92 imeta tags carry URLs for uploads without file extensions
-        let imetaURLs: [URL] = resolvedTags.compactMap { tag in
-            guard tag.first == "imeta", tag.count >= 2 else { return nil }
-            for field in tag.dropFirst() {
-                if field.hasPrefix("url ") {
-                    let urlStr = String(field.dropFirst(4)).trimmingCharacters(in: .whitespaces)
-                    return URL(string: urlStr)
-                }
-            }
-            return nil
-        }
-        var seen = Set<String>()
-        self.mediaURLs = (contentURLs + imetaURLs).filter { seen.insert($0.absoluteString).inserted }
-        self.linkURLs = Self.parseLinkURLs(from: resolvedContent, excludingMedia: self.mediaURLs)
-        self.quotedEventIds = Self.parseQuotedEventIds(from: resolvedContent)
-    }
-
-    var replyCount: Int {
-        tags.filter { $0.count >= 2 && $0[0] == "e" }.count
-    }
-
-    var note1: String {
-        guard let data = Bech32.hexToData(id) else { return id }
-        return Bech32.encode(hrp: "note", data: data) ?? id
-    }
-
-    var nevent: String {
-        guard let idData = Bech32.hexToData(id),
-              let pubData = Bech32.hexToData(pubkey) else { return note1 }
-
-        var tlv = Data()
-        tlv.append(Bech32.encodeTLV(type: 0, data: idData))
-        tlv.append(Bech32.encodeTLV(type: 2, data: pubData))
-        let kindBytes = withUnsafeBytes(of: UInt32(kind).bigEndian) { Data($0) }
-        tlv.append(Bech32.encodeTLV(type: 3, data: kindBytes))
-
-        return Bech32.encode(hrp: "nevent", data: tlv) ?? note1
-    }
-
-    // MARK: - Static parsers (called once at init)
-
-    private static let mediaRegex: NSRegularExpression? = SupportedMediaFormats.mediaExtensionRegex
-
-    /// Matches extensionless Blossom URLs where the path is a 64-char SHA-256 hex hash.
-    private static let blossomRegex: NSRegularExpression? = {
-        try? NSRegularExpression(pattern: #"https?://\S+/[a-f0-9]{64}(?=\s|$)"#, options: .caseInsensitive)
-    }()
-
-    private static let quoteRegex: NSRegularExpression? = {
-        try? NSRegularExpression(pattern: #"nostr:(note1[a-z0-9]+|nevent1[a-z0-9]+|naddr1[a-z0-9]+)"#, options: .caseInsensitive)
-    }()
-
-    /// Matches any HTTP(S) URL in content for link preview extraction.
-    private static let httpURLRegex: NSRegularExpression? = {
-        try? NSRegularExpression(pattern: #"https?://[^\s<>\")\]]*[^\s<>\")\].,;:!?'\"]"#, options: .caseInsensitive)
-    }()
-
-    private static func parseMediaURLs(from content: String) -> [URL] {
-        let ns = content as NSString
-        let range = NSRange(location: 0, length: ns.length)
-        var urls: [URL] = []
-
-        if let regex = mediaRegex {
-            urls += regex.matches(in: content, range: range)
-                .compactMap { URL(string: ns.substring(with: $0.range)) }
-        }
-
-        // Extensionless Blossom URLs (SHA-256 hash as last path component)
-        if let regex = blossomRegex {
-            urls += regex.matches(in: content, range: range)
-                .compactMap { URL(string: ns.substring(with: $0.range)) }
-        }
-
-        return urls
-    }
-
-    private static func parseQuotedEventIds(from content: String) -> [String] {
-        guard let regex = quoteRegex else { return [] }
-        let ns = content as NSString
-        return regex.matches(in: content, range: NSRange(location: 0, length: ns.length))
-            .compactMap { match -> String? in
-                let identifier = ns.substring(with: match.range(at: 1))
-                if identifier.hasPrefix("note1") {
-                    return Bech32.decode(identifier)?.hexString
-                } else if identifier.hasPrefix("nevent1") {
-                    guard let decoded = Bech32.decode(identifier) else { return nil }
-                    var data = decoded.data
-                    while data.count >= 2 {
-                        let type = data.removeFirst()
-                        let length = Int(data.removeFirst())
-                        if data.count >= length {
-                            let value = data.prefix(length)
-                            if type == 0 && length == 32 {
-                                return value.map { String(format: "%02x", $0) }.joined()
-                            }
-                            data.removeFirst(length)
-                        } else {
-                            break
-                        }
-                    }
-                } else if identifier.hasPrefix("naddr1") {
-                    // NIP-19 naddr TLV: type 0 = d-tag (UTF-8), type 1 = relay, type 2 = pubkey (32 bytes), type 3 = kind (4 bytes BE)
-                    guard let decoded = Bech32.decode(identifier) else { return nil }
-                    var data = decoded.data
-                    var dTag: String?
-                    var pubkey: String?
-                    var kind: UInt32?
-                    while data.count >= 2 {
-                        let tlvType = data.removeFirst()
-                        let length = Int(data.removeFirst())
-                        guard data.count >= length else { break }
-                        let value = data.prefix(length)
-                        switch tlvType {
-                        case 0: dTag = String(data: Data(value), encoding: .utf8)
-                        case 2 where length == 32: pubkey = value.map { String(format: "%02x", $0) }.joined()
-                        case 3 where length == 4:
-                            kind = Data(value).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
-                        default: break
-                        }
-                        data.removeFirst(length)
-                    }
-                    if let k = kind, let p = pubkey {
-                        // Coordinate format: "naddr:<kind>:<pubkey>:<d-tag>"
-                        return "naddr:\(k):\(p):\(dTag ?? "")"
-                    }
-                }
-                return nil
-            }
-    }
-
-    /// Extracts non-media HTTP(S) URLs from content for link preview cards.
-    private static func parseLinkURLs(from content: String, excludingMedia mediaURLs: [URL]) -> [URL] {
-        guard let regex = httpURLRegex else { return [] }
-        let ns = content as NSString
-        let range = NSRange(location: 0, length: ns.length)
-        let mediaSet = Set(mediaURLs.map { $0.absoluteString })
-
-        var seen = Set<String>()
-        return regex.matches(in: content, range: range)
-            .compactMap { URL(string: ns.substring(with: $0.range)) }
-            .filter { !mediaSet.contains($0.absoluteString) }
-            .filter { seen.insert($0.absoluteString).inserted }
-    }
-
-    // MARK: - Codable (encodes resolved properties to avoid NIP-18 double-resolution on decode)
-
-    enum CodingKeys: String, CodingKey {
-        case id, pubkey, content, createdAt, tags, kind, repostedBy
-        case isReply, replyToPubkey, parentEventId, mediaURLs, linkURLs, quotedEventIds, repostedEventId
-    }
-
-    init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = try c.decode(String.self, forKey: .id)
-        self.pubkey = try c.decode(String.self, forKey: .pubkey)
-        self.content = try c.decode(String.self, forKey: .content)
-        self.createdAt = try c.decode(Date.self, forKey: .createdAt)
-        self.tags = try c.decode([[String]].self, forKey: .tags)
-        self.kind = try c.decode(Int.self, forKey: .kind)
-        self.repostedBy = try c.decodeIfPresent(String.self, forKey: .repostedBy)
-        self.isReply = try c.decode(Bool.self, forKey: .isReply)
-        self.replyToPubkey = try c.decodeIfPresent(String.self, forKey: .replyToPubkey)
-        self.parentEventId = try c.decodeIfPresent(String.self, forKey: .parentEventId)
-        self.mediaURLs = try c.decode([URL].self, forKey: .mediaURLs)
-        self.linkURLs = try c.decodeIfPresent([URL].self, forKey: .linkURLs) ?? []
-        self.quotedEventIds = try c.decode([String].self, forKey: .quotedEventIds)
-        self.repostedEventId = try c.decodeIfPresent(String.self, forKey: .repostedEventId)
-    }
-
-    func encode(to encoder: Encoder) throws {
-        var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(id, forKey: .id)
-        try c.encode(pubkey, forKey: .pubkey)
-        try c.encode(content, forKey: .content)
-        try c.encode(createdAt, forKey: .createdAt)
-        try c.encode(tags, forKey: .tags)
-        try c.encode(kind, forKey: .kind)
-        try c.encodeIfPresent(repostedBy, forKey: .repostedBy)
-        try c.encode(isReply, forKey: .isReply)
-        try c.encodeIfPresent(replyToPubkey, forKey: .replyToPubkey)
-        try c.encodeIfPresent(parentEventId, forKey: .parentEventId)
-        try c.encode(mediaURLs, forKey: .mediaURLs)
-        try c.encode(linkURLs, forKey: .linkURLs)
-        try c.encode(quotedEventIds, forKey: .quotedEventIds)
-        try c.encodeIfPresent(repostedEventId, forKey: .repostedEventId)
-    }
-
-    /// Technical heuristic to filter out spam, bots, empty, duplicate, or telemetry noise.
-    static func isNoiseOrSpam(content: String, tags: [[String]]) -> Bool {
-        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.isEmpty { return true }
-        
-        // 1. JSON / technical payloads (common in spam/telemetry)
-        if trimmed.hasPrefix("{") && trimmed.hasSuffix("}") {
-            return true
-        }
-        
-        let lower = trimmed.lowercased()
-        if lower.contains("nostr-wallet-connect") ||
-           lower.contains("\"method\":") ||
-           lower.contains("\"result\":") ||
-           lower.contains("nip47") {
-            return true
-        }
-        
-        // 2. Excessive consecutive repeated characters (e.g. spam lines or emoji flood)
-        var consecutiveCount = 1
-        var lastChar: Character? = nil
-        for char in trimmed {
-            if let last = lastChar, last == char {
-                consecutiveCount += 1
-                if consecutiveCount >= 20 {
-                    return true
-                }
-            } else {
-                consecutiveCount = 1
-            }
-            lastChar = char
-        }
-        
-        // 3. Hashtag or Mention stuffing (in very short content)
-        let hashtags = tags.filter { $0.count >= 2 && $0[0] == "t" }
-        let mentions = tags.filter { $0.count >= 2 && $0[0] == "p" }
-        if trimmed.count < 100 {
-            if hashtags.count > 6 || mentions.count > 6 {
-                return true
-            }
-        }
-        
-        // 4. Common bot status updates, advertising, or phishing
-        let spamKeywords = [
-            "relay status:", "relay uptime:", "ping time:", "block height:",
-            "free bitcoin", "earn double bitcoin", "telegram channel for free",
-            "pump telegram", "whatsapp group", "click here to claim"
-        ]
-        for keyword in spamKeywords {
-            if lower.contains(keyword) {
-                return true
-            }
-        }
-        
-        return false
-    }
-}
-
-// MARK: - BackgroundAccumulator
-
-/// Thread-safe buffer for events parsed off the main thread.
-/// All methods must be called on the FeedService processingQueue.
-final class BackgroundAccumulator: @unchecked Sendable {
-    var notes: [FeedNote] = []
-    var profiles: [String] = []
-    /// Reaction events: (target note ID, reactor pubkey). Used for both self-like
-    /// detection and per-note reaction counting.
-    var reactionEvents: [(targetId: String, pubkey: String)] = []
-    /// Note IDs that were reposted (from kind 6 events).
-    var repostTargets: [String] = []
-    /// Raw event JSON strings for NIP-18 repost embedding (id → stringified JSON with sig).
-    var rawEventEntries: [(id: String, json: String)] = []
-    var flushScheduled = false
-
-    /// Dedup set for engagement events (reactions, etc.) to avoid double-counting
-    /// from multiple relays. NOT drained — persists across flushes.
-    var seenEngagementIds = Set<String>()
-    private static let maxEngagementIds = 20_000
-
-    static let flushIntervalFast: TimeInterval = 0.2
-    static let flushIntervalNormal: TimeInterval = 0.5
-    static let flushIntervalRealtime: TimeInterval = 0.05
-
-    /// During initial feed load, flush more frequently so content appears sooner.
-    /// Set to true by FeedService when subscribeToAllRelays starts; false on EOSE.
-    var isInitialLoad = false
-
-    /// Global feed mode uses ultra-fast flushing for real-time streaming.
-    /// Set to true when feedMode is .global or media+global.
-    var isGlobalMode = false
-
-    var effectiveFlushInterval: TimeInterval {
-        if isGlobalMode { return Self.flushIntervalRealtime }
-        return isInitialLoad ? Self.flushIntervalFast : Self.flushIntervalNormal
-    }
-
-    struct Snapshot {
-        let notes: [FeedNote]
-        let profiles: [String]
-        let reactionEvents: [(targetId: String, pubkey: String)]
-        let repostTargets: [String]
-        let rawEventEntries: [(id: String, json: String)]
-    }
-
-    func drain() -> Snapshot {
-        let snap = Snapshot(
-            notes: notes,
-            profiles: profiles,
-            reactionEvents: reactionEvents,
-            repostTargets: repostTargets,
-            rawEventEntries: rawEventEntries
-        )
-        notes.removeAll(keepingCapacity: true)
-        profiles.removeAll(keepingCapacity: true)
-        reactionEvents.removeAll(keepingCapacity: true)
-        repostTargets.removeAll(keepingCapacity: true)
-        rawEventEntries.removeAll(keepingCapacity: true)
-        flushScheduled = false
-
-        // Cap dedup set to prevent unbounded growth. Evict roughly half rather
-        // than clearing entirely so recent IDs still suppress duplicates.
-        // Sort before evicting so every device drops the same (lexicographically smallest) IDs.
-        if seenEngagementIds.count > Self.maxEngagementIds {
-            let keepCount = Self.maxEngagementIds / 2
-            let sorted = seenEngagementIds.sorted(by: >)
-            seenEngagementIds = Set(sorted.prefix(keepCount))
-        }
-        return snap
-    }
-}
-
-// MARK: - FeedService
-
-enum MediaFeedMode: String, CaseIterable {
-    case following = "Following"
-    case global = "Global"
-}
-
-/// Filter for the Popular feed: show all, only follows, or only non-follows.
-enum PopularFilter: String, CaseIterable {
-    case all = "All"
-    case follows = "Follows"
-    case nonFollows = "Non-Follows"
-}
-
-/// Feed mode: following (contacts only), discovery (extended network), global (all notes), popular (trending), or media grid.
-enum FeedMode: String, CaseIterable {
-    case following = "Following"
-    case discovery = "Discovery"
-    case global = "Global"
-    case popular = "Popular"
-    case media = "Media"
-}
-
-/// Per-account, in-memory snapshot of the feed state. Captured before switching
-/// accounts and restored on switch-back so the feed reappears instantly instead
-/// of going through a full cold reload. Engagement state (likes/zaps) is also
-/// scoped here so it doesn't leak across accounts.
-struct AccountFeedSnapshot {
-    var notes: [FeedNote] = []
-    var parentNotesCache: [String: FeedNote] = [:]
-    var followedPubkeys: [String] = []
-    var extendedNetworkPubkeys: [String] = []
-    var seenIds: Set<String> = []
-    var noteStats: [String: NoteStats] = [:]
-    var likedEventIds: Set<String> = []
-    var zappedEventIds: [String: Int] = [:]
-    var contactListContent: String = ""
-    var contactListPTags: [[String]] = []
-    var lastFetchedContactCount: Int = 0
-    var hasAttemptedContactLoad: Bool = false
-    var capturedAt: Date = Date()
-    var lastEventTimestamp: Int64 = 0
-}
-
-/// Lightweight, Codable subset of AccountFeedSnapshot persisted to disk so that
-/// switching to a previously-visited account after app restart doesn't require a
-/// full cold load. Excludes parentNotesCache (large, re-fetched lazily), seenIds
-/// (rebuilt from notes), and interaction state (already persisted separately).
-struct DiskFeedSnapshot: Codable {
-    var notes: [FeedNote]
-    var followedPubkeys: [String]
-    var extendedNetworkPubkeys: [String]
-    var noteStats: [String: NoteStats]
-    var contactListContent: String
-    var contactListPTags: [[String]]
-    var lastFetchedContactCount: Int
-    var capturedAt: Date
-    var lastEventTimestamp: Int64 = 0
-
-    /// Snapshots older than 7 days are considered stale.
-    static let maxAge: TimeInterval = 7 * 24 * 60 * 60
-}
 
 /// Builds a following feed by querying BOTH the local Haven relay and
 /// well-known public Nostr relays in parallel.
@@ -565,98 +88,34 @@ class FeedService: ObservableObject {
     func recomputeFilteredNotes() {
         rebuildNoteIndex()
         let blocked = ConfigService.shared.activeAccountBlockedHexPubkeys
-        let showReposts = ConfigService.shared.config.showReposts
-        let showReplies = ConfigService.shared.config.showReplies
-        let mode = feedMode
-
-        var newFiltered = notes.filter { note in
-            if blocked.contains(note.pubkey) { return false }
-            if note.kind == 6 && !showReposts { return false }
-            if mode == .popular {
-                // Popular filter: follows / non-follows / all
-                let isFollowed = followedPubkeys.contains(note.pubkey)
-                if popularFilter == .follows && !isFollowed { return false }
-                if popularFilter == .nonFollows && isFollowed { return false }
-                return !note.isReply
-            }
-            if mode == .global {
-                // Only show notes from WOT members in the global feed
-                if !wotPubkeys.isEmpty && !wotPubkeys.contains(note.pubkey) { return false }
-                return !note.isReply
-            }
-            return showReplies || !note.isReply
-        }
-
-        // Popular feed: sort by engagement score instead of chronological
-        if mode == .popular && !popularNoteScores.isEmpty {
-            newFiltered.sort { a, b in
-                let scoreA = popularNoteScores[a.id] ?? 0
-                let scoreB = popularNoteScores[b.id] ?? 0
-                if scoreA != scoreB { return scoreA > scoreB }
-                return a.createdAt > b.createdAt
-            }
-        }
-
-        // Apply throttle limits: for each throttled author, keep only their N most recent posts
         let throttled = ConfigService.shared.activeAccountThrottledHexPubkeys
-        if !throttled.isEmpty {
-            var authorCounts: [String: Int] = [:]
-            newFiltered = newFiltered.filter { note in
-                guard let maxPosts = throttled[note.pubkey] else { return true }
-                let count = authorCounts[note.pubkey, default: 0]
-                if count < maxPosts {
-                    authorCounts[note.pubkey] = count + 1
-                    return true
-                }
-                return false
-            }
-        }
+
+        let newFiltered = FeedFilterEngine.filterFeedNotes(
+            notes: notes,
+            mode: feedMode,
+            blocked: blocked,
+            showReposts: ConfigService.shared.config.showReposts,
+            showReplies: ConfigService.shared.config.showReplies,
+            followedPubkeys: followedPubkeys,
+            wotPubkeys: wotPubkeys,
+            popularFilter: popularFilter,
+            popularNoteScores: popularNoteScores,
+            throttledPubkeys: throttled
+        )
 
         // Only publish a change when the visible list actually differs.
-        // This prevents unnecessary SwiftUI re-renders (and scroll position resets)
-        // when a background buffer flush adds notes that are filtered out or
-        // sorted into the same positions.
-        let newIDs = newFiltered.map(\.id)
-        let oldIDs = filteredNotes.map(\.id)
-        if newIDs != oldIDs {
+        if newFiltered.map(\.id) != filteredNotes.map(\.id) {
             filteredNotes = newFiltered
-
-            // Precompute parent-is-next relationships for the view
-            var newParentIsNext = Set<String>()
-            for i in 0..<newFiltered.count {
-                if let parentId = newFiltered[i].parentEventId,
-                   i + 1 < newFiltered.count,
-                   newFiltered[i + 1].id == parentId {
-                    newParentIsNext.insert(newFiltered[i].id)
-                }
-            }
-            parentIsNextNote = newParentIsNext
+            parentIsNextNote = FeedFilterEngine.computeParentIsNext(filteredNotes: newFiltered)
         }
 
-        let isGlobalMedia = feedMode == .media && mediaFeedMode == .global
-        var newMedia = notes.filter { note in
-            if blocked.contains(note.pubkey) { return false }
-            // Only show media from WOT members in global media mode
-            if isGlobalMedia && !wotPubkeys.isEmpty && !wotPubkeys.contains(note.pubkey) { return false }
-            return !note.mediaURLs.isEmpty
-        }.sorted {
-            if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
-            return $0.id > $1.id
-        }
-
-        // Apply throttle limits to media feed as well
-        if !throttled.isEmpty {
-            var mediaCounts: [String: Int] = [:]
-            newMedia = newMedia.filter { note in
-                guard let maxPosts = throttled[note.pubkey] else { return true }
-                let count = mediaCounts[note.pubkey, default: 0]
-                if count < maxPosts {
-                    mediaCounts[note.pubkey] = count + 1
-                    return true
-                }
-                return false
-            }
-        }
+        let newMedia = FeedFilterEngine.filterMediaNotes(
+            notes: notes,
+            blocked: blocked,
+            wotPubkeys: wotPubkeys,
+            isGlobalMedia: feedMode == .media && mediaFeedMode == .global,
+            throttledPubkeys: throttled
+        )
 
         if newMedia.map(\.id) != filteredMediaNotes.map(\.id) {
             filteredMediaNotes = newMedia
@@ -748,28 +207,22 @@ class FeedService: ObservableObject {
 
     /// Used for de-duping relay URLs across the floor + outbox set.
     private static func normalizeRelayKey(_ urlStr: String) -> String? {
-        guard let url = URL(string: urlStr), let host = url.host else { return urlStr.lowercased() }
-        var key = "\(url.scheme ?? "wss")://\(host.lowercased())"
-        if let port = url.port { key += ":\(port)" }
-        let path = url.path.hasSuffix("/") ? String(url.path.dropLast()) : url.path
-        if !path.isEmpty { key += path }
-        return key
+        FeedFilterEngine.normalizeRelayKey(urlStr)
     }
 
     /// Loads WOT pubkeys from the relay's cached `wot_cache.json` file.
-    /// The relay computes this graph (owner → follows → follows-of-follows,
+    /// The relay computes this graph (owner -> follows -> follows-of-follows,
     /// filtered by minimum follower count) and persists it to disk.
     func loadWotPubkeys() {
         let cacheURL = ConfigService.shared.relayDataDir.appendingPathComponent("wot_cache.json")
-        guard let data = try? Data(contentsOf: cacheURL),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let pubkeys = json["pubkeys"] as? [String: Bool] else {
+        let loaded = FeedFilterEngine.loadWotPubkeys(from: cacheURL)
+        if loaded.isEmpty {
             #if DEBUG
             print("FeedService: Could not load WOT cache from \(cacheURL.path)")
             #endif
             return
         }
-        wotPubkeys = Set(pubkeys.keys)
+        wotPubkeys = loaded
         #if DEBUG
         print("FeedService: Loaded \(wotPubkeys.count) WOT pubkeys from cache")
         #endif
@@ -1175,46 +628,17 @@ class FeedService: ObservableObject {
 
     // MARK: - Interaction State Persistence (per-account)
 
-    /// Legacy single-file path used before per-account state was introduced.
-    /// Migrated to the owner account on first load.
-    private static let legacyInteractionStateFile = "interaction_state.json"
-
     private var interactionSaveThrottle: Date = .distantPast
 
-    /// Load engagement state (likes / zaps) for the given account snapshot key
-    /// into the published properties. Falls back to the legacy global file when
-    /// no per-account file exists yet.
+    /// Load engagement state (likes / zaps) for the given account snapshot key.
+    /// Delegates to EngagementTracker for the actual disk I/O and migration logic.
     private func loadInteractionState(forKey key: String) {
-        let url = Self.interactionStateURL(forKey: key)
-        if let data = try? Data(contentsOf: url),
-           let state = try? JSONDecoder().decode(InteractionState.self, from: data) {
-            self.likedEventIds = state.likedEventIds
-            self.zappedEventIds = state.zappedEventIds
-            #if DEBUG
-            print("FeedService: Loaded \(state.likedEventIds.count) likes, \(state.zappedEventIds.count) zaps for account \(key.prefix(8))")
-            #endif
-            return
-        }
-
-        // Migration: read the old shared file once and assign it to whichever
-        // account first asks for it (typically the owner on launch).
-        let legacy = Self.interactionStateURL(legacy: true)
-        if let data = try? Data(contentsOf: legacy),
-           let state = try? JSONDecoder().decode(InteractionState.self, from: data) {
-            self.likedEventIds = state.likedEventIds
-            self.zappedEventIds = state.zappedEventIds
-            #if DEBUG
-            print("FeedService: Migrated legacy interaction state for account \(key.prefix(8))")
-            #endif
-            // Persist under the new per-account file so the legacy file can be
-            // dropped on next launch.
-            interactionSaveThrottle = .distantPast
-            saveInteractionState()
-            return
-        }
-
-        self.likedEventIds = []
-        self.zappedEventIds = [:]
+        let result = EngagementTracker.loadInteractionState(forKey: key)
+        self.likedEventIds = result.likedEventIds
+        self.zappedEventIds = result.zappedEventIds
+        #if DEBUG
+        print("FeedService: Loaded \(result.likedEventIds.count) likes, \(result.zappedEventIds.count) zaps for account \(key.prefix(8))")
+        #endif
     }
 
     func saveInteractionState() {
@@ -1222,56 +646,11 @@ class FeedService: ObservableObject {
         let now = Date()
         guard now.timeIntervalSince(interactionSaveThrottle) > 2.0 else { return }
         interactionSaveThrottle = now
-
-        let state = InteractionState(likedEventIds: likedEventIds, zappedEventIds: zappedEventIds)
-        let url = Self.interactionStateURL(forKey: loadedSnapshotNpub)
-        DispatchQueue.global(qos: .utility).async {
-            if let data = try? JSONEncoder().encode(state) {
-                try? data.write(to: url)
-            }
-        }
-    }
-
-    private static func interactionStateURL(forKey key: String) -> URL {
-        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("Haven")
-        }
-        let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
-        try? FileManager.default.createDirectory(at: havenDir, withIntermediateDirectories: true)
-        let safeKey = key.isEmpty ? "owner" : key.replacingOccurrences(of: "/", with: "_")
-        return havenDir.appendingPathComponent("interaction_state_\(safeKey).json")
-    }
-
-    private static func interactionStateURL(legacy: Bool) -> URL {
-        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
-            return URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("Haven")
-        }
-        let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
-        try? FileManager.default.createDirectory(at: havenDir, withIntermediateDirectories: true)
-        return havenDir.appendingPathComponent(legacyInteractionStateFile)
-    }
-
-    private struct InteractionState: Codable {
-        let likedEventIds: Set<String>
-        let zappedEventIds: [String: Int]
-
-        init(likedEventIds: Set<String>, zappedEventIds: [String: Int]) {
-            self.likedEventIds = likedEventIds
-            self.zappedEventIds = zappedEventIds
-        }
-
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            likedEventIds = try container.decode(Set<String>.self, forKey: .likedEventIds)
-            // Migrate from old Set<String> format if needed
-            if let dict = try? container.decode([String: Int].self, forKey: .zappedEventIds) {
-                zappedEventIds = dict
-            } else if let set = try? container.decode(Set<String>.self, forKey: .zappedEventIds) {
-                zappedEventIds = Dictionary(uniqueKeysWithValues: set.map { ($0, 0) })
-            } else {
-                zappedEventIds = [:]
-            }
-        }
+        EngagementTracker.saveInteractionState(
+            likedEventIds: likedEventIds,
+            zappedEventIds: zappedEventIds,
+            forKey: loadedSnapshotNpub
+        )
     }
 
     // MARK: - Public API
@@ -1969,36 +1348,25 @@ class FeedService: ObservableObject {
             }
             completed = true
             self.contactLoadingTimeout?.invalidate()
-            // Disconnect all clients including the winner
             clients.forEach { $0.disconnect() }
 
-            var finalPTags = pTags
-            let existingPubkeys = Set(pTags.map { $0[1] })
+            let parsed = ContactManager.parseContactList(
+                pTags: pTags,
+                ownerHex: ownerHex,
+                whitelistedNpubs: ConfigService.shared.config.whitelistedNpubs
+            )
 
-            // Ensure owner is in the list
-            if !existingPubkeys.contains(ownerHex) {
-                finalPTags.append(["p", ownerHex])
-            }
-
-            // Auto-follow whitelisted accounts so they appear in the default feed
-            for npub in ConfigService.shared.config.whitelistedNpubs {
-                if let hex = Bech32.decode(npub)?.hexString, !existingPubkeys.contains(hex) {
-                    finalPTags.append(["p", hex])
-                }
-            }
-
-            self.contactListPTags = finalPTags
-            self.followedPubkeys = finalPTags.map { $0[1] }
+            self.contactListPTags = parsed.pTags
+            self.followedPubkeys = parsed.pubkeys
             self.contactListContent = content
-            self.lastFetchedContactCount = pTags.count
+            self.lastFetchedContactCount = parsed.relayPTagCount
             self.isLoadingContacts = false
             self.hasAttemptedContactLoad = true
-            self.connectionStatus = pTags.isEmpty ? "No contacts found" : "Loaded \(pTags.count) contacts"
+            self.connectionStatus = parsed.relayPTagCount == 0 ? "No contacts found" : "Loaded \(parsed.relayPTagCount) contacts"
 
-            // Automatically snapshot the contact list for backup/recovery
             FollowingBackupService.shared.maybeCreateSnapshot(
                 pubkeys: self.followedPubkeys,
-                pTags: finalPTags,
+                pTags: parsed.pTags,
                 contactListContent: content,
                 forAccountKey: self.currentSnapshotKey()
             )
@@ -2125,11 +1493,8 @@ class FeedService: ObservableObject {
             completed = true
             self.extendedNetworkTimeout?.invalidate()
             clients.forEach { $0.disconnect() }
-            
-            // Sort by mutual count
-            let sorted = mutualCounts.sorted { $0.value > $1.value }
-            // Take top 500
-            self.extendedNetworkPubkeys = Array(sorted.prefix(500).map { $0.key })
+
+            self.extendedNetworkPubkeys = ContactManager.rankExtendedNetwork(mutualCounts: mutualCounts)
             self.extendedNetworkComputedAt = Date()
 
             self.isLoadingExtendedNetwork = false
@@ -2153,17 +1518,12 @@ class FeedService: ObservableObject {
                        let eventDict = json[2] as? [String: Any],
                        let kind = eventDict["kind"] as? Int, kind == 3,
                        let tags = eventDict["tags"] as? [[String]] {
-                        
-                        var localCounts: [String: Int] = [:]
-                        for t in tags {
-                            if t.count >= 2, t[0] == "p" {
-                                let pk = t[1]
-                                if !excludeSet.contains(pk) {
-                                    localCounts[pk, default: 0] += 1
-                                }
-                            }
-                        }
-                        
+
+                        let localCounts = ContactManager.countMutualFollows(
+                            eventTags: tags,
+                            excludeSet: excludeSet
+                        )
+
                         DispatchQueue.main.async {
                             for (pk, count) in localCounts {
                                 mutualCounts[pk, default: 0] += count
@@ -2218,51 +1578,54 @@ class FeedService: ObservableObject {
 
     // MARK: - Follow / Unfollow
 
-    enum FollowActionError: Error {
-        case contactsNotLoaded
-        case alreadyFollowing
-        case cannotUnfollowSelf
-    }
+    /// Backward-compatible typealias — error type now lives in ContactManager.
+    typealias FollowActionError = ContactManager.FollowActionError
 
     @discardableResult
     func followUser(_ pubkey: String) -> Result<Void, FollowActionError> {
-        // Don't publish if contacts haven't loaded yet — would wipe the list
-        guard hasAttemptedContactLoad, !isLoadingContacts else { return .failure(.contactsNotLoaded) }
-        guard !followedPubkeys.contains(pubkey) else { return .failure(.alreadyFollowing) }
-        contactListPTags.append(["p", pubkey])
-        followedPubkeys.append(pubkey)
-        publishContactList()
-        return .success(())
+        switch ContactManager.prepareFollow(
+            pubkey: pubkey,
+            currentPTags: contactListPTags,
+            currentPubkeys: followedPubkeys,
+            hasAttemptedLoad: hasAttemptedContactLoad,
+            isLoading: isLoadingContacts
+        ) {
+        case .failure(let err): return .failure(err)
+        case .success(let result):
+            contactListPTags = result.pTags
+            followedPubkeys = result.pubkeys
+            publishContactList()
+            return .success(())
+        }
     }
 
     @discardableResult
     func unfollowUser(_ pubkey: String) -> Result<Void, FollowActionError> {
-        // Don't publish if contacts haven't loaded yet — would wipe the list
-        guard hasAttemptedContactLoad, !isLoadingContacts else { return .failure(.contactsNotLoaded) }
-        let activeHex = ConfigService.shared.activeAccountHexPubkey
-        guard pubkey != activeHex else { return .failure(.cannotUnfollowSelf) }
-        contactListPTags.removeAll { $0.count >= 2 && $0[1] == pubkey }
-        followedPubkeys.removeAll { $0 == pubkey }
-        publishContactList()
-        return .success(())
+        switch ContactManager.prepareUnfollow(
+            pubkey: pubkey,
+            activeAccountHex: ConfigService.shared.activeAccountHexPubkey,
+            currentPTags: contactListPTags,
+            currentPubkeys: followedPubkeys,
+            hasAttemptedLoad: hasAttemptedContactLoad,
+            isLoading: isLoadingContacts
+        ) {
+        case .failure(let err): return .failure(err)
+        case .success(let result):
+            contactListPTags = result.pTags
+            followedPubkeys = result.pubkeys
+            publishContactList()
+            return .success(())
+        }
     }
 
     private func publishContactList() {
-        // Never publish an empty contact list — that would wipe all follows
         guard !contactListPTags.isEmpty else { return }
-
-        // Safety check: refuse to publish if the list would shrink drastically
-        // compared to what we last fetched from relays (prevents stale data wipes)
-        if lastFetchedContactCount > 10 {
-            let ratio = Double(contactListPTags.count) / Double(lastFetchedContactCount)
-            if ratio < 0.5 {
-                #if DEBUG
-                print("FeedService: BLOCKED contact list publish — \(contactListPTags.count) tags vs \(lastFetchedContactCount) fetched (ratio \(String(format: "%.2f", ratio))). Possible data loss.")
-                #endif
-                return
-            }
+        if ContactManager.shouldBlockPublish(currentTagCount: contactListPTags.count, lastFetchedCount: lastFetchedContactCount) {
+            #if DEBUG
+            print("FeedService: BLOCKED contact list publish — \(contactListPTags.count) tags vs \(lastFetchedContactCount) fetched. Possible data loss.")
+            #endif
+            return
         }
-
         Task {
             guard let event = await NostrService.shared.signEventAsync(kind: 3, content: contactListContent, tags: contactListPTags) else { return }
             NostrService.shared.postEvent(event)
@@ -2897,30 +2260,21 @@ class FeedService: ObservableObject {
             let ownerHex = NostrService.shared.activeHexPubkey
 
             // Self-likes: reactions authored by the owner
-            if !ownerHex.isEmpty && !snap.reactionEvents.isEmpty {
-                let selfLikes = snap.reactionEvents.compactMap { $0.pubkey == ownerHex ? $0.targetId : nil }
-                if !selfLikes.isEmpty {
-                    let before = likedEventIds.count
-                    likedEventIds.formUnion(selfLikes)
-                    if likedEventIds.count > before {
-                        saveInteractionState()
-                    }
+            let selfLikes = EngagementTracker.detectSelfLikes(reactions: snap.reactionEvents, ownerHex: ownerHex)
+            if !selfLikes.isEmpty {
+                let before = likedEventIds.count
+                likedEventIds.formUnion(selfLikes)
+                if likedEventIds.count > before {
+                    saveInteractionState()
                 }
             }
 
             // Merge engagement counts (single dictionary assignment for one @Published update)
-            var updated = noteStats
-            for (targetId, _) in snap.reactionEvents {
-                var s = updated[targetId] ?? NoteStats()
-                s.reactions += 1
-                updated[targetId] = s
-            }
-            for targetId in snap.repostTargets {
-                var s = updated[targetId] ?? NoteStats()
-                s.reposts += 1
-                updated[targetId] = s
-            }
-            noteStats = updated
+            noteStats = EngagementTracker.mergeEngagementCounts(
+                reactions: snap.reactionEvents,
+                repostTargets: snap.repostTargets,
+                currentStats: noteStats
+            )
         }
 
         // Merge raw event JSON entries into the cache for NIP-18 repost embedding

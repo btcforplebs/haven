@@ -4,10 +4,6 @@ import SwiftUI
 
 @MainActor
 class NostrService: ObservableObject {
-    private struct UncheckedSendable<T>: @unchecked Sendable {
-        let value: T
-    }
-
     static let shared = NostrService()
     // These are no longer @Published to prevent background-thread notification crashes.
     // We notify manually on the main thread via the throttled subject.
@@ -129,18 +125,6 @@ class NostrService: ObservableObject {
     @Published var profiles: [String: FeedProfile] = [:]
     private(set) var ownerHexPubkey: String = ""
 
-    /// Lightweight signal published when profile metadata changes, so views can
-    /// re-resolve ONLY the affected rows instead of rebuilding everything.
-    /// `generation` increments on every flush so SwiftUI's `onChange` always
-    /// fires — even when the same pubkey set updates in consecutive batches —
-    /// and `pubkeys` carries exactly which profiles changed. This also fixes a
-    /// long-standing bug where in-place profile updates (same pubkey, new
-    /// name/avatar) never refreshed the feed because they don't change
-    /// `profiles.count`.
-    struct ProfileUpdateSignal: Equatable {
-        var generation: Int = 0
-        var pubkeys: Set<String> = []
-    }
     @Published private(set) var profileUpdates = ProfileUpdateSignal()
     private var pendingProfileUpdates: Set<String> = []
     private var profileUpdateFlushScheduled = false
@@ -260,58 +244,14 @@ class NostrService: ObservableObject {
     }
 
     private func loadProfiles() {
-        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
-        let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
-        let profileURL = havenDir.appendingPathComponent("profiles.json")
-
-        if let data = try? Data(contentsOf: profileURL),
-           let loaded = try? JSONDecoder().decode([String: FeedProfile].self, from: data) {
-            self.profiles = loaded
-            #if DEBUG
-            print("NostrService: Loaded \(profiles.count) profiles from cache")
-            #endif
-        }
-
-        // Load Relay Lists
-        let relayListsURL = havenDir.appendingPathComponent("relay_lists.json")
-        if let data = try? Data(contentsOf: relayListsURL),
-           let loaded = try? JSONDecoder().decode([String: [String]].self, from: data) {
-            self.relayLists = loaded
-            #if DEBUG
-            print("NostrService: Loaded \(relayLists.count) relay lists from cache")
-            #endif
-        }
-
-        // Load Outbox Relay Lists (Kind 10002 write relays)
-        let outboxRelaysURL = havenDir.appendingPathComponent("outbox_relays.json")
-        if let data = try? Data(contentsOf: outboxRelaysURL),
-           let loaded = try? JSONDecoder().decode([String: [String]].self, from: data) {
-            self.outboxRelays = loaded
-            #if DEBUG
-            print("NostrService: Loaded \(outboxRelays.count) outbox relay lists from cache")
-            #endif
-        }
-
-        // Load Server Lists (BUD-03)
-        let serverListsURL = havenDir.appendingPathComponent("server_lists.json")
-        if let data = try? Data(contentsOf: serverListsURL),
-           let loaded = try? JSONDecoder().decode([String: [String]].self, from: data) {
-            self.serverLists = loaded
-            #if DEBUG
-            print("NostrService: Loaded \(serverLists.count) server lists from cache")
-            #endif
-        }
-
-        // Load DM Relay Lists (Kind 10050 - NIP-17)
-        let dmRelayListsURL = havenDir.appendingPathComponent("dm_relay_lists.json")
-        if let data = try? Data(contentsOf: dmRelayListsURL),
-           let loaded = try? JSONDecoder().decode([String: [String]].self, from: data) {
-            self.dmRelayLists = loaded
-            #if DEBUG
-            print("NostrService: Loaded \(dmRelayLists.count) DM relay lists from cache")
-            #endif
-        }
-
+        self.profiles = ProfileRepository.loadProfiles()
+        self.relayLists = ProfileRepository.loadRelayLists()
+        self.outboxRelays = ProfileRepository.loadOutboxRelays()
+        self.serverLists = ProfileRepository.loadServerLists()
+        self.dmRelayLists = ProfileRepository.loadDMRelayLists()
+        #if DEBUG
+        print("NostrService: Loaded \(profiles.count) profiles, \(relayLists.count) relay lists, \(outboxRelays.count) outbox, \(serverLists.count) servers, \(dmRelayLists.count) DM relays from cache")
+        #endif
     }
 
 
@@ -323,83 +263,11 @@ class NostrService: ObservableObject {
         let now = Date()
         if now.timeIntervalSince(lastProfileSave) > profileSaveThrottle {
             lastProfileSave = now
-            saveProfiles()
-            saveRelayLists()
-            saveOutboxRelays()
-            saveDMRelayLists()
-            saveServerLists()
-        }
-    }
-
-    private func saveRelayLists() {
-        let listsCopy = relayLists
-        DispatchQueue.global(qos: .utility).async {
-            guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
-            let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
-            let relayListsURL = havenDir.appendingPathComponent("relay_lists.json")
-
-            if let data = try? JSONEncoder().encode(listsCopy) {
-                try? data.write(to: relayListsURL)
-            }
-        }
-    }
-
-    private func saveOutboxRelays() {
-        let listsCopy = outboxRelays
-        DispatchQueue.global(qos: .utility).async {
-            guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
-            let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
-            let outboxRelaysURL = havenDir.appendingPathComponent("outbox_relays.json")
-
-            if let data = try? JSONEncoder().encode(listsCopy) {
-                try? data.write(to: outboxRelaysURL)
-            }
-        }
-    }
-
-    private func saveDMRelayLists() {
-        let listsCopy = dmRelayLists
-        DispatchQueue.global(qos: .utility).async {
-            guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
-            let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
-            let dmRelayListsURL = havenDir.appendingPathComponent("dm_relay_lists.json")
-
-            if let data = try? JSONEncoder().encode(listsCopy) {
-                try? data.write(to: dmRelayListsURL)
-            }
-        }
-    }
-
-    private func saveServerLists() {
-        let listsCopy = serverLists
-        DispatchQueue.global(qos: .utility).async {
-            guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
-            let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
-            let serverListsURL = havenDir.appendingPathComponent("server_lists.json")
-
-            if let data = try? JSONEncoder().encode(listsCopy) {
-                try? data.write(to: serverListsURL)
-            }
-        }
-    }
-
-    private func saveProfiles() {
-
-        let profilesCopy = profiles
-        DispatchQueue.global(qos: .utility).async {
-            guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return }
-            let havenDir = appSupport.appendingPathComponent("Haven", isDirectory: true)
-
-            // Ensure directory exists
-            try? FileManager.default.createDirectory(at: havenDir, withIntermediateDirectories: true)
-            let profileURL = havenDir.appendingPathComponent("profiles.json")
-
-            if let data = try? JSONEncoder().encode(profilesCopy) {
-                try? data.write(to: profileURL)
-                #if DEBUG
-                // print("NostrService: Saved \(profilesCopy.count) profiles to cache")
-                #endif
-            }
+            ProfileRepository.saveProfiles(profiles)
+            ProfileRepository.saveRelayLists(relayLists)
+            ProfileRepository.saveOutboxRelays(outboxRelays)
+            ProfileRepository.saveDMRelayLists(dmRelayLists)
+            ProfileRepository.saveServerLists(serverLists)
         }
     }
 
@@ -507,18 +375,6 @@ class NostrService: ObservableObject {
 
     // MARK: - Global (NIP-50) Search
 
-    /// Parsed results of a NIP-50 global search.
-    struct GlobalSearchResults {
-        var profiles: [FeedProfile] = []
-        var notes: [FeedNote] = []
-    }
-
-    /// Public NIP-50 search-capable relays queried for global search.
-    private static let nip50SearchRelays = [
-        "wss://relay.nostr.band",
-        "wss://relay.noswhere.com"
-    ]
-
     private var globalSearchClients: [WebSocketClient] = []
     private var globalSearchCancellables = Set<AnyCancellable>()
 
@@ -536,7 +392,7 @@ class NostrService: ObservableObject {
             return
         }
 
-        let relays = Self.nip50SearchRelays.compactMap { URL(string: $0) }
+        let relays = nip50SearchRelays.compactMap { URL(string: $0) }
         guard !relays.isEmpty else {
             completion(GlobalSearchResults())
             return
@@ -817,28 +673,8 @@ class NostrService: ObservableObject {
         // Use the active account's pubkey for the event
         let signingPubkey = signingAsOwner ? ownerHexPubkey : activeHexPubkey
 
-        var finalTags = tags
-        if kind == 1 && !finalTags.contains(where: { $0.first == "client" }) {
-            #if os(iOS)
-            let clientName: String
-            if UIDevice.current.userInterfaceIdiom == .pad {
-                clientName = "Nostr Vault on iPadOS"
-            } else {
-                clientName = "Nostr Vault on iOS"
-            }
-            #else
-            let clientName = "Nostr Vault on MacOS"
-            #endif
-            finalTags.append(["client", clientName])
-        }
-
-        let eventDict: [String: Any] = [
-            "pubkey": signingPubkey,
-            "created_at": Int64(Date().timeIntervalSince1970),
-            "kind": kind,
-            "content": content,
-            "tags": finalTags
-        ]
+        let finalTags = EventPublisher.appendClientTag(to: tags, kind: kind)
+        let eventDict = EventPublisher.buildUnsignedEvent(pubkey: signingPubkey, kind: kind, content: content, tags: finalTags)
 
         guard let jsonData = try? JSONSerialization.data(withJSONObject: eventDict),
               let jsonStr = String(data: jsonData, encoding: .utf8) else {
@@ -846,26 +682,7 @@ class NostrService: ObservableObject {
             return nil
         }
 
-        // Call Go backend for signing
-        guard let signedCStr = SignEventC(UnsafeMutablePointer(mutating: (jsonStr as NSString).utf8String), UnsafeMutablePointer(mutating: (sk as NSString).utf8String)) else {
-            print("NostrService: SignEventC returned nil (Go signing failed)")
-            return nil
-        }
-
-        let signedJsonStr = String(cString: signedCStr)
-        free(signedCStr)
-
-        guard let signedData = signedJsonStr.data(using: .utf8) else {
-            print("NostrService: Failed to convert signed JSON to Data")
-            return nil
-        }
-
-        do {
-            return try JSONDecoder().decode(NostrEvent.self, from: signedData)
-        } catch {
-            print("NostrService: Failed to decode signed event: \(error) — JSON: \(signedJsonStr.prefix(200))")
-            return nil
-        }
+        return EventPublisher.signWithGoBackend(eventJSON: jsonStr, secretKey: sk)
     }
 
     /// Async variant of signEvent that supports both local key and NIP-46 remote signing.
@@ -884,28 +701,8 @@ class NostrService: ObservableObject {
                 return nil
             }
 
-            var finalTags = tags
-            if kind == 1 && !finalTags.contains(where: { $0.first == "client" }) {
-                #if os(iOS)
-                let clientName: String
-                if UIDevice.current.userInterfaceIdiom == .pad {
-                    clientName = "Nostr Vault on iPadOS"
-                } else {
-                    clientName = "Nostr Vault on iOS"
-                }
-                #else
-                let clientName = "Nostr Vault on MacOS"
-                #endif
-                finalTags.append(["client", clientName])
-            }
-
-            let eventDict: [String: Any] = [
-                "pubkey": signingPubkey,
-                "created_at": Int64(Date().timeIntervalSince1970),
-                "kind": kind,
-                "content": content,
-                "tags": finalTags
-            ]
+            let finalTags = EventPublisher.appendClientTag(to: tags, kind: kind)
+            let eventDict = EventPublisher.buildUnsignedEvent(pubkey: signingPubkey, kind: kind, content: content, tags: finalTags)
 
             guard let jsonData = try? JSONSerialization.data(withJSONObject: eventDict),
                   let jsonStr = String(data: jsonData, encoding: .utf8) else {
@@ -985,29 +782,8 @@ class NostrService: ObservableObject {
         }
 
         let signingPubkey = signingAsOwner ? ownerHexPubkey : activeHexPubkey
-
-        var finalTags = tags
-        if kind == 1 && !finalTags.contains(where: { $0.first == "client" }) {
-            #if os(iOS)
-            let clientName: String
-            if UIDevice.current.userInterfaceIdiom == .pad {
-                clientName = "Nostr Vault on iPadOS"
-            } else {
-                clientName = "Nostr Vault on iOS"
-            }
-            #else
-            let clientName = "Nostr Vault on MacOS"
-            #endif
-            finalTags.append(["client", clientName])
-        }
-
-        let eventDict: [String: Any] = [
-            "pubkey": signingPubkey,
-            "created_at": Int64(Date().timeIntervalSince1970),
-            "kind": kind,
-            "content": content,
-            "tags": finalTags
-        ]
+        let finalTags = EventPublisher.appendClientTag(to: tags, kind: kind)
+        let eventDict = EventPublisher.buildUnsignedEvent(pubkey: signingPubkey, kind: kind, content: content, tags: finalTags)
 
         guard let jsonData = try? JSONSerialization.data(withJSONObject: eventDict),
               let jsonStr = String(data: jsonData, encoding: .utf8) else {
@@ -1015,30 +791,7 @@ class NostrService: ObservableObject {
             return nil
         }
 
-        guard let signedCStr = MineAndSignEventC(
-            UnsafeMutablePointer(mutating: (jsonStr as NSString).utf8String),
-            UnsafeMutablePointer(mutating: (sk as NSString).utf8String),
-            Int32(difficulty),
-            Int32(maxAttempts)
-        ) else {
-            print("NostrService: MineAndSignEventC returned nil")
-            return nil
-        }
-
-        let signedJsonStr = String(cString: signedCStr)
-        free(signedCStr)
-
-        guard let signedData = signedJsonStr.data(using: .utf8) else {
-            print("NostrService: Failed to convert signed JSON to Data")
-            return nil
-        }
-
-        do {
-            return try JSONDecoder().decode(NostrEvent.self, from: signedData)
-        } catch {
-            print("NostrService: Failed to decode signed event: \(error) — JSON: \(signedJsonStr.prefix(200))")
-            return nil
-        }
+        return EventPublisher.mineAndSignWithGoBackend(eventJSON: jsonStr, secretKey: sk, difficulty: difficulty, maxAttempts: maxAttempts)
     }
 
     /// Async variant of mineAndSignEvent that supports NIP-46 remote signing.
@@ -1860,92 +1613,29 @@ class NostrService: ObservableObject {
             }
 
             if event.kind == 0 {
-                // Handling Kind 0 (Metadata)
-                if let metadata = try? JSONSerialization.jsonObject(with: event.content.data(using: .utf8) ?? Data()) as? [String: Any] {
-                    let name = metadata["name"] as? String
-                    let displayName = metadata["display_name"] as? String
-                    let picture = (metadata["picture"] as? String).flatMap { URL(string: $0) }
-                    let nip05 = metadata["nip05"] as? String
-                    let about = metadata["about"] as? String
-                    let lud16 = metadata["lud16"] as? String
-                    let lud06 = metadata["lud06"] as? String
-                    let website = metadata["website"] as? String
-
-                    DispatchQueue.main.async { [weak self] in
-                        guard let self = self else { return }
-                        var profile = self.profiles[event.pubkey] ?? FeedProfile(pubkey: event.pubkey)
-
-                        var changed = false
-                        if profile.name != name {
-                            profile.name = name
-                            changed = true
-                        }
-                        if profile.displayName != displayName {
-                            profile.displayName = displayName
-                            changed = true
-                        }
-                        if profile.pictureURL != picture {
-                            profile.pictureURL = picture
-                            changed = true
-                        }
-                        if profile.nip05 != nip05 {
-                            profile.nip05 = nip05
-                            changed = true
-                        }
-                        if profile.about != about {
-                            profile.about = about
-                            changed = true
-                        }
-                        if profile.lud16 != lud16 {
-                            profile.lud16 = lud16
-                            changed = true
-                        }
-                        if profile.lud06 != lud06 {
-                            profile.lud06 = lud06
-                            changed = true
-                        }
-                        if profile.website != website {
-                            profile.website = website
-                            changed = true
-                        }
-
-                        if changed {
-                            self.profiles[event.pubkey] = profile
-                            self.profilesInFlight.remove(event.pubkey)
-                            self.saveProfilesThrottled()
-                            self.eventUpdateSubject.send()
-                            self.noteProfileUpdated(event.pubkey)
-                        }
-                    }
-                }
-                return // Metadata doesn't need to be in the events list
-            }
-
-            if event.kind == 10002 {
-                // NIP-65: ["r", relay_url, "read" | "write"], no marker = both
-                var inboxRelays: [String] = []
-                var writeRelays: [String] = []
-                for tag in event.tags {
-                    if tag.count >= 2 && tag[0] == "r" {
-                        let type = tag.count >= 3 ? tag[2] : ""
-                        if type == "read" || type == "" {
-                            inboxRelays.append(tag[1])
-                        }
-                        if type == "write" || type == "" {
-                            writeRelays.append(tag[1])
-                        }
-                    }
-                }
-
+                let content = event.content
                 let pubkey = event.pubkey
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
-                    if !inboxRelays.isEmpty {
-                        self.relayLists[pubkey] = inboxRelays
+                    if let result = ProfileRepository.parseMetadataContent(content, pubkey: pubkey, existingProfile: self.profiles[pubkey]),
+                       result.changed {
+                        self.profiles[pubkey] = result.profile
+                        self.profilesInFlight.remove(pubkey)
+                        self.saveProfilesThrottled()
+                        self.eventUpdateSubject.send()
+                        self.noteProfileUpdated(pubkey)
                     }
-                    if !writeRelays.isEmpty {
-                        self.outboxRelays[pubkey] = writeRelays
-                    }
+                }
+                return
+            }
+
+            if event.kind == 10002 {
+                let parsed = ProfileRepository.parseRelayListTags(event.tags)
+                let pubkey = event.pubkey
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    if !parsed.inbox.isEmpty { self.relayLists[pubkey] = parsed.inbox }
+                    if !parsed.write.isEmpty { self.outboxRelays[pubkey] = parsed.write }
                     self.relaysInFlight.remove(pubkey)
                     self.saveProfilesThrottled()
                 }
@@ -1953,20 +1643,11 @@ class NostrService: ObservableObject {
             }
 
             if event.kind == 10050 {
-                // NIP-17: DM relay preferences — ["r", relay_url]
-                var dmRelays: [String] = []
-                for tag in event.tags {
-                    if tag.count >= 2 && tag[0] == "r" {
-                        dmRelays.append(tag[1])
-                    }
-                }
-
+                let dmRelays = ProfileRepository.parseDMRelayListTags(event.tags)
                 let pubkey = event.pubkey
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
-                    if !dmRelays.isEmpty {
-                        self.dmRelayLists[pubkey] = dmRelays
-                    }
+                    if !dmRelays.isEmpty { self.dmRelayLists[pubkey] = dmRelays }
                     self.dmRelaysInFlight.remove(pubkey)
                     self.saveProfilesThrottled()
                 }
@@ -1974,64 +1655,38 @@ class NostrService: ObservableObject {
             }
 
             if event.kind == 10063 {
-                // BUD-03: Parse ["server", url] tags for Blossom server list
-                var servers: [String] = []
-                for tag in event.tags {
-                    if tag.count >= 2 && tag[0] == "server" {
-                        servers.append(tag[1])
-                    }
-                }
-
+                let servers = ProfileRepository.parseServerListTags(event.tags)
                 let pubkey = event.pubkey
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
-                    if !servers.isEmpty {
-                        self.serverLists[pubkey] = servers
-                    }
+                    if !servers.isEmpty { self.serverLists[pubkey] = servers }
                     self.saveProfilesThrottled()
                 }
                 return
             }
 
             if event.kind == 10000 {
-                // Parse Kind 10000 (Mute List)
-                var blockedHexKeys: [String] = []
-                for tag in event.tags {
-                    if tag.count >= 2 && tag[0] == "p" {
-                        blockedHexKeys.append(tag[1])
-                    }
-                }
-                
-                // Find which of our accounts matches this event's pubkey
+                let blockedHexKeys = ProfileRepository.parseMuteListPTags(event.tags)
                 let allNpubs = ConfigService.shared.allAccountNpubs
                 if let matchingNpub = allNpubs.first(where: { npub in
                     Bech32.decode(npub)?.hexString == event.pubkey
                 }) {
-                    // Map hex keys to npubs
-                    let blockedNpubs = blockedHexKeys.compactMap { hexKey -> String? in
-                        guard let data = Bech32.hexToData(hexKey) else { return nil }
-                        return Bech32.encode(hrp: "npub", data: data)
-                    }
-                    
+                    let blockedNpubs = ProfileRepository.hexKeysToNpubs(blockedHexKeys)
+                    let eventTimestamp = event.created_at
                     DispatchQueue.main.async {
                         let currentBlocks = ConfigService.shared.config.blockedNpubsPerAccount[matchingNpub] ?? []
                         let lastSync = ConfigService.shared.config.blockedNpubsLastSyncTimestamp[matchingNpub] ?? 0
-                        
-                        if event.created_at >= lastSync && Set(currentBlocks) != Set(blockedNpubs) {
+
+                        if eventTimestamp >= lastSync && Set(currentBlocks) != Set(blockedNpubs) {
                             ConfigService.shared.config.blockedNpubsPerAccount[matchingNpub] = blockedNpubs
-                            ConfigService.shared.config.blockedNpubsLastSyncTimestamp[matchingNpub] = event.created_at
-                            
-                            // If this is the owner's account, sync to Go relay's blacklistedNpubs and save
+                            ConfigService.shared.config.blockedNpubsLastSyncTimestamp[matchingNpub] = eventTimestamp
                             if matchingNpub == ConfigService.shared.config.ownerNpub {
                                 ConfigService.shared.config.blacklistedNpubs = blockedNpubs
                             }
-                            
                             ConfigService.shared.save()
-                            
                             #if DEBUG
                             print("NostrService: Synced \(blockedNpubs.count) blocks from Kind 10000 for \(matchingNpub.prefix(8))")
                             #endif
-                            
                             NotificationCenter.default.post(name: NSNotification.Name("BlockedAccountsUpdated"), object: nil)
                         }
                     }
@@ -2460,20 +2115,11 @@ class NostrService: ObservableObject {
     }
 
     static func mimeFromExtension(_ url: URL) -> String? {
-        SupportedMediaFormats.mime(forExtension: url.pathExtension)
+        EventPublisher.mimeFromExtension(url)
     }
 
     nonisolated static func mediaTypeFromMime(_ mime: String?, url: URL) -> MediaItem.MediaType {
-        if let mime = mime?.lowercased() {
-            if mime.hasPrefix("video/") { return .video }
-            if mime.hasPrefix("audio/") { return .audio }
-            if mime.hasPrefix("image/") { return .image }
-            if mime != "application/octet-stream" { return .unknown }
-        }
-        // Fallback to extension-based detection
-        if url.isVideo { return .video }
-        if url.isAudio { return .audio }
-        return .image
+        EventPublisher.mediaTypeFromMime(mime, url: url)
     }
 
     /// Sniff the first 64 bytes of a remote URL via HTTP Range request to detect mime type.
@@ -2543,61 +2189,3 @@ class NostrService: ObservableObject {
     }
 }
 
-/// Thread-safe accumulator for NIP-50 global search results. EVENT messages
-/// from multiple relays are deduplicated by id (notes) / pubkey (profiles).
-final class GlobalSearchCollector {
-    private let lock = NSLock()
-    private var notes: [String: FeedNote] = [:]
-    private var profiles: [String: FeedProfile] = [:]
-
-    func ingest(message: String, subId: String) {
-        guard let data = message.data(using: .utf8),
-              let arr = try? JSONSerialization.jsonObject(with: data) as? [Any],
-              arr.count >= 3,
-              let type = arr[0] as? String, type == "EVENT",
-              let sid = arr[1] as? String, sid == subId,
-              let ev = arr[2] as? [String: Any],
-              let id = ev["id"] as? String,
-              let pubkey = ev["pubkey"] as? String,
-              let kind = (ev["kind"] as? NSNumber)?.intValue,
-              let content = ev["content"] as? String else { return }
-        let createdAt = (ev["created_at"] as? NSNumber)?.int64Value ?? 0
-        let tags = (ev["tags"] as? [[String]]) ?? []
-
-        lock.lock()
-        defer { lock.unlock() }
-
-        if kind == 1 {
-            guard notes[id] == nil else { return }
-            notes[id] = FeedNote(
-                id: id,
-                pubkey: pubkey,
-                content: content,
-                createdAt: Date(timeIntervalSince1970: TimeInterval(createdAt)),
-                tags: tags,
-                kind: kind
-            )
-        } else if kind == 0 {
-            guard let metadata = try? JSONSerialization.jsonObject(with: content.data(using: .utf8) ?? Data()) as? [String: Any] else { return }
-            var profile = FeedProfile(pubkey: pubkey)
-            profile.name = metadata["name"] as? String
-            profile.displayName = metadata["display_name"] as? String
-            profile.pictureURL = (metadata["picture"] as? String).flatMap { URL(string: $0) }
-            profile.nip05 = metadata["nip05"] as? String
-            profile.about = metadata["about"] as? String
-            profile.lud16 = metadata["lud16"] as? String
-            profile.lud06 = metadata["lud06"] as? String
-            profile.website = metadata["website"] as? String
-            profiles[pubkey] = profile
-        }
-    }
-
-    func snapshot() -> NostrService.GlobalSearchResults {
-        lock.lock()
-        defer { lock.unlock() }
-        var results = NostrService.GlobalSearchResults()
-        results.notes = notes.values.sorted { $0.createdAt > $1.createdAt }
-        results.profiles = Array(profiles.values)
-        return results
-    }
-}

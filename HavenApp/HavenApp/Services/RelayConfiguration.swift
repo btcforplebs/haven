@@ -1,0 +1,174 @@
+import Foundation
+
+/// Relay environment configuration — no Combine, no SwiftUI.
+/// Portable: same key-value config structure applies on Android
+/// (loaded via Properties / BuildConfig instead of .env).
+enum RelayConfiguration {
+
+    /// Top-level subdirectories created under the relay data root.
+    static let dataSubdirs = ["data", "blossom", "cache", "db"]
+
+    /// Individual database subdirectories under db/.
+    static let dbSubdirs = ["private", "chat", "outbox", "inbox", "blossom"]
+
+    /// Create all required relay directories under the given root.
+    static func ensureDirectories(under root: URL) {
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        for sub in dataSubdirs {
+            try? FileManager.default.createDirectory(
+                at: root.appendingPathComponent(sub),
+                withIntermediateDirectories: true
+            )
+        }
+        for db in dbSubdirs {
+            try? FileManager.default.createDirectory(
+                at: root.appendingPathComponent("db/\(db)"),
+                withIntermediateDirectories: true
+            )
+        }
+    }
+
+    /// Build the full environment dictionary from a HavenConfig.
+    /// `relayDataDir` is passed explicitly so this function has no
+    /// dependency on ConfigService.shared.
+    static func generateEnvDictionary(config: HavenConfig, relayDataDir: URL) -> [String: String] {
+        let cleanNpub = config.ownerNpub.trimmingCharacters(in: .whitespacesAndNewlines)
+            .filter { "abcdefghijklmnopqrstuvwxyz0123456789".contains($0.lowercased()) }
+
+        #if os(iOS)
+        let enableTLS = "1"
+        #else
+        let enableTLS = "0"
+        #endif
+        let relayBindAddress = config.allowNetworkAccess ? "::" : "127.0.0.1"
+
+        return [
+            "OWNER_NPUB": cleanNpub,
+            "RELAY_URL": config.relayURL,
+            "RELAY_PORT": String(config.relayPort),
+            "RELAY_BIND_ADDRESS": relayBindAddress,
+            "DB_ENGINE": config.dbEngine,
+            "LMDB_MAPSIZE": "0",
+            "DATABASE_PATH": relayDataDir.appendingPathComponent("data").standardized.path + "/",
+            "BLOSSOM_PATH": relayDataDir.appendingPathComponent(config.blossomPath).standardized.path + "/",
+            "HAVEN_LOG_LEVEL": config.logLevel,
+            "LOG_FORMAT": "$$host $$remote_addr - $$remote_user [$$time_local] \"$$request\" $$status $$body_bytes_sent \"$$http_referer\" \"$$http_user_agent\" \"$$upstream_addr\"",
+            "TZ": "UTC",
+
+            // Whitelisted Npubs
+            "WHITELISTED_NPUBS_FILE": config.whitelistedNpubsFile,
+
+            // Blacklisted Npubs
+            "BLACKLISTED_NPUBS_FILE": config.blacklistedNpubsFile,
+
+            // Private Relay
+            "PRIVATE_RELAY_NAME": config.privateRelayName,
+            "PRIVATE_RELAY_NPUB": config.ownerNpub,
+            "PRIVATE_RELAY_DESCRIPTION": config.privateRelayDescription,
+            "PRIVATE_RELAY_ICON": config.privateRelayIcon,
+            "PRIVATE_RELAY_EVENT_IP_LIMITER_TOKENS_PER_INTERVAL": "50",
+            "PRIVATE_RELAY_EVENT_IP_LIMITER_INTERVAL": "1",
+            "PRIVATE_RELAY_EVENT_IP_LIMITER_MAX_TOKENS": "100",
+            "PRIVATE_RELAY_ALLOW_EMPTY_FILTERS": "true",
+            "PRIVATE_RELAY_ALLOW_COMPLEX_FILTERS": "true",
+            "PRIVATE_RELAY_CONNECTION_RATE_LIMITER_TOKENS_PER_INTERVAL": "3",
+            "PRIVATE_RELAY_CONNECTION_RATE_LIMITER_INTERVAL": "5",
+            "PRIVATE_RELAY_CONNECTION_RATE_LIMITER_MAX_TOKENS": "9",
+
+            // Chat Relay
+            "CHAT_RELAY_NAME": config.chatRelayName,
+            "CHAT_RELAY_NPUB": config.ownerNpub,
+            "CHAT_RELAY_DESCRIPTION": config.chatRelayDescription,
+            "CHAT_RELAY_ICON": config.chatRelayIcon,
+            "CHAT_RELAY_WOT_DEPTH": String(config.chatRelayWotDepth),
+            "CHAT_RELAY_WOT_REFRESH_INTERVAL_HOURS": String(config.chatRelayWotRefreshHours),
+            "WOT_REFRESH_INTERVAL": config.wotRefreshInterval,
+            "WOT_DEPTH": String(config.chatRelayWotDepth),
+            "WOT_MINIMUM_FOLLOWERS": String(config.chatRelayMinFollowers),
+            "CHAT_RELAY_MINIMUM_FOLLOWERS": String(config.chatRelayMinFollowers),
+            "CHAT_RELAY_EVENT_IP_LIMITER_TOKENS_PER_INTERVAL": "50",
+            "CHAT_RELAY_EVENT_IP_LIMITER_INTERVAL": "1",
+            "CHAT_RELAY_EVENT_IP_LIMITER_MAX_TOKENS": "100",
+            "CHAT_RELAY_ALLOW_EMPTY_FILTERS": "true",
+            "CHAT_RELAY_ALLOW_COMPLEX_FILTERS": "false",
+            "CHAT_RELAY_CONNECTION_RATE_LIMITER_TOKENS_PER_INTERVAL": "3",
+            "CHAT_RELAY_CONNECTION_RATE_LIMITER_INTERVAL": "3",
+            "CHAT_RELAY_CONNECTION_RATE_LIMITER_MAX_TOKENS": "9",
+
+            // Outbox Relay
+            "OUTBOX_RELAY_NAME": config.outboxRelayName,
+            "OUTBOX_RELAY_NPUB": config.ownerNpub,
+            "OUTBOX_RELAY_DESCRIPTION": config.outboxRelayDescription,
+            "OUTBOX_RELAY_ICON": config.outboxRelayIcon,
+            "OUTBOX_MAX_EVENTS_PER_MINUTE": String(config.outboxMaxEventsPerMinute),
+            "OUTBOX_MAX_CONNECTIONS_PER_MINUTE": String(config.outboxMaxConnectionsPerMinute),
+            "OUTBOX_RELAY_EVENT_IP_LIMITER_TOKENS_PER_INTERVAL": "10",
+            "OUTBOX_RELAY_EVENT_IP_LIMITER_INTERVAL": "60",
+            "OUTBOX_RELAY_EVENT_IP_LIMITER_MAX_TOKENS": "100",
+            "OUTBOX_RELAY_ALLOW_EMPTY_FILTERS": "true",
+            "OUTBOX_RELAY_ALLOW_COMPLEX_FILTERS": "false",
+            "OUTBOX_RELAY_CONNECTION_RATE_LIMITER_TOKENS_PER_INTERVAL": "3",
+            "OUTBOX_RELAY_CONNECTION_RATE_LIMITER_INTERVAL": "1",
+            "OUTBOX_RELAY_CONNECTION_RATE_LIMITER_MAX_TOKENS": "9",
+
+            // Inbox Relay
+            "INBOX_RELAY_NAME": config.inboxRelayName,
+            "INBOX_RELAY_NPUB": config.ownerNpub,
+            "INBOX_RELAY_DESCRIPTION": config.inboxRelayDescription,
+            "INBOX_RELAY_ICON": config.inboxRelayIcon,
+            "INBOX_PULL_INTERVAL_SECONDS": String(config.inboxPullIntervalSeconds),
+            "INBOX_RELAY_EVENT_IP_LIMITER_TOKENS_PER_INTERVAL": "10",
+            "INBOX_RELAY_EVENT_IP_LIMITER_INTERVAL": "1",
+            "INBOX_RELAY_EVENT_IP_LIMITER_MAX_TOKENS": "20",
+            "INBOX_RELAY_ALLOW_EMPTY_FILTERS": "true",
+            "INBOX_RELAY_ALLOW_COMPLEX_FILTERS": "false",
+            "INBOX_RELAY_CONNECTION_RATE_LIMITER_TOKENS_PER_INTERVAL": "3",
+            "INBOX_RELAY_CONNECTION_RATE_LIMITER_INTERVAL": "1",
+            "INBOX_RELAY_CONNECTION_RATE_LIMITER_MAX_TOKENS": "9",
+
+            // Import
+            "IMPORT_START_DATE": config.importStartDate,
+            "IMPORT_SEED_RELAYS_FILE": config.importSeedRelaysFile,
+            "IMPORT_QUERY_INTERVAL_SECONDS": "600",
+            "IMPORT_OWNER_NOTES_FETCH_TIMEOUT_SECONDS": "300",
+            "IMPORT_TAGGED_NOTES_FETCH_TIMEOUT_SECONDS": "600",
+
+            // DM Relays
+            "DM_RELAYS_FILE": "relays_dm.json",
+
+            // Backup
+            "BACKUP_PROVIDER": config.backupProvider,
+            "BACKUP_INTERVAL_HOURS": String(config.backupIntervalHours),
+            "S3_ACCESS_KEY_ID": config.s3AccessKeyId,
+            "S3_SECRET_KEY": config.s3SecretKey,
+            "S3_ENDPOINT": config.s3Endpoint,
+            "S3_REGION": config.s3Region,
+            "S3_BUCKET_NAME": config.s3BucketName,
+
+            // Blastr
+            "BLASTR_RELAYS_FILE": config.blastrRelaysFile,
+
+            // WoT
+            "WOT_FETCH_TIMEOUT_SECONDS": "60",
+
+            // TLS
+            "HAVEN_ENABLE_TLS": enableTLS,
+        ]
+    }
+
+    /// Format an environment dictionary as a .env file string.
+    static func formatEnvFile(from envDict: [String: String]) -> String {
+        var content = ""
+        for (key, value) in envDict.sorted(by: { $0.key < $1.key }) {
+            if value.contains(" ") || value.contains("\"") {
+                let escapedValue = value.replacingOccurrences(of: "\"", with: "\\\"")
+                content += "\(key)=\"\(escapedValue)\"\n"
+            } else if value.isEmpty {
+                content += "\(key)=\"\"\n"
+            } else {
+                content += "\(key)=\(value)\n"
+            }
+        }
+        return content
+    }
+}

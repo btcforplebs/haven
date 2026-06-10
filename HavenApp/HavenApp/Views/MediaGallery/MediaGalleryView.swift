@@ -229,7 +229,7 @@ struct MediaGalleryView: View {
     @ViewBuilder
     var listContent: some View {
         VStack(spacing: 0) {
-            mediaGrid
+            mediaContent
                 .animation(.none, value: mediaSourceFilter)
         }
         .padding(.vertical, 16)

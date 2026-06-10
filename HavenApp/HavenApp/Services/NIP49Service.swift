@@ -148,175 +148,38 @@ struct NIP49Service {
         return decoded.data.hex
     }
 
-    // MARK: - Keychain Storage for Password
+    // MARK: - Keychain Storage (delegates to CredentialStore)
 
-    /// Keychain service identifier
-    private static let keychainService = "com.havenapp.nip49"
-    private static let keychainAccount = "owner-key-password"
-
-    /// Stores the NIP-49 password securely in Keychain
-    /// - Parameter password: The password to store
-    /// - Returns: True if storage was successful
+    @discardableResult
     static func storePasswordInKeychain(_ password: String) -> Bool {
-        guard let passwordData = password.data(using: .utf8) else { return false }
-
-        // First, try to delete any existing item
-        let deleteQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount
-        ]
-        SecItemDelete(deleteQuery as CFDictionary)
-
-        // Add the new item
-        let addQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount,
-            kSecValueData as String: passwordData,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        ]
-
-        let status = SecItemAdd(addQuery as CFDictionary, nil)
-
-        if status == errSecSuccess {
-            #if DEBUG
-            print("NIP49Service: Password stored successfully in Keychain")
-            #endif
-            return true
-        } else {
-            #if DEBUG
-            print("NIP49Service: Failed to store password in Keychain: \(status)")
-            #endif
-            return false
-        }
+        CredentialStore.storeOwnerPassword(password)
     }
 
-    /// Retrieves the NIP-49 password from Keychain
-    /// - Returns: The stored password, or nil if not found
     static func getPasswordFromKeychain() -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        if status == errSecSuccess, let passwordData = result as? Data {
-            return String(data: passwordData, encoding: .utf8)
-        } else if status == errSecItemNotFound {
-            #if DEBUG
-            print("NIP49Service: No password found in Keychain")
-            #endif
-        } else {
-            #if DEBUG
-            print("NIP49Service: Error retrieving password from Keychain: \(status)")
-            #endif
-        }
-
-        return nil
+        CredentialStore.getOwnerPassword()
     }
 
-    /// Deletes the NIP-49 password from Keychain
-    /// - Returns: True if deletion was successful
+    @discardableResult
     static func deletePasswordFromKeychain() -> Bool {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: keychainAccount
-        ]
-
-        let status = SecItemDelete(query as CFDictionary)
-
-        if status == errSecSuccess || status == errSecItemNotFound {
-            #if DEBUG
-            print("NIP49Service: Password deleted from Keychain")
-            #endif
-            return true
-        } else {
-            #if DEBUG
-            print("NIP49Service: Failed to delete password from Keychain: \(status)")
-            #endif
-            return false
-        }
+        CredentialStore.deleteOwnerPassword()
     }
 
-    /// Checks if a password is stored in Keychain
-    /// - Returns: True if password exists
     static func hasStoredPassword() -> Bool {
-        return getPasswordFromKeychain() != nil
+        CredentialStore.hasOwnerPassword()
     }
 
-    // MARK: - Per-Account Keychain Storage (whitelisted accounts)
-
-    /// Returns the Keychain account identifier namespaced by npub
-    private static func keychainAccountId(forNpub npub: String) -> String {
-        return "account-key-password-\(npub)"
-    }
-
-    /// Stores the NIP-49 password for a specific npub in Keychain
     @discardableResult
     static func storePasswordInKeychain(_ password: String, forNpub npub: String) -> Bool {
-        guard let passwordData = password.data(using: .utf8) else { return false }
-        let accountId = keychainAccountId(forNpub: npub)
-
-        let deleteQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: accountId
-        ]
-        SecItemDelete(deleteQuery as CFDictionary)
-
-        let addQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: accountId,
-            kSecValueData as String: passwordData,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
-        ]
-
-        let status = SecItemAdd(addQuery as CFDictionary, nil)
-        #if DEBUG
-        print("NIP49Service: Store password for npub \(npub.prefix(12))... status=\(status == errSecSuccess ? "ok" : "\(status)")")
-        #endif
-        return status == errSecSuccess
+        CredentialStore.storePassword(password, forNpub: npub)
     }
 
-    /// Retrieves the NIP-49 password for a specific npub from Keychain
     static func getPasswordFromKeychain(forNpub npub: String) -> String? {
-        let accountId = keychainAccountId(forNpub: npub)
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: accountId,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-
-        if status == errSecSuccess, let passwordData = result as? Data {
-            return String(data: passwordData, encoding: .utf8)
-        }
-        return nil
+        CredentialStore.getPassword(forNpub: npub)
     }
 
-    /// Removes the stored password for a specific npub from Keychain
     @discardableResult
     static func deletePasswordFromKeychain(forNpub npub: String) -> Bool {
-        let accountId = keychainAccountId(forNpub: npub)
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: accountId
-        ]
-        let status = SecItemDelete(query as CFDictionary)
-        return status == errSecSuccess || status == errSecItemNotFound
+        CredentialStore.deletePassword(forNpub: npub)
     }
 }
 

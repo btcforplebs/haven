@@ -296,7 +296,7 @@ class ConfigService: ObservableObject {
         try? FileManager.default.createDirectory(at: relayDataDir, withIntermediateDirectories: true)
         
         // Create .env file - handled by RelayProcessManager on first run/setup
-        let envContent = RelayProcessManager.shared.generateMinimalEnv(config: config)
+        let envContent = RelayConfiguration.formatEnvFile(from: RelayConfiguration.generateEnvDictionary(config: config, relayDataDir: relayDataDir))
         let envURL = relayDataDir.appendingPathComponent(".env")
         try? envContent.write(to: envURL, atomically: true, encoding: .utf8)
         
@@ -506,7 +506,7 @@ class ConfigService: ObservableObject {
     func setCredential(nsec: String, password: String, forNpub npub: String) throws {
         let ncryptsec = try NIP49Service.encrypt(nsec: nsec, password: password)
         config.accountCredentials[npub] = ncryptsec
-        NIP49Service.storePasswordInKeychain(password, forNpub: npub)
+        CredentialStore.storePassword(password, forNpub: npub)
         save()
     }
     
@@ -516,7 +516,7 @@ class ConfigService: ObservableObject {
         guard let ncryptsec = config.accountCredentials[npub], !ncryptsec.isEmpty else {
             return nil
         }
-        guard let password = NIP49Service.getPasswordFromKeychain(forNpub: npub) else {
+        guard let password = CredentialStore.getPassword(forNpub: npub) else {
             return nil
         }
         let nsec = try NIP49Service.decrypt(ncryptsec: ncryptsec, password: password)
@@ -540,7 +540,7 @@ class ConfigService: ObservableObject {
     /// Removes the stored credential and Keychain password for a whitelisted account.
     func removeCredential(forNpub npub: String) {
         config.accountCredentials.removeValue(forKey: npub)
-        NIP49Service.deletePasswordFromKeychain(forNpub: npub)
+        CredentialStore.deletePassword(forNpub: npub)
         save()
     }
 

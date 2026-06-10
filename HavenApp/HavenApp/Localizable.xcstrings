@@ -659,6 +659,9 @@
     "Enter a domain to make your relay publicly accessible. Leave blank for local-only. Accepts any format (https://, wss://, or bare domain)." : {
 
     },
+    "Enter a valid npub or NIP-05 identifier" : {
+
+    },
     "Enter an npub to block it. Blocked profiles cannot interact with you." : {
 
     },
@@ -669,6 +672,9 @@
 
     },
     "Enter your Mac relay in any format — https://, wss://, or bare domain. All derived addresses below are computed automatically." : {
+
+    },
+    "Enter your npub, NIP-05 (user@domain), or scan a QR code." : {
 
     },
     "Error" : {
@@ -1196,9 +1202,6 @@
     "Force Restart" : {
 
     },
-    "Format: YYYY-MM-DD. Notes will be fetched starting from this date." : {
-
-    },
     "Fund from Lightning" : {
 
     },
@@ -1236,6 +1239,9 @@
 
     },
     "I will NOT send to a hardware wallet or exchange" : {
+
+    },
+    "Identity" : {
 
     },
     "If you sweep to a Ledger, Trezor, Coldcard, Coinbase, Kraken, or ANY custodial service, your Nostr npub is permanently tied to that wallet on the public blockchain. There is no way to reverse this." : {
@@ -1515,6 +1521,9 @@
     "Notes & Replies" : {
 
     },
+    "Notes will be fetched starting from this date." : {
+
+    },
     "Npub" : {
 
     },
@@ -1705,6 +1714,12 @@
 
     },
     "Request deletion of this post? Not all relays honor NIP-09 deletion requests." : {
+
+    },
+    "Resolved: %@..." : {
+
+    },
+    "Resolving NIP-05..." : {
 
     },
     "Restart Required" : {
@@ -1951,6 +1966,7 @@
       }
     },
     "setup.identity.browseHint" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {
@@ -3154,6 +3170,9 @@
 
     },
     "Users" : {
+
+    },
+    "Valid public key" : {
 
     },
     "Version %@" : {

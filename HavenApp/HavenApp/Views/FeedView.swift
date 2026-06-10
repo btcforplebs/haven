@@ -597,18 +597,15 @@ struct FeedView: View {
                 feedService.resumeFeed()
                 return
             }
-            // Start feed immediately when running, even if still booting.
-            // localRelayURL returns nil during boot so no WebSocket errors occur;
-            // external relays are contacted right away instead of waiting ~3 minutes.
-            if feedService.notes.isEmpty && !feedService.isLoadingContacts {
-                // Cold launch: restore the cached feed instantly when available
-                // (jump right back in + background top-up), else a full cold load.
+            // Wait for relay to be ready before loading feed to avoid OOM
+            // from relay + feed + media all starting simultaneously.
+            if relayManager.isReadyForConnections && feedService.notes.isEmpty && !feedService.isLoadingContacts {
                 feedService.startInitialLoad()
             }
         }
-        .onChange(of: relayManager.isRunning) { _, running in
-            if running && !feedService.isPaused && feedService.notes.isEmpty && !feedService.isLoadingContacts && !feedService.isLoadingFeed {
-                feedService.refresh()
+        .onChange(of: relayManager.isReadyForConnections) { _, ready in
+            if ready && !feedService.isPaused && feedService.notes.isEmpty && !feedService.isLoadingContacts && !feedService.isLoadingFeed {
+                feedService.startInitialLoad()
             }
         }
         .onChange(of: relayManager.isBooting) { _, booting in

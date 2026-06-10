@@ -1,4 +1,8 @@
 import SwiftUI
+#if os(iOS)
+import AVFoundation
+import AudioToolbox
+#endif
 
 // MARK: - Design System
 
@@ -228,7 +232,7 @@ struct SetupWizardView: View {
     private var totalVisibleSteps: Int {
         switch setupPath {
         case .none: return 3 // welcome, path, identity
-        case .browse: return 3 // welcome, path, identity, done (3 dots, last = complete)
+        case .browse: return 4 // welcome, path, identity, import, done (4 dots, last = complete)
         case .full: return isIOSDevice ? 8 : 7  // welcome, path, identity, relay, import, media, wallet, (notif), done
         }
     }
@@ -236,7 +240,7 @@ struct SetupWizardView: View {
     private var currentDotIndex: Int {
         // Map actual step numbers to dot indices
         let fullSteps: [Int] = isIOSDevice ? [0, 1, 2, 3, 4, 5, 6, 7, 8] : [0, 1, 2, 3, 4, 5, 6, 8]
-        let browseSteps: [Int] = [0, 1, 2, 8]
+        let browseSteps: [Int] = [0, 1, 2, 4, 8]
         let steps = setupPath == .browse ? browseSteps : fullSteps
         return steps.firstIndex(of: currentStep) ?? 0
     }
@@ -364,7 +368,10 @@ struct SetupWizardView: View {
         direction = .forward
         withAnimation(WizardAnimations.springEnter) {
             if currentStep == 2 && setupPath == .browse {
-                // Browse mode: skip relay, import, media, wallet, notifications — go straight to complete
+                // Browse mode: skip relay config, go to import step
+                currentStep = 4
+            } else if currentStep == 4 && setupPath == .browse {
+                // Browse mode: after import, skip mirror/wallet/notifications — go to complete
                 currentStep = 8
             } else if currentStep == 6 && !isIOSDevice {
                 // macOS full setup: skip notifications, go to complete
@@ -382,9 +389,11 @@ struct SetupWizardView: View {
     private func goBack() {
         direction = .backward
         withAnimation(WizardAnimations.springEnter) {
-            if currentStep == 8 {
+            if currentStep == 4 && setupPath == .browse {
+                currentStep = 2 // Browse: back from import to identity (skip relay config)
+            } else if currentStep == 8 {
                 if setupPath == .browse {
-                    currentStep = 2 // Browse: back to identity
+                    currentStep = 4 // Browse: back to import
                 } else if isIOSDevice {
                     currentStep = 7 // iOS full: back to notifications
                 } else {
@@ -400,7 +409,10 @@ struct SetupWizardView: View {
 
     private func saveIntermediateConfig() {
         configService.config.ownerNpub = npub
-        configService.config.relayURL = relayURL
+        // Browse mode: set default localhost relay URL so the local relay can start
+        configService.config.relayURL = (setupPath == .browse && relayURL.isEmpty)
+            ? "127.0.0.1:\(configService.config.relayPort)"
+            : relayURL
         configService.config.dbEngine = "badger"
         configService.config.signingMode = signingMode
         configService.config.setupMode = setupPath == .browse ? "browse" : "full"
@@ -724,6 +736,12 @@ private struct IdentityStepView: View {
     @State private var isConnectingBunker = false
     @State private var bunkerError: String?
     @State private var selectedMethod: SigningMethod = .local
+    // Browse mode: NIP-05 + QR
+    @State private var identityInput: String = ""
+    @State private var isResolvingNIP05 = false
+    @State private var nip05Error: String?
+    @State private var resolvedFromNIP05: String? = nil
+    @State private var showQRScanner = false
 
     private var isNpubValid: Bool {
         guard !npub.isEmpty, npub.hasPrefix("npub") else { return false }
@@ -731,9 +749,24 @@ private struct IdentityStepView: View {
         return true
     }
 
+    /// Checks if browse mode input looks like a NIP-05 identifier (user@domain or just domain.tld)
+    private var looksLikeNIP05: Bool {
+        let trimmed = identityInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return false }
+        if trimmed.contains("@") && trimmed.contains(".") { return true }
+        // bare domain: "domain.com" — must have a dot and no spaces
+        if !trimmed.contains(" ") && !trimmed.hasPrefix("npub") && !trimmed.hasPrefix("nprofile") && trimmed.contains(".") { return true }
+        return false
+    }
+
     private var canContinue: Bool {
+        if isBrowseMode {
+            if isResolvingNIP05 { return false }
+            if isNpubValid { return true }
+            if looksLikeNIP05 { return true }
+            return false
+        }
         guard isNpubValid else { return false }
-        if isBrowseMode { return true }
         if selectedMethod == .nip46 { return bunkerConnected }
         if !nsec.isEmpty && nsecPassword.isEmpty { return false }
         return true
@@ -751,7 +784,7 @@ private struct IdentityStepView: View {
                 .animation(WizardAnimations.springEnter.delay(0.1), value: appeared)
 
             if isBrowseMode {
-                Text(String(localized: "setup.identity.browseHint"))
+                Text("Enter your npub, NIP-05 (user@domain), or scan a QR code.")
                     .font(.system(size: 15))
                     .foregroundColor(WizardColors.textSecondary)
                     .multilineTextAlignment(.center)
@@ -759,20 +792,145 @@ private struct IdentityStepView: View {
                     .animation(WizardAnimations.fadeIn.delay(0.2), value: appeared)
             }
 
-            // npub field
-            WizardInputField(label: String(localized: "setup.identity.label.npub"), text: $npub, placeholder: "npub1...", isDisabled: selectedMethod == .nip46 && bunkerConnected)
+            if isBrowseMode {
+                // Browse mode: unified identity input (npub / NIP-05 / QR)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Identity")
+                        .font(.system(size: 13))
+                        .foregroundColor(WizardColors.textSecondary)
+
+                    HStack(spacing: 8) {
+                        TextField("npub1... or user@domain.com", text: $identityInput)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 15))
+                            .foregroundColor(WizardColors.textPrimary)
+                            .autocorrectionDisabled()
+                            #if os(iOS)
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.emailAddress)
+                            #endif
+                            .onChange(of: identityInput) { newValue in
+                                nip05Error = nil
+                                resolvedFromNIP05 = nil
+                                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                                // Strip nostr: prefix
+                                let cleaned = trimmed.hasPrefix("nostr:") ? String(trimmed.dropFirst(6)) : trimmed
+                                if cleaned.hasPrefix("npub1") {
+                                    if let decoded = Bech32.decode(cleaned), decoded.hrp == "npub" {
+                                        npub = cleaned
+                                    } else {
+                                        npub = ""
+                                    }
+                                } else if cleaned.hasPrefix("nprofile1") {
+                                    // Decode nprofile TLV to extract pubkey
+                                    if let decoded = Bech32.decode(cleaned), decoded.hrp == "nprofile" {
+                                        let bytes = Array(decoded.data)
+                                        var i = 0
+                                        while i + 2 <= bytes.count {
+                                            let type = bytes[i]
+                                            let length = Int(bytes[i + 1])
+                                            i += 2
+                                            if i + length > bytes.count { break }
+                                            if type == 0 && length == 32 {
+                                                let pubkeyHex = bytes[i..<i+length].map { String(format: "%02x", $0) }.joined()
+                                                if let pubData = Bech32.hexToData(pubkeyHex),
+                                                   let resolvedNpub = Bech32.encode(hrp: "npub", data: pubData) {
+                                                    npub = resolvedNpub
+                                                }
+                                            }
+                                            i += length
+                                        }
+                                    } else {
+                                        npub = ""
+                                    }
+                                } else {
+                                    npub = ""
+                                }
+                            }
+
+                        #if os(iOS)
+                        Button(action: { showQRScanner = true }) {
+                            Image(systemName: "qrcode.viewfinder")
+                                .font(.system(size: 20))
+                                .foregroundColor(WizardColors.accentPrimary)
+                                .frame(width: 36, height: 36)
+                                .background(WizardColors.bgElevated)
+                                .cornerRadius(8)
+                        }
+                        .buttonStyle(.plain)
+                        #endif
+                    }
+                    .padding(12)
+                    .background(WizardColors.bgCard)
+                    .cornerRadius(12)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(WizardColors.borderSubtle, lineWidth: 1)
+                    )
+                }
                 .opacity(appeared ? 1 : 0)
                 .offset(x: appeared ? 0 : 20)
                 .animation(WizardAnimations.springEnter.delay(0.2), value: appeared)
 
-            if !npub.isEmpty && !isNpubValid {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.caption)
-                    Text(String(localized: "setup.identity.invalidNpub"))
-                        .font(.system(size: 13))
+                // Status indicators for browse mode
+                if isResolvingNIP05 {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(WizardColors.accentPrimary)
+                        Text("Resolving NIP-05...")
+                            .font(.system(size: 13))
+                            .foregroundColor(WizardColors.textSecondary)
+                    }
+                } else if let resolved = resolvedFromNIP05 {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(WizardColors.success)
+                        Text("Resolved: \(String(resolved.prefix(20)))...")
+                            .font(.system(size: 13))
+                            .foregroundColor(WizardColors.success)
+                    }
+                } else if let error = nip05Error {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.caption)
+                        Text(error)
+                            .font(.system(size: 13))
+                    }
+                    .foregroundColor(WizardColors.error)
+                } else if !identityInput.isEmpty && !isNpubValid && !looksLikeNIP05 {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.caption)
+                        Text("Enter a valid npub or NIP-05 identifier")
+                            .font(.system(size: 13))
+                    }
+                    .foregroundColor(WizardColors.error)
+                } else if isNpubValid && !identityInput.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(WizardColors.success)
+                        Text("Valid public key")
+                            .font(.system(size: 13))
+                            .foregroundColor(WizardColors.success)
+                    }
                 }
-                .foregroundColor(WizardColors.error)
+            } else {
+                // Full mode: standard npub field
+                WizardInputField(label: String(localized: "setup.identity.label.npub"), text: $npub, placeholder: "npub1...", isDisabled: selectedMethod == .nip46 && bunkerConnected)
+                    .opacity(appeared ? 1 : 0)
+                    .offset(x: appeared ? 0 : 20)
+                    .animation(WizardAnimations.springEnter.delay(0.2), value: appeared)
+
+                if !npub.isEmpty && !isNpubValid {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.caption)
+                        Text(String(localized: "setup.identity.invalidNpub"))
+                            .font(.system(size: 13))
+                    }
+                    .foregroundColor(WizardColors.error)
+                }
             }
 
             if !isBrowseMode {
@@ -907,11 +1065,125 @@ private struct IdentityStepView: View {
                 }
             }
 
-            WizardPrimaryButton(title: String(localized: "setup.action.continue"), action: onContinue, disabled: !canContinue)
+            WizardPrimaryButton(
+                title: isBrowseMode && looksLikeNIP05 && !isNpubValid ? "Resolve & Continue" : String(localized: "setup.action.continue"),
+                action: { handleContinue() },
+                disabled: !canContinue
+            )
 
             Spacer().frame(height: 8)
         }
         .onAppear { appeared = true }
+        #if os(iOS)
+        .sheet(isPresented: $showQRScanner) {
+            QRScannerView { scannedCode in
+                showQRScanner = false
+                // Strip nostr: prefix if present
+                let cleaned = scannedCode.hasPrefix("nostr:") ? String(scannedCode.dropFirst(6)) : scannedCode
+                identityInput = cleaned
+            }
+        }
+        #endif
+    }
+
+    private func handleContinue() {
+        if isBrowseMode {
+            if isNpubValid {
+                onContinue()
+            } else if looksLikeNIP05 {
+                resolveNIP05()
+            }
+        } else {
+            onContinue()
+        }
+    }
+
+    private func resolveNIP05() {
+        let input = identityInput.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        isResolvingNIP05 = true
+        nip05Error = nil
+        resolvedFromNIP05 = nil
+
+        Task {
+            do {
+                // Parse user@domain or bare domain (implies _@domain)
+                let user: String
+                let domain: String
+                if input.contains("@") {
+                    let parts = input.split(separator: "@", maxSplits: 1)
+                    guard parts.count == 2 else {
+                        throw NIP05Error.invalidFormat
+                    }
+                    user = String(parts[0])
+                    domain = String(parts[1])
+                } else {
+                    user = "_"
+                    domain = input
+                }
+
+                guard !domain.isEmpty, domain.contains(".") else {
+                    throw NIP05Error.invalidFormat
+                }
+
+                // Fetch .well-known/nostr.json
+                guard let url = URL(string: "https://\(domain)/.well-known/nostr.json?name=\(user)") else {
+                    throw NIP05Error.invalidFormat
+                }
+
+                let (data, response) = try await URLSession.shared.data(from: url)
+
+                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                    throw NIP05Error.serverError
+                }
+
+                guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let names = json["names"] as? [String: String],
+                      let hexPubkey = names[user] else {
+                    throw NIP05Error.nameNotFound
+                }
+
+                // Validate hex pubkey (64 hex chars = 32 bytes)
+                guard hexPubkey.count == 64, hexPubkey.allSatisfy({ $0.isHexDigit }) else {
+                    throw NIP05Error.invalidPubkey
+                }
+
+                // Convert to npub
+                guard let pubData = Bech32.hexToData(hexPubkey),
+                      let resolvedNpub = Bech32.encode(hrp: "npub", data: pubData) else {
+                    throw NIP05Error.invalidPubkey
+                }
+
+                await MainActor.run {
+                    npub = resolvedNpub
+                    resolvedFromNIP05 = resolvedNpub
+                    isResolvingNIP05 = false
+                    onContinue()
+                }
+            } catch let error as NIP05Error {
+                await MainActor.run {
+                    nip05Error = error.displayMessage
+                    isResolvingNIP05 = false
+                }
+            } catch {
+                await MainActor.run {
+                    nip05Error = "Failed to resolve NIP-05: \(error.localizedDescription)"
+                    isResolvingNIP05 = false
+                }
+            }
+        }
+    }
+
+    private enum NIP05Error: Error {
+        case invalidFormat, serverError, nameNotFound, invalidPubkey
+
+        var displayMessage: String {
+            switch self {
+            case .invalidFormat: return "Invalid NIP-05 format. Use user@domain.com"
+            case .serverError: return "Could not reach the NIP-05 server"
+            case .nameNotFound: return "Name not found on that domain"
+            case .invalidPubkey: return "Server returned an invalid public key"
+            }
+        }
     }
 
     private func generateNewIdentity() {
@@ -1014,6 +1286,132 @@ private struct IdentityStepView: View {
         ConfigService.shared.config.nip46Secret = ""
     }
 }
+
+// MARK: - QR Scanner (iOS only)
+
+#if os(iOS)
+private struct QRScannerView: UIViewControllerRepresentable {
+    let onCodeScanned: (String) -> Void
+
+    func makeUIViewController(context: Context) -> QRScannerViewController {
+        let controller = QRScannerViewController()
+        controller.onCodeScanned = onCodeScanned
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: QRScannerViewController, context: Context) {}
+}
+
+private class QRScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
+    var onCodeScanned: ((String) -> Void)?
+    private var captureSession: AVCaptureSession?
+    private var previewLayer: AVCaptureVideoPreviewLayer?
+    private var hasScanned = false
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        setupCamera()
+        setupOverlay()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        previewLayer?.frame = view.bounds
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        captureSession?.stopRunning()
+    }
+
+    private func setupCamera() {
+        let session = AVCaptureSession()
+        guard let device = AVCaptureDevice.default(for: .video),
+              let input = try? AVCaptureDeviceInput(device: device) else {
+            showError("Camera not available")
+            return
+        }
+
+        if session.canAddInput(input) {
+            session.addInput(input)
+        }
+
+        let output = AVCaptureMetadataOutput()
+        if session.canAddOutput(output) {
+            session.addOutput(output)
+            output.setMetadataObjectsDelegate(self, queue: .main)
+            output.metadataObjectTypes = [.qr]
+        }
+
+        let preview = AVCaptureVideoPreviewLayer(session: session)
+        preview.videoGravity = .resizeAspectFill
+        preview.frame = view.bounds
+        view.layer.addSublayer(preview)
+        previewLayer = preview
+
+        captureSession = session
+        DispatchQueue.global(qos: .userInitiated).async {
+            session.startRunning()
+        }
+    }
+
+    private func setupOverlay() {
+        // Title label
+        let titleLabel = UILabel()
+        titleLabel.text = "Scan Nostr QR Code"
+        titleLabel.textColor = .white
+        titleLabel.font = .systemFont(ofSize: 18, weight: .semibold)
+        titleLabel.textAlignment = .center
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(titleLabel)
+
+        // Dismiss button
+        let dismissButton = UIButton(type: .system)
+        dismissButton.setImage(UIImage(systemName: "xmark.circle.fill"), for: .normal)
+        dismissButton.tintColor = .white
+        dismissButton.addTarget(self, action: #selector(dismissScanner), for: .touchUpInside)
+        dismissButton.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(dismissButton)
+
+        NSLayoutConstraint.activate([
+            titleLabel.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 16),
+            titleLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            dismissButton.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 12),
+            dismissButton.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            dismissButton.widthAnchor.constraint(equalToConstant: 32),
+            dismissButton.heightAnchor.constraint(equalToConstant: 32),
+        ])
+    }
+
+    @objc private func dismissScanner() {
+        dismiss(animated: true)
+    }
+
+    private func showError(_ message: String) {
+        let label = UILabel()
+        label.text = message
+        label.textColor = .white
+        label.textAlignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        ])
+    }
+
+    func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput metadataObjects: [AVMetadataObject], from connection: AVCaptureConnection) {
+        guard !hasScanned,
+              let object = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
+              let value = object.stringValue else { return }
+        hasScanned = true
+        captureSession?.stopRunning()
+        AudioServicesPlaySystemSound(SystemSoundID(kSystemSoundID_Vibrate))
+        onCodeScanned?(value)
+    }
+}
+#endif
 
 // MARK: - Step 3: Relay Configuration
 

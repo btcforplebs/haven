@@ -1994,16 +1994,33 @@ struct AdvancedSettingsView: View {
 
 struct ImportSettingsView: View {
     @EnvironmentObject var configService: ConfigService
-    
+
+    private var importDateBinding: Binding<Date> {
+        Binding<Date>(
+            get: {
+                let fmt = DateFormatter()
+                fmt.dateFormat = "yyyy-MM-dd"
+                fmt.timeZone = TimeZone(identifier: "UTC")
+                return fmt.date(from: configService.config.importStartDate) ?? Date()
+            },
+            set: { newDate in
+                let fmt = DateFormatter()
+                fmt.dateFormat = "yyyy-MM-dd"
+                fmt.timeZone = TimeZone(identifier: "UTC")
+                configService.config.importStartDate = fmt.string(from: newDate)
+            }
+        )
+    }
+
     var body: some View {
         Form {
             Section {
-                TextField("Start Date", text: $configService.config.importStartDate)
+                DatePicker("Start Date", selection: importDateBinding, displayedComponents: .date)
                 TextField("Seed Relays File", text: $configService.config.importSeedRelaysFile)
             } header: {
                 Text("Import Configuration")
             } footer: {
-                Text("Format: YYYY-MM-DD. Notes will be fetched starting from this date.")
+                Text("Notes will be fetched starting from this date.")
             }
             
             Section {

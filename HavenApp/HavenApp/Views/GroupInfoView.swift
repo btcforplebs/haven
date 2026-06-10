@@ -212,7 +212,7 @@ struct GroupInfoView: View {
                         ]
                         let msg = ["EVENT", eventDict] as [Any]
                         if let data = try? JSONSerialization.data(withJSONObject: msg),
-                           let str = String(data: data, encoding: .utf8) {
+                           let _ = String(data: data, encoding: .utf8) {
                             // Use the relay client directly
                         }
                         try? await groupService.leaveGroup(identifier)
