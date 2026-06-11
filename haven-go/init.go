@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime"
+	"sync"
 	"text/template"
 	"time"
 
@@ -126,7 +127,14 @@ func initDBs() error {
 	return GranularInitDBs([]string{"private", "chat", "outbox", "inbox", "blossom"})
 }
 
+// dbMu guards the dbs map and per-DB global assignment against
+// concurrent init/close (e.g. a backup racing a relay stop in C-shared
+// mode). Lock order: lifecycle mutex first, then dbMu — never reverse.
+var dbMu sync.Mutex
+
 func GranularInitDBs(names []string) error {
+	dbMu.Lock()
+	defer dbMu.Unlock()
 	if dbs == nil {
 		dbs = make(map[string]DBBackend)
 	}
@@ -160,6 +168,8 @@ func GranularInitDBs(names []string) error {
 }
 
 func CloseDBs() {
+	dbMu.Lock()
+	defer dbMu.Unlock()
 	if dbs != nil {
 		for name, db := range dbs {
 			if db != nil {

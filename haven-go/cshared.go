@@ -25,7 +25,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/barrydeen/haven/pkg/runsafe"
 	"github.com/barrydeen/haven/pkg/wot"
 	"github.com/mailru/easyjson"
 	"github.com/nbd-wtf/go-nostr"
@@ -35,12 +34,6 @@ import (
 	"github.com/spf13/afero"
 	"golang.org/x/crypto/chacha20poly1305"
 	"golang.org/x/crypto/scrypt"
-)
-
-var (
-	csharedCtx    context.Context
-	csharedCancel context.CancelFunc
-	globalServer  *http.Server
 )
 
 // Import log bridge: lets the host app poll for Go log messages during import.
@@ -95,15 +88,10 @@ func SetHavenEnvC(key *C.char, value *C.char) {
 	os.Setenv(C.GoString(key), C.GoString(value))
 }
 
-//export StartRelayC
-func StartRelayC(importMode bool) {
-	// Recover from any panic so we don't crash the host app
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("🚫 HAVEN recovered from panic: %v", r)
-		}
-	}()
-
+// prepareCSharedEnv performs the per-start environment setup shared by
+// normal and import mode. Must be called with relayLC.mu held — it
+// mutates the package globals config/fs and the process CWD.
+func prepareCSharedEnv() error {
 	// On Android (and other embedded hosts), the process CWD is NOT the relay
 	// data directory.  DATABASE_PATH is set to <relayDataDir>/data/ — derive
 	// the relay data root and chdir so that relative paths (db/*, wot_cache.json,
@@ -122,159 +110,235 @@ func StartRelayC(importMode bool) {
 	nostr.InfoLogger = log.New(io.Discard, "", 0)
 	slog.SetLogLoggerLevel(getLogLevelFromConfig())
 
-	csharedCtx, csharedCancel = context.WithCancel(context.Background())
-
 	fs = afero.NewOsFs()
 	if err := fs.MkdirAll(config.BlossomPath, 0755); err != nil {
-		log.Println("🚫 error creating blossom path:", err)
+		return fmt.Errorf("error creating blossom path: %w", err)
+	}
+
+	// Install log interceptor so the host app can poll for log messages.
+	// This runs in both normal and import mode, enabling the dashboard
+	// console log viewer on Android/iOS. Only install once — wrapping on
+	// every restart would nest writers and duplicate captured lines.
+	if _, ok := log.Writer().(*importLogWriter); !ok {
+		log.SetOutput(&importLogWriter{original: log.Writer()})
+	}
+
+	return nil
+}
+
+//export StartRelayC
+func StartRelayC(importMode bool) {
+	// Recover from any panic so we don't crash the host app
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("🚫 HAVEN recovered from panic: %v", r)
+		}
+	}()
+
+	if importMode {
+		runImportCycle()
 		return
 	}
 
-	pool = nostr.NewSimplePool(csharedCtx,
+	err := relayLC.startCycle(func(cycle *relayCycle) error {
+		if err := prepareCSharedEnv(); err != nil {
+			return err
+		}
+
+		cycle.pool = nostr.NewSimplePool(cycle.ctx,
+			nostr.WithPenaltyBox(),
+			nostr.WithRelayOptions(
+				nostr.WithRequestHeader{
+					"User-Agent": []string{config.UserAgent},
+				}),
+		)
+		pool = cycle.pool // shared code (blast, import.go) reads the global
+
+		log.Println("🚀 HAVEN", config.RelayVersion, "is booting up (C-Shared Mode) [1/3]")
+
+		log.Println("⏳ Loading databases [2/3]")
+		if err := initRelays(cycle.ctx); err != nil {
+			return fmt.Errorf("error initializing databases/relays: %w", err)
+		}
+		log.Println("✅ Databases ready")
+
+		log.Println("⏳ Starting background services [3/3]")
+		cycle.spawn("background-setup", func() {
+			// Initialize WOT (can take time, so run in background)
+			log.Println("  → Initializing Web of Trust")
+			wotModel := wot.NewSimpleInMemory(
+				cycle.pool,
+				config.WhitelistedPubKeys,
+				config.ImportSeedRelays,
+				config.WotDepth,
+				config.WotMinimumFollowers,
+				config.WotFetchTimeoutSeconds,
+				config.WotCachePath,
+				config.WotCacheTTLMinutes,
+			)
+
+			// Try to load from cache first - instant startup
+			// Only run full network rebuild if cache is missing or expired
+			cacheLoaded := wotModel.LoadFromCache()
+			gate := wot.NewCycle()
+			if cacheLoaded {
+				wot.MarkReady(gate, wotModel)
+				log.Println("  ✓ Web of Trust loaded from cache, skipping rebuild")
+			} else {
+				cycle.spawn("wot.Initialize", func() { wot.Initialize(cycle.ctx, wotModel, gate) })
+				log.Println("  ✓ Web of Trust initializing from network")
+			}
+
+			cycle.spawn("subscribeInboxAndChat", func() { subscribeInboxAndChat(cycle.ctx) })
+			cycle.spawn("periodicCloudBackups", func() { startPeriodicCloudBackups(cycle.ctx) })
+			cycle.spawn("wot.PeriodicRefresh", func() { wot.PeriodicRefresh(cycle.ctx, config.WotRefreshInterval) })
+		})
+
+		// Use a fresh ServeMux each cycle so stop/start never panics on
+		// duplicate pattern registration in the default mux.
+		mux := http.NewServeMux()
+		mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("templates/static"))))
+
+		// All Blossom endpoints (PUT /upload, GET /<sha256>, DELETE /<sha256>, etc.)
+		// are handled by the khatru/blossom server mounted on outboxRelay in init.go.
+		// We just need to route everything through dynamicRelayHandler and add CORS headers.
+		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "*")
+
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+
+			dynamicRelayHandler(w, r)
+		})
+
+		addr := fmt.Sprintf("%s:%d", config.RelayBindAddress, config.RelayPort)
+		cycle.server = &http.Server{Addr: addr, Handler: mux}
+
+		// Only enable HTTPS when HAVEN_ENABLE_TLS=1 (iOS needs it for App Transport Security;
+		// macOS uses plain HTTP since Cloudflare handles TLS termination)
+		var certPath, keyPath string
+		if os.Getenv("HAVEN_ENABLE_TLS") == "1" {
+			var err error
+			certPath, keyPath, err = getOrCreateSelfSignedCert(".")
+			if err != nil {
+				log.Printf("⚠️  Failed to setup HTTPS certificate: %v, falling back to HTTP", err)
+				certPath, keyPath = "", ""
+			} else {
+				log.Printf("🔐 HTTPS enabled with self-signed certificate")
+			}
+		}
+
+		// Start server in background and give it a moment to bind before continuing
+		cycle.spawn("http-server", func() {
+			var err error
+			if certPath != "" && keyPath != "" {
+				err = cycle.server.ListenAndServeTLS(certPath, keyPath)
+			} else {
+				err = cycle.server.ListenAndServe()
+			}
+			if err != nil && err != http.ErrServerClosed {
+				// e.g. "bind: address already in use" — the host app's log
+				// parser watches for this to surface port conflicts.
+				log.Printf("🚫 relay HTTP server exited: %v", err)
+			}
+		})
+
+		// Brief delay to ensure server binds to port before returning
+		time.Sleep(100 * time.Millisecond)
+
+		protocol := "http"
+		if certPath != "" {
+			protocol = "https"
+		}
+		log.Printf("🔗 listening at %s://%s", protocol, addr)
+		return nil
+	})
+
+	switch {
+	case err == errAlreadyRunning:
+		log.Println("⚠️ StartRelayC ignored: relay already running")
+	case err != nil:
+		log.Println("🚫", err)
+		// initRelays may have opened some DBs before failing
+		CloseDBs()
+	}
+}
+
+// runImportCycle runs a one-shot import under the lifecycle mutex so it
+// can never overlap a normal relay cycle. The cycle is installed in
+// relayLC.current before the import starts so StopRelayC's lock-free
+// cancel phase can abort a long-running import.
+func runImportCycle() {
+	relayLC.mu.Lock()
+	defer relayLC.mu.Unlock()
+	if relayLC.current.Load() != nil {
+		log.Println("⚠️ Import ignored: relay already running")
+		return
+	}
+
+	if err := prepareCSharedEnv(); err != nil {
+		log.Println("🚫", err)
+		return
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	c := &relayCycle{ctx: ctx, cancel: cancel}
+	c.pool = nostr.NewSimplePool(ctx,
 		nostr.WithPenaltyBox(),
 		nostr.WithRelayOptions(
 			nostr.WithRequestHeader{
 				"User-Agent": []string{config.UserAgent},
 			}),
 	)
+	pool = c.pool
+	relayLC.current.Store(c)
+	defer func() {
+		relayLC.current.Swap(nil)
+		cancel()
+		CloseDBs()
+	}()
 
-	// Install log interceptor so the host app can poll for log messages.
-	// This runs in both normal and import mode, enabling the dashboard
-	// console log viewer on Android/iOS.
-	origWriter := log.Writer()
-	log.SetOutput(&importLogWriter{original: origWriter})
-
-	log.Println("🚀 HAVEN", config.RelayVersion, "is booting up (C-Shared Mode) [1/3]")
-
-	if importMode {
-		defer log.SetOutput(origWriter)
-
-		defer CloseDBs()
-		if !ensureImportRelays() {
-			log.Println("🚫 Import aborted: could not connect to any seed relays")
-			return
-		}
-		runImport(csharedCtx)
-		log.Println("✅ Import completed in C-Shared mode")
+	log.Println("🚀 HAVEN", config.RelayVersion, "is booting up (C-Shared Import Mode)")
+	if !ensureImportRelays() {
+		log.Println("🚫 Import aborted: could not connect to any seed relays")
 		return
 	}
-
-	log.Println("⏳ Loading databases [2/3]")
-	if err := initRelays(csharedCtx); err != nil {
-		log.Println("🚫 error initializing databases/relays:", err)
+	runImport(ctx)
+	if ctx.Err() != nil {
+		log.Println("🛑 Import cancelled")
 		return
 	}
-	log.Println("✅ Databases ready")
-
-	log.Println("⏳ Starting background services [3/3]")
-	runsafe.Go("background-setup", func() {
-		// Initialize WOT (can take time, so run in background)
-		log.Println("  → Initializing Web of Trust")
-		wotModel := wot.NewSimpleInMemory(
-			pool,
-			config.WhitelistedPubKeys,
-			config.ImportSeedRelays,
-			config.WotDepth,
-			config.WotMinimumFollowers,
-			config.WotFetchTimeoutSeconds,
-			config.WotCachePath,
-			config.WotCacheTTLMinutes,
-		)
-
-		// Try to load from cache first - instant startup
-		// Only run full network rebuild if cache is missing or expired
-		cacheLoaded := wotModel.LoadFromCache()
-		gate := wot.NewCycle()
-		if cacheLoaded {
-			wot.MarkReady(gate, wotModel)
-			log.Println("  ✓ Web of Trust loaded from cache, skipping rebuild")
-		} else {
-			runsafe.Go("wot.Initialize", func() { wot.Initialize(csharedCtx, wotModel, gate) })
-			log.Println("  ✓ Web of Trust initializing from network")
-		}
-
-		runsafe.Go("subscribeInboxAndChat", func() { subscribeInboxAndChat(csharedCtx) })
-		runsafe.Go("periodicCloudBackups", func() { startPeriodicCloudBackups(csharedCtx) })
-		runsafe.Go("wot.PeriodicRefresh", func() { wot.PeriodicRefresh(csharedCtx, config.WotRefreshInterval) })
-	})
-
-	// Use a fresh ServeMux each cycle so stop/start never panics on
-	// duplicate pattern registration in the default mux.
-	mux := http.NewServeMux()
-	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("templates/static"))))
-
-	// All Blossom endpoints (PUT /upload, GET /<sha256>, DELETE /<sha256>, etc.)
-	// are handled by the khatru/blossom server mounted on outboxRelay in init.go.
-	// We just need to route everything through dynamicRelayHandler and add CORS headers.
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "*")
-
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		dynamicRelayHandler(w, r)
-	})
-
-	addr := fmt.Sprintf("%s:%d", config.RelayBindAddress, config.RelayPort)
-	globalServer = &http.Server{Addr: addr, Handler: mux}
-
-	// Only enable HTTPS when HAVEN_ENABLE_TLS=1 (iOS needs it for App Transport Security;
-	// macOS uses plain HTTP since Cloudflare handles TLS termination)
-	var certPath, keyPath string
-	if os.Getenv("HAVEN_ENABLE_TLS") == "1" {
-		var err error
-		certPath, keyPath, err = getOrCreateSelfSignedCert(".")
-		if err != nil {
-			log.Printf("⚠️  Failed to setup HTTPS certificate: %v, falling back to HTTP", err)
-			certPath, keyPath = "", ""
-		} else {
-			log.Printf("🔐 HTTPS enabled with self-signed certificate")
-		}
-	}
-
-	// Start server in background and give it a moment to bind before continuing
-	serverReady := make(chan error, 1)
-	runsafe.Go("http-server", func() {
-		if certPath != "" && keyPath != "" {
-			serverReady <- globalServer.ListenAndServeTLS(certPath, keyPath)
-		} else {
-			serverReady <- globalServer.ListenAndServe()
-		}
-	})
-
-	// Brief delay to ensure server binds to port before returning
-	time.Sleep(100 * time.Millisecond)
-
-	protocol := "http"
-	if certPath != "" {
-		protocol = "https"
-	}
-	log.Printf("🔗 listening at %s://%s", protocol, addr)
+	log.Println("✅ Import completed in C-Shared mode")
 }
 
 //export StopRelayC
 func StopRelayC() {
 	log.Println("🔌 HAVEN is shutting down (C-Shared Mode)")
-	if csharedCancel != nil {
-		csharedCancel()
-	}
-	if globalServer != nil {
-		// Use a bounded timeout so a hung handler can't block shutdown forever.
-		// The Android side already imposes a 5 s JNI timeout; this 4 s ceiling
-		// ensures the Go side finishes first and databases close cleanly.
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 4*time.Second)
-		defer shutdownCancel()
-		if err := globalServer.Shutdown(shutdownCtx); err != nil {
-			log.Printf("⚠️ HTTP server shutdown error (force-closing): %v", err)
-			globalServer.Close() // hard close if graceful timed out
+	relayLC.stopCycle(func(c *relayCycle) {
+		if c.server != nil {
+			// Use a bounded timeout so a hung handler can't block shutdown forever.
+			// The Android side already imposes a 5 s JNI timeout; this 4 s ceiling
+			// ensures the Go side finishes first and databases close cleanly.
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 4*time.Second)
+			defer shutdownCancel()
+			if err := c.server.Shutdown(shutdownCtx); err != nil {
+				log.Printf("⚠️ HTTP server shutdown error (force-closing): %v", err)
+				c.server.Close() // hard close if graceful timed out
+			}
 		}
-		globalServer = nil
-	}
-	CloseDBs()
+		// All background goroutines are context-driven, so this normally
+		// returns quickly; if something straggles, closing the DBs after a
+		// bounded wait is still safe — a late write hits Badger's
+		// ErrDBClosed (or the runsafe recover) instead of corrupting state.
+		if !c.waitBackground(10 * time.Second) {
+			log.Println("⚠️ background goroutines did not exit within 10s; closing DBs anyway")
+		}
+		CloseDBs()
+	})
 }
 
 //export BackupDatabaseC
@@ -288,21 +352,23 @@ func BackupDatabaseC(outputPath *C.char) (ret C.int) {
 	goPath := C.GoString(outputPath)
 	log.Printf("📦 Starting database backup to %s", goPath)
 
-	config = loadConfig()
-	if err := initDBs(); err != nil {
-		log.Println("🚫 backup: failed to init DBs:", err)
-		return 1
-	}
-	defer CloseDBs()
+	return C.int(withExclusiveDBs("backup", func() int {
+		config = loadConfig()
+		if err := initDBs(); err != nil {
+			log.Println("🚫 backup: failed to init DBs:", err)
+			return 1
+		}
+		defer CloseDBs()
 
-	ctx := context.Background()
-	if err := exportToZip(ctx, goPath); err != nil {
-		log.Println("🚫 backup failed:", err)
-		return 1
-	}
+		ctx := context.Background()
+		if err := exportToZip(ctx, goPath); err != nil {
+			log.Println("🚫 backup failed:", err)
+			return 1
+		}
 
-	log.Println("✅ Database backup complete")
-	return 0
+		log.Println("✅ Database backup complete")
+		return 0
+	}))
 }
 
 //export RestoreDatabaseC
@@ -316,21 +382,23 @@ func RestoreDatabaseC(inputPath *C.char) (ret C.int) {
 	goPath := C.GoString(inputPath)
 	log.Printf("📦 Starting database restore from %s", goPath)
 
-	config = loadConfig()
-	if err := initDBs(); err != nil {
-		log.Println("🚫 restore: failed to init DBs:", err)
-		return 1
-	}
-	defer CloseDBs()
+	return C.int(withExclusiveDBs("restore", func() int {
+		config = loadConfig()
+		if err := initDBs(); err != nil {
+			log.Println("🚫 restore: failed to init DBs:", err)
+			return 1
+		}
+		defer CloseDBs()
 
-	ctx := context.Background()
-	if err := importFromZip(ctx, goPath); err != nil {
-		log.Println("🚫 restore failed:", err)
-		return 1
-	}
+		ctx := context.Background()
+		if err := importFromZip(ctx, goPath); err != nil {
+			log.Println("🚫 restore failed:", err)
+			return 1
+		}
 
-	log.Println("✅ Database restore complete")
-	return 0
+		log.Println("✅ Database restore complete")
+		return 0
+	}))
 }
 
 //export BackupToCloudC
@@ -343,35 +411,37 @@ func BackupToCloudC() (ret C.int) {
 	}()
 	log.Println("☁️ Starting cloud backup")
 
-	config = loadConfig()
-	if err := initDBs(); err != nil {
-		log.Println("🚫 cloud backup: failed to init DBs:", err)
-		return 1
-	}
-	defer CloseDBs()
+	return C.int(withExclusiveDBs("cloud backup", func() int {
+		config = loadConfig()
+		if err := initDBs(); err != nil {
+			log.Println("🚫 cloud backup: failed to init DBs:", err)
+			return 1
+		}
+		defer CloseDBs()
 
-	ctx := context.Background()
-	zipFileName := "haven_backup.zip"
+		ctx := context.Background()
+		zipFileName := "haven_backup.zip"
 
-	if err := exportToZip(ctx, zipFileName); err != nil {
-		log.Println("🚫 cloud backup: export failed:", err)
-		return 1
-	}
-	defer os.Remove(zipFileName)
+		if err := exportToZip(ctx, zipFileName); err != nil {
+			log.Println("🚫 cloud backup: export failed:", err)
+			return 1
+		}
+		defer os.Remove(zipFileName)
 
-	cloudProvider, err := getCloudProvider()
-	if err != nil {
-		log.Println("🚫 cloud backup:", err)
-		return 1
-	}
+		cloudProvider, err := getCloudProvider()
+		if err != nil {
+			log.Println("🚫 cloud backup:", err)
+			return 1
+		}
 
-	if err := uploadBackupToCloud(ctx, cloudProvider, zipFileName); err != nil {
-		log.Println("🚫 cloud backup: upload failed:", err)
-		return 1
-	}
+		if err := uploadBackupToCloud(ctx, cloudProvider, zipFileName); err != nil {
+			log.Println("🚫 cloud backup: upload failed:", err)
+			return 1
+		}
 
-	log.Println("✅ Cloud backup complete")
-	return 0
+		log.Println("✅ Cloud backup complete")
+		return 0
+	}))
 }
 
 //export RestoreFromCloudC
@@ -384,36 +454,38 @@ func RestoreFromCloudC() (ret C.int) {
 	}()
 	log.Println("☁️ Starting cloud restore")
 
-	config = loadConfig()
+	return C.int(withExclusiveDBs("cloud restore", func() int {
+		config = loadConfig()
 
-	zipFileName := "haven_backup.zip"
-	ctx := context.Background()
+		zipFileName := "haven_backup.zip"
+		ctx := context.Background()
 
-	cloudProvider, err := getCloudProvider()
-	if err != nil {
-		log.Println("🚫 cloud restore:", err)
-		return 1
-	}
+		cloudProvider, err := getCloudProvider()
+		if err != nil {
+			log.Println("🚫 cloud restore:", err)
+			return 1
+		}
 
-	if err := downloadBackupFromCloud(ctx, cloudProvider, zipFileName); err != nil {
-		log.Println("🚫 cloud restore: download failed:", err)
-		return 1
-	}
-	defer os.Remove(zipFileName)
+		if err := downloadBackupFromCloud(ctx, cloudProvider, zipFileName); err != nil {
+			log.Println("🚫 cloud restore: download failed:", err)
+			return 1
+		}
+		defer os.Remove(zipFileName)
 
-	if err := initDBs(); err != nil {
-		log.Println("🚫 cloud restore: failed to init DBs:", err)
-		return 1
-	}
-	defer CloseDBs()
+		if err := initDBs(); err != nil {
+			log.Println("🚫 cloud restore: failed to init DBs:", err)
+			return 1
+		}
+		defer CloseDBs()
 
-	if err := importFromZip(ctx, zipFileName); err != nil {
-		log.Println("🚫 cloud restore: import failed:", err)
-		return 1
-	}
+		if err := importFromZip(ctx, zipFileName); err != nil {
+			log.Println("🚫 cloud restore: import failed:", err)
+			return 1
+		}
 
-	log.Println("✅ Cloud restore complete")
-	return 0
+		log.Println("✅ Cloud restore complete")
+		return 0
+	}))
 }
 
 //export ZipDirectoryC
@@ -1148,12 +1220,15 @@ func ComputePopularNotesC() *C.char {
 		}
 	}()
 
-	if pool == nil || csharedCtx == nil {
+	// Snapshot the live cycle so a concurrent stop can't yank the pool or
+	// context out from under us mid-computation.
+	c := relayLC.current.Load()
+	if c == nil || c.server == nil { // server == nil means import cycle
 		result, _ := json.Marshal(map[string]string{"error": "relay not running"})
 		return C.CString(string(result))
 	}
 
-	ctx, cancel := context.WithTimeout(csharedCtx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(c.ctx, 30*time.Second)
 	defer cancel()
 
 	notes, err := computePopularNotes(ctx)
