@@ -300,12 +300,6 @@ class RelayProcessManager: ObservableObject {
                 free(cValue)
             }
         }
-        setenv("RELAY_BIND_ADDRESS", "127.0.0.1", 1)
-        if let cKey = strdup("RELAY_BIND_ADDRESS"), let cValue = strdup("127.0.0.1") {
-            SetHavenEnvC(cKey, cValue)
-            free(cKey)
-            free(cValue)
-        }
 
         // Change working directory so Go creates files in relayDataDir
         FileManager.default.changeCurrentDirectoryPath(relayDataDir.path)
@@ -645,12 +639,6 @@ class RelayProcessManager: ObservableObject {
                 free(cKey)
                 free(cValue)
             }
-        }
-        setenv("RELAY_BIND_ADDRESS", "127.0.0.1", 1)
-        if let cKey = strdup("RELAY_BIND_ADDRESS"), let cValue = strdup("127.0.0.1") {
-            SetHavenEnvC(cKey, cValue)
-            free(cKey)
-            free(cValue)
         }
 
         FileManager.default.changeCurrentDirectoryPath(relayDataDir.path)
@@ -1010,7 +998,6 @@ class RelayProcessManager: ObservableObject {
         for (key, value) in configEnv {
             setenv(key, value, 1)
         }
-        setenv("RELAY_BIND_ADDRESS", "127.0.0.1", 1)
 
         FileManager.default.changeCurrentDirectoryPath(relayDataDir.path)
         captureOutput(in: relayDataDir)
