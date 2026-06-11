@@ -40,12 +40,13 @@ import com.nostrvault.relay.RelayForegroundService
 import com.nostrvault.service.NostrEvent
 import com.nostrvault.service.NostrService
 import com.nostrvault.service.StatsService
-import com.nostrvault.ui.components.CompactNoteCard
 import com.nostrvault.ui.components.CustomZapSheet
 import com.nostrvault.ui.components.GlassPill
 import com.nostrvault.ui.components.GlassScaffold
-import com.nostrvault.ui.components.NoteCard
 import com.nostrvault.ui.components.SkeletonFeed
+import com.nostrvault.ui.components.VaultNoteCard
+import com.nostrvault.ui.components.VaultNoteLayoutMode
+import com.nostrvault.ui.components.VaultNoteType
 import com.nostrvault.ui.navigation.Screen
 import com.nostrvault.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -213,20 +214,21 @@ class DashboardViewModel @Inject constructor(
     init {
         loadStats()
 
-        // Primary gate: wait for readyForConnections (fires 3s after RUNNING)
-        // before attempting WebSocket connection. This matches the pattern in
-        // FeedViewModel and prevents connecting while the relay mux is still
-        // initializing.
+        // Fallback: readyForConnections fires 3s after RUNNING. If the
+        // relayStatus RUNNING handler below already connected, _isRefreshing
+        // will be true and we skip the duplicate call.
         viewModelScope.launch {
             RelayForegroundService.readyForConnections.collect { ready ->
                 Log.d(TAG, "readyForConnections=$ready, notesLoaded=${_notesHasLoadedOnce.value}, color=${_connectionColor.value}")
-                if (ready && (!_notesHasLoadedOnce.value || _connectionColor.value == "red")) {
+                if (ready && !_notesHasLoadedOnce.value && !_isRefreshing.value) {
                     loadLocalRelayNotes()
                 }
             }
         }
 
-        // Status display: update connection UI text during lifecycle transitions
+        // Connect as soon as relay is RUNNING — no 3s wait. The relay's TCP
+        // health check already passed before this status is set, so the
+        // WebSocket endpoint is reachable.
         viewModelScope.launch {
             RelayForegroundService.relayStatus.collect { status ->
                 when (status) {
@@ -239,10 +241,8 @@ class DashboardViewModel @Inject constructor(
                         _connectionColor.value = "yellow"
                     }
                     RelayForegroundService.RelayStatus.RUNNING -> {
-                        // Don't connect here -- wait for readyForConnections
-                        if (!_notesHasLoadedOnce.value) {
-                            _connectionStatus.value = "Relay starting..."
-                            _connectionColor.value = "yellow"
+                        if (!_notesHasLoadedOnce.value && !_isRefreshing.value) {
+                            loadLocalRelayNotes()
                         }
                     }
                     RelayForegroundService.RelayStatus.OFFLINE -> {
@@ -271,9 +271,8 @@ class DashboardViewModel @Inject constructor(
      */
     fun onResume() {
         val relayUp = RelayForegroundService.relayStatus.value == RelayForegroundService.RelayStatus.RUNNING
-        val relayReady = RelayForegroundService.readyForConnections.value
-        val needsReconnect = _connectionColor.value == "red" || localClient == null
-        if (relayUp && relayReady && needsReconnect) {
+        val needsReconnect = _connectionColor.value != "green" || localClient == null
+        if (relayUp && needsReconnect && !_isRefreshing.value) {
             loadLocalRelayNotes()
         }
         // Always refresh stats on resume
@@ -319,7 +318,6 @@ class DashboardViewModel @Inject constructor(
                     val envDict = com.nostrvault.relay.RelayConfiguration.generateEnvDictionary(
                         config = config,
                         relayDataDir = relayDataDir,
-                        allowNetworkAccess = config.allowNetworkAccess,
                     )
                     for ((key, value) in envDict) {
                         com.nostrvault.relay.HavenBridge.setEnv(key, value)
@@ -1130,6 +1128,22 @@ class DashboardViewModel @Inject constructor(
 
     fun profileFor(pubkey: String): FeedProfile? = profiles.value[pubkey]
 
+    fun currentUserPubkey(): String = nostrService.activeHexPubkey
+
+    fun isWhitelisted(pubkey: String): Boolean =
+        resolveWhitelistedHexPubkeys().contains(pubkey)
+
+    fun getReactionDate(noteId: String, reactorPubkey: String): java.util.Date? {
+        val events = runBlocking { allEventsMutex.withLock { allEvents.toList() } }
+        return events
+            .filter { event ->
+                event.kind == 7 &&
+                event.tags.any { tag -> tag.size >= 2 && tag[0] == "e" && tag[1] == noteId } &&
+                event.pubkey == reactorPubkey
+            }
+            .maxOfOrNull { event -> java.util.Date(event.createdAt * 1000) }
+    }
+
     /**
      * Query a relay endpoint, collecting events until EOSE or timeout.
      * Uses the shared [seenIds] set to deduplicate across calls.
@@ -1519,6 +1533,8 @@ fun DashboardScreen(
             when (viewMode) {
                 VaultViewMode.NOTES -> NotesContent(
                     notes = displayNotes,
+                    reactionMap = reactionMap,
+                    zapMap = zapMap,
                     isRefreshing = isRefreshing,
                     hasLoadedOnce = notesHasLoadedOnce,
                     isCompact = isCompact,
@@ -1529,17 +1545,6 @@ fun DashboardScreen(
                     viewModel = viewModel,
                     onNoteClick = onNoteClick,
                     onProfileClick = onProfileClick,
-                    onReply = onReply,
-                    onZap = { id -> zapNoteId = id },
-                    onShare = { id ->
-                        val shareNote = displayNotes.find { it.id == id }
-                        val shareText = shareNote?.content ?: "nostr:${id}"
-                        val intent = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_TEXT, shareText)
-                        }
-                        context.startActivity(Intent.createChooser(intent, "Share Note"))
-                    },
                 )
                 VaultViewMode.LIKES -> LikesContent(
                     notes = displayLikedNotes,
@@ -1554,8 +1559,6 @@ fun DashboardScreen(
                     viewModel = viewModel,
                     onNoteClick = onNoteClick,
                     onProfileClick = onProfileClick,
-                    onReply = onReply,
-                    onZap = { id -> zapNoteId = id },
                 )
                 VaultViewMode.ZAPS -> ZapsContent(
                     notes = displayZappedNotes,
@@ -1570,8 +1573,6 @@ fun DashboardScreen(
                     viewModel = viewModel,
                     onNoteClick = onNoteClick,
                     onProfileClick = onProfileClick,
-                    onReply = onReply,
-                    onZap = { id -> zapNoteId = id },
                 )
             }
         }
@@ -1681,6 +1682,8 @@ fun DashboardScreen(
 @Composable
 private fun NotesContent(
     notes: List<FeedNote>,
+    reactionMap: Map<String, List<Pair<String, String>>>,
+    zapMap: Map<String, List<Pair<String, Long>>>,
     isRefreshing: Boolean,
     hasLoadedOnce: Boolean,
     isCompact: Boolean,
@@ -1691,12 +1694,8 @@ private fun NotesContent(
     viewModel: DashboardViewModel,
     onNoteClick: (String) -> Unit,
     onProfileClick: (String) -> Unit,
-    onReply: (String) -> Unit,
-    onZap: (String) -> Unit,
-    onShare: (String) -> Unit,
 ) {
     val colors = LocalNostrVaultColors.current
-    val context = LocalContext.current
 
     if (notes.isEmpty() && (isRefreshing || !hasLoadedOnce)) {
         SkeletonFeed(count = 5)
@@ -1738,35 +1737,26 @@ private fun NotesContent(
             modifier = Modifier.fillMaxSize(),
         ) {
             items(items = notes, key = { it.id }) { note ->
-                if (isCompact) {
-                    CompactNoteCard(
-                        note = note,
-                        profile = viewModel.profileFor(note.pubkey),
-                        repostedByProfile = note.repostedBy?.let { viewModel.profileFor(it) },
-                        onNoteClick = onNoteClick,
-                        onProfileClick = onProfileClick,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
-                    )
-                } else {
-                    NoteCard(
-                        note = note,
-                        profile = viewModel.profileFor(note.pubkey),
-                        stats = null,
-                        profiles = allProfiles,
-                        isLiked = false,
-                        isZapped = false,
-                        repostedByProfile = note.repostedBy?.let { viewModel.profileFor(it) },
-                        replyToProfile = note.replyToPubkey?.let { viewModel.profileFor(it) },
-                        onNoteClick = onNoteClick,
-                        onProfileClick = onProfileClick,
-                        onLike = {},
-                        onRepost = {},
-                        onZap = onZap,
-                        onReply = onReply,
-                        onShare = onShare,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                    )
+                val noteType = when {
+                    note.pubkey == viewModel.currentUserPubkey() -> VaultNoteType.MINE
+                    viewModel.isWhitelisted(note.pubkey) -> VaultNoteType.WHITELISTED
+                    else -> VaultNoteType.TAGGED
                 }
+                VaultNoteCard(
+                    note = note,
+                    profile = viewModel.profileFor(note.pubkey),
+                    profiles = allProfiles,
+                    reactors = reactionMap[note.id] ?: emptyList(),
+                    latestReactionDate = reactionMap[note.id]?.mapNotNull {
+                        viewModel.getReactionDate(note.id, it.first)
+                    }?.maxOrNull(),
+                    zappers = zapMap[note.id] ?: emptyList(),
+                    noteType = noteType,
+                    layoutMode = if (isCompact) VaultNoteLayoutMode.COMPACT else VaultNoteLayoutMode.EXPANDED,
+                    onNoteClick = onNoteClick,
+                    onProfileClick = onProfileClick,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = if (isCompact) 2.dp else 4.dp),
+                )
             }
 
             if (isLoadingMore) {
@@ -1806,8 +1796,6 @@ private fun LikesContent(
     viewModel: DashboardViewModel,
     onNoteClick: (String) -> Unit,
     onProfileClick: (String) -> Unit,
-    onReply: (String) -> Unit,
-    onZap: (String) -> Unit,
 ) {
     val colors = LocalNostrVaultColors.current
 
@@ -1875,49 +1863,25 @@ private fun LikesContent(
             modifier = Modifier.fillMaxSize(),
         ) {
             items(items = notes, key = { it.id }) { note ->
-                Column {
-                    // Show who liked this note (for incoming reaction modes)
-                    if (likesFilter != VaultLikesFilter.MY_LIKES) {
-                        val reactors = reactionMap[note.id]
-                        if (!reactors.isNullOrEmpty()) {
-                            LikedByRow(
-                                reactors = reactors,
-                                profiles = allProfiles,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                            )
-                        }
-                    }
-
-                    if (isCompact) {
-                        CompactNoteCard(
-                            note = note,
-                            profile = viewModel.profileFor(note.pubkey),
-                            repostedByProfile = null,
-                            onNoteClick = onNoteClick,
-                            onProfileClick = onProfileClick,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
-                        )
-                    } else {
-                        NoteCard(
-                            note = note,
-                            profile = viewModel.profileFor(note.pubkey),
-                            stats = null,
-                            profiles = allProfiles,
-                            isLiked = false,
-                            isZapped = false,
-                            repostedByProfile = null,
-                            replyToProfile = note.replyToPubkey?.let { viewModel.profileFor(it) },
-                            onNoteClick = onNoteClick,
-                            onProfileClick = onProfileClick,
-                            onLike = {},
-                            onRepost = {},
-                            onZap = onZap,
-                            onReply = onReply,
-                            onShare = {},
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                        )
-                    }
+                val noteType = when {
+                    note.pubkey == viewModel.currentUserPubkey() -> VaultNoteType.MINE
+                    viewModel.isWhitelisted(note.pubkey) -> VaultNoteType.WHITELISTED
+                    else -> VaultNoteType.TAGGED
                 }
+                VaultNoteCard(
+                    note = note,
+                    profile = viewModel.profileFor(note.pubkey),
+                    profiles = allProfiles,
+                    reactors = reactionMap[note.id] ?: emptyList(),
+                    latestReactionDate = reactionMap[note.id]?.mapNotNull {
+                        viewModel.getReactionDate(note.id, it.first)
+                    }?.maxOrNull(),
+                    noteType = noteType,
+                    layoutMode = if (isCompact) VaultNoteLayoutMode.COMPACT else VaultNoteLayoutMode.EXPANDED,
+                    onNoteClick = onNoteClick,
+                    onProfileClick = onProfileClick,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = if (isCompact) 2.dp else 4.dp),
+                )
             }
         }
     }
@@ -1941,8 +1905,6 @@ private fun ZapsContent(
     viewModel: DashboardViewModel,
     onNoteClick: (String) -> Unit,
     onProfileClick: (String) -> Unit,
-    onReply: (String) -> Unit,
-    onZap: (String) -> Unit,
 ) {
     val colors = LocalNostrVaultColors.current
 
@@ -2010,49 +1972,22 @@ private fun ZapsContent(
             modifier = Modifier.fillMaxSize(),
         ) {
             items(items = notes, key = { it.id }) { note ->
-                Column {
-                    // Show who zapped this note (for incoming zap modes)
-                    if (zapsFilter != VaultZapsFilter.MY_ZAPS) {
-                        val zappers = zapMap[note.id]
-                        if (!zappers.isNullOrEmpty()) {
-                            ZappedByRow(
-                                zappers = zappers,
-                                profiles = allProfiles,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                            )
-                        }
-                    }
-
-                    if (isCompact) {
-                        CompactNoteCard(
-                            note = note,
-                            profile = viewModel.profileFor(note.pubkey),
-                            repostedByProfile = null,
-                            onNoteClick = onNoteClick,
-                            onProfileClick = onProfileClick,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
-                        )
-                    } else {
-                        NoteCard(
-                            note = note,
-                            profile = viewModel.profileFor(note.pubkey),
-                            stats = null,
-                            profiles = allProfiles,
-                            isLiked = false,
-                            isZapped = false,
-                            repostedByProfile = null,
-                            replyToProfile = note.replyToPubkey?.let { viewModel.profileFor(it) },
-                            onNoteClick = onNoteClick,
-                            onProfileClick = onProfileClick,
-                            onLike = {},
-                            onRepost = {},
-                            onZap = onZap,
-                            onReply = onReply,
-                            onShare = {},
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                        )
-                    }
+                val noteType = when {
+                    note.pubkey == viewModel.currentUserPubkey() -> VaultNoteType.MINE
+                    viewModel.isWhitelisted(note.pubkey) -> VaultNoteType.WHITELISTED
+                    else -> VaultNoteType.TAGGED
                 }
+                VaultNoteCard(
+                    note = note,
+                    profile = viewModel.profileFor(note.pubkey),
+                    profiles = allProfiles,
+                    zappers = zapMap[note.id] ?: emptyList(),
+                    noteType = noteType,
+                    layoutMode = if (isCompact) VaultNoteLayoutMode.COMPACT else VaultNoteLayoutMode.EXPANDED,
+                    onNoteClick = onNoteClick,
+                    onProfileClick = onProfileClick,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = if (isCompact) 2.dp else 4.dp),
+                )
             }
         }
     }
