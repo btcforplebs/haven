@@ -20,6 +20,7 @@ import kotlinx.serialization.json.*
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.locks.ReentrantLock
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -192,6 +193,11 @@ class FeedService @Inject constructor(
     private val rawEventCache = ConcurrentHashMap<String, String>()
     private val injectedEventIds = ConcurrentHashMap.newKeySet<String>()
     private val feedClients = ConcurrentHashMap<String, WebSocketClient>()
+    // Collector Jobs per feed client (messages + connectionState). Tracked so they
+    // can be cancelled on removal — client.messages is a SharedFlow that never
+    // completes, so disconnect() alone leaves these coroutines (and the client)
+    // pinned in memory forever.
+    private val feedClientJobs = ConcurrentHashMap<String, MutableList<Job>>()
 
     // Background accumulator
     private val accumulator = BackgroundAccumulator()
@@ -222,6 +228,9 @@ class FeedService @Inject constructor(
 
     // Extended network caching
     private var lastExtendedNetworkLoadTime = 0L
+
+    // Guards loadMore() against re-entry from scroll-triggered re-fires
+    private val isLoadingMore = AtomicBoolean(false)
 
     // Search debounce
     private var searchDebounceJob: Job? = null
@@ -316,8 +325,7 @@ class FeedService @Inject constructor(
         Log.d(TAG, "pauseFeed: persisting snapshot and disconnecting feed clients")
         persistCurrentSnapshot()
         saveInteractionState()
-        feedClients.values.forEach { it.disconnect() }
-        feedClients.clear()
+        teardownAllFeedClients()
         _connectionStatus.value = "Paused"
         _connectionColor.value = "gray"
     }
@@ -354,8 +362,7 @@ class FeedService @Inject constructor(
     }
 
     fun disconnect() {
-        feedClients.values.forEach { it.disconnect() }
-        feedClients.clear()
+        teardownAllFeedClients()
         _connectionStatus.value = "Disconnected"
         _connectionColor.value = "gray"
     }
@@ -435,7 +442,9 @@ class FeedService @Inject constructor(
                     val client = WebSocketClient(url = relayUrl, scope = scope, trustLocalhost = relayUrl.contains("localhost") || relayUrl.contains("127.0.0.1"))
                     val subId = "contacts-${UUID.randomUUID().toString().take(8)}"
 
-                    scope.launch {
+                    // Tracked so it can be cancelled after disconnect — messages is a
+                    // SharedFlow that never completes, so this would otherwise leak.
+                    val collector = scope.launch {
                         client.messages.collect { msg ->
                             try {
                                 val parsed = json.parseToJsonElement(msg).jsonArray
@@ -476,6 +485,7 @@ class FeedService @Inject constructor(
                     client.send("[\"REQ\",\"$subId\",$filter]")
 
                     delay(CONTACT_LOAD_TIMEOUT_MS)
+                    collector.cancel()
                     client.disconnect()
                     completeLock.withLock {
                         if (!completed) {
@@ -545,7 +555,7 @@ class FeedService @Inject constructor(
         // and skip URLs that already have a live connection.
         val staleKeys = feedClients.keys - relayUrls.toSet()
         for (key in staleKeys) {
-            feedClients.remove(key)?.disconnect()
+            teardownFeedClient(key)
         }
 
         _isLoadingFeed.value = true
@@ -568,8 +578,8 @@ class FeedService @Inject constructor(
                 sendPrimaryFeedSubscription(relayUrl, "feed-$label")
                 continue
             }
-            // Disconnect any half-dead client before replacing it
-            existing?.disconnect()
+            // Tear down any half-dead client (and its collectors) before replacing it
+            if (existing != null) teardownFeedClient(relayUrl)
 
             scope.launch(Dispatchers.IO) {
                 // Stagger external relays
@@ -589,6 +599,20 @@ class FeedService @Inject constructor(
         }
     }
 
+    /** Cancel a feed client's collectors and disconnect it. */
+    private fun teardownFeedClient(relayUrl: String) {
+        feedClientJobs.remove(relayUrl)?.forEach { it.cancel() }
+        feedClients.remove(relayUrl)?.disconnect()
+    }
+
+    /** Cancel and disconnect every feed client. */
+    private fun teardownAllFeedClients() {
+        feedClientJobs.values.forEach { jobs -> jobs.forEach { it.cancel() } }
+        feedClientJobs.clear()
+        feedClients.values.forEach { it.disconnect() }
+        feedClients.clear()
+    }
+
     private fun connectFeedRelay(relayUrl: String) {
         val label = when (_feedMode.value) {
             FeedMode.FOLLOWING -> "following"
@@ -604,9 +628,11 @@ class FeedService @Inject constructor(
             scope = scope,
             trustLocalhost = relayUrl.contains("localhost") || relayUrl.contains("127.0.0.1"),
         )
+        // Replacing an existing client for this URL: tear down its collectors first.
+        teardownFeedClient(relayUrl)
         feedClients[relayUrl] = client
 
-        scope.launch {
+        val messagesJob = scope.launch {
             client.messages.collect { msg ->
                 launch(processingDispatcher) {
                     processAccumulatorMessage(msg, relayUrl)
@@ -614,7 +640,7 @@ class FeedService @Inject constructor(
             }
         }
 
-        scope.launch {
+        val stateJob = scope.launch {
             client.connectionState.collect { state ->
                 when (state) {
                     WebSocketClient.ConnectionState.CONNECTED -> {
@@ -628,6 +654,7 @@ class FeedService @Inject constructor(
                 }
             }
         }
+        feedClientJobs[relayUrl] = mutableListOf(messagesJob, stateJob)
 
         client.connect()
     }
@@ -1183,7 +1210,13 @@ class FeedService @Inject constructor(
     // ══════════════════════════════════════════════════════════════════
 
     fun loadMore() {
-        val oldest = _notes.value.lastOrNull()?.createdAt ?: return
+        // In-flight guard: scroll-triggered, so without this it re-fires on every
+        // bottom-reach and leaks a client + collector per relay each time.
+        if (!isLoadingMore.compareAndSet(false, true)) return
+        val oldest = _notes.value.lastOrNull()?.createdAt ?: run {
+            isLoadingMore.set(false)
+            return
+        }
         val config = configStore.config.value
         val relayUrls = buildList {
             config.nostrURL?.let { add(it) }
@@ -1192,35 +1225,47 @@ class FeedService @Inject constructor(
 
         scope.launch(Dispatchers.IO) {
             val subId = "feed-hist-${UUID.randomUUID().toString().take(8)}"
-            for (relayUrl in relayUrls) {
-                val client = WebSocketClient(url = relayUrl, scope = scope, trustLocalhost = relayUrl.contains("localhost") || relayUrl.contains("127.0.0.1"))
+            val clients = mutableListOf<WebSocketClient>()
+            val collectors = mutableListOf<Job>()
+            try {
+                for (relayUrl in relayUrls) {
+                    val client = WebSocketClient(url = relayUrl, scope = scope, trustLocalhost = relayUrl.contains("localhost") || relayUrl.contains("127.0.0.1"))
+                    clients.add(client)
 
-                scope.launch {
-                    client.messages.collect { msg ->
-                        launch(processingDispatcher) {
-                            processAccumulatorMessage(msg, relayUrl)
+                    // Track the collector so it can be cancelled on cleanup —
+                    // WebSocketClient.messages is a SharedFlow that never completes,
+                    // so disconnect() alone leaves this coroutine (and the client)
+                    // pinned in memory forever.
+                    collectors.add(scope.launch {
+                        client.messages.collect { msg ->
+                            launch(processingDispatcher) {
+                                processAccumulatorMessage(msg, relayUrl)
+                            }
                         }
-                    }
-                }
+                    })
 
-                client.connect()
+                    client.connect()
 
-                val filter = buildString {
-                    append("{\"kinds\":[1,6,30023]")
-                    if (_feedMode.value == FeedMode.FOLLOWING) {
-                        val authors = _followedPubkeys.value.take(500)
-                        if (authors.isNotEmpty()) {
-                            append(",\"authors\":[${authors.joinToString(",") { "\"$it\"" }}]")
+                    val filter = buildString {
+                        append("{\"kinds\":[1,6,30023]")
+                        if (_feedMode.value == FeedMode.FOLLOWING) {
+                            val authors = _followedPubkeys.value.take(500)
+                            if (authors.isNotEmpty()) {
+                                append(",\"authors\":[${authors.joinToString(",") { "\"$it\"" }}]")
+                            }
                         }
+                        append(",\"until\":${oldest.time / 1000 - 1}")
+                        append(",\"limit\":100}")
                     }
-                    append(",\"until\":${oldest.time / 1000 - 1}")
-                    append(",\"limit\":100}")
-                }
 
-                client.send("[\"REQ\",\"$subId\",$filter]")
+                    client.send("[\"REQ\",\"$subId\",$filter]")
+                }
 
                 delay(NOTE_FETCH_TIMEOUT_MS)
-                client.disconnect()
+            } finally {
+                collectors.forEach { it.cancel() }
+                clients.forEach { it.disconnect() }
+                isLoadingMore.set(false)
             }
         }
     }
@@ -1243,6 +1288,7 @@ class FeedService @Inject constructor(
             val filter = """{"ids":["$id"]}"""
 
             val tempClients = mutableListOf<WebSocketClient>()
+            val collectors = mutableListOf<Job>()
             for (relayUrl in relayUrls) {
                 val existingClient = feedClients[relayUrl]
                 val client: WebSocketClient
@@ -1254,7 +1300,10 @@ class FeedService @Inject constructor(
                     client.connect()
                 }
 
-                scope.launch {
+                // Tracked so it is cancelled below. Critical for reused persistent
+                // feed clients: an un-cancelled collector here would re-parse every
+                // future feed message for the life of the app, once per thread opened.
+                collectors.add(scope.launch {
                     client.messages.collect { msg ->
                         try {
                             val parsed = json.parseToJsonElement(msg).jsonArray
@@ -1281,12 +1330,13 @@ class FeedService @Inject constructor(
                             }
                         } catch (_: Exception) {}
                     }
-                }
+                })
 
                 client.send("[\"REQ\",\"$subId\",$filter]")
             }
 
             delay(NOTE_FETCH_TIMEOUT_MS)
+            collectors.forEach { it.cancel() }
             tempClients.forEach { it.disconnect() }
         }
     }

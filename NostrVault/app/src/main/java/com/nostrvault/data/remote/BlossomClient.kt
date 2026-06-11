@@ -30,6 +30,7 @@ class BlossomClient(
 ) {
     companion object {
         private const val TAG = "BlossomClient"
+        private const val MAX_BLOB_BYTES = 50L * 1024 * 1024 // 50 MB
     }
 
     private val client = OkHttpClient.Builder()
@@ -82,7 +83,9 @@ class BlossomClient(
     }
 
     /**
-     * Download a blob by its SHA256 hash.
+     * Download a blob by its SHA256 hash, with a size cap and content-address
+     * verification (Blossom is content-addressed, so the bytes must hash to the
+     * requested digest — a mismatch indicates a malicious/broken server).
      */
     suspend fun download(sha256: String): ByteArray = withContext(Dispatchers.IO) {
         val request = Request.Builder()
@@ -96,7 +99,36 @@ class BlossomClient(
             throw IOException("Download failed: ${response.code}")
         }
 
-        response.body?.bytes() ?: throw IOException("Empty response body")
+        val data = readBodyCapped(response, MAX_BLOB_BYTES)
+            ?: throw IOException("Empty or oversized response body")
+
+        if (computeSHA256(data) != sha256.lowercase()) {
+            throw IOException("Blob hash mismatch for $sha256")
+        }
+        data
+    }
+
+    private fun computeSHA256(data: ByteArray): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        return digest.digest(data).joinToString("") { "%02x".format(it) }
+    }
+
+    /** Read a response body with a hard byte ceiling (Content-Length + streaming cap). */
+    private fun readBodyCapped(response: Response, maxBytes: Long): ByteArray? {
+        val body = response.body ?: return null
+        return body.use {
+            if (it.contentLength() > maxBytes) return null
+            val source = it.source()
+            val sink = okio.Buffer()
+            var total = 0L
+            while (true) {
+                val n = source.read(sink, 64 * 1024L)
+                if (n == -1L) break
+                total += n
+                if (total > maxBytes) return null
+            }
+            sink.readByteArray()
+        }
     }
 
     /**

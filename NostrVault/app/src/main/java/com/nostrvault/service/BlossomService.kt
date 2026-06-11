@@ -40,6 +40,9 @@ class BlossomService @Inject constructor(
         private const val AUTH_KIND = 24242
         private const val MAX_UPLOAD_RETRIES = 3
         private const val MIRROR_CONCURRENCY = 4
+
+        /** Hard ceiling on any single downloaded blob held in memory. */
+        private const val MAX_BLOB_BYTES = 50L * 1024 * 1024 // 50 MB
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -247,7 +250,7 @@ class BlossomService @Inject constructor(
                 val response = remoteClient.newCall(request).execute()
                 if (!response.isSuccessful) return@withContext null
 
-                val data = response.body?.bytes() ?: return@withContext null
+                val data = readBodyCapped(response, MAX_BLOB_BYTES) ?: return@withContext null
                 val sha256 = computeSHA256(data)
 
                 // Save to local relay
@@ -277,7 +280,15 @@ class BlossomService @Inject constructor(
 
                 val response = remoteClient.newCall(request).execute()
                 if (response.isSuccessful) {
-                    return response.body?.bytes()
+                    val data = readBodyCapped(response, MAX_BLOB_BYTES) ?: continue
+                    // Blossom is content-addressed: the bytes MUST hash to the
+                    // requested digest. A mismatch means a malicious/broken mirror;
+                    // discard rather than poison the local cache.
+                    if (computeSHA256(data) != sha256.lowercase()) {
+                        Log.w(TAG, "Hash mismatch from mirror $mirror for $sha256, discarding")
+                        continue
+                    }
+                    return data
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Download from mirror $mirror failed: ${e.message}")
@@ -297,7 +308,7 @@ class BlossomService @Inject constructor(
             val request = Request.Builder().url("$localUrl/$sha256").get().build()
             val response = localClient.newCall(request).execute()
             if (!response.isSuccessful) return@withContext
-            response.body?.bytes() ?: return@withContext
+            readBodyCapped(response, MAX_BLOB_BYTES) ?: return@withContext
         } catch (e: Exception) {
             Log.w(TAG, "Local download failed: ${e.message}")
             return@withContext
@@ -521,6 +532,49 @@ class BlossomService @Inject constructor(
     private fun computeSHA256(data: ByteArray): String {
         val digest = MessageDigest.getInstance("SHA-256")
         return digest.digest(data).joinToString("") { "%02x".format(it) }
+    }
+
+    /** Streaming SHA-256 of a file (does not load the whole file into memory). */
+    fun computeSHA256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(64 * 1024)
+            var read: Int
+            while (input.read(buffer).also { read = it } != -1) {
+                digest.update(buffer, 0, read)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * Read a response body into memory with a hard byte ceiling.
+     * Rejects up-front on an oversized Content-Length and aborts mid-stream if a
+     * missing/lying length lets the body exceed [maxBytes]. Prevents a hostile or
+     * broken server from OOM-killing the app with a giant blob.
+     */
+    private fun readBodyCapped(response: Response, maxBytes: Long): ByteArray? {
+        val body = response.body ?: return null
+        return body.use {
+            val declared = it.contentLength()
+            if (declared > maxBytes) {
+                Log.w(TAG, "Rejecting oversized body: Content-Length=$declared > $maxBytes")
+                return null
+            }
+            val source = it.source()
+            val sink = okio.Buffer()
+            var total = 0L
+            while (true) {
+                val n = source.read(sink, 64 * 1024L)
+                if (n == -1L) break
+                total += n
+                if (total > maxBytes) {
+                    Log.w(TAG, "Aborting oversized body mid-stream at $total bytes")
+                    return null
+                }
+            }
+            sink.readByteArray()
+        }
     }
 
     /** Trust self-signed certs for localhost connections. */

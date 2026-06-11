@@ -9,6 +9,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import java.io.File
 import java.io.FileOutputStream
 import java.security.MessageDigest
@@ -32,11 +33,13 @@ class MediaCacheService @Inject constructor(
     companion object {
         private const val TAG = "MediaCacheService"
         private const val IMAGE_CACHE_MAX_SIZE = 60 * 1024 * 1024 // 60 MB
-        private const val THUMBNAIL_MAX_ENTRIES = 200
+        private const val THUMBNAIL_CACHE_MAX_SIZE = 24 * 1024 * 1024 // 24 MB (byte-sized, not count)
         private const val MAX_CONCURRENT_DOWNLOADS = 4
         private const val MAX_CONCURRENT_THUMBNAILS = 2
         private const val MIN_CACHE_SIZE = 100L // bytes
         private const val TTL_DAYS = 30
+        private const val MAX_DOWNLOAD_BYTES = 50L * 1024 * 1024 // 50 MB hard ceiling per download
+        private const val DISK_CACHE_MAX_BYTES = 256L * 1024 * 1024 // 256 MB on-disk cap
     }
 
     // ── Caches ────────────────────────────────────────────────────────
@@ -45,7 +48,11 @@ class MediaCacheService @Inject constructor(
         override fun sizeOf(key: String, value: ByteArray): Int = value.size
     }
 
-    private val thumbnailCache = LruCache<String, Bitmap>(THUMBNAIL_MAX_ENTRIES)
+    // Byte-sized, NOT count-sized: a count cap would let 200 native-resolution
+    // video frames (~8 MB each at 1080p) balloon to >1 GB.
+    private val thumbnailCache = object : LruCache<String, Bitmap>(THUMBNAIL_CACHE_MAX_SIZE) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.allocationByteCount
+    }
 
     // ── Memory pressure eviction ─────────────────────────────────────
 
@@ -59,7 +66,7 @@ class MediaCacheService @Inject constructor(
     /** Trim in-memory caches to half capacity (called on moderate pressure). */
     fun trimMemoryCaches() {
         imageCache.trimToSize(IMAGE_CACHE_MAX_SIZE / 2)
-        thumbnailCache.trimToSize(THUMBNAIL_MAX_ENTRIES / 2)
+        thumbnailCache.trimToSize(THUMBNAIL_CACHE_MAX_SIZE / 2)
         Log.i(TAG, "Trimmed memory caches to 50%")
     }
 
@@ -101,6 +108,51 @@ class MediaCacheService @Inject constructor(
         // Load persisted 404s
         val saved = prefs.getStringSet("not_found_urls", emptySet()) ?: emptySet()
         notFoundURLs.addAll(saved)
+
+        // Disk eviction is otherwise never triggered — run it on startup so the
+        // on-disk cache can't grow without bound (TTL sweep + byte-size cap).
+        scope.launch {
+            evictExpiredFiles()
+            trimDiskCacheToSize(DISK_CACHE_MAX_BYTES)
+        }
+    }
+
+    /**
+     * Read a response body into memory with a hard byte ceiling. Rejects on an
+     * oversized Content-Length and aborts mid-stream if the body exceeds [maxBytes].
+     */
+    private fun readBodyCapped(response: Response, maxBytes: Long): ByteArray? {
+        val body = response.body ?: return null
+        return body.use {
+            if (it.contentLength() > maxBytes) {
+                Log.w(TAG, "Rejecting oversized media body: ${it.contentLength()} > $maxBytes")
+                return null
+            }
+            val source = it.source()
+            val sink = okio.Buffer()
+            var total = 0L
+            while (true) {
+                val n = source.read(sink, 64 * 1024L)
+                if (n == -1L) break
+                total += n
+                if (total > maxBytes) {
+                    Log.w(TAG, "Aborting oversized media body mid-stream at $total bytes")
+                    return null
+                }
+            }
+            sink.readByteArray()
+        }
+    }
+
+    /** Delete oldest cached files until the media cache dir is under [maxBytes]. */
+    private fun trimDiskCacheToSize(maxBytes: Long) {
+        val files = cacheDirectory.listFiles()?.sortedBy { it.lastModified() } ?: return
+        var total = files.sumOf { it.length() }
+        for (file in files) {
+            if (total <= maxBytes) break
+            val size = file.length()
+            if (file.delete()) total -= size
+        }
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -250,7 +302,7 @@ class MediaCacheService @Inject constructor(
                     return@async null
                 }
 
-                val data = response.body?.bytes() ?: return@async null
+                val data = readBodyCapped(response, MAX_DOWNLOAD_BYTES) ?: return@async null
                 saveToCache(url, data)
                 cacheImage(data, url)
                 data

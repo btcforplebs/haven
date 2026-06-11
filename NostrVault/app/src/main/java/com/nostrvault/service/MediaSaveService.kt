@@ -37,8 +37,9 @@ class MediaSaveService @Inject constructor(
      */
     suspend fun saveToGallery(file: File, mimeType: String?): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            val bytes = file.readBytes()
-            saveBytes(bytes, file.name, mimeType ?: guessMimeType(file.name))
+            file.inputStream().use { input ->
+                saveStream(input, file.name, mimeType ?: guessMimeType(file.name))
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Save file to gallery failed", e)
             Result.failure(e)
@@ -47,26 +48,29 @@ class MediaSaveService @Inject constructor(
 
     /**
      * Download from a URL and save to the device gallery.
+     * Streams the body straight to MediaStore — never buffers the whole (possibly
+     * large video) blob in memory, which would OOM low-RAM devices.
      */
     suspend fun saveToGallery(url: String, mimeType: String?): Result<Unit> = withContext(Dispatchers.IO) {
         try {
             val request = Request.Builder().url(url).get().build()
-            val response = httpClient.newCall(request).execute()
-            if (!response.isSuccessful) {
-                return@withContext Result.failure(Exception("Download failed: ${response.code}"))
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(Exception("Download failed: ${response.code}"))
+                }
+                val body = response.body
+                    ?: return@withContext Result.failure(Exception("Empty response"))
+                val contentType = mimeType ?: response.header("Content-Type") ?: "image/jpeg"
+                val filename = url.substringAfterLast('/').take(12)
+                body.byteStream().use { input -> saveStream(input, filename, contentType) }
             }
-            val bytes = response.body?.bytes()
-                ?: return@withContext Result.failure(Exception("Empty response"))
-            val contentType = mimeType ?: response.header("Content-Type") ?: "image/jpeg"
-            val filename = url.substringAfterLast('/').take(12)
-            saveBytes(bytes, filename, contentType)
         } catch (e: Exception) {
             Log.e(TAG, "Save URL to gallery failed", e)
             Result.failure(e)
         }
     }
 
-    private fun saveBytes(bytes: ByteArray, filename: String, mimeType: String): Result<Unit> {
+    private fun saveStream(input: java.io.InputStream, filename: String, mimeType: String): Result<Unit> {
         val isVideo = mimeType.startsWith("video")
         val collection = if (isVideo) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -100,7 +104,7 @@ class MediaSaveService @Inject constructor(
             ?: return Result.failure(Exception("Failed to create MediaStore entry"))
 
         return try {
-            resolver.openOutputStream(uri)?.use { it.write(bytes) }
+            resolver.openOutputStream(uri)?.use { input.copyTo(it) }
                 ?: return Result.failure(Exception("Failed to open output stream"))
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

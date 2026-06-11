@@ -49,7 +49,6 @@ import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
-import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
@@ -221,25 +220,33 @@ class MediaGalleryViewModel @Inject constructor(
             _isUploading.value = true
             val filename = uri.lastPathSegment ?: "media"
             val uploadId = notificationManager.addUpload(filename)
+            // Stream the picked media to a temp file instead of readBytes() — a
+            // large video pulled fully into a ByteArray OOM-kills low-RAM devices
+            // before the upload even starts. The File-based upload path streams
+            // from disk (file.asRequestBody) end to end.
+            var tempFile: File? = null
             try {
-                val bytes = withContext(Dispatchers.IO) {
-                    contentResolver.openInputStream(uri)?.readBytes()
+                tempFile = withContext(Dispatchers.IO) {
+                    val f = File.createTempFile("upload_", null, mediaCacheService.cacheDirectory)
+                    val copied = contentResolver.openInputStream(uri)?.use { input ->
+                        f.outputStream().use { output -> input.copyTo(output, 64 * 1024) }
+                        true
+                    } ?: false
+                    if (copied) f else { f.delete(); null }
                 } ?: run {
                     notificationManager.markUploadFailed(uploadId, "Could not read file")
-                    _isUploading.value = false
                     return@launch
                 }
 
                 val contentType = contentResolver.getType(uri) ?: "application/octet-stream"
                 val sha256 = withContext(Dispatchers.IO) {
-                    val digest = MessageDigest.getInstance("SHA-256")
-                    digest.digest(bytes).joinToString("") { "%02x".format(it) }
+                    blossomService.computeSHA256(tempFile!!)
                 }
 
                 notificationManager.updateUploadProgress(uploadId, 0.3f)
 
                 val resultUrl = withContext(Dispatchers.IO) {
-                    blossomService.uploadAndMirror(bytes, sha256, contentType)
+                    blossomService.uploadAndMirror(tempFile!!, sha256, contentType)
                 }
 
                 notificationManager.updateUploadProgress(uploadId, 1.0f)
@@ -254,6 +261,7 @@ class MediaGalleryViewModel @Inject constructor(
                 Log.e(TAG, "Upload failed", e)
                 notificationManager.markUploadFailed(uploadId, e.message ?: "Upload failed")
             } finally {
+                tempFile?.let { withContext(NonCancellable + Dispatchers.IO) { it.delete() } }
                 _isUploading.value = false
             }
         }

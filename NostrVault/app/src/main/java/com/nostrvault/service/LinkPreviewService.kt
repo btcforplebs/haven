@@ -52,11 +52,13 @@ class LinkPreviewService @Inject constructor() {
     private val inFlightRequests = ConcurrentHashMap<String, Deferred<LinkPreviewMetadata?>>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    // Redirects disabled: auto-follow could bounce a public URL to an internal
+    // host, bypassing the SSRF guard applied to the initial URL.
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
-        .followRedirects(true)
-        .followSslRedirects(true)
+        .followRedirects(false)
+        .followSslRedirects(false)
         .build()
 
     private var cacheDirectory: File? = null
@@ -118,6 +120,9 @@ class LinkPreviewService @Inject constructor() {
     // ══════════════════════════════════════════════════════════════════
 
     private fun fetchOGMetadata(url: String): LinkPreviewMetadata? {
+        // SSRF guard: the app runs a local relay/Blossom/bridge on localhost.
+        if (!com.nostrvault.util.UrlSafety.isSafeRemoteUrl(url)) return null
+
         val request = Request.Builder()
             .url(url)
             .addHeader("User-Agent", BROWSER_USER_AGENT)
@@ -169,7 +174,8 @@ class LinkPreviewService @Inject constructor() {
                 val base = java.net.URI(sourceURL)
                 base.resolve(img).toString()
             } catch (e: Exception) { img }
-        }
+        // Guard the image URL too — it is later handed to Coil to load.
+        }?.takeIf { com.nostrvault.util.UrlSafety.isSafeRemoteUrl(it) }
 
         return LinkPreviewMetadata(
             url = sourceURL,

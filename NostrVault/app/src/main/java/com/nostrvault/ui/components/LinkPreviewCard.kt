@@ -16,10 +16,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.util.LruCache
 import coil.compose.AsyncImage
 import com.nostrvault.ui.theme.*
+import com.nostrvault.util.UrlSafety
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
 import java.net.URL
 
 /**
@@ -36,15 +39,15 @@ fun LinkPreviewCard(
 ) {
     val colors = LocalNostrVaultColors.current
     val uriHandler = LocalUriHandler.current
-    var metadata by remember(url) { mutableStateOf(ogMetadataCache[url]) }
-    var fetched by remember(url) { mutableStateOf(ogMetadataCache.containsKey(url)) }
+    var metadata by remember(url) { mutableStateOf(ogMetadataCache.get(url)) }
+    var fetched by remember(url) { mutableStateOf(ogMetadataCache.get(url) != null) }
 
     // Fetch OG metadata on first composition
     LaunchedEffect(url) {
         if (!fetched) {
             fetched = true
             val result = fetchOgMetadata(url)
-            ogMetadataCache[url] = result
+            ogMetadataCache.put(url, result)
             metadata = result
         }
     }
@@ -131,8 +134,12 @@ data class OgMetadata(
     val siteName: String?,
 )
 
-/** Simple in-memory cache for OG metadata. */
-private val ogMetadataCache = mutableMapOf<String, OgMetadata>()
+/**
+ * Bounded in-memory cache for OG metadata. LruCache is internally synchronized and
+ * size-capped, replacing an unbounded HashMap that grew one entry per distinct link
+ * ever scrolled past (and was written concurrently from composition coroutines).
+ */
+private val ogMetadataCache = LruCache<String, OgMetadata>(200)
 
 private fun extractDomain(url: String): String {
     return try {
@@ -146,15 +153,40 @@ private fun extractDomain(url: String): String {
  * Fetch OpenGraph metadata from a URL by parsing HTML meta tags.
  * Returns an OgMetadata with whatever could be extracted.
  */
+private const val MAX_OG_REDIRECTS = 5
+
 private suspend fun fetchOgMetadata(url: String): OgMetadata = withContext(Dispatchers.IO) {
+    val empty = OgMetadata(null, null, null, null)
     try {
-        val connection = URL(url).openConnection().apply {
-            setRequestProperty("User-Agent", "NostrVault/1.0")
-            connectTimeout = 5000
-            readTimeout = 5000
+        // SSRF guard: never fetch internal/private hosts (the app runs a local
+        // relay/Blossom/bridge on localhost). Follow redirects manually so each
+        // hop is re-validated — auto-follow could bounce a public URL to 127.0.0.1.
+        var current = url
+        var connection: HttpURLConnection? = null
+        var hops = 0
+        while (true) {
+            if (!UrlSafety.isSafeRemoteUrl(current)) return@withContext empty
+            val conn = (URL(current).openConnection() as HttpURLConnection).apply {
+                setRequestProperty("User-Agent", "NostrVault/1.0")
+                connectTimeout = 5000
+                readTimeout = 5000
+                instanceFollowRedirects = false
+            }
+            val code = conn.responseCode
+            if (code in 300..399) {
+                val location = conn.getHeaderField("Location")
+                conn.disconnect()
+                if (location == null || ++hops > MAX_OG_REDIRECTS) return@withContext empty
+                // Resolve relative redirects against the current URL.
+                current = try { URL(URL(current), location).toString() } catch (_: Exception) { return@withContext empty }
+                continue
+            }
+            connection = conn
+            break
         }
 
-        val html = connection.getInputStream().bufferedReader().use { reader ->
+        val activeConn = connection ?: return@withContext empty
+        val html = activeConn.inputStream.bufferedReader().use { reader ->
             val sb = StringBuilder()
             val buf = CharArray(4096)
             var total = 0
@@ -168,19 +200,22 @@ private suspend fun fetchOgMetadata(url: String): OgMetadata = withContext(Dispa
             }
             sb.toString()
         }
+        activeConn.disconnect()
 
         val title = extractMetaContent(html, "og:title")
             ?: extractMetaContent(html, "twitter:title")
             ?: extractHtmlTitle(html)
         val description = extractMetaContent(html, "og:description")
             ?: extractMetaContent(html, "twitter:description")
-        val imageUrl = extractMetaContent(html, "og:image")
+        val rawImageUrl = extractMetaContent(html, "og:image")
             ?: extractMetaContent(html, "twitter:image")
+        // Guard the image URL too — it is handed to Coil, a second internal-fetch vector.
+        val imageUrl = rawImageUrl?.takeIf { UrlSafety.isSafeRemoteUrl(it) }
         val siteName = extractMetaContent(html, "og:site_name")
 
         OgMetadata(title, description, imageUrl, siteName)
     } catch (_: Exception) {
-        OgMetadata(null, null, null, null)
+        empty
     }
 }
 
