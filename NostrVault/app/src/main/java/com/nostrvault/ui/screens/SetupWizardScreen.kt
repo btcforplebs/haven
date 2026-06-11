@@ -78,11 +78,11 @@ private val WizardGradient = Brush.horizontalGradient(
 // ── Enums ────────────────────────────────────────────────────────
 
 enum class WizardStep {
-    WELCOME, CHOOSE_PATH, ACCOUNT, RELAYS, IMPORT_NOTES, MIRROR_MEDIA, WALLET, COMPLETE
+    WELCOME, CHOOSE_PATH, NOSTR_INTRO, ACCOUNT, RELAYS, IMPORT_NOTES, MIRROR_MEDIA, WALLET, COMPLETE
 }
 
 enum class AccountMode { GENERATE, IMPORT, AMBER }
-enum class SetupPath { NONE, FULL, BROWSE }
+enum class SetupPath { NONE, FULL, BROWSE, NEW_TO_NOSTR }
 
 // ── ViewModel ────────────────────────────────────────────────────
 
@@ -216,9 +216,19 @@ class SetupWizardViewModel @Inject constructor(
         WizardStep.IMPORT_NOTES, WizardStep.COMPLETE,
     )
 
+    /** Steps for "New to Nostr" mode. */
+    private val newUserSteps = listOf(
+        WizardStep.WELCOME, WizardStep.CHOOSE_PATH,
+        WizardStep.NOSTR_INTRO, WizardStep.COMPLETE,
+    )
+
     /** Active step list based on current setup path. */
     val activeSteps: List<WizardStep>
-        get() = if (_setupPath.value == SetupPath.BROWSE) browseSteps else fullSteps
+        get() = when (_setupPath.value) {
+            SetupPath.BROWSE -> browseSteps
+            SetupPath.NEW_TO_NOSTR -> newUserSteps
+            else -> fullSteps
+        }
 
     /** Current step index (0-based) within active step list. */
     val currentStepIndex: Int
@@ -233,8 +243,68 @@ class SetupWizardViewModel @Inject constructor(
     fun advanceFromWelcome() { _step.value = WizardStep.CHOOSE_PATH }
 
     fun advanceFromChoosePath() {
-        _step.value = WizardStep.ACCOUNT
+        _step.value = when (_setupPath.value) {
+            SetupPath.NEW_TO_NOSTR -> WizardStep.NOSTR_INTRO
+            else -> WizardStep.ACCOUNT
+        }
     }
+
+    // ── Key Generation Helper ─────────────────────────────────────
+
+    /** Generate a new keypair and save credentials. Returns (npub, skHex, pkHex) or null on failure. */
+    private fun generateAndSaveKeypair(): Triple<String, String, String>? {
+        val keypair = HavenBridge.generateKeypair() ?: run {
+            _error.value = "Key generation failed"
+            return null
+        }
+        val parts = keypair.split(":")
+        if (parts.size != 2) {
+            _error.value = "Key generation returned invalid format"
+            return null
+        }
+        val skHex = parts[0]
+        val pkHex = parts[1]
+        val npub = HavenBridge.hexToNpub(pkHex)
+        val nsec = HavenBridge.encodeNsec(skHex)
+        _generatedNsec.value = nsec
+        credentialStore.saveNsec(skHex, pkHex)
+        return Triple(npub ?: pkHex, skHex, pkHex)
+    }
+
+    // ── New to Nostr ──────────────────────────────────────────────
+
+    /** Generate keys for a new user. Stays on NOSTR_INTRO to show nsec backup. */
+    fun generateNewUserKeys() {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _error.value = null
+            try {
+                val (npub, skHex, pkHex) = generateAndSaveKeypair() ?: run {
+                    _isLoading.value = false
+                    return@launch
+                }
+                configStore.update { it.copy(
+                    ownerNpub = npub,
+                    ownerHexKey = skHex,
+                    signingMode = "local",
+                    setupMode = "newuser",
+                    defaultFeedMode = "POPULAR",
+                ) }
+                configStore.setActiveAccount(pkHex)
+                // Stay on NOSTR_INTRO so user can see/copy their nsec
+            } catch (e: Exception) {
+                _error.value = e.message ?: "Setup failed"
+            }
+            _isLoading.value = false
+        }
+    }
+
+    /** Advance from NOSTR_INTRO to COMPLETE after user has seen their nsec. */
+    fun advanceFromNostrIntro() {
+        _step.value = WizardStep.COMPLETE
+    }
+
+    // ── Account ───────────────────────────────────────────────────
 
     fun advanceFromAccount() {
         viewModelScope.launch {
@@ -298,25 +368,12 @@ class SetupWizardViewModel @Inject constructor(
                     // Full mode
                     when (_accountMode.value) {
                         AccountMode.GENERATE -> {
-                            val keypair = HavenBridge.generateKeypair() ?: run {
-                                _error.value = "Key generation failed"
+                            val (npub, skHex, pkHex) = generateAndSaveKeypair() ?: run {
                                 _isLoading.value = false
                                 return@launch
                             }
-                            val parts = keypair.split(":")
-                            if (parts.size != 2) {
-                                _error.value = "Key generation returned invalid format"
-                                _isLoading.value = false
-                                return@launch
-                            }
-                            val skHex = parts[0]
-                            val pkHex = parts[1]
-                            val npub = HavenBridge.hexToNpub(pkHex)
-                            val nsec = HavenBridge.encodeNsec(skHex)
-                            _generatedNsec.value = nsec
-                            credentialStore.saveNsec(skHex, pkHex)
                             configStore.update { it.copy(
-                                ownerNpub = npub ?: pkHex,
+                                ownerNpub = npub,
                                 ownerHexKey = skHex,
                                 signingMode = "local",
                                 setupMode = "full",
@@ -772,6 +829,7 @@ fun SetupWizardScreen(
                         onContinue = viewModel::advanceFromWelcome,
                     )
                     WizardStep.CHOOSE_PATH -> ChoosePathStep(viewModel)
+                    WizardStep.NOSTR_INTRO -> NostrIntroStep(viewModel)
                     WizardStep.ACCOUNT -> AccountStep(viewModel)
                     WizardStep.RELAYS -> RelayStep(viewModel)
                     WizardStep.IMPORT_NOTES -> ImportNotesStep(viewModel)
@@ -902,6 +960,16 @@ private fun ChoosePathStep(viewModel: SetupWizardViewModel) {
         Spacer(Modifier.height(24.dp))
 
         WizardOptionCard(
+            title = "New to Nostr",
+            subtitle = "Quick start -- we'll set everything up for you",
+            selected = setupPath == SetupPath.NEW_TO_NOSTR,
+            onClick = { viewModel.setSetupPath(SetupPath.NEW_TO_NOSTR) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        Spacer(Modifier.height(12.dp))
+
+        WizardOptionCard(
             title = "Full Setup",
             subtitle = "Relay, notes, media, wallet -- the complete package",
             selected = setupPath == SetupPath.FULL,
@@ -926,6 +994,136 @@ private fun ChoosePathStep(viewModel: SetupWizardViewModel) {
             enabled = setupPath != SetupPath.NONE,
             onClick = viewModel::advanceFromChoosePath,
         )
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// Step: Nostr Intro (New to Nostr path)
+// ══════════════════════════════════════════════════════════════════
+
+@Composable
+private fun NostrIntroStep(viewModel: SetupWizardViewModel) {
+    val generatedNsec by viewModel.generatedNsec.collectAsState()
+    val isLoading by viewModel.isLoading.collectAsState()
+    val error by viewModel.error.collectAsState()
+    val context = LocalContext.current
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        // Card 1: What is Nostr
+        WizardCard {
+            Text(
+                text = "Welcome to Nostr",
+                color = PrimaryText,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = "Nostr is an open social protocol. You own your identity " +
+                    "through a cryptographic keypair -- no company controls your " +
+                    "account. Your posts are broadcast to relays and can be read " +
+                    "by anyone.",
+                color = SecondaryText,
+                fontSize = 15.sp,
+                lineHeight = 22.sp,
+                textAlign = TextAlign.Center,
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // Card 2: Why Nostr Vault is unique
+        WizardCard {
+            Text(
+                text = "Your Personal Archive",
+                color = PrimaryText,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.SemiBold,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = "Nostr Vault runs a HAVEN relay right on your device. " +
+                    "Every note, message, and media file you interact with is " +
+                    "archived locally. Your data stays with you -- not on " +
+                    "someone else's server.",
+                color = SecondaryText,
+                fontSize = 15.sp,
+                lineHeight = 22.sp,
+                textAlign = TextAlign.Center,
+            )
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        if (generatedNsec != null) {
+            // Card 3: Secret key backup
+            WizardCard {
+                Text(
+                    text = "Your Secret Key",
+                    color = PrimaryText,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = "Save this somewhere safe. It's the only way to recover " +
+                        "your account. Anyone with this key can post as you.",
+                    color = SecondaryText,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = generatedNsec!!,
+                    color = WizardAccent,
+                    fontSize = 12.sp,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(WizardBgElevated)
+                        .border(1.dp, WizardBorderSubtle, RoundedCornerShape(8.dp))
+                        .clickable {
+                            val clipboard = context.getSystemService(
+                                Context.CLIPBOARD_SERVICE,
+                            ) as android.content.ClipboardManager
+                            clipboard.setPrimaryClip(
+                                android.content.ClipData.newPlainText("nsec", generatedNsec),
+                            )
+                        }
+                        .padding(12.dp),
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "Tap to copy",
+                    color = SecondaryText.copy(alpha = 0.5f),
+                    fontSize = 11.sp,
+                )
+            }
+
+            Spacer(Modifier.height(32.dp))
+
+            WizardPrimaryButton(
+                text = "Continue",
+                onClick = viewModel::advanceFromNostrIntro,
+            )
+        } else {
+            // Error display
+            error?.let { errorText ->
+                Text(errorText, color = Color(0xFFEF4444), fontSize = 13.sp)
+                Spacer(Modifier.height(8.dp))
+            }
+
+            WizardPrimaryButton(
+                text = "Create My Account",
+                enabled = !isLoading,
+                onClick = viewModel::generateNewUserKeys,
+            )
+        }
     }
 }
 
@@ -1773,7 +1971,10 @@ private fun CompleteStep(
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         WizardCard {
             Text(
-                text = "You're all set!",
+                text = when (setupPath) {
+                    SetupPath.NEW_TO_NOSTR -> "Welcome to Nostr!"
+                    else -> "You're all set!"
+                },
                 color = WizardAccent,
                 fontSize = 24.sp,
                 fontWeight = FontWeight.Bold,
@@ -1782,26 +1983,49 @@ private fun CompleteStep(
             )
             Spacer(Modifier.height(16.dp))
 
-            if (setupPath == SetupPath.BROWSE) {
-                WizardCheckItem("Connected to Nostr")
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    text = "You're in browse mode. Upgrade to full setup for signing, your own relay, and media storage.",
-                    color = SecondaryText,
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp,
-                    textAlign = TextAlign.Center,
-                )
-            } else {
-                WizardCheckItem("Relay is running")
-                WizardCheckItem("DMs enabled")
-                WizardCheckItem("Blossom media active")
-                WizardCheckItem("Posts being broadcast")
+            when (setupPath) {
+                SetupPath.NEW_TO_NOSTR -> {
+                    WizardCheckItem("Account created")
+                    WizardCheckItem("Relay is running")
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        text = "We'll start you on the Popular feed so you can discover " +
+                            "interesting people to follow. You can switch to the " +
+                            "Following feed anytime.",
+                        color = SecondaryText,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+                SetupPath.BROWSE -> {
+                    WizardCheckItem("Connected to Nostr")
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        text = "You're in browse mode. Upgrade to full setup for signing, your own relay, and media storage.",
+                        color = SecondaryText,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+                else -> {
+                    WizardCheckItem("Relay is running")
+                    WizardCheckItem("DMs enabled")
+                    WizardCheckItem("Blossom media active")
+                    WizardCheckItem("Posts being broadcast")
+                }
             }
         }
 
         Spacer(Modifier.height(32.dp))
-        WizardPrimaryButton(text = "Open Nostr Vault", onClick = onFinish)
+        WizardPrimaryButton(
+            text = when (setupPath) {
+                SetupPath.NEW_TO_NOSTR -> "Start Exploring"
+                else -> "Open Nostr Vault"
+            },
+            onClick = onFinish,
+        )
     }
 }
 

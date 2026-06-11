@@ -198,7 +198,8 @@ data class HavenConfig(
 
     // Setup
     val hasCompletedSetup: Boolean = false,
-    val setupMode: String = "full", // "full" or "browse"
+    val setupMode: String = "full", // "full", "browse", or "newuser"
+    val defaultFeedMode: String = "FOLLOWING", // "FOLLOWING", "POPULAR", etc.
     val hasCompletedInitialImport: Boolean = false, // Browse mode: tracks if first background import has run
 
     // Account management
@@ -309,9 +310,24 @@ data class HavenConfig(
     val oledMode: Boolean = false,
     val useFeedCompactMode: Boolean = true,
     val feedCompactModes: Map<String, Boolean> = emptyMap(),
+    val defaultReactionEmoji: String = "+",
+    val autoplayVideos: Boolean = true,
 
     // Performance
     val prefetchAvatars: Boolean = true,
+
+    // Push Notifications
+    val pushServerURL: String = "",
+    val enablePushNotifications: Boolean = false,
+    val pushNotifyMentions: Boolean = true,
+    val pushNotifyReplies: Boolean = true,
+    val pushNotifyDMs: Boolean = true,
+    val pushNotifyZaps: Boolean = true,
+    val pushNotifyReactions: Boolean = false,
+    val pushNotifyReposts: Boolean = false,
+
+    // Search
+    val recentSearches: List<String> = emptyList(),
 ) {
     /** Computed local relay WebSocket URL.
      *  Always uses ws:// for localhost since the local relay runs without TLS.

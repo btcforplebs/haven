@@ -14,9 +14,17 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.nostrvault.data.local.ConfigStore
+import com.nostrvault.relay.RelayForegroundService
+import com.nostrvault.service.FeedService
 import com.nostrvault.ui.components.AccountInfo
+import com.nostrvault.ui.notification.NotificationManager
+import com.nostrvault.service.PendingPostManager
+import com.nostrvault.ui.components.PendingPostBanner
+import com.nostrvault.ui.notification.NotificationOverlay
 import com.nostrvault.ui.components.AccountSwitcherSheet
+import com.nostrvault.relay.LogStore
 import com.nostrvault.ui.screens.*
+import com.nostrvault.ui.screens.dashboard.LogViewerScreen
 import com.nostrvault.ui.screens.dm.DMInboxScreen
 import com.nostrvault.ui.screens.dm.DMThreadScreen
 import com.nostrvault.ui.screens.feed.FeedScreen
@@ -28,8 +36,16 @@ import com.nostrvault.ui.screens.profile.ProfileEditScreen
 import com.nostrvault.ui.screens.profile.ProfileScreen
 import com.nostrvault.ui.screens.settings.AccountSettingsScreen
 import com.nostrvault.ui.screens.settings.AppearanceSettingsScreen
+import com.nostrvault.ui.screens.settings.BlastrSettingsScreen
+import com.nostrvault.ui.screens.settings.BlossomSettingsScreen
+import com.nostrvault.ui.screens.settings.CloudBackupScreen
+import com.nostrvault.ui.screens.settings.DMRelaySettingsScreen
+import com.nostrvault.ui.screens.settings.FollowingBackupScreen
+import com.nostrvault.ui.screens.settings.NotificationSettingsScreen
+import com.nostrvault.ui.screens.settings.PowSettingsScreen
 import com.nostrvault.ui.screens.settings.RelayListEditorScreen
 import com.nostrvault.ui.screens.settings.SettingsScreen
+import kotlinx.coroutines.flow.StateFlow
 import java.net.URLDecoder
 import java.net.URLEncoder
 
@@ -42,6 +58,12 @@ fun NostrVaultNavHost(
     isSetupComplete: Boolean,
     modifier: Modifier = Modifier,
     configStore: ConfigStore,
+    feedService: FeedService,
+    logStore: LogStore,
+    dmUnreadCount: StateFlow<Int>,
+    hasNewRelayActivity: StateFlow<Boolean>,
+    notificationManager: NotificationManager,
+    pendingPostManager: PendingPostManager,
 ) {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -63,6 +85,8 @@ fun NostrVaultNavHost(
     val config by configStore.config.collectAsState()
     val activeHex by configStore.activeAccountHexPubkey.collectAsState()
     val isOwner = config.activeAccountNpub.isNullOrBlank()
+    val unreadDMs by dmUnreadCount.collectAsState()
+    val relayActivity by hasNewRelayActivity.collectAsState()
 
     Box(modifier = modifier.fillMaxSize()) {
         NavHost(
@@ -107,6 +131,9 @@ fun NostrVaultNavHost(
                     },
                     onReply = { noteId ->
                         navController.navigate(Screen.ComposeNote.createRoute(replyToNoteId = noteId))
+                    },
+                    onQuote = { noteId ->
+                        navController.navigate(Screen.ComposeNote.createRoute(quoteToNoteId = noteId))
                     },
                     onNavigateToSettings = {
                         navController.navigate(Screen.Settings.route)
@@ -193,6 +220,9 @@ fun NostrVaultNavHost(
                     onReply = { id ->
                         navController.navigate(Screen.ComposeNote.createRoute(replyToNoteId = id))
                     },
+                    onQuote = { id ->
+                        navController.navigate(Screen.ComposeNote.createRoute(quoteToNoteId = id))
+                    },
                     onBack = { navController.popBackStack() },
                 )
             }
@@ -215,10 +245,27 @@ fun NostrVaultNavHost(
                 route = Screen.ComposeNote.route,
                 arguments = listOf(
                     navArgument("replyTo") { type = NavType.StringType; nullable = true; defaultValue = null },
+                    navArgument("quoteTo") { type = NavType.StringType; nullable = true; defaultValue = null },
+                    navArgument("draftId") { type = NavType.StringType; nullable = true; defaultValue = null },
                 ),
             ) { entry ->
                 ComposeNoteScreen(
                     onPublished = { navController.popBackStack() },
+                    onBack = { navController.popBackStack() },
+                )
+            }
+
+            composable(Screen.Drafts.route) {
+                DraftsScreen(
+                    onResumeDraft = { draftId, _, replyToId, quoteToId ->
+                        navController.navigate(
+                            Screen.ComposeNote.createRoute(
+                                replyToNoteId = replyToId,
+                                quoteToNoteId = quoteToId,
+                                draftId = draftId,
+                            )
+                        )
+                    },
                     onBack = { navController.popBackStack() },
                 )
             }
@@ -349,6 +396,48 @@ fun NostrVaultNavHost(
                 )
             }
 
+            composable(Screen.DMRelaySettings.route) {
+                DMRelaySettingsScreen(
+                    onBack = { navController.popBackStack() },
+                )
+            }
+
+            composable(Screen.BlastrSettings.route) {
+                BlastrSettingsScreen(
+                    onBack = { navController.popBackStack() },
+                )
+            }
+
+            composable(Screen.BlossomSettings.route) {
+                BlossomSettingsScreen(
+                    onBack = { navController.popBackStack() },
+                )
+            }
+
+            composable(Screen.PowSettings.route) {
+                PowSettingsScreen(
+                    onBack = { navController.popBackStack() },
+                )
+            }
+
+            composable(Screen.CloudBackupSettings.route) {
+                CloudBackupScreen(
+                    onBack = { navController.popBackStack() },
+                )
+            }
+
+            composable(Screen.FollowingBackup.route) {
+                FollowingBackupScreen(
+                    onBack = { navController.popBackStack() },
+                )
+            }
+
+            composable(Screen.NotificationSettings.route) {
+                NotificationSettingsScreen(
+                    onBack = { navController.popBackStack() },
+                )
+            }
+
             // ── Dashboard ─────────────────────────────────────────
             composable(Screen.Dashboard.route) {
                 DashboardScreen(
@@ -366,11 +455,21 @@ fun NostrVaultNavHost(
                         navController.navigate(Screen.ComposeNote.createRoute(replyToNoteId = noteId))
                     },
                     onBack = { navController.popBackStack() },
+                    logStore = logStore,
+                    feedService = feedService,
                 )
             }
 
             composable(Screen.BlossomDashboard.route) {
                 BlossomDashboardScreen(
+                    onBack = { navController.popBackStack() },
+                )
+            }
+
+            composable(Screen.LogViewer.route) {
+                val currentLogs by logStore.logs.collectAsState()
+                LogViewerScreen(
+                    logs = currentLogs,
                     onBack = { navController.popBackStack() },
                 )
             }
@@ -384,6 +483,7 @@ fun NostrVaultNavHost(
                 MediaViewerScreen(
                     initialIndex = index,
                     onBack = { navController.popBackStack() },
+                    autoplayVideos = configStore.config.value.autoplayVideos,
                 )
             }
         }
@@ -395,7 +495,12 @@ fun NostrVaultNavHost(
                     currentRoute = currentRoute,
                     activeAccountPubkey = activeHex,
                     isOwner = isOwner,
+                    hasUnreadDMs = unreadDMs > 0,
+                    hasNewRelayActivity = relayActivity,
                     onNavigate = { screen ->
+                        if (screen == Screen.Dashboard) {
+                            RelayForegroundService.markRelayViewed()
+                        }
                         val route = if (screen == Screen.Profile) {
                             Screen.Profile.createRoute(activeHex)
                         } else {
@@ -407,10 +512,33 @@ fun NostrVaultNavHost(
                             restoreState = true
                         }
                     },
+                    onReselect = { screen ->
+                        when (screen) {
+                            Screen.Feed -> feedService.requestScrollToTop()
+                            else -> {
+                                // Other tabs: pop back to root if deep, otherwise no-op for now
+                                navController.popBackStack(screen.route, inclusive = false)
+                            }
+                        }
+                    },
                     onAccountSwitcher = { showAccountSwitcher = true },
                 )
             }
         }
+
+        // Pending post countdown banner
+        PendingPostBanner(
+            pendingPostManager = pendingPostManager,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = if (showBottomBar) 80.dp else 0.dp),
+        )
+
+        // Notification pill overlay at top
+        NotificationOverlay(
+            notificationManager = notificationManager,
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
     }
 
     // Account switcher bottom sheet

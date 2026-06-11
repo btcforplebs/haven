@@ -17,10 +17,18 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.nostrvault.data.model.Draft
+import com.nostrvault.data.model.FeedNote
+import com.nostrvault.data.model.FeedProfile
+import com.nostrvault.service.DraftService
 import com.nostrvault.service.FeedService
 import com.nostrvault.service.NostrService
+import com.nostrvault.service.PendingPostManager
+import com.nostrvault.ui.components.QuotedNoteCard
 import com.nostrvault.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -35,10 +43,18 @@ import javax.inject.Inject
 class ComposeNoteViewModel @Inject constructor(
     private val nostrService: NostrService,
     private val feedService: FeedService,
+    private val pendingPostManager: PendingPostManager,
+    private val draftService: DraftService,
     savedStateHandle: SavedStateHandle,
 ) : ViewModel() {
 
     private val replyToNoteId: String? = savedStateHandle["replyTo"]
+    private val quoteToNoteId: String? = savedStateHandle["quoteTo"]
+    private val resumeDraftId: String? = savedStateHandle["draftId"]
+
+    /** Stable draft ID for this compose session. */
+    private val draftId: String = resumeDraftId ?: java.util.UUID.randomUUID().toString()
+    private var autoSaveJob: Job? = null
 
     private val _content = MutableStateFlow("")
     val content = _content.asStateFlow()
@@ -53,9 +69,25 @@ class ComposeNoteViewModel @Inject constructor(
     private val _replyingToName = MutableStateFlow<String?>(null)
     val replyingToName = _replyingToName.asStateFlow()
 
+    /** The quoted note and its author profile (for preview card). */
+    private val _quotedNote = MutableStateFlow<FeedNote?>(null)
+    val quotedNote = _quotedNote.asStateFlow()
+
+    private val _quotedProfile = MutableStateFlow<FeedProfile?>(null)
+    val quotedProfile = _quotedProfile.asStateFlow()
+
     val isReply: Boolean get() = replyToNoteId != null
+    val isQuote: Boolean get() = quoteToNoteId != null
 
     init {
+        // Restore content from a resumed draft
+        if (resumeDraftId != null) {
+            val draft = draftService.findDraft(resumeDraftId)
+            if (draft != null) {
+                _content.value = draft.content
+            }
+        }
+
         if (replyToNoteId != null) {
             val parentNote = feedService.findNote(replyToNoteId)
             if (parentNote != null) {
@@ -63,9 +95,40 @@ class ComposeNoteViewModel @Inject constructor(
                 _replyingToName.value = profile?.bestName ?: parentNote.pubkey.take(8) + "..."
             }
         }
+        if (quoteToNoteId != null) {
+            val quoted = feedService.findNote(quoteToNoteId)
+            _quotedNote.value = quoted
+            if (quoted != null) {
+                _quotedProfile.value = nostrService.profiles.value[quoted.pubkey]
+            }
+            if (_content.value.isEmpty()) {
+                _content.value = "\nnostr:${quoteToNoteId}"
+            }
+        }
     }
 
-    fun setContent(text: String) { _content.value = text }
+    fun setContent(text: String) {
+        _content.value = text
+        scheduleDraftSave()
+    }
+
+    private fun scheduleDraftSave() {
+        autoSaveJob?.cancel()
+        autoSaveJob = viewModelScope.launch {
+            delay(2000) // 2-second debounce
+            val text = _content.value
+            if (text.isNotBlank()) {
+                draftService.saveDraft(
+                    Draft(
+                        id = draftId,
+                        content = text,
+                        replyToId = replyToNoteId,
+                        quoteId = quoteToNoteId,
+                    )
+                )
+            }
+        }
+    }
 
     fun publish(onPublished: () -> Unit) {
         val text = _content.value.trim()
@@ -75,10 +138,26 @@ class ComposeNoteViewModel @Inject constructor(
             _isPublishing.value = true
             _error.value = null
             try {
-                val tags = buildReplyTags()
+                val tags = buildReplyTags().toMutableList()
+                // Add quote tag if quoting
+                if (quoteToNoteId != null) {
+                    tags.add(listOf("q", quoteToNoteId))
+                }
                 val event = nostrService.signEventAsync(kind = 1, content = text, tags = tags)
                 if (event != null) {
-                    nostrService.postEvent(event)
+                    val replyNote = replyToNoteId?.let { feedService.findNote(it) }
+                    val quoteNote = quoteToNoteId?.let { feedService.findNote(it) }
+                    pendingPostManager.startPost(
+                        event = event,
+                        content = text,
+                        replyTo = replyNote,
+                        quoteTo = quoteNote,
+                    ) { evt ->
+                        nostrService.postEvent(evt)
+                    }
+                    // Delete draft on successful publish
+                    autoSaveJob?.cancel()
+                    draftService.deleteDraft(draftId)
                     onPublished()
                 } else {
                     Log.e("ComposeNote", "signEventAsync returned null for kind=1")
@@ -136,12 +215,22 @@ fun ComposeNoteScreen(
     val isPublishing by viewModel.isPublishing.collectAsState()
     val error by viewModel.error.collectAsState()
     val replyingToName by viewModel.replyingToName.collectAsState()
+    val quotedNote by viewModel.quotedNote.collectAsState()
+    val quotedProfile by viewModel.quotedProfile.collectAsState()
     val colors = LocalNostrVaultColors.current
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(if (viewModel.isReply) "Reply" else "New Note") },
+                title = {
+                    Text(
+                        when {
+                            viewModel.isReply -> "Reply"
+                            viewModel.isQuote -> "Quote"
+                            else -> "New Note"
+                        }
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(NostrVaultIcons.Dismiss, contentDescription = "Cancel")
@@ -196,6 +285,16 @@ fun ComposeNoteScreen(
                 Spacer(Modifier.height(8.dp))
             }
 
+            // Quoted note preview
+            quotedNote?.let { qNote ->
+                QuotedNoteCard(
+                    note = qNote,
+                    profile = quotedProfile,
+                    onClick = { /* non-interactive in compose */ },
+                    modifier = Modifier.padding(bottom = 12.dp),
+                )
+            }
+
             // Error message
             error?.let { errMsg ->
                 Surface(
@@ -219,7 +318,11 @@ fun ComposeNoteScreen(
                 onValueChange = viewModel::setContent,
                 placeholder = {
                     Text(
-                        if (viewModel.isReply) "Write your reply..." else "What's on your mind?",
+                        when {
+                            viewModel.isReply -> "Write your reply..."
+                            viewModel.isQuote -> "Add your thoughts..."
+                            else -> "What's on your mind?"
+                        },
                         color = PlaceholderText,
                     )
                 },

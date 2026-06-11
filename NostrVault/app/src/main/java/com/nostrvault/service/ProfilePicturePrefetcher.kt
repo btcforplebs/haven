@@ -39,8 +39,8 @@ class ProfilePicturePrefetcher @Inject constructor(
 ) {
     companion object {
         private const val TAG = "AvatarPrefetch"
-        private const val BATCH_SIZE = 5
-        private const val BATCH_DELAY_MS = 1000L
+        private const val BATCH_SIZE = 15
+        private const val BATCH_DELAY_MS = 300L
         private const val DEBOUNCE_MS = 12L * 60 * 60 * 1000 // 12 hours
         private const val STARTUP_DELAY_MS = 10_000L // Wait for contacts to load
         private const val PROFILE_FETCH_WAIT_MS = 5_000L // Wait for Kind 0 metadata

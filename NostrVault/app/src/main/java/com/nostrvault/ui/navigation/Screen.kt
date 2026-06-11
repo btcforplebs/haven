@@ -21,12 +21,21 @@ sealed class Screen(val route: String) {
     data object DMThread : Screen("dm_thread/{pubkey}") {
         fun createRoute(pubkey: String) = "dm_thread/$pubkey"
     }
-    data object ComposeNote : Screen("compose?replyTo={replyTo}") {
-        fun createRoute(replyToNoteId: String? = null): String {
-            return if (replyToNoteId != null) "compose?replyTo=$replyToNoteId" else "compose"
+    data object ComposeNote : Screen("compose?replyTo={replyTo}&quoteTo={quoteTo}&draftId={draftId}") {
+        fun createRoute(
+            replyToNoteId: String? = null,
+            quoteToNoteId: String? = null,
+            draftId: String? = null,
+        ): String {
+            val params = mutableListOf<String>()
+            replyToNoteId?.let { params.add("replyTo=$it") }
+            quoteToNoteId?.let { params.add("quoteTo=$it") }
+            draftId?.let { params.add("draftId=$it") }
+            return if (params.isNotEmpty()) "compose?${params.joinToString("&")}" else "compose"
         }
     }
     data object ProfileEdit : Screen("profile_edit")
+    data object Drafts : Screen("drafts")
 
     // Groups
     data object GroupList : Screen("groups")
@@ -48,10 +57,18 @@ sealed class Screen(val route: String) {
     data object AppearanceSettings : Screen("settings/appearance")
     data object AccountSettings : Screen("settings/accounts")
     data object RelayListEditor : Screen("settings/relays")
+    data object DMRelaySettings : Screen("settings/dm_relays")
+    data object BlastrSettings : Screen("settings/blastr")
+    data object BlossomSettings : Screen("settings/blossom")
+    data object PowSettings : Screen("settings/pow")
+    data object CloudBackupSettings : Screen("settings/cloud_backup")
+    data object FollowingBackup : Screen("settings/following_backup")
+    data object NotificationSettings : Screen("settings/notifications")
 
     // Dashboard
     data object Dashboard : Screen("dashboard")
     data object BlossomDashboard : Screen("blossom_dashboard")
+    data object LogViewer : Screen("log_viewer")
 
     // Setup
     data object SetupWizard : Screen("setup")

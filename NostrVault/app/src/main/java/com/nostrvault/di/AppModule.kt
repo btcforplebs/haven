@@ -8,6 +8,7 @@ import com.nostrvault.data.local.ProfileRepository
 import com.nostrvault.service.ContactManager
 import com.nostrvault.service.EventPublisher
 import com.nostrvault.service.FeedFilterEngine
+import coil.decode.GifDecoder
 import coil.decode.VideoFrameDecoder
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
@@ -79,6 +80,7 @@ object AppModule {
                     .build()
             }
             .components {
+                add(GifDecoder.Factory())
                 add(VideoFrameDecoder.Factory())
             }
             .crossfade(150) // 150ms: smooth but less visual noise than default 200ms during fast scroll

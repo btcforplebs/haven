@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
@@ -34,6 +35,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.nostrvault.ui.components.glassPillBackground
+import com.nostrvault.ui.theme.ErrorRed
 import com.nostrvault.ui.theme.LocalNostrVaultColors
 import com.nostrvault.ui.theme.LocalOledMode
 import com.nostrvault.ui.theme.NostrVaultIcons
@@ -67,7 +69,10 @@ fun BottomNavBar(
     currentRoute: String?,
     activeAccountPubkey: String,
     isOwner: Boolean,
+    hasUnreadDMs: Boolean = false,
+    hasNewRelayActivity: Boolean = false,
     onNavigate: (Screen) -> Unit,
+    onReselect: (Screen) -> Unit = {},
     onAccountSwitcher: () -> Unit,
 ) {
     val colors = LocalNostrVaultColors.current
@@ -101,8 +106,13 @@ fun BottomNavBar(
                         selected = selected,
                         selectedColor = colors.primary,
                         isOwner = isOwner,
+                        showBadge = hasUnreadDMs,
                         onClick = {
-                            onNavigate(Screen.Profile)
+                            if (selected) {
+                                onReselect(Screen.Profile)
+                            } else {
+                                onNavigate(Screen.Profile)
+                            }
                         },
                         onLongClick = onAccountSwitcher,
                         modifier = Modifier.weight(1f),
@@ -113,7 +123,14 @@ fun BottomNavBar(
                         label = item.label,
                         selected = selected,
                         selectedColor = colors.primary,
-                        onClick = { onNavigate(item.screen) },
+                        showBadge = item.screen == Screen.Dashboard && hasNewRelayActivity,
+                        onClick = {
+                            if (selected) {
+                                onReselect(item.screen)
+                            } else {
+                                onNavigate(item.screen)
+                            }
+                        },
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -128,6 +145,7 @@ private fun NavTab(
     label: String,
     selected: Boolean,
     selectedColor: Color,
+    showBadge: Boolean = false,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -146,14 +164,25 @@ private fun NavTab(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = label,
-            tint = if (selected) selectedColor else SecondaryText,
-            modifier = Modifier
-                .size(31.dp)
-                .scale(scale),
-        )
+        Box {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = if (selected) selectedColor else SecondaryText,
+                modifier = Modifier
+                    .size(31.dp)
+                    .scale(scale),
+            )
+            if (showBadge) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .align(Alignment.TopEnd)
+                        .offset(x = 2.dp, y = (-2).dp)
+                        .background(ErrorRed, CircleShape),
+                )
+            }
+        }
         Text(
             text = label,
             fontSize = 10.sp,
@@ -169,6 +198,7 @@ private fun ProfileTab(
     selected: Boolean,
     selectedColor: Color,
     isOwner: Boolean,
+    showBadge: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -197,26 +227,37 @@ private fun ProfileTab(
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         // Avatar placeholder with ring
-        Box(
-            modifier = Modifier
-                .size(31.dp)
-                .scale(scale)
-                .border(
-                    width = if (selected) 1.5.dp else 0.dp,
-                    color = if (selected) ringColor else Color.Transparent,
-                    shape = CircleShape,
+        Box {
+            Box(
+                modifier = Modifier
+                    .size(31.dp)
+                    .scale(scale)
+                    .border(
+                        width = if (selected) 1.5.dp else 0.dp,
+                        color = if (selected) ringColor else Color.Transparent,
+                        shape = CircleShape,
+                    )
+                    .padding(1.dp)
+                    .clip(CircleShape)
+                    .background(SecondaryGroupedBg),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = NostrVaultIcons.AccountCircle,
+                    contentDescription = "Profile",
+                    tint = if (selected) selectedColor else SecondaryText,
+                    modifier = Modifier.size(25.dp),
                 )
-                .padding(1.dp)
-                .clip(CircleShape)
-                .background(SecondaryGroupedBg),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = NostrVaultIcons.AccountCircle,
-                contentDescription = "Profile",
-                tint = if (selected) selectedColor else SecondaryText,
-                modifier = Modifier.size(25.dp),
-            )
+            }
+            if (showBadge) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .align(Alignment.TopEnd)
+                        .offset(x = 2.dp, y = (-2).dp)
+                        .background(ErrorRed, CircleShape),
+                )
+            }
         }
         Text(
             text = "Profile",

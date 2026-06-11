@@ -4,7 +4,7 @@ android_sdk := env("ANDROID_HOME", env("HOME", "") + "/Library/Android/sdk")
 adb := android_sdk + "/platform-tools/adb"
 ndk_home := `ls -d ~/Library/Android/sdk/ndk/* 2>/dev/null | tail -1`
 
-# Build Android debug APK (compiles Go native lib + Gradle build)
+# Build Android release APK (compiles Go native lib + Gradle build)
 android-build:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -26,11 +26,11 @@ android-build:
     rm -f "$GO_SRC/HavenBridgeJNI.c"
     rm -f "$JNILIBS/arm64-v8a/libhaven.h"
     echo "Building APK..."
-    cd {{justfile_directory()}}/NostrVault && ./gradlew assembleDebug
+    cd {{justfile_directory()}}/NostrVault && ./gradlew assembleRelease
 
-# Install Android debug APK on connected device
+# Install Android release APK on connected device
 android-install:
-    {{adb}} install -r {{justfile_directory()}}/NostrVault/app/build/outputs/apk/debug/app-debug.apk
+    {{adb}} install -r {{justfile_directory()}}/NostrVault/app/build/outputs/apk/release/app-release.apk
 
 # Build iOS app via Xcode
 ios-build:

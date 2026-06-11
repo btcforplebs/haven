@@ -43,6 +43,7 @@ class NostrService @Inject constructor(
     private val profileRepository: ProfileRepository,
     private val eventPublisher: EventPublisher,
     private val amberSignerService: AmberSignerService,
+    private val powPreferences: com.nostrvault.data.local.PowPreferences,
 ) {
     companion object {
         private const val TAG = "NostrService"
@@ -51,14 +52,14 @@ class NostrService @Inject constructor(
         private const val MAX_EVENTS = 10_000
         private const val BUFFER_FLUSH_DELAY_MS = 300L
         private const val PROFILE_SAVE_THROTTLE_MS = 5_000L
-        private const val PROFILE_FLUSH_DELAY_MS = 500L
+        private const val PROFILE_FLUSH_DELAY_MS = 100L
         private const val PROFILE_UPDATE_DEBOUNCE_MS = 100L
         private const val FETCH_WATCHDOG_TIMEOUT_MS = 8_000L
         private const val MAX_RECONNECT_ATTEMPTS = 10
         private const val BASE_RECONNECT_DELAY_MS = 2_000L
         private const val MAX_RECONNECT_DELAY_MS = 30_000L
         private const val SEARCH_TIMEOUT_MS = 4_000L
-        private const val TEMP_CLIENT_DISCONNECT_MS = 5_000L
+        private const val TEMP_CLIENT_DISCONNECT_MS = 3_000L
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -656,12 +657,12 @@ class NostrService @Inject constructor(
 
         val subId = "meta-${UUID.randomUUID().toString().take(8)}"
         val filter = buildMap<String, Any> {
-            put("kinds", listOf(0, 10002, 10050, 10000, 10063))
+            put("kinds", listOf(0))
             put("authors", pubkeys)
         }
 
-        // Connect to Blastr relays in parallel for metadata
-        for (relayUrl in blastrRelays) {
+        // Connect to a few Blastr relays in parallel for metadata (kind 0 is widely replicated)
+        for (relayUrl in blastrRelays.shuffled().take(3)) {
             if (!isValidRelayUrl(relayUrl)) continue
             scope.launch(Dispatchers.IO) {
                 tempClientSemaphore.withPermit {
@@ -923,7 +924,15 @@ class NostrService @Inject constructor(
                 val eventJson = EventPublisher.buildUnsignedEvent(
                     kind = kind, content = content, tags = finalTags, pubkey = pubkey,
                 )
-                val signed = EventPublisher.signWithGoBackend(eventJson, secretKey)
+
+                // Apply NIP-13 proof of work if enabled for this event kind
+                val powDifficulty = powPreferences.difficultyForKind(kind)
+                val signed = if (powDifficulty > 0) {
+                    EventPublisher.mineAndSignWithGoBackend(eventJson, secretKey, powDifficulty)
+                        ?: EventPublisher.signWithGoBackend(eventJson, secretKey) // fallback
+                } else {
+                    EventPublisher.signWithGoBackend(eventJson, secretKey)
+                }
                     ?: throw IllegalStateException("Go signEvent failed (pubkey=${pubkey.take(8)}, keyLen=${secretKey.length})")
                 parseSignedEvent(signed)
                     ?: throw IllegalStateException("Failed to parse signed event")

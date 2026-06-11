@@ -1410,6 +1410,9 @@
     "New" : {
 
     },
+    "New to Nostr" : {
+
+    },
     "Newest: %@" : {
 
     },
@@ -1488,10 +1491,16 @@
     "NOISE FILTERING" : {
 
     },
+    "Nostr is an open social protocol. You own your identity through a cryptographic keypair -- no company controls your account. Your posts are broadcast to relays and can be read by anyone." : {
+
+    },
     "Nostr Vault" : {
 
     },
     "Nostr Vault lives in your menu bar" : {
+
+    },
+    "Nostr Vault runs a HAVEN relay right on your device. Every note, message, and media file you interact with is archived locally. Your data stays with you -- not on someone else's server." : {
 
     },
     "Nostr Vault v%@" : {
@@ -1626,6 +1635,9 @@
     "Quick Reactions" : {
 
     },
+    "Quick start -- we'll set everything up for you" : {
+
+    },
     "RAW EVENT" : {
 
     },
@@ -1756,6 +1768,9 @@
 
     },
     "Save all notes and metadata as a JSONL backup" : {
+
+    },
+    "Save this somewhere safe. It's the only way to recover your account. Anyone with this key can post as you." : {
 
     },
     "Scanning cache…" : {
@@ -3038,6 +3053,9 @@
     "Tap to complete setup and start your relay." : {
 
     },
+    "Tap to copy" : {
+
+    },
     "Text Accessibility" : {
 
     },
@@ -3196,6 +3214,12 @@
     "Warn+" : {
 
     },
+    "We'll start you on the Popular feed so you can discover interesting people to follow. You can switch to the Following feed anytime." : {
+
+    },
+    "Welcome to Nostr" : {
+
+    },
     "Welcome to Nostr Vault" : {
 
     },
@@ -3229,6 +3253,9 @@
     "Your Nostr key is a valid Bitcoin Taproot key. This address is derived deterministically from your npub via BIP-341 — no separate seed phrase needed." : {
 
     },
+    "Your Personal Archive" : {
+
+    },
     "Your personal Mac Sync Relay is automatically applied as a Blossom mirror. No manual setup required." : {
 
     },
@@ -3239,6 +3266,9 @@
 
     },
     "Your relay lives here" : {
+
+    },
+    "Your Secret Key" : {
 
     },
     "Zap %@" : {

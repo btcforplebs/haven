@@ -76,24 +76,24 @@ func newBadgerBackend(path string) DBBackend {
 		BadgerOptionsModifier: func(opts badgerdb.Options) badgerdb.Options {
 			if runtime.GOOS == "android" {
 				// Android shares ~3-4 GB RAM with the JVM. With 5 databases
-				// running, every MB counts. These settings reduce per-DB
-				// memory from ~60-80 MB (server defaults) to ~8-12 MB:
+				// running, every MB counts. These settings target ~20-26 MB per DB
+				// (vs ~60-80 MB server defaults):
 				//   - 16 MiB vlog files (vs 2 GB default)
-				//   - 1 memtable (vs 5): saves ~4 × 64 MB per DB
+				//   - 2 memtables (vs 5): allows 1 flush in background without stalling writes
 				//   - Fewer L0 tables: reduces open file handles and mmap
 				//   - 2 compactor threads (vs 4): fewer goroutines (BadgerDB requires >= 2)
-				//   - No compression: saves CPU and allows BlockCacheSize=0
-				//   - Disabled block/index caches: OS page cache is enough
+				//   - No compression: saves CPU cycles
+				//   - Small block/index caches: avoids disk reads for hot data
 				return opts.
 					WithMemTableSize(8 << 20).             // 8 MiB (default 64 MiB)
 					WithValueLogFileSize(1 << 24).         // 16 MiB
-					WithNumMemtables(1).                   // default 5
+					WithNumMemtables(2).                   // default 5; allows 1 background flush
 					WithNumLevelZeroTables(1).             // default 5
 					WithNumLevelZeroTablesStall(2).        // default 15
 					WithNumCompactors(2).                  // default 4, minimum 2
-					WithCompression(badgeropts.None).      // disable compression (saves CPU + allows no block cache)
-					WithBlockCacheSize(0).                 // disable (requires compression=None)
-					WithIndexCacheSize(0).                 // disable
+					WithCompression(badgeropts.None).      // disable compression (saves CPU)
+					WithBlockCacheSize(4 << 20).           // 4 MiB per DB (20 MiB total across 5 DBs)
+					WithIndexCacheSize(2 << 20).           // 2 MiB per DB (10 MiB total across 5 DBs)
 					WithValueThreshold(1 << 10)            // 1 KB: inline small values
 			}
 			// iOS / macOS / desktop: only limit vlog size for iOS mmap safety

@@ -1,14 +1,20 @@
 package com.nostrvault.ui.screens.feed
 
 import android.content.Intent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
@@ -20,15 +26,21 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.hilt.navigation.compose.hiltViewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import com.nostrvault.data.model.FeedMode
 import com.nostrvault.data.model.PopularFilter
 import com.nostrvault.ui.components.CustomZapSheet
+import com.nostrvault.ui.components.BroadcastSheet
+import com.nostrvault.ui.components.EmojiPickerSheet
 import com.nostrvault.ui.components.CompactNoteCard
 import com.nostrvault.ui.components.GlassPill
 import com.nostrvault.ui.components.GlassScaffold
 import com.nostrvault.ui.components.NoteCard
 import com.nostrvault.ui.components.SkeletonFeed
+import com.nostrvault.service.ScrollPosition
 import com.nostrvault.ui.theme.*
 
 /**
@@ -42,6 +54,7 @@ fun FeedScreen(
     onProfileClick: (String) -> Unit,
     onCompose: () -> Unit,
     onReply: ((String) -> Unit)? = null,
+    onQuote: ((String) -> Unit)? = null,
     onNavigateToSettings: () -> Unit,
     onNavigateToDashboard: () -> Unit,
     viewModel: FeedViewModel = hiltViewModel(),
@@ -60,8 +73,10 @@ fun FeedScreen(
     val mediaFollowingOnly by viewModel.mediaFollowingOnly.collectAsState()
     val popularFilter by viewModel.popularFilter.collectAsState()
     val showEngagementStats by viewModel.showEngagementStats.collectAsState()
+    val pendingCount by viewModel.pendingNoteCount.collectAsState()
     val listState = rememberLazyListState()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     // Inline expansion state for compact mode (iOS parity: tap expands inline first)
     var expandedNoteId by remember { mutableStateOf<String?>(null) }
@@ -75,6 +90,18 @@ fun FeedScreen(
     var zapNoteId by remember { mutableStateOf<String?>(null) }
     val zapSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
+    // More menu / delete confirmation state
+    var deleteNoteId by remember { mutableStateOf<String?>(null) }
+    var moreMenuNoteId by remember { mutableStateOf<String?>(null) }
+
+    // Emoji picker state
+    var emojiPickerNoteId by remember { mutableStateOf<String?>(null) }
+    val emojiSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    // Broadcast sheet state
+    var broadcastNoteId by remember { mutableStateOf<String?>(null) }
+    val broadcastSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
     // Trigger load-more when near bottom
     val shouldLoadMore by remember {
         derivedStateOf {
@@ -84,6 +111,52 @@ fun FeedScreen(
     }
     LaunchedEffect(shouldLoadMore) {
         if (shouldLoadMore && notes.isNotEmpty()) viewModel.loadMore()
+    }
+
+    // Track whether the user is at the top of the feed
+    val isAtTop by remember {
+        derivedStateOf {
+            listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset < 50
+        }
+    }
+
+    // Save scroll position for snapshot persistence (debounced on scroll stop)
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (!listState.isScrollInProgress) {
+            viewModel.saveScrollPosition(
+                listState.firstVisibleItemIndex,
+                listState.firstVisibleItemScrollOffset,
+            )
+        }
+    }
+
+    // Restore scroll position from disk snapshot on cold boot
+    val restoredPosition by viewModel.restoredScrollPosition.collectAsState()
+    LaunchedEffect(restoredPosition, notes) {
+        val pos = restoredPosition ?: return@LaunchedEffect
+        if (notes.isNotEmpty() && pos.index < notes.size) {
+            listState.scrollToItem(pos.index, pos.offset)
+            viewModel.clearRestoredPosition()
+        }
+    }
+
+    // Auto-apply pending notes when at top with auto-load enabled
+    LaunchedEffect(pendingCount, autoLoad, isAtTop) {
+        if (pendingCount > 0 && autoLoad && isAtTop) {
+            delay(1500)
+            viewModel.applyPendingNotes()
+        }
+    }
+
+    // Handle tab re-selection: scroll to top or refresh if already at top
+    LaunchedEffect(Unit) {
+        viewModel.scrollToTopRequest.collect {
+            if (isAtTop) {
+                viewModel.refresh()
+            } else {
+                listState.animateScrollToItem(0)
+            }
+        }
     }
 
     GlassScaffold(
@@ -120,6 +193,7 @@ fun FeedScreen(
             }
         },
     ) { padding ->
+        Box(modifier = Modifier.fillMaxSize()) {
         PullToRefreshBox(
             isRefreshing = isRefreshing,
             onRefresh = viewModel::refresh,
@@ -199,6 +273,8 @@ fun FeedScreen(
                                         }
                                         context.startActivity(Intent.createChooser(intent, "Share Note"))
                                     },
+                                    onMore = { id -> moreMenuNoteId = id },
+                                    onLongPressLike = { id -> emojiPickerNoteId = id },
                                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                                 )
                             }
@@ -223,6 +299,26 @@ fun FeedScreen(
                 }
             }
         }
+
+            // Floating "New Posts" pill
+            AnimatedVisibility(
+                visible = pendingCount > 0 && (!autoLoad || !isAtTop),
+                enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+                exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(top = padding.calculateTopPadding() + 12.dp)
+                    .zIndex(1f),
+            ) {
+                NewPostsPill(
+                    count = pendingCount,
+                    onClick = {
+                        viewModel.applyPendingNotes()
+                        scope.launch { listState.animateScrollToItem(0) }
+                    },
+                )
+            }
+        }
     }
 
     // Custom zap sheet
@@ -234,6 +330,130 @@ fun FeedScreen(
                 zapNoteId?.let { viewModel.zapNote(it, amount) }
                 zapNoteId = null
             },
+        )
+    }
+
+    // More menu dropdown
+    if (moreMenuNoteId != null) {
+        val targetNote = notes.find { it.id == moreMenuNoteId }
+        val isOwn = targetNote != null && viewModel.isOwnNote(targetNote.pubkey)
+
+        AlertDialog(
+            onDismissRequest = { moreMenuNoteId = null },
+            title = { Text("Actions") },
+            text = {
+                Column {
+                    // Quote
+                    if (onQuote != null) {
+                        TextButton(
+                            onClick = {
+                                moreMenuNoteId?.let { onQuote(it) }
+                                moreMenuNoteId = null
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(NostrVaultIcons.Quote, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Quote Post")
+                            }
+                        }
+                    }
+
+                    // Broadcast
+                    TextButton(
+                        onClick = {
+                            broadcastNoteId = moreMenuNoteId
+                            moreMenuNoteId = null
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(NostrVaultIcons.Send, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Broadcast")
+                        }
+                    }
+
+                    // Delete (own notes only)
+                    if (isOwn) {
+                        TextButton(
+                            onClick = {
+                                deleteNoteId = moreMenuNoteId
+                                moreMenuNoteId = null
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(NostrVaultIcons.Delete, contentDescription = null, tint = ErrorRed, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Delete Post", color = ErrorRed)
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { moreMenuNoteId = null }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
+    // Delete confirmation dialog
+    if (deleteNoteId != null) {
+        AlertDialog(
+            onDismissRequest = { deleteNoteId = null },
+            title = { Text("Delete Post") },
+            text = { Text("Request deletion of this post? Not all relays honor NIP-09 deletion requests.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleteNoteId?.let { viewModel.deleteNote(it) }
+                    deleteNoteId = null
+                }) {
+                    Text("Delete", color = ErrorRed)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteNoteId = null }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
+    // Emoji picker sheet
+    if (emojiPickerNoteId != null) {
+        EmojiPickerSheet(
+            sheetState = emojiSheetState,
+            onDismiss = { emojiPickerNoteId = null },
+            onSelectEmoji = { emoji ->
+                emojiPickerNoteId?.let { viewModel.likeNote(it, emoji) }
+                emojiPickerNoteId = null
+            },
+        )
+    }
+
+    // Broadcast sheet
+    val broadcastNote = broadcastNoteId?.let { id -> notes.find { it.id == id } }
+    if (broadcastNote != null) {
+        BroadcastSheet(
+            note = broadcastNote,
+            sheetState = broadcastSheetState,
+            feedService = viewModel.feedServiceRef,
+            nostrService = viewModel.nostrServiceRef,
+            configStore = viewModel.configStoreRef,
+            onDismiss = { broadcastNoteId = null },
         )
     }
 }
@@ -474,6 +694,38 @@ private fun EmptyFeedPlaceholder(mode: FeedMode) {
                 },
                 color = SecondaryText,
                 fontSize = 16.sp,
+            )
+        }
+    }
+}
+
+// ── New posts pill ──────────────────────────────────────────────
+
+@Composable
+private fun NewPostsPill(count: Int, onClick: () -> Unit) {
+    val colors = LocalNostrVaultColors.current
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(50),
+        color = colors.primary,
+        shadowElevation = 8.dp,
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(vertical = 10.dp, horizontal = 20.dp),
+        ) {
+            Icon(
+                imageVector = NostrVaultIcons.ArrowUp,
+                contentDescription = null,
+                tint = PrimaryText,
+                modifier = Modifier.size(14.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                text = "$count New Post${if (count != 1) "s" else ""}",
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+                color = PrimaryText,
             )
         }
     }

@@ -137,12 +137,15 @@ func StartRelayC(importMode bool) {
 			}),
 	)
 
+	// Install log interceptor so the host app can poll for log messages.
+	// This runs in both normal and import mode, enabling the dashboard
+	// console log viewer on Android/iOS.
+	origWriter := log.Writer()
+	log.SetOutput(&importLogWriter{original: origWriter})
+
 	log.Println("🚀 HAVEN", config.RelayVersion, "is booting up (C-Shared Mode) [1/3]")
 
 	if importMode {
-		// Install log interceptor so the host app can poll progress
-		origWriter := log.Writer()
-		log.SetOutput(&importLogWriter{original: origWriter})
 		defer log.SetOutput(origWriter)
 
 		defer CloseDBs()
@@ -259,7 +262,15 @@ func StopRelayC() {
 		csharedCancel()
 	}
 	if globalServer != nil {
-		globalServer.Shutdown(context.Background())
+		// Use a bounded timeout so a hung handler can't block shutdown forever.
+		// The Android side already imposes a 5 s JNI timeout; this 4 s ceiling
+		// ensures the Go side finishes first and databases close cleanly.
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer shutdownCancel()
+		if err := globalServer.Shutdown(shutdownCtx); err != nil {
+			log.Printf("⚠️ HTTP server shutdown error (force-closing): %v", err)
+			globalServer.Close() // hard close if graceful timed out
+		}
 		globalServer = nil
 	}
 	CloseDBs()

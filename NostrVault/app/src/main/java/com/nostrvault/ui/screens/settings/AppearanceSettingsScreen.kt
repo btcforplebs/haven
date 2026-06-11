@@ -45,11 +45,15 @@ class AppearanceViewModel @Inject constructor(
     private val _oledMode = MutableStateFlow(false)
     val oledMode = _oledMode.asStateFlow()
 
+    private val _defaultEmoji = MutableStateFlow("+")
+    val defaultEmoji = _defaultEmoji.asStateFlow()
+
     init {
         val config = configStore.config.value
         _selectedTheme.value = AppTheme.fromKey(config.themeColor)
         _textScale.value = config.textSizeScale
         _oledMode.value = config.oledMode
+        _defaultEmoji.value = config.defaultReactionEmoji
     }
 
     fun selectTheme(theme: AppTheme) {
@@ -72,6 +76,13 @@ class AppearanceViewModel @Inject constructor(
             configStore.update { it.copy(oledMode = enabled) }
         }
     }
+
+    fun setDefaultEmoji(emoji: String) {
+        _defaultEmoji.value = emoji
+        viewModelScope.launch {
+            configStore.update { it.copy(defaultReactionEmoji = emoji) }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -83,6 +94,7 @@ fun AppearanceSettingsScreen(
     val selectedTheme by viewModel.selectedTheme.collectAsState()
     val textScale by viewModel.textScale.collectAsState()
     val oledMode by viewModel.oledMode.collectAsState()
+    val defaultEmoji by viewModel.defaultEmoji.collectAsState()
 
     Scaffold(
         topBar = {
@@ -150,8 +162,8 @@ fun AppearanceSettingsScreen(
                 Slider(
                     value = textScale,
                     onValueChange = viewModel::setTextScale,
-                    valueRange = 0.8f..1.4f,
-                    steps = 5,
+                    valueRange = 0.8f..1.6f,
+                    steps = 7,
                     colors = SliderDefaults.colors(
                         thumbColor = LocalNostrVaultColors.current.primary,
                         activeTrackColor = LocalNostrVaultColors.current.primary,
@@ -198,6 +210,66 @@ fun AppearanceSettingsScreen(
                         checkedTrackColor = LocalNostrVaultColors.current.primary,
                     ),
                 )
+            }
+
+            Spacer(Modifier.height(32.dp))
+
+            // Default reaction emoji
+            Text(
+                text = "Default Reaction",
+                color = PrimaryText,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = "Used for quick-react on notes",
+                color = SecondaryText,
+                fontSize = 13.sp,
+            )
+            Spacer(Modifier.height(12.dp))
+
+            val emojiOptions = listOf(
+                "+" to "+",
+                "\u2764\uFE0F" to "\u2764\uFE0F",
+                "\uD83D\uDC4D" to "\uD83D\uDC4D",
+                "\uD83D\uDD25" to "\uD83D\uDD25",
+                "\u26A1" to "\u26A1",
+                "\uD83D\uDE02" to "\uD83D\uDE02",
+                "\uD83E\uDD14" to "\uD83E\uDD14",
+                "\uD83D\uDE4F" to "\uD83D\uDE4F",
+            )
+
+            Row(
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                emojiOptions.forEach { (display, value) ->
+                    val isSelected = defaultEmoji == value
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                if (isSelected) LocalNostrVaultColors.current.primary.copy(alpha = 0.2f)
+                                else TertiaryGroupedBg,
+                            )
+                            .then(
+                                if (isSelected) Modifier.border(
+                                    2.dp,
+                                    LocalNostrVaultColors.current.primary,
+                                    RoundedCornerShape(10.dp),
+                                )
+                                else Modifier
+                            )
+                            .clickable { viewModel.setDefaultEmoji(value) },
+                    ) {
+                        Text(
+                            text = display,
+                            fontSize = 20.sp,
+                        )
+                    }
+                }
             }
         }
     }

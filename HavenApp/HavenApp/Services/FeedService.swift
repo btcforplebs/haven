@@ -18,7 +18,10 @@ extension Notification.Name {
 class FeedService: ObservableObject {
     static let shared = FeedService()
 
-    @Published var feedMode: FeedMode = .following
+    @Published var feedMode: FeedMode = {
+        let stored = ConfigService.shared.config.defaultFeedMode.lowercased()
+        return FeedMode.allCases.first { $0.rawValue.lowercased() == stored } ?? .following
+    }()
     @Published var mediaFeedMode: MediaFeedMode = .following
     @Published var notes: [FeedNote] = []
     /// O(1) lookup index for notes by ID. Maintained alongside `notes` mutations.
@@ -104,7 +107,9 @@ class FeedService: ObservableObject {
         )
 
         // Only publish a change when the visible list actually differs.
-        if newFiltered.map(\.id) != filteredNotes.map(\.id) {
+        // Uses lazy zip to avoid allocating temporary [String] arrays.
+        if newFiltered.count != filteredNotes.count ||
+            !zip(newFiltered, filteredNotes).allSatisfy({ $0.id == $1.id }) {
             filteredNotes = newFiltered
             parentIsNextNote = FeedFilterEngine.computeParentIsNext(filteredNotes: newFiltered)
         }
@@ -117,7 +122,8 @@ class FeedService: ObservableObject {
             throttledPubkeys: throttled
         )
 
-        if newMedia.map(\.id) != filteredMediaNotes.map(\.id) {
+        if newMedia.count != filteredMediaNotes.count ||
+            !zip(newMedia, filteredMediaNotes).allSatisfy({ $0.id == $1.id }) {
             filteredMediaNotes = newMedia
         }
     }
@@ -125,15 +131,21 @@ class FeedService: ObservableObject {
     /// Cache of raw event JSON strings for NIP-18 repost embedding.
     /// Key: event ID, Value: complete stringified JSON of the event (includes sig).
     private(set) var rawEventCache: [String: String] = [:]
+    /// FIFO insertion order for rawEventCache eviction (avoids O(n log n) sort).
+    private var rawEventCacheOrder: [String] = []
     private static let maxRawEventCacheSize = 1000
 
     /// Insert a raw event JSON string into the cache (for own posts / rebroadcast).
     func cacheRawEvent(id: String, json: String) {
+        if rawEventCache[id] == nil {
+            rawEventCacheOrder.append(id)
+        }
         rawEventCache[id] = json
         if rawEventCache.count > Self.maxRawEventCacheSize {
             let overflow = rawEventCache.count - Self.maxRawEventCacheSize
-            let keysToRemove = rawEventCache.keys.sorted().prefix(overflow)
+            let keysToRemove = rawEventCacheOrder.prefix(overflow)
             for key in keysToRemove { rawEventCache.removeValue(forKey: key) }
+            rawEventCacheOrder.removeFirst(overflow)
         }
     }
 
@@ -973,6 +985,9 @@ class FeedService: ObservableObject {
     func addNote(_ note: FeedNote) {
         if !notes.contains(where: { $0.id == note.id }) {
             notes.insert(note, at: 0)
+            if notes.count > Self.maxNotes {
+                notes.removeLast(notes.count - Self.maxNotes)
+            }
             seenIds.insert(note.id)
             recomputeFilteredNotes()
         }
@@ -1143,6 +1158,9 @@ class FeedService: ObservableObject {
         
         notes.append(contentsOf: newNotes)
         notes.sort { $0.createdAt > $1.createdAt }
+        if notes.count > Self.maxNotes {
+            notes.removeLast(notes.count - Self.maxNotes)
+        }
         recomputeFilteredNotes()
 
         // Update new note count/tracking
@@ -2397,6 +2415,16 @@ class FeedService: ObservableObject {
         if !toAdd.isEmpty {
             recomputeFilteredNotes()
         }
+
+        trimEngagementStateIfNeeded()
+    }
+
+    /// Trim noteStats to only contain entries for notes currently in memory.
+    /// Called after notes are flushed to prevent unbounded growth of engagement data.
+    private func trimEngagementStateIfNeeded() {
+        guard noteStats.count > Self.maxNotes else { return }
+        let activeIds = Set(notes.map { $0.id }).union(parentNotesCache.keys)
+        noteStats = noteStats.filter { activeIds.contains($0.key) }
     }
 
     // MARK: - Note Fetching logic
@@ -2530,6 +2558,10 @@ class FeedService: ObservableObject {
         fetchingNoteIds.remove(id)
         fetchingNoteTimestamps.removeValue(forKey: id)
         parentNotesCache[id] = note
+        if parentNotesCache.count > 500 {
+            let referencedIds = Set(notes.compactMap { $0.parentEventId })
+            parentNotesCache = parentNotesCache.filter { referencedIds.contains($0.key) }
+        }
         NostrService.shared.fetchMissingProfiles(for: [pubkey])
     }
 

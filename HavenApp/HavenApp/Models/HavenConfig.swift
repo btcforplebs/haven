@@ -22,7 +22,8 @@ struct HavenConfig: Codable, Equatable {
     var hasCompletedSetup: Bool = false
     var hasSeenWelcome: Bool = false
     var hasAcceptedToS: Bool = false
-    var setupMode: String = "full" // "full" or "browse"
+    var setupMode: String = "full" // "full", "browse", or "newuser"
+    var defaultFeedMode: String = "FOLLOWING" // "FOLLOWING", "POPULAR", etc.
     var hasCompletedInitialImport: Bool = false // Browse mode: tracks if first background import has run
     var disableMediaCache: Bool = false
     var autoplayVideos: Bool = true

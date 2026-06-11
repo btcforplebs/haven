@@ -1,6 +1,7 @@
 package com.nostrvault.data.local
 
 import android.content.Context
+import com.nostrvault.relay.HavenBridge
 import com.nostrvault.relay.HavenConfig
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -50,6 +51,17 @@ class ConfigStore @Inject constructor(
             }
         } catch (_: Exception) {
             HavenConfig()
+        }
+
+        // Restore active account hex pubkey from persisted ownerNpub so that
+        // profile navigation works on subsequent app launches (not just setup).
+        if (_activeAccountHexPubkey.value.isEmpty()) {
+            val npub = _config.value.ownerNpub
+            if (npub.startsWith("npub1")) {
+                HavenBridge.decodeNpub(npub)?.let { hex ->
+                    _activeAccountHexPubkey.value = hex
+                }
+            }
         }
     }
 

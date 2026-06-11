@@ -32,10 +32,11 @@ object HavenBridge {
             // cgocheck=0 disables the CGO pointer validity checks that can
             // misfire when Go heap objects contain mmap'd region boundaries.
             Os.setenv("GODEBUG", "asyncpreemptoff=1,cgocheck=0,madvdontneed=1", true)
-            // Cap Go heap to 128 MiB and collect more aggressively (default GOGC=100).
+            // Cap Go heap to 192 MiB and collect more aggressively (default GOGC=100).
             // Without these, BadgerDB mmap + Go GC + JVM heap exceed the ~3-4 GB
             // available on typical Android devices, triggering the LMK.
-            Os.setenv("GOMEMLIMIT", "128MiB", true)
+            // Budget: ~100-130 MiB BadgerDB (5 DBs × ~20-26 MiB) + ~60 MiB headroom.
+            Os.setenv("GOMEMLIMIT", "192MiB", true)
             Os.setenv("GOGC", "50", true)
             System.loadLibrary("haven")
             System.loadLibrary("nostrvault-jni")
@@ -373,6 +374,31 @@ object HavenBridge {
         if (pubkey == null) return null
         val relaysJson = relays.joinToString(",") { "\"${it.replace("\\", "\\\\").replace("\"", "\\\"")}\"" }
         return """{"pubkey":"$pubkey","relays":[$relaysJson]}"""
+    }
+
+    /** Decode a note1 bech32 string to a hex event ID. */
+    fun decodeNote(note1: String): String? {
+        val (hrp, payload) = bech32Decode(note1) ?: return null
+        if (hrp != "note" || payload.size != 32) return null
+        return payload.toHex()
+    }
+
+    /** Decode an nevent1 bech32 string. Returns the hex event ID (type 0 TLV). */
+    fun decodeNevent(nevent1: String): String? {
+        val (hrp, payload) = bech32Decode(nevent1) ?: return null
+        if (hrp != "nevent") return null
+        var i = 0
+        while (i + 2 <= payload.size) {
+            val type = payload[i].toInt() and 0xFF
+            val length = payload[i + 1].toInt() and 0xFF
+            i += 2
+            if (i + length > payload.size) break
+            if (type == 0 && length == 32) {
+                return payload.copyOfRange(i, i + length).toHex()
+            }
+            i += length
+        }
+        return null
     }
 
     // -----------------------------------------------------------------------

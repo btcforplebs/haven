@@ -10,7 +10,11 @@ import com.nostrvault.data.model.NoteStats
 import com.nostrvault.data.model.PopularFilter
 import com.nostrvault.service.FeedService
 import com.nostrvault.service.NostrService
+import com.nostrvault.service.ScrollPosition
+import com.nostrvault.ui.notification.NotificationManager
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -24,6 +28,7 @@ class FeedViewModel @Inject constructor(
     private val feedService: FeedService,
     private val nostrService: NostrService,
     private val configStore: ConfigStore,
+    private val notificationManager: NotificationManager,
 ) : ViewModel() {
 
     // ── Feed state ───────────────────────────────────────────────
@@ -35,6 +40,15 @@ class FeedViewModel @Inject constructor(
     val zappedEventIds: StateFlow<Map<String, Int>> = feedService.zappedEventIds
     val connectionStatus: StateFlow<String> = feedService.connectionStatus
     val connectionColor: StateFlow<String> = feedService.connectionColor
+
+    // ── Pending notes (new posts indicator) ────────────────────
+    val pendingNoteCount: StateFlow<Int> = feedService.pendingNotes
+        .map { it.size }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    fun applyPendingNotes() {
+        feedService.applyPendingNotes()
+    }
 
     init {
         // Staggered startup: wait for relay to be ready before loading feed
@@ -49,7 +63,11 @@ class FeedViewModel @Inject constructor(
         }
     }
 
-    private val _feedMode = MutableStateFlow(FeedMode.FOLLOWING)
+    private val _feedMode = MutableStateFlow(
+        configStore.config.value.defaultFeedMode
+            .let { name -> FeedMode.entries.find { it.name == name } }
+            ?: FeedMode.FOLLOWING
+    )
     val feedMode: StateFlow<FeedMode> = _feedMode.asStateFlow()
 
     private val _isRefreshing = MutableStateFlow(false)
@@ -143,9 +161,16 @@ class FeedViewModel @Inject constructor(
         }
     }
 
-    fun likeNote(noteId: String) {
+    fun likeNote(noteId: String, emoji: String? = null) {
+        if (likedEventIds.value.contains(noteId) && emoji == null) {
+            // Already liked — start unlike countdown
+            notificationManager.startUnlikeCountdown {
+                feedService.unlikeNote(noteId)
+            }
+            return
+        }
         viewModelScope.launch {
-            feedService.likeNote(noteId)
+            feedService.likeNote(noteId, emoji)
         }
     }
 
@@ -160,6 +185,37 @@ class FeedViewModel @Inject constructor(
             feedService.zapNote(noteId, amount = amount.toLong())
         }
     }
+
+    fun deleteNote(noteId: String) {
+        viewModelScope.launch {
+            nostrService.deleteNote(noteId)
+            feedService.removeNote(noteId)
+        }
+    }
+
+    fun isOwnNote(pubkey: String): Boolean {
+        return pubkey == nostrService.activeHexPubkey
+    }
+
+    // Exposed for BroadcastSheet which needs direct service access
+    val feedServiceRef: FeedService get() = feedService
+    val nostrServiceRef: NostrService get() = nostrService
+    val configStoreRef: ConfigStore get() = configStore
+
+    // ── Scroll position persistence ────────────────────────────
+
+    val restoredScrollPosition: StateFlow<ScrollPosition?> = feedService.restoredScrollPosition
+    val scrollToTopRequest = feedService.scrollToTopRequest
+
+    fun saveScrollPosition(index: Int, offset: Int) {
+        feedService.updateScrollPosition(index, offset)
+    }
+
+    fun clearRestoredPosition() {
+        feedService.clearRestoredScrollPosition()
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────
 
     fun profileFor(pubkey: String): FeedProfile? = profiles.value[pubkey]
     fun statsFor(noteId: String): NoteStats? = noteStats.value[noteId]

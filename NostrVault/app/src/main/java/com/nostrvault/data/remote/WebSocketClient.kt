@@ -42,6 +42,7 @@ class WebSocketClient(
         private const val TAG = "WebSocketClient"
         private const val MAX_RECONNECT_ATTEMPTS = 10
         private const val INITIAL_BACKOFF_MS = 1000L
+        private const val SLOW_RETRY_INTERVAL_MS = 120_000L // 2 minutes between slow retries
 
         /** Shared OkHttpClient for all normal (non-localhost) connections. */
         val sharedClient: OkHttpClient by lazy {
@@ -165,10 +166,29 @@ class WebSocketClient(
         })
     }
 
+    /**
+     * Reset the reconnect counter so the next disconnect retries from attempt 1.
+     * Call this after the app returns to the foreground or after a relay restart
+     * to give connections a fresh set of retries.
+     */
+    fun resetReconnect() {
+        reconnectAttempts = 0
+    }
+
     private fun scheduleReconnect() {
         if (!shouldReconnect) return
+
         if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-            Log.w(TAG, "Max reconnect attempts reached for $url")
+            // Instead of giving up permanently, back off to a slow periodic retry
+            // (every 2 minutes) so the connection can recover if the relay comes
+            // back or the network changes.
+            Log.w(TAG, "Max fast-reconnect attempts reached for $url, switching to slow retry")
+            reconnectJob = scope.launch(Dispatchers.IO) {
+                delay(SLOW_RETRY_INTERVAL_MS)
+                reconnectAttempts = MAX_RECONNECT_ATTEMPTS // keep in slow mode
+                Log.d(TAG, "Slow-retry reconnecting to $url")
+                doConnect()
+            }
             return
         }
 

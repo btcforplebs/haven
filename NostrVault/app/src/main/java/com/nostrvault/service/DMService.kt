@@ -55,6 +55,10 @@ class DMService @Inject constructor(
     val totalUnreadCount: Int
         get() = _conversations.value.sumOf { it.unreadCount }
 
+    val totalUnreadCountFlow: StateFlow<Int> = _conversations
+        .map { convos -> convos.sumOf { it.unreadCount } }
+        .stateIn(scope, SharingStarted.WhileSubscribed(5_000), 0)
+
     // ── Internal state ────────────────────────────────────────────────
 
     private var inboxClient: WebSocketClient? = null     // NIP-17 /chat relay

@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AlternateEmail
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.CellTower
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.filled.LocalFlorist
 import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Key
@@ -44,9 +46,12 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.OfflineBolt
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PersonAdd
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.PersonOff
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.filled.Refresh
@@ -60,6 +65,8 @@ import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material.icons.filled.Videocam
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Verified
 import androidx.compose.material.icons.filled.ViewAgenda
 import androidx.compose.material.icons.filled.Warning
@@ -111,12 +118,15 @@ object NostrVaultIcons {
     val Dismiss: ImageVector = Icons.Filled.Close          // xmark
     val Alert: ImageVector = Icons.Filled.Warning          // exclamationmark.triangle.fill
     val Create: ImageVector = Icons.Filled.Add             // plus
+    val ArrowUp: ImageVector = Icons.Filled.ArrowUpward    // arrow.up
     val Search: ImageVector = Icons.Filled.Search          // magnifyingglass
+    val History: ImageVector = Icons.Filled.History         // clock.arrow.circlepath
     val Media: ImageVector = Icons.Filled.Image            // photo
     val More: ImageVector = Icons.Filled.MoreVert          // ellipsis
     val Edit: ImageVector = Icons.Filled.Edit              // pencil
     val Delete: ImageVector = Icons.Filled.Delete          // trash
     val Share: ImageVector = Icons.Filled.Share             // square.and.arrow.up
+    val Quote: ImageVector = Icons.Filled.Edit                // quote (pen icon)
     val Refresh: ImageVector = Icons.Filled.Refresh        // arrow.clockwise
     val Check: ImageVector = Icons.Filled.Check            // checkmark
     val Info: ImageVector = Icons.Filled.Info              // info.circle
@@ -137,6 +147,7 @@ object NostrVaultIcons {
     val MarkAllRead: ImageVector = Icons.Filled.DoneAll      // checkmark.circle
     val Browse: ImageVector = Icons.Filled.Explore           // magnifyingglass.circle
     val GridLayout: ImageVector = Icons.Filled.GridView      // square.grid.2x2
+    val ListLayout: ImageVector = Icons.AutoMirrored.Filled.ViewList  // list.bullet
     val FilterMenu: ImageVector = Icons.Filled.FilterList    // line.3.horizontal.decrease
 
     // Feed filter toggles
@@ -164,4 +175,9 @@ object NostrVaultIcons {
 
     // Media actions
     val UploadIcon: ImageVector = Icons.Filled.Upload            // arrow.up.doc
+    val PlayCircle: ImageVector = Icons.Filled.PlayCircle        // play.circle.fill
+    val PlayArrow: ImageVector = Icons.Filled.PlayArrow          // play.fill
+    val PauseIcon: ImageVector = Icons.Filled.Pause              // pause.fill
+    val VolumeUp: ImageVector = Icons.AutoMirrored.Filled.VolumeUp   // speaker.wave.2.fill
+    val VolumeOff: ImageVector = Icons.AutoMirrored.Filled.VolumeOff // speaker.slash.fill
 }

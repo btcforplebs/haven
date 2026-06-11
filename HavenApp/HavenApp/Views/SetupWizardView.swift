@@ -221,7 +221,7 @@ struct SetupWizardView: View {
     let onComplete: () -> Void
 
     enum SetupPath {
-        case none, full, browse
+        case none, full, browse, newToNostr
     }
 
     enum TransitionDirection {
@@ -233,6 +233,7 @@ struct SetupWizardView: View {
         switch setupPath {
         case .none: return 3 // welcome, path, identity
         case .browse: return 4 // welcome, path, identity, import, done (4 dots, last = complete)
+        case .newToNostr: return 4 // welcome, path, intro, done
         case .full: return isIOSDevice ? 8 : 7  // welcome, path, identity, relay, import, media, wallet, (notif), done
         }
     }
@@ -241,7 +242,13 @@ struct SetupWizardView: View {
         // Map actual step numbers to dot indices
         let fullSteps: [Int] = isIOSDevice ? [0, 1, 2, 3, 4, 5, 6, 7, 8] : [0, 1, 2, 3, 4, 5, 6, 8]
         let browseSteps: [Int] = [0, 1, 2, 4, 8]
-        let steps = setupPath == .browse ? browseSteps : fullSteps
+        let newUserSteps: [Int] = [0, 1, 9, 8]
+        let steps: [Int]
+        switch setupPath {
+        case .browse: steps = browseSteps
+        case .newToNostr: steps = newUserSteps
+        default: steps = fullSteps
+        }
         return steps.firstIndex(of: currentStep) ?? 0
     }
 
@@ -355,10 +362,23 @@ struct SetupWizardView: View {
                 PushNotificationStep(onContinue: { currentStep = 8 }, onSkip: { currentStep = 8 })
             } else {
                 // macOS browse mode lands here as "complete"
-                CompleteStep(isBrowseMode: setupPath == .browse, onLaunch: { saveAndComplete() })
+                CompleteStep(isBrowseMode: setupPath == .browse, isNewUser: setupPath == .newToNostr, onLaunch: { saveAndComplete() })
             }
         case 8:
-            CompleteStep(isBrowseMode: setupPath == .browse, onLaunch: { saveAndComplete() })
+            CompleteStep(isBrowseMode: setupPath == .browse, isNewUser: setupPath == .newToNostr, onLaunch: { saveAndComplete() })
+        case 9:
+            NostrIntroStep(
+                npub: $npub,
+                nsec: $nsec,
+                nsecPassword: $nsecPassword,
+                onContinue: {
+                    saveIntermediateConfig()
+                    direction = .forward
+                    withAnimation(WizardAnimations.springEnter) {
+                        currentStep = 8
+                    }
+                }
+            )
         default:
             EmptyView()
         }
@@ -367,7 +387,10 @@ struct SetupWizardView: View {
     private func goForward() {
         direction = .forward
         withAnimation(WizardAnimations.springEnter) {
-            if currentStep == 2 && setupPath == .browse {
+            if currentStep == 1 && setupPath == .newToNostr {
+                // New to Nostr: go to intro step
+                currentStep = 9
+            } else if currentStep == 2 && setupPath == .browse {
                 // Browse mode: skip relay config, go to import step
                 currentStep = 4
             } else if currentStep == 4 && setupPath == .browse {
@@ -381,7 +404,7 @@ struct SetupWizardView: View {
             }
         }
         // Save intermediate config at key points
-        if currentStep >= 3 || (currentStep == 8 && setupPath == .browse) {
+        if currentStep >= 3 || (currentStep == 8 && setupPath == .browse) || currentStep == 9 {
             saveIntermediateConfig()
         }
     }
@@ -389,10 +412,14 @@ struct SetupWizardView: View {
     private func goBack() {
         direction = .backward
         withAnimation(WizardAnimations.springEnter) {
-            if currentStep == 4 && setupPath == .browse {
+            if currentStep == 9 {
+                currentStep = 1 // New to Nostr: back to choose path
+            } else if currentStep == 4 && setupPath == .browse {
                 currentStep = 2 // Browse: back from import to identity (skip relay config)
             } else if currentStep == 8 {
-                if setupPath == .browse {
+                if setupPath == .newToNostr {
+                    currentStep = 9 // New to Nostr: back to intro
+                } else if setupPath == .browse {
                     currentStep = 4 // Browse: back to import
                 } else if isIOSDevice {
                     currentStep = 7 // iOS full: back to notifications
@@ -409,13 +436,19 @@ struct SetupWizardView: View {
 
     private func saveIntermediateConfig() {
         configService.config.ownerNpub = npub
-        // Browse mode: set default localhost relay URL so the local relay can start
-        configService.config.relayURL = (setupPath == .browse && relayURL.isEmpty)
+        // Browse / New to Nostr mode: set default localhost relay URL so the local relay can start
+        configService.config.relayURL = ((setupPath == .browse || setupPath == .newToNostr) && relayURL.isEmpty)
             ? "127.0.0.1:\(configService.config.relayPort)"
             : relayURL
         configService.config.dbEngine = "badger"
-        configService.config.signingMode = signingMode
-        configService.config.setupMode = setupPath == .browse ? "browse" : "full"
+        configService.config.signingMode = setupPath == .newToNostr ? "local" : signingMode
+        switch setupPath {
+        case .browse: configService.config.setupMode = "browse"
+        case .newToNostr:
+            configService.config.setupMode = "newuser"
+            configService.config.defaultFeedMode = "POPULAR"
+        default: configService.config.setupMode = "full"
+        }
         configService.config.macRelayURL = macRelayURL
         configService.config.nwcURI = nwcURI
         configService.config.cashuMintURL = cashuMintURL
@@ -635,6 +668,41 @@ private struct ChoosePathStep: View {
                 .animation(WizardAnimations.springEnter.delay(0.1), value: appeared)
 
             VStack(spacing: 14) {
+                // New to Nostr card
+                Button(action: { withAnimation(WizardAnimations.springEnter) { selectedPath = .newToNostr } }) {
+                    WizardGlassCard(isSelected: selectedPath == .newToNostr) {
+                        HStack(alignment: .top, spacing: 14) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 28))
+                                .foregroundColor(selectedPath == .newToNostr ? WizardColors.accentPrimary : WizardColors.textSecondary)
+                                .frame(width: 36)
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text("New to Nostr")
+                                        .font(.system(size: 18, weight: .semibold))
+                                        .foregroundColor(WizardColors.textPrimary)
+                                    Spacer()
+                                    if selectedPath == .newToNostr {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundColor(WizardColors.accentPrimary)
+                                            .transition(.scale.combined(with: .opacity))
+                                    }
+                                }
+                                Text("Quick start -- we'll set everything up for you")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(WizardColors.textSecondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                    }
+                    .opacity(selectedPath != .none && selectedPath != .newToNostr ? 0.7 : 1.0)
+                }
+                .buttonStyle(.plain)
+                .opacity(appeared ? 1 : 0)
+                .offset(y: appeared ? 0 : 16)
+                .animation(WizardAnimations.springEnter.delay(0.2), value: appeared)
+
                 // Full Setup card
                 Button(action: { withAnimation(WizardAnimations.springEnter) { selectedPath = .full } }) {
                     WizardGlassCard(isSelected: selectedPath == .full) {
@@ -663,12 +731,12 @@ private struct ChoosePathStep: View {
                             }
                         }
                     }
-                    .opacity(selectedPath == .browse ? 0.7 : 1.0)
+                    .opacity(selectedPath != .none && selectedPath != .full ? 0.7 : 1.0)
                 }
                 .buttonStyle(.plain)
                 .opacity(appeared ? 1 : 0)
                 .offset(y: appeared ? 0 : 16)
-                .animation(WizardAnimations.springEnter.delay(0.25), value: appeared)
+                .animation(WizardAnimations.springEnter.delay(0.3), value: appeared)
 
                 // Browse Mode card
                 Button(action: { withAnimation(WizardAnimations.springEnter) { selectedPath = .browse } }) {
@@ -698,12 +766,12 @@ private struct ChoosePathStep: View {
                             }
                         }
                     }
-                    .opacity(selectedPath == .full ? 0.7 : 1.0)
+                    .opacity(selectedPath != .none && selectedPath != .browse ? 0.7 : 1.0)
                 }
                 .buttonStyle(.plain)
                 .opacity(appeared ? 1 : 0)
                 .offset(y: appeared ? 0 : 16)
-                .animation(WizardAnimations.springEnter.delay(0.35), value: appeared)
+                .animation(WizardAnimations.springEnter.delay(0.4), value: appeared)
             }
 
             if selectedPath != .none {
@@ -714,6 +782,173 @@ private struct ChoosePathStep: View {
             Spacer()
         }
         .onAppear { appeared = true }
+    }
+}
+
+// MARK: - Step 9: Nostr Intro (New to Nostr path)
+
+private struct NostrIntroStep: View {
+    @Binding var npub: String
+    @Binding var nsec: String
+    @Binding var nsecPassword: String
+    let onContinue: () -> Void
+
+    @State private var appeared = false
+    @State private var generatedKeys = false
+    @State private var isGenerating = false
+    @State private var error: String?
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Spacer().frame(height: 20)
+
+            // Card 1: What is Nostr
+            WizardGlassCard(isSelected: false) {
+                VStack(spacing: 12) {
+                    Text("Welcome to Nostr")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(WizardColors.textPrimary)
+                        .multilineTextAlignment(.center)
+
+                    Text("Nostr is an open social protocol. You own your identity through a cryptographic keypair -- no company controls your account. Your posts are broadcast to relays and can be read by anyone.")
+                        .font(.system(size: 15))
+                        .foregroundColor(WizardColors.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(4)
+                }
+            }
+            .opacity(appeared ? 1 : 0)
+            .offset(y: appeared ? 0 : 16)
+            .animation(WizardAnimations.springEnter.delay(0.15), value: appeared)
+
+            // Card 2: Why Nostr Vault is unique
+            WizardGlassCard(isSelected: false) {
+                VStack(spacing: 12) {
+                    Text("Your Personal Archive")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(WizardColors.textPrimary)
+                        .multilineTextAlignment(.center)
+
+                    Text("Nostr Vault runs a HAVEN relay right on your device. Every note, message, and media file you interact with is archived locally. Your data stays with you -- not on someone else's server.")
+                        .font(.system(size: 15))
+                        .foregroundColor(WizardColors.textSecondary)
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(4)
+                }
+            }
+            .opacity(appeared ? 1 : 0)
+            .offset(y: appeared ? 0 : 16)
+            .animation(WizardAnimations.springEnter.delay(0.3), value: appeared)
+
+            if generatedKeys {
+                // Card 3: Secret key backup
+                WizardGlassCard(isSelected: false) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Your Secret Key")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(WizardColors.textPrimary)
+
+                        Text("Save this somewhere safe. It's the only way to recover your account. Anyone with this key can post as you.")
+                            .font(.system(size: 13))
+                            .foregroundColor(WizardColors.textSecondary)
+                            .lineSpacing(2)
+
+                        Button {
+                            #if os(iOS)
+                            UIPasteboard.general.string = nsec
+                            #else
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(nsec, forType: .string)
+                            #endif
+                        } label: {
+                            Text(nsec)
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundColor(WizardColors.accentPrimary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(12)
+                                .background(WizardColors.bgElevated)
+                                .cornerRadius(8)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(WizardColors.borderSubtle, lineWidth: 1)
+                                )
+                        }
+                        .buttonStyle(.plain)
+
+                        Text("Tap to copy")
+                            .font(.system(size: 11))
+                            .foregroundColor(WizardColors.textMuted)
+                    }
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+
+                WizardPrimaryButton(title: "Continue", action: onContinue)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else {
+                if let errorText = error {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.caption)
+                        Text(errorText)
+                            .font(.system(size: 13))
+                    }
+                    .foregroundColor(WizardColors.error)
+                }
+
+                WizardPrimaryButton(title: "Create My Account", action: generateKeys)
+                    .disabled(isGenerating)
+                    .opacity(appeared ? 1 : 0)
+                    .offset(y: appeared ? 0 : 10)
+                    .animation(WizardAnimations.springEnter.delay(0.45), value: appeared)
+
+                if isGenerating {
+                    ProgressView()
+                        .tint(WizardColors.accentPrimary)
+                }
+            }
+
+            Spacer()
+        }
+        .onAppear { appeared = true }
+    }
+
+    private func generateKeys() {
+        isGenerating = true
+        error = nil
+
+        guard let resultCStr = GenerateKeyPairC() else {
+            error = "Key generation failed"
+            isGenerating = false
+            return
+        }
+        let result = String(cString: resultCStr)
+        let parts = result.split(separator: ":")
+        guard parts.count == 2 else {
+            error = "Key generation returned invalid format"
+            isGenerating = false
+            return
+        }
+        let sk = String(parts[0])
+        let pk = String(parts[1])
+
+        if let pubData = Bech32.hexToData(pk),
+           let generatedNpub = Bech32.encode(hrp: "npub", data: pubData) {
+            npub = generatedNpub
+        }
+
+        if let secData = Bech32.hexToData(sk),
+           let generatedNsec = Bech32.encode(hrp: "nsec", data: secData) {
+            nsec = generatedNsec
+        }
+
+        // Auto-generate a password for NIP-49 encryption
+        let randomBytes = (0..<32).map { _ in UInt8.random(in: 0...255) }
+        nsecPassword = Data(randomBytes).base64EncodedString()
+
+        withAnimation(WizardAnimations.springBounce) {
+            generatedKeys = true
+        }
+        isGenerating = false
     }
 }
 
@@ -2523,6 +2758,7 @@ private struct PushNotificationStep: View {
 
 private struct CompleteStep: View {
     let isBrowseMode: Bool
+    var isNewUser: Bool = false
     let onLaunch: () -> Void
     @State private var showContent = false
     @State private var ringScale: CGFloat = 0
@@ -2567,7 +2803,7 @@ private struct CompleteStep: View {
             }
 
             // Title
-            Text(isBrowseMode ? String(localized: "setup.complete.title.browse") : String(localized: "setup.complete.title.full"))
+            Text(isNewUser ? "Welcome to Nostr!" : (isBrowseMode ? String(localized: "setup.complete.title.browse") : String(localized: "setup.complete.title.full")))
                 .font(.system(size: isIOSDevice ? 28 : 32, weight: .bold))
                 .foregroundColor(WizardColors.textPrimary)
                 .opacity(showContent ? 1 : 0)
@@ -2576,7 +2812,10 @@ private struct CompleteStep: View {
 
             // Summary bullets
             VStack(alignment: .leading, spacing: 14) {
-                if isBrowseMode {
+                if isNewUser {
+                    completeBullet(icon: "checkmark.circle.fill", text: "Account created", color: WizardColors.success, delay: 1.0)
+                    completeBullet(icon: "checkmark.circle.fill", text: "Relay is running", color: WizardColors.success, delay: 1.1)
+                } else if isBrowseMode {
                     completeBullet(icon: "checkmark.circle.fill", text: String(localized: "setup.complete.browse.connected"), color: WizardColors.success, delay: 1.0)
                     completeBullet(icon: "info.circle.fill", text: String(localized: "setup.complete.browse.upgradeHint"), color: WizardColors.accentPrimary, delay: 1.1)
                 } else {
@@ -2585,6 +2824,16 @@ private struct CompleteStep: View {
                     completeBullet(icon: "checkmark.circle.fill", text: String(localized: "setup.complete.full.blossomActive"), color: WizardColors.success, delay: 1.2)
                     completeBullet(icon: "checkmark.circle.fill", text: String(localized: "setup.complete.full.postsBroadcast"), color: WizardColors.success, delay: 1.3)
                 }
+            }
+
+            if isNewUser {
+                Text("We'll start you on the Popular feed so you can discover interesting people to follow. You can switch to the Following feed anytime.")
+                    .font(.system(size: 14))
+                    .foregroundColor(WizardColors.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(2)
+                    .opacity(showContent ? 1 : 0)
+                    .animation(WizardAnimations.fadeIn.delay(1.3), value: showContent)
             }
 
             Spacer()
@@ -2598,7 +2847,7 @@ private struct CompleteStep: View {
             #endif
 
             // Launch button with pulse
-            WizardPrimaryButton(title: String(localized: "setup.complete.launch"), action: onLaunch)
+            WizardPrimaryButton(title: isNewUser ? "Start Exploring" : String(localized: "setup.complete.launch"), action: onLaunch)
                 .shadow(color: buttonPulse ? WizardColors.accentGlow : .clear, radius: buttonPulse ? 16 : 8)
                 .opacity(showContent ? 1 : 0)
                 .offset(y: showContent ? 0 : 10)

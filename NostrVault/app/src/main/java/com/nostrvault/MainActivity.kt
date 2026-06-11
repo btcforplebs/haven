@@ -11,9 +11,14 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import com.nostrvault.data.local.ConfigStore
+import com.nostrvault.relay.LogStore
 import com.nostrvault.relay.RelayForegroundService
 import com.nostrvault.service.AmberResultBridge
+import com.nostrvault.service.DMService
+import com.nostrvault.service.FeedService
+import com.nostrvault.service.PendingPostManager
 import com.nostrvault.ui.navigation.NostrVaultNavHost
+import com.nostrvault.ui.notification.NotificationManager
 import com.nostrvault.ui.theme.NostrVaultTheme
 import com.nostrvault.ui.theme.WindowBackground
 import dagger.hilt.android.AndroidEntryPoint
@@ -23,6 +28,11 @@ import javax.inject.Inject
 class MainActivity : ComponentActivity() {
 
     @Inject lateinit var configStore: ConfigStore
+    @Inject lateinit var dmService: DMService
+    @Inject lateinit var feedService: FeedService
+    @Inject lateinit var logStore: LogStore
+    @Inject lateinit var notificationManager: NotificationManager
+    @Inject lateinit var pendingPostManager: PendingPostManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,9 +65,32 @@ class MainActivity : ComponentActivity() {
                     NostrVaultNavHost(
                         isSetupComplete = config.hasCompletedSetup,
                         configStore = configStore,
+                        feedService = feedService,
+                        logStore = logStore,
+                        dmUnreadCount = dmService.totalUnreadCountFlow,
+                        hasNewRelayActivity = RelayForegroundService.hasNewRelayActivity,
+                        notificationManager = notificationManager,
+                        pendingPostManager = pendingPostManager,
                     )
                 }
             }
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Snapshot the feed and disconnect WebSockets when the app goes to background.
+        // The Go relay keeps running via the foreground service.
+        if (configStore.config.value.hasCompletedSetup) {
+            feedService.pauseFeed()
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Restore the snapshot for instant UI, then reconnect in the background.
+        if (configStore.config.value.hasCompletedSetup) {
+            feedService.resumeFeed()
         }
     }
 

@@ -29,7 +29,13 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
     }()
 
     // In-memory thumbnail cache (keyed by url hash). Disk cache backs this.
-    private var thumbnailMemoryCache: [String: PlatformImage] = [:]
+    // NSCache auto-evicts under memory pressure and enforces count/cost limits.
+    private let thumbnailMemoryCache: NSCache<NSString, PlatformImage> = {
+        let cache = NSCache<NSString, PlatformImage>()
+        cache.countLimit = 150
+        cache.totalCostLimit = 30 * 1024 * 1024 // 30 MB
+        return cache
+    }()
     private let thumbnailCacheLock = NSLock()
     // Per-url in-flight thumbnail jobs to coalesce parallel requests
     private var inFlightThumbnails: [String: [CheckedContinuation<PlatformImage?, Never>]] = [:]
@@ -127,9 +133,7 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
 
     private func handleMemoryPressure() {
         imageCache.removeAllObjects()
-        thumbnailCacheLock.lock()
-        thumbnailMemoryCache.removeAll()
-        thumbnailCacheLock.unlock()
+        thumbnailMemoryCache.removeAllObjects()
         VideoPlayerCache.shared.evictAll()
         #if DEBUG
         print("MediaCacheService: Purged in-memory caches due to memory pressure")
@@ -414,12 +418,10 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
     /// to call from view init or onAppear before async work kicks off.
     func cachedThumbnail(for url: URL) -> PlatformImage? {
         let key = hash(url: url)
-        thumbnailCacheLock.lock()
-        if let image = thumbnailMemoryCache[key] {
-            thumbnailCacheLock.unlock()
+        let nsKey = key as NSString
+        if let image = thumbnailMemoryCache.object(forKey: nsKey) {
             return image
         }
-        thumbnailCacheLock.unlock()
 
         let diskPath = thumbnailDiskPath(for: key)
         guard FileManager.default.fileExists(atPath: diskPath.path),
@@ -428,9 +430,8 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
             return nil
         }
 
-        thumbnailCacheLock.lock()
-        thumbnailMemoryCache[key] = image
-        thumbnailCacheLock.unlock()
+        let cost = Int(image.size.width * image.size.height * 4)
+        thumbnailMemoryCache.setObject(image, forKey: nsKey, cost: cost)
         return image
     }
 
@@ -498,9 +499,8 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
 
         // 3. Persist + broadcast
         if let image = image {
-            thumbnailCacheLock.withLock {
-                thumbnailMemoryCache[key] = image
-            }
+            let cost = Int(image.size.width * image.size.height * 4)
+            thumbnailMemoryCache.setObject(image, forKey: key as NSString, cost: cost)
             saveThumbnailToDisk(image, key: key)
         }
 
@@ -717,9 +717,7 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
                     try? FileManager.default.removeItem(at: fileURL)
                 }
             }
-            thumbnailCacheLock.lock()
-            thumbnailMemoryCache.removeAll()
-            thumbnailCacheLock.unlock()
+            thumbnailMemoryCache.removeAllObjects()
             #if DEBUG
             print("MediaCacheService: Cleared \(deletedCount) cached files + thumbnails (Blossom data preserved)")
             #endif
@@ -749,9 +747,7 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
         }
 
         if evictedCount > 0 {
-            thumbnailCacheLock.lock()
-            thumbnailMemoryCache.removeAll()
-            thumbnailCacheLock.unlock()
+            thumbnailMemoryCache.removeAllObjects()
             #if DEBUG
             print("MediaCacheService: Evicted \(evictedCount) expired files (TTL: \(ttlDays) days)")
             #endif

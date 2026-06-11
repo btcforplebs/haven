@@ -14,6 +14,7 @@ import com.nostrvault.MainActivity
 import com.nostrvault.R
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -21,6 +22,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
@@ -59,6 +61,10 @@ class RelayForegroundService : Service() {
         private const val PREFS_NAME = "relay_lifecycle"
         private const val PREF_LAST_START_TIME = "last_start_time"
 
+        private const val WATCHDOG_INTERVAL_MS = 30_000L   // check every 30s
+        private const val WATCHDOG_PROBE_TIMEOUT_MS = 2_000 // TCP probe timeout
+        private const val WATCHDOG_MAX_FAILURES = 3         // consecutive failures before restart
+
         private val _relayStatus = MutableStateFlow(RelayStatus.OFFLINE)
         val relayStatus: StateFlow<RelayStatus> = _relayStatus.asStateFlow()
 
@@ -71,6 +77,76 @@ class RelayForegroundService : Service() {
         /** Feed connections should wait until this is true (3s after RUNNING). */
         private val _readyForConnections = MutableStateFlow(false)
         val readyForConnections: StateFlow<Boolean> = _readyForConnections.asStateFlow()
+
+        // ── Error states (surfaced from RelayLogParser) ────────
+        private val _isLocked = MutableStateFlow(false)
+        val isLocked: StateFlow<Boolean> = _isLocked.asStateFlow()
+
+        private val _isPortConflict = MutableStateFlow(false)
+        val isPortConflict: StateFlow<Boolean> = _isPortConflict.asStateFlow()
+
+        fun updateErrorStates(locked: Boolean, portConflict: Boolean) {
+            _isLocked.value = locked
+            _isPortConflict.value = portConflict
+        }
+
+        fun clearErrorStates() {
+            _isLocked.value = false
+            _isPortConflict.value = false
+        }
+
+        /**
+         * Clear stale BadgerDB LOCK files from the relay data directory.
+         * Can be called from UI without a service instance.
+         */
+        fun clearLocksPublic(context: Context) {
+            val relayDataDir = File(context.filesDir, "relay_data")
+            var cleared = 0
+            for (sub in RelayConfiguration.dbSubdirs) {
+                for (prefix in listOf("db", "data")) {
+                    val lockFile = File(relayDataDir, "$prefix/$sub/LOCK")
+                    if (lockFile.exists()) {
+                        lockFile.delete()
+                        cleared++
+                    }
+                }
+            }
+            if (cleared > 0) {
+                Log.i(TAG, "Cleared $cleared stale database lock(s) via public method")
+            }
+            _isLocked.value = false
+        }
+
+        /**
+         * Force stop, clear locks, and restart the relay.
+         */
+        fun forceRestart(context: Context) {
+            stop(context)
+            clearLocksPublic(context)
+            clearErrorStates()
+            // Small delay to let the service fully stop before restarting
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                start(context)
+            }, 1500)
+        }
+
+        // ── Relay activity badge ────────────────────────────────
+        private val _hasNewRelayActivity = MutableStateFlow(false)
+        val hasNewRelayActivity: StateFlow<Boolean> = _hasNewRelayActivity.asStateFlow()
+
+        private var eventsStoredWhenLastViewed = 0
+
+        fun markRelayViewed() {
+            eventsStoredWhenLastViewed = _eventsStored.value
+            _hasNewRelayActivity.value = false
+        }
+
+        fun updateEventsStored(count: Int) {
+            _eventsStored.value = count
+            if (count > eventsStoredWhenLastViewed) {
+                _hasNewRelayActivity.value = true
+            }
+        }
 
         fun start(context: Context) {
             val intent = Intent(context, RelayForegroundService::class.java)
@@ -97,6 +173,7 @@ class RelayForegroundService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val jsonCodec = Json { ignoreUnknownKeys = true; prettyPrint = true }
     private var wakeLock: PowerManager.WakeLock? = null
+    private var healthWatchdogJob: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -158,26 +235,31 @@ class RelayForegroundService : Service() {
         _relayStatus.value = RelayStatus.OFFLINE
         _readyForConnections.value = false
 
-        // Shutdown with timeout -- don't let a hanging stopRelay() block forever
-        serviceScope.launch(Dispatchers.IO) {
-            val stopped = withTimeoutOrNull(SHUTDOWN_TIMEOUT_MS) {
-                try {
-                    if (HavenBridge.isLoaded) {
-                        HavenBridge.stopRelay()
+        // Block until the Go relay shuts down (or we time out).
+        // We must NOT cancel serviceScope before the shutdown coroutine finishes,
+        // and the wake lock must stay held until databases are closed.
+        try {
+            runBlocking {
+                withTimeoutOrNull(SHUTDOWN_TIMEOUT_MS) {
+                    withContext(Dispatchers.IO) {
+                        try {
+                            if (HavenBridge.isLoaded) {
+                                HavenBridge.stopRelay()
+                            }
+                        } catch (e: Throwable) {
+                            Log.e(TAG, "Error stopping relay: ${e.message}")
+                        }
                     }
-                    true
-                } catch (e: Throwable) {
-                    Log.e(TAG, "Error stopping relay: ${e.message}")
-                    false
-                }
+                } ?: Log.w(TAG, "stopRelay() timed out after ${SHUTDOWN_TIMEOUT_MS}ms, force-resetting state")
             }
-            if (stopped == null) {
-                Log.w(TAG, "stopRelay() timed out after ${SHUTDOWN_TIMEOUT_MS}ms, force-resetting state")
-            }
-            lifecycleState = LifecycleState.IDLE
-            isShuttingDown = false
+        } catch (e: Exception) {
+            Log.e(TAG, "Shutdown block failed: ${e.message}")
         }
 
+        lifecycleState = LifecycleState.IDLE
+        isShuttingDown = false
+
+        // Release resources only after the Go side has stopped (or timed out)
         releaseWakeLock()
         serviceScope.cancel()
         super.onDestroy()
@@ -379,10 +461,63 @@ class RelayForegroundService : Service() {
                 delay(3000)
                 _readyForConnections.value = true
             }
+
+            // Start the health watchdog so we detect if Go dies post-startup
+            startHealthWatchdog()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start relay: ${e.message}")
             lifecycleState = LifecycleState.IDLE
             attemptRetry(File(filesDir, "relay_data"))
+        }
+    }
+
+    // ── Health watchdog ────────────────────────────────────────────
+
+    /**
+     * Periodically probe the relay's TCP port while in RUNNING state.
+     * If 3 consecutive probes fail, assume the Go side has died and
+     * trigger a restart cycle.
+     */
+    private fun startHealthWatchdog() {
+        healthWatchdogJob?.cancel()
+        healthWatchdogJob = serviceScope.launch {
+            var consecutiveFailures = 0
+            while (lifecycleState == LifecycleState.RUNNING && !isShuttingDown) {
+                delay(WATCHDOG_INTERVAL_MS)
+                if (lifecycleState != LifecycleState.RUNNING || isShuttingDown) break
+
+                val alive = try {
+                    withContext(Dispatchers.IO) {
+                        Socket().use { socket ->
+                            socket.connect(
+                                InetSocketAddress("127.0.0.1", currentRelayPort),
+                                WATCHDOG_PROBE_TIMEOUT_MS,
+                            )
+                        }
+                    }
+                    true
+                } catch (_: Exception) {
+                    false
+                }
+
+                if (alive) {
+                    consecutiveFailures = 0
+                } else {
+                    consecutiveFailures++
+                    Log.w(TAG, "Health watchdog: probe failed ($consecutiveFailures/$WATCHDOG_MAX_FAILURES)")
+                    if (consecutiveFailures >= WATCHDOG_MAX_FAILURES) {
+                        Log.e(TAG, "Health watchdog: relay unresponsive, triggering restart")
+                        _relayStatus.value = RelayStatus.OFFLINE
+                        updateNotification(RelayStatus.OFFLINE)
+                        lifecycleState = LifecycleState.IDLE
+                        val relayDataDir = File(filesDir, "relay_data")
+                        clearDatabaseLocks(relayDataDir)
+                        retryCount = 0
+                        startGoRelay()
+                        break
+                    }
+                }
+            }
         }
     }
 
@@ -433,14 +568,18 @@ class RelayForegroundService : Service() {
     // ── Wake lock ──────────────────────────────────────────────────
 
     private fun acquireWakeLock() {
+        if (wakeLock?.isHeld == true) return // already held, avoid double-acquire
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(
             PowerManager.PARTIAL_WAKE_LOCK,
             WAKELOCK_TAG,
         ).apply {
-            acquire()
+            setReferenceCounted(false)
+            // 4-hour ceiling: if the service crashes without calling releaseWakeLock(),
+            // the lock auto-releases instead of draining the battery until reboot.
+            acquire(4 * 60 * 60 * 1000L)
         }
-        Log.d(TAG, "Wake lock acquired")
+        Log.d(TAG, "Wake lock acquired (4h timeout)")
     }
 
     private fun releaseWakeLock() {

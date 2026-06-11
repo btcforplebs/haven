@@ -70,9 +70,9 @@ import javax.inject.Inject
 
 @HiltViewModel
 class DashboardViewModel @Inject constructor(
-    private val statsService: StatsService,
-    private val configStore: ConfigStore,
-    private val nostrService: NostrService,
+    val statsService: StatsService,
+    val configStore: ConfigStore,
+    val nostrService: NostrService,
 ) : ViewModel() {
 
     companion object {
@@ -106,6 +106,29 @@ class DashboardViewModel @Inject constructor(
 
     private val _statsLoading = MutableStateFlow(true)
     val statsLoading = _statsLoading.asStateFlow()
+
+    // ── Import/Export state ──────────────────────────────────────
+
+    private val _isImporting = MutableStateFlow(false)
+    val isImporting = _isImporting.asStateFlow()
+
+    private val _importProgress = MutableStateFlow(0f)
+    val importProgress = _importProgress.asStateFlow()
+
+    private val _importStatusMessage = MutableStateFlow("")
+    val importStatusMessage = _importStatusMessage.asStateFlow()
+
+    private val _importCompleted = MutableStateFlow(false)
+    val importCompleted = _importCompleted.asStateFlow()
+
+    private val _isExportingJsonl = MutableStateFlow(false)
+    val isExportingJsonl = _isExportingJsonl.asStateFlow()
+
+    private val _isExportingMedia = MutableStateFlow(false)
+    val isExportingMedia = _isExportingMedia.asStateFlow()
+
+    private val _exportUri = MutableStateFlow<android.net.Uri?>(null)
+    val exportUri = _exportUri.asStateFlow()
 
     // ── View mode & filters ──────────────────────────────────────
 
@@ -264,6 +287,7 @@ class DashboardViewModel @Inject constructor(
             _statsLoading.value = true
             val stats = statsService.fetchStats()
             _totalEvents.value = stats.totalEvents
+            RelayForegroundService.updateEventsStored(stats.totalEvents)
             _storageUsed.value = stats.formattedTotalSize
             _noteCount.value = stats.noteCount
             _dmCount.value = stats.dmCount
@@ -271,6 +295,149 @@ class DashboardViewModel @Inject constructor(
             _mediaSize.value = stats.formattedMediaSize
             _statsLoading.value = false
         }
+    }
+
+    // ── Import / Export ─────────────────────────────────────────
+
+    fun importNotes(context: android.content.Context) {
+        if (_isImporting.value) return
+        _isImporting.value = true
+        _importProgress.value = 0f
+        _importStatusMessage.value = "Preparing import..."
+        _importCompleted.value = false
+
+        viewModelScope.launch {
+            try {
+                // Stop relay first
+                RelayForegroundService.stop(context)
+                delay(2000)
+
+                // Start in import mode
+                withContext(Dispatchers.IO) {
+                    val config = configStore.config.value
+                    val relayDataDir = java.io.File(context.filesDir, "relay_data")
+                    val envDict = com.nostrvault.relay.RelayConfiguration.generateEnvDictionary(
+                        config = config,
+                        relayDataDir = relayDataDir,
+                        allowNetworkAccess = config.allowNetworkAccess,
+                    )
+                    for ((key, value) in envDict) {
+                        com.nostrvault.relay.HavenBridge.setEnv(key, value)
+                    }
+                    com.nostrvault.relay.HavenBridge.startRelay(importMode = true)
+                }
+
+                // Poll for progress
+                val batch = com.nostrvault.relay.RelayLogParser.BatchedStateUpdate()
+                while (!batch.importCompleted && !batch.stopImporting) {
+                    val logLine = withContext(Dispatchers.IO) {
+                        com.nostrvault.relay.HavenBridge.getImportLog()
+                    }
+                    if (!logLine.isNullOrBlank()) {
+                        batch.importProgress = null
+                        batch.importStatusMessage = null
+                        com.nostrvault.relay.RelayLogParser.collectStateChanges(logLine, batch)
+                        batch.importProgress?.let { _importProgress.value = it.toFloat() }
+                        batch.importStatusMessage?.let { _importStatusMessage.value = it }
+                    }
+                    delay(200)
+                }
+
+                _importProgress.value = 1f
+                _importStatusMessage.value = "Import Complete!"
+                _importCompleted.value = true
+            } catch (e: Exception) {
+                _importStatusMessage.value = "Import failed: ${e.message}"
+                _importCompleted.value = true
+            } finally {
+                _isImporting.value = false
+                // Restart relay normally
+                RelayForegroundService.start(context)
+            }
+        }
+    }
+
+    fun exportJsonl(context: android.content.Context) {
+        if (_isExportingJsonl.value) return
+        _isExportingJsonl.value = true
+
+        viewModelScope.launch {
+            try {
+                val outputDir = java.io.File(context.cacheDir, "exports")
+                outputDir.mkdirs()
+                val outputFile = java.io.File(outputDir, "haven_backup_${System.currentTimeMillis()}.zip")
+
+                val result = withContext(Dispatchers.IO) {
+                    com.nostrvault.relay.HavenBridge.backupDatabase(outputFile.absolutePath)
+                }
+
+                if (result == 0 && outputFile.exists()) {
+                    val uri = androidx.core.content.FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.fileprovider",
+                        outputFile,
+                    )
+                    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                        type = "application/zip"
+                        putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    context.startActivity(android.content.Intent.createChooser(intent, "Export Database"))
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "JSONL export failed: ${e.message}")
+            } finally {
+                _isExportingJsonl.value = false
+            }
+        }
+    }
+
+    fun exportMedia(context: android.content.Context) {
+        if (_isExportingMedia.value) return
+        _isExportingMedia.value = true
+
+        viewModelScope.launch {
+            try {
+                val config = configStore.config.value
+                val blossomDir = config.relayDataDir?.let { "$it/${config.blossomPath}" }
+                if (blossomDir == null) {
+                    _isExportingMedia.value = false
+                    return@launch
+                }
+
+                val outputDir = java.io.File(context.cacheDir, "exports")
+                outputDir.mkdirs()
+                val outputFile = java.io.File(outputDir, "haven_media_${System.currentTimeMillis()}.zip")
+
+                val result = withContext(Dispatchers.IO) {
+                    com.nostrvault.relay.HavenBridge.zipDirectory(blossomDir, outputFile.absolutePath)
+                }
+
+                if (result == 0 && outputFile.exists()) {
+                    val uri = androidx.core.content.FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.fileprovider",
+                        outputFile,
+                    )
+                    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                        type = "application/zip"
+                        putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    context.startActivity(android.content.Intent.createChooser(intent, "Export Media"))
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Media export failed: ${e.message}")
+            } finally {
+                _isExportingMedia.value = false
+            }
+        }
+    }
+
+    fun dismissImport() {
+        _importCompleted.value = false
+        _importProgress.value = 0f
+        _importStatusMessage.value = ""
     }
 
     // ── Local relay notes ────────────────────────────────────────
@@ -421,6 +588,14 @@ class DashboardViewModel @Inject constructor(
                     delay(200)
                 }
 
+                // Query inbox for tagged notes (stored in separate DB on the relay)
+                val inboxUrl = "$localUrl/inbox"
+                Log.d(TAG, "Querying inbox at $inboxUrl for tagged notes...")
+                val (inboxRaw, inboxNotes) = queryRelayEndpoint(inboxUrl, filters, "local-inbox", LOAD_TIMEOUT_MS)
+                rawEvents.addAll(inboxRaw)
+                contentNotes.addAll(inboxNotes)
+                Log.d(TAG, "Inbox complete: ${inboxRaw.size} events, ${inboxNotes.size} notes")
+
                 Log.d(TAG, "Load complete: eoseReceived=$eoseReceived, rawEvents=${rawEvents.size}, contentNotes=${contentNotes.size}")
 
                 // Store all events
@@ -509,78 +684,26 @@ class DashboardViewModel @Inject constructor(
             _isLoadingMore.value = true
 
             viewModelScope.launch(Dispatchers.IO) {
-                val notes = mutableListOf<FeedNote>()
-                val rawEvents = mutableListOf<NostrEvent>()
-                val client = WebSocketClient(url = localUrl, scope = viewModelScope, trustLocalhost = true)
-                val subId = "local-hist-${UUID.randomUUID().toString().take(8)}"
-                var eoseReceived = false
-
-                val collectJob = launch {
-                    client.messages.collect { msg ->
-                        try {
-                            val parsed = json.parseToJsonElement(msg).jsonArray
-                            val type = parsed[0].jsonPrimitive.contentOrNull ?: return@collect
-
-                            when (type) {
-                                "EVENT" -> {
-                                    if (parsed.size < 3) return@collect
-                                    val eventObj = parsed[2].jsonObject
-                                    val id = eventObj["id"]?.jsonPrimitive?.contentOrNull ?: return@collect
-                                    if (!seenIds.add(id)) return@collect
-
-                                    val pubkey = eventObj["pubkey"]?.jsonPrimitive?.contentOrNull ?: return@collect
-                                    val kind = eventObj["kind"]?.jsonPrimitive?.intOrNull ?: return@collect
-                                    val content = eventObj["content"]?.jsonPrimitive?.contentOrNull ?: ""
-                                    val createdAt = eventObj["created_at"]?.jsonPrimitive?.longOrNull ?: return@collect
-                                    val sig = eventObj["sig"]?.jsonPrimitive?.contentOrNull ?: ""
-                                    val tags = eventObj["tags"]?.jsonArray?.map { tagArr ->
-                                        tagArr.jsonArray.map { it.jsonPrimitive.contentOrNull ?: "" }
-                                    } ?: emptyList()
-
-                                    val nostrEvent = NostrEvent(
-                                        id = id, pubkey = pubkey, createdAt = createdAt,
-                                        kind = kind, tags = tags, content = content, sig = sig,
-                                    )
-                                    rawEvents.add(nostrEvent)
-
-                                    if (kind in listOf(1, 6, 30023)) {
-                                        val note = FeedNote.fromEvent(id, pubkey, content, tags, createdAt, kind)
-                                        if (!note.isNoiseOrSpam()) {
-                                            notes.add(note)
-                                            nostrService.fetchMissingProfiles(listOf(pubkey))
-                                        }
-                                    }
-                                }
-                                "EOSE" -> {
-                                    eoseReceived = true
-                                }
-                            }
-                        } catch (_: Exception) {}
-                    }
-                }
-
-                client.connect()
-                delay(500)
-
                 val untilSecs = oldest.time / 1000 - 1
                 val authorsJson = authors.joinToString(",") { "\"$it\"" }
-                val filter = """{"kinds":[1,6,7,30023,9735],"authors":[$authorsJson],"until":$untilSecs,"limit":200}"""
-                val sent = client.send("[\"REQ\",\"$subId\",$filter]")
-                if (!sent) {
-                    Log.w(TAG, "loadMore send() failed")
-                    withContext(Dispatchers.Main.immediate) { _isLoadingMore.value = false }
-                    collectJob.cancel()
-                    client.disconnect()
-                    return@launch
+                val authorFilter = """{"kinds":[1,6,7,30023,9735],"authors":[$authorsJson],"until":$untilSecs,"limit":200}"""
+
+                val filters = if (ownerHex.isNotEmpty()) {
+                    val mentionsFilter = """{"kinds":[1,6,7,30023,9735],"#p":["$ownerHex"],"until":$untilSecs,"limit":100}"""
+                    "$authorFilter,$mentionsFilter"
+                } else {
+                    authorFilter
                 }
 
-                val deadline = System.currentTimeMillis() + LOAD_MORE_TIMEOUT_MS
-                while (!eoseReceived && System.currentTimeMillis() < deadline) {
-                    delay(200)
-                }
+                // Query outbox
+                val (outboxRaw, _) = queryRelayEndpoint(localUrl, filters, "outbox-hist", LOAD_MORE_TIMEOUT_MS)
+
+                // Query inbox for older tagged notes
+                val (inboxRaw, _) = queryRelayEndpoint("$localUrl/inbox", filters, "inbox-hist", LOAD_MORE_TIMEOUT_MS)
 
                 allEventsMutex.withLock {
-                    allEvents.addAll(rawEvents)
+                    allEvents.addAll(outboxRaw)
+                    allEvents.addAll(inboxRaw)
                 }
 
                 withContext(Dispatchers.Main.immediate) {
@@ -588,9 +711,6 @@ class DashboardViewModel @Inject constructor(
                 }
 
                 scheduleUpdateDisplayData()
-
-                collectJob.cancel()
-                client.disconnect()
             }
         } else {
             // For likes/zaps mode, just increase the display limit
@@ -1010,6 +1130,98 @@ class DashboardViewModel @Inject constructor(
 
     fun profileFor(pubkey: String): FeedProfile? = profiles.value[pubkey]
 
+    /**
+     * Query a relay endpoint, collecting events until EOSE or timeout.
+     * Uses the shared [seenIds] set to deduplicate across calls.
+     */
+    private suspend fun queryRelayEndpoint(
+        url: String,
+        filters: String,
+        subIdPrefix: String,
+        timeoutMs: Long,
+    ): Pair<List<NostrEvent>, List<FeedNote>> {
+        val rawEvents = mutableListOf<NostrEvent>()
+        val contentNotes = mutableListOf<FeedNote>()
+        val client = WebSocketClient(url = url, scope = viewModelScope, trustLocalhost = true)
+        val subId = "$subIdPrefix-${UUID.randomUUID().toString().take(8)}"
+        var eoseReceived = false
+
+        val collectJob = viewModelScope.launch(Dispatchers.IO) {
+            client.messages.collect { msg ->
+                try {
+                    val parsed = json.parseToJsonElement(msg).jsonArray
+                    val type = parsed[0].jsonPrimitive.contentOrNull ?: return@collect
+
+                    when (type) {
+                        "EVENT" -> {
+                            if (parsed.size < 3) return@collect
+                            val eventObj = parsed[2].jsonObject
+                            val id = eventObj["id"]?.jsonPrimitive?.contentOrNull ?: return@collect
+                            if (!seenIds.add(id)) return@collect
+
+                            val pubkey = eventObj["pubkey"]?.jsonPrimitive?.contentOrNull ?: return@collect
+                            val kind = eventObj["kind"]?.jsonPrimitive?.intOrNull ?: return@collect
+                            val content = eventObj["content"]?.jsonPrimitive?.contentOrNull ?: ""
+                            val createdAt = eventObj["created_at"]?.jsonPrimitive?.longOrNull ?: return@collect
+                            val sig = eventObj["sig"]?.jsonPrimitive?.contentOrNull ?: ""
+                            val tags = eventObj["tags"]?.jsonArray?.map { tagArr ->
+                                tagArr.jsonArray.map { it.jsonPrimitive.contentOrNull ?: "" }
+                            } ?: emptyList()
+
+                            if (kind in listOf(0, 10002, 10050, 10063, 10000)) {
+                                nostrService.processRelayMessage(msg, url)
+                                return@collect
+                            }
+
+                            val nostrEvent = NostrEvent(
+                                id = id, pubkey = pubkey, createdAt = createdAt,
+                                kind = kind, tags = tags, content = content, sig = sig,
+                            )
+                            rawEvents.add(nostrEvent)
+
+                            if (kind in listOf(1, 6, 30023)) {
+                                val note = FeedNote.fromEvent(id, pubkey, content, tags, createdAt, kind)
+                                if (!note.isNoiseOrSpam()) {
+                                    contentNotes.add(note)
+                                }
+                            }
+
+                            nostrService.fetchMissingProfiles(listOf(pubkey))
+                        }
+                        "EOSE" -> {
+                            eoseReceived = true
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Parse error in $subIdPrefix: ${e.message}")
+                }
+            }
+        }
+
+        client.connect()
+
+        var waited = 0L
+        while (client.connectionState.value != WebSocketClient.ConnectionState.CONNECTED && waited < 5000) {
+            delay(100)
+            waited += 100
+        }
+
+        if (client.connectionState.value == WebSocketClient.ConnectionState.CONNECTED) {
+            val sent = client.send("[\"REQ\",\"$subId\",$filters]")
+            if (sent) {
+                val deadline = System.currentTimeMillis() + timeoutMs
+                while (!eoseReceived && System.currentTimeMillis() < deadline) {
+                    delay(200)
+                }
+            }
+        }
+
+        collectJob.cancel()
+        client.disconnect()
+
+        return Pair(rawEvents, contentNotes)
+    }
+
     override fun onCleared() {
         super.onCleared()
         localClient?.disconnect()
@@ -1060,6 +1272,8 @@ fun DashboardScreen(
     onCompose: () -> Unit,
     onReply: (String) -> Unit,
     onBack: () -> Unit,
+    logStore: com.nostrvault.relay.LogStore,
+    feedService: com.nostrvault.service.FeedService,
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
     // Stats
@@ -1119,6 +1333,17 @@ fun DashboardScreen(
     // Reconnect to local relay when the app returns to the foreground
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         viewModel.onResume()
+    }
+
+    // Start/stop log polling based on relay status
+    val logRelayStatus by RelayForegroundService.relayStatus.collectAsState()
+    LaunchedEffect(logRelayStatus) {
+        when (logRelayStatus) {
+            RelayForegroundService.RelayStatus.BOOTING,
+            RelayForegroundService.RelayStatus.IMPORTING,
+            RelayForegroundService.RelayStatus.RUNNING -> logStore.startPolling(this)
+            RelayForegroundService.RelayStatus.OFFLINE -> logStore.stopPolling()
+        }
     }
 
     // Connection dot color for FAB
@@ -1374,6 +1599,12 @@ fun DashboardScreen(
                 }
             },
         ) {
+            val currentRelayStatus by RelayForegroundService.relayStatus.collectAsState()
+            val currentIsLocked by RelayForegroundService.isLocked.collectAsState()
+            val currentIsPortConflict by RelayForegroundService.isPortConflict.collectAsState()
+            val currentLogs by logStore.logs.collectAsState()
+            val context = LocalContext.current
+
             DashboardSheetContent(
                 totalEvents = totalEvents,
                 storageUsed = storageUsed,
@@ -1382,10 +1613,52 @@ fun DashboardScreen(
                 mediaCount = mediaCount,
                 mediaSize = mediaSize,
                 isLoading = statsLoading,
+                relayStatus = currentRelayStatus,
+                isLocked = currentIsLocked,
+                isPortConflict = currentIsPortConflict,
                 onRefresh = viewModel::loadStats,
                 onBlossomClick = {
                     showDashboardSheet = false
                     onNavigate(Screen.BlossomDashboard)
+                },
+                onStartRelay = { RelayForegroundService.start(context) },
+                onStopRelay = { RelayForegroundService.stop(context) },
+                onRestartRelay = {
+                    RelayForegroundService.stop(context)
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        RelayForegroundService.start(context)
+                    }, 1500)
+                },
+                onForceRestart = { RelayForegroundService.forceRestart(context) },
+                onClearLocks = { RelayForegroundService.clearLocksPublic(context) },
+                logs = currentLogs,
+                onViewAllLogs = {
+                    showDashboardSheet = false
+                    onNavigate(Screen.LogViewer)
+                },
+                statsService = viewModel.statsService,
+                ownerPubkey = viewModel.nostrService.ownerHexPubkey,
+                cacheDir = viewModel.configStore.config.value.appSupportDir?.let { "$it/media_cache" },
+                isImporting = viewModel.isImporting.collectAsState().value,
+                importProgress = viewModel.importProgress.collectAsState().value,
+                importStatusMessage = viewModel.importStatusMessage.collectAsState().value,
+                importCompleted = viewModel.importCompleted.collectAsState().value,
+                isExportingJsonl = viewModel.isExportingJsonl.collectAsState().value,
+                isExportingMedia = viewModel.isExportingMedia.collectAsState().value,
+                onImportNotes = { viewModel.importNotes(context) },
+                onExportJsonl = { viewModel.exportJsonl(context) },
+                onExportMedia = { viewModel.exportMedia(context) },
+                onDismissImport = viewModel::dismissImport,
+                showReposts = feedService.showReposts.collectAsState().value,
+                showReplies = feedService.showReplies.collectAsState().value,
+                autoLoadNewNotes = true, // Default; auto-load state lives in FeedViewModel
+                feedRelays = viewModel.configStore.config.value.activeFeedRelays,
+                onToggleReposts = { feedService.setShowReposts(it) },
+                onToggleReplies = { feedService.setShowReplies(it) },
+                onToggleAutoLoad = { /* auto-load managed by FeedViewModel */ },
+                onManageRelays = {
+                    showDashboardSheet = false
+                    onNavigate(Screen.RelayListEditor)
                 },
             )
         }
@@ -1927,8 +2200,39 @@ private fun DashboardSheetContent(
     mediaCount: Int,
     mediaSize: String,
     isLoading: Boolean,
+    relayStatus: RelayForegroundService.RelayStatus,
+    isLocked: Boolean,
+    isPortConflict: Boolean,
     onRefresh: () -> Unit,
     onBlossomClick: () -> Unit,
+    onStartRelay: () -> Unit,
+    onStopRelay: () -> Unit,
+    onRestartRelay: () -> Unit,
+    onForceRestart: () -> Unit,
+    onClearLocks: () -> Unit,
+    logs: List<com.nostrvault.relay.RelayLogParser.LogEntry>,
+    onViewAllLogs: () -> Unit,
+    statsService: StatsService,
+    ownerPubkey: String,
+    cacheDir: String?,
+    isImporting: Boolean,
+    importProgress: Float,
+    importStatusMessage: String,
+    importCompleted: Boolean,
+    isExportingJsonl: Boolean,
+    isExportingMedia: Boolean,
+    onImportNotes: () -> Unit,
+    onExportJsonl: () -> Unit,
+    onExportMedia: () -> Unit,
+    onDismissImport: () -> Unit,
+    showReposts: Boolean,
+    showReplies: Boolean,
+    autoLoadNewNotes: Boolean,
+    feedRelays: List<String>,
+    onToggleReposts: (Boolean) -> Unit,
+    onToggleReplies: (Boolean) -> Unit,
+    onToggleAutoLoad: (Boolean) -> Unit,
+    onManageRelays: () -> Unit,
 ) {
     val colors = LocalNostrVaultColors.current
 
@@ -1960,6 +2264,17 @@ private fun DashboardSheetContent(
                 fontWeight = FontWeight.Bold,
             )
             Spacer(Modifier.weight(1f))
+
+            var showFeedConfig by remember { mutableStateOf(false) }
+
+            IconButton(onClick = { showFeedConfig = true }, modifier = Modifier.size(32.dp)) {
+                Icon(
+                    NostrVaultIcons.Settings,
+                    "Feed Settings",
+                    tint = SecondaryText,
+                    modifier = Modifier.size(18.dp),
+                )
+            }
             IconButton(onClick = onRefresh, modifier = Modifier.size(32.dp)) {
                 Icon(
                     NostrVaultIcons.Refresh,
@@ -1968,6 +2283,46 @@ private fun DashboardSheetContent(
                     modifier = Modifier.size(18.dp),
                 )
             }
+
+            if (showFeedConfig) {
+                com.nostrvault.ui.screens.dashboard.FeedConfigSheet(
+                    showReposts = showReposts,
+                    showReplies = showReplies,
+                    autoLoadNewNotes = autoLoadNewNotes,
+                    feedRelays = feedRelays,
+                    onToggleReposts = onToggleReposts,
+                    onToggleReplies = onToggleReplies,
+                    onToggleAutoLoad = onToggleAutoLoad,
+                    onManageRelays = {
+                        showFeedConfig = false
+                        onManageRelays()
+                    },
+                    onDismiss = { showFeedConfig = false },
+                )
+            }
+        }
+
+        // Relay status header
+        com.nostrvault.ui.screens.dashboard.RelayStatusHeader(
+            relayStatus = relayStatus,
+            isLocked = isLocked,
+            isPortConflict = isPortConflict,
+            onStartRelay = onStartRelay,
+            onStopRelay = onStopRelay,
+            onRestartRelay = onRestartRelay,
+            onForceRestart = onForceRestart,
+            onClearLocks = onClearLocks,
+        )
+
+        Spacer(Modifier.height(12.dp))
+
+        // Compact log console
+        if (logs.isNotEmpty()) {
+            com.nostrvault.ui.screens.dashboard.CompactLogConsole(
+                logs = logs,
+                onViewAll = onViewAllLogs,
+            )
+            Spacer(Modifier.height(12.dp))
         }
 
         if (isLoading) {
@@ -1980,7 +2335,13 @@ private fun DashboardSheetContent(
                 CircularProgressIndicator(color = colors.primary)
             }
         } else {
-            // Stats grid
+            // Breakdown sheet state
+            var showEventBreakdown by remember { mutableStateOf(false) }
+            var showStorageBreakdown by remember { mutableStateOf(false) }
+            var showBlossomBreakdown by remember { mutableStateOf(false) }
+            var showCacheBreakdown by remember { mutableStateOf(false) }
+
+            // Stats grid -- clickable cards that open breakdown sheets
             Row(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 modifier = Modifier.fillMaxWidth(),
@@ -1990,12 +2351,14 @@ private fun DashboardSheetContent(
                     value = totalEvents.toString(),
                     icon = NostrVaultIcons.AppIcon,
                     modifier = Modifier.weight(1f),
+                    onClick = { showEventBreakdown = true },
                 )
                 StatsCard(
                     title = "Storage",
                     value = storageUsed,
                     icon = NostrVaultIcons.Storage,
                     modifier = Modifier.weight(1f),
+                    onClick = { showStorageBreakdown = true },
                 )
             }
 
@@ -2026,18 +2389,64 @@ private fun DashboardSheetContent(
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 StatsCard(
-                    title = "Media Files",
+                    title = "Blossom Media",
                     value = mediaCount.toString(),
-                    icon = NostrVaultIcons.Media,
+                    icon = NostrVaultIcons.Blossom,
                     modifier = Modifier.weight(1f),
+                    onClick = { showBlossomBreakdown = true },
                 )
                 StatsCard(
-                    title = "Media Size",
+                    title = "Media Cache",
                     value = mediaSize,
-                    icon = NostrVaultIcons.Storage,
+                    icon = NostrVaultIcons.Media,
                     modifier = Modifier.weight(1f),
+                    onClick = { showCacheBreakdown = true },
                 )
             }
+
+            // Breakdown sheets
+            if (showEventBreakdown) {
+                com.nostrvault.ui.screens.dashboard.EventKindBreakdownSheet(
+                    statsService = statsService,
+                    onDismiss = { showEventBreakdown = false },
+                )
+            }
+            if (showStorageBreakdown) {
+                com.nostrvault.ui.screens.dashboard.StorageBreakdownSheet(
+                    statsService = statsService,
+                    onDismiss = { showStorageBreakdown = false },
+                )
+            }
+            if (showBlossomBreakdown) {
+                com.nostrvault.ui.screens.dashboard.BlossomBreakdownSheet(
+                    statsService = statsService,
+                    ownerPubkey = ownerPubkey,
+                    onDismiss = { showBlossomBreakdown = false },
+                )
+            }
+            if (showCacheBreakdown) {
+                com.nostrvault.ui.screens.dashboard.CacheBreakdownSheet(
+                    statsService = statsService,
+                    cacheDir = cacheDir,
+                    onDismiss = { showCacheBreakdown = false },
+                )
+            }
+
+            Spacer(Modifier.height(24.dp))
+
+            // Import/Export actions
+            com.nostrvault.ui.screens.dashboard.ImportExportSection(
+                isImporting = isImporting,
+                importProgress = importProgress,
+                importStatusMessage = importStatusMessage,
+                importCompleted = importCompleted,
+                isExportingJsonl = isExportingJsonl,
+                isExportingMedia = isExportingMedia,
+                onImportNotes = onImportNotes,
+                onExportJsonl = onExportJsonl,
+                onExportMedia = onExportMedia,
+                onDismissImport = onDismissImport,
+            )
 
             Spacer(Modifier.height(24.dp))
 
@@ -2080,12 +2489,15 @@ private fun StatsCard(
     value: String,
     icon: ImageVector,
     modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
 ) {
     val colors = LocalNostrVaultColors.current
 
     Surface(
         color = SecondaryGroupedBg,
         shape = RoundedCornerShape(12.dp),
+        onClick = onClick ?: {},
+        enabled = onClick != null,
         modifier = modifier,
     ) {
         Column(

@@ -2,9 +2,11 @@ package com.nostrvault.ui.screens
 
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.lazy.LazyColumn
@@ -27,15 +29,10 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import coil.compose.AsyncImage
-import com.nostrvault.data.model.FeedNote
-import com.nostrvault.data.model.FeedProfile
-import com.nostrvault.data.model.NoteStats
+import com.nostrvault.data.model.*
 import com.nostrvault.service.FeedService
 import com.nostrvault.service.NostrService
-import com.nostrvault.ui.components.GlassPill
-import com.nostrvault.ui.components.GlassScaffold
-import com.nostrvault.ui.components.MediaPreviewRow
-import com.nostrvault.ui.components.NoteCard
+import com.nostrvault.ui.components.*
 import com.nostrvault.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
@@ -79,6 +76,17 @@ class NoteDetailViewModel @Inject constructor(
     private val _isCompact = MutableStateFlow(false)
     val isCompact: StateFlow<Boolean> = _isCompact.asStateFlow()
 
+    // Engagement details for the focused (hero) note
+    private val _engagementDetails = MutableStateFlow<EngagementDetails?>(null)
+    val engagementDetails: StateFlow<EngagementDetails?> = _engagementDetails.asStateFlow()
+
+    // Thread-wide engagement stats
+    private val _expandedEngagement = MutableStateFlow(false)
+    val expandedEngagement: StateFlow<Boolean> = _expandedEngagement.asStateFlow()
+
+    private val _perNoteEngagement = MutableStateFlow<Map<String, EngagementDetails>>(emptyMap())
+    val perNoteEngagement: StateFlow<Map<String, EngagementDetails>> = _perNoteEngagement.asStateFlow()
+
     init {
         loadNoteThread()
     }
@@ -112,9 +120,18 @@ class NoteDetailViewModel @Inject constructor(
 
                 val pubkeys = (parents.map { it.pubkey } + foundNote.pubkey).distinct()
                 nostrService.fetchMissingProfiles(pubkeys)
+
+                // Fetch engagement details for hero note
+                fetchEngagement(noteId)
             }
 
             _isLoading.value = false
+        }
+    }
+
+    fun fetchEngagement(noteId: String) {
+        feedService.fetchEngagementDetails(noteId) { details ->
+            _engagementDetails.value = details
         }
     }
 
@@ -126,8 +143,60 @@ class NoteDetailViewModel @Inject constructor(
         viewModelScope.launch { feedService.likeNote(noteId) }
     }
 
+    fun reactToNote(noteId: String, emoji: String) {
+        viewModelScope.launch { feedService.likeNote(noteId, emoji) }
+    }
+
     fun repostNote(noteId: String) {
         viewModelScope.launch { feedService.repostNote(noteId) }
+    }
+
+    // Moderation
+    fun isOwnNote(pubkey: String): Boolean = pubkey == nostrService.activeHexPubkey
+
+    fun followUser(pubkey: String) {
+        viewModelScope.launch { feedService.followUser(pubkey) }
+    }
+
+    fun unfollowUser(pubkey: String) {
+        viewModelScope.launch { feedService.unfollowUser(pubkey) }
+    }
+
+    fun isFollowing(pubkey: String): Boolean = feedService.isFollowing(pubkey)
+
+    fun blockUser(pubkey: String) {
+        viewModelScope.launch { feedService.blockUser(pubkey) }
+    }
+
+    fun deleteNote(noteId: String) {
+        viewModelScope.launch {
+            nostrService.deleteNote(noteId)
+            feedService.removeNote(noteId)
+        }
+    }
+
+    fun reportNote(noteId: String, pubkey: String, reason: String) {
+        viewModelScope.launch { nostrService.reportEvent(noteId, pubkey, reason) }
+    }
+
+    // Thread-wide stats
+    fun toggleExpandedEngagement() {
+        _expandedEngagement.value = !_expandedEngagement.value
+        if (_expandedEngagement.value && _perNoteEngagement.value.isEmpty()) {
+            fetchThreadEngagement()
+        }
+    }
+
+    private fun fetchThreadEngagement() {
+        val allIds = buildList {
+            addAll(_parentNotes.value.map { it.id })
+            _note.value?.id?.let { add(it) }
+            addAll(_allReplies.value.map { it.id })
+        }
+        if (allIds.isEmpty()) return
+        feedService.fetchThreadEngagement(allIds) { result ->
+            _perNoteEngagement.value = result
+        }
     }
 
     fun profileFor(pubkey: String): FeedProfile? = profiles.value[pubkey]
@@ -141,13 +210,14 @@ class NoteDetailViewModel @Inject constructor(
 
 // ── Screen ──────────────────────────────────────────────────────
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun NoteDetailScreen(
     noteId: String,
     onProfileClick: (String) -> Unit,
     onNoteClick: (String) -> Unit,
     onReply: (String) -> Unit,
+    onQuote: (String) -> Unit,
     onBack: () -> Unit,
     viewModel: NoteDetailViewModel = hiltViewModel(),
 ) {
@@ -156,6 +226,10 @@ fun NoteDetailScreen(
     val allReplies by viewModel.allReplies.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val isCompact by viewModel.isCompact.collectAsState()
+    val engagementDetails by viewModel.engagementDetails.collectAsState()
+    val expandedEngagement by viewModel.expandedEngagement.collectAsState()
+    val perNoteEngagement by viewModel.perNoteEngagement.collectAsState()
+    val profiles by viewModel.profiles.collectAsState()
     val colors = LocalNostrVaultColors.current
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
@@ -163,6 +237,23 @@ fun NoteDetailScreen(
     // The currently focused note (hero). Starts as the original note,
     // tapping a parent or reply refocuses the thread around it.
     var focusedNoteId by remember { mutableStateOf(noteId) }
+
+    // Engagement sheet states
+    var showReactorsSheet by remember { mutableStateOf(false) }
+    var showZappersSheet by remember { mutableStateOf(false) }
+    var showRepostersSheet by remember { mutableStateOf(false) }
+
+    // Emoji picker state
+    var showEmojiPicker by remember { mutableStateOf(false) }
+
+    // Delete confirmation
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    var showBlockDialog by remember { mutableStateOf(false) }
+
+    // Re-fetch engagement when focus changes
+    LaunchedEffect(focusedNoteId) {
+        viewModel.fetchEngagement(focusedNoteId)
+    }
 
     // Derive focused note, parents, and direct replies from focusedNoteId
     val focusedNote = remember(focusedNoteId, note, allReplies) {
@@ -224,6 +315,52 @@ fun NoteDetailScreen(
         }
     }
 
+    // Delete confirmation dialog
+    if (showDeleteDialog && focusedNote != null) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text("Delete Post", color = PrimaryText) },
+            text = { Text("Request deletion of this post? Not all relays honor NIP-09 deletion requests.", color = SecondaryText) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.deleteNote(focusedNote!!.id)
+                        showDeleteDialog = false
+                        onBack()
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = LikeRed),
+                ) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) { Text("Cancel", color = SecondaryText) }
+            },
+            containerColor = SecondaryGroupedBg,
+        )
+    }
+
+    // Block confirmation dialog
+    if (showBlockDialog && focusedNote != null) {
+        AlertDialog(
+            onDismissRequest = { showBlockDialog = false },
+            title = { Text("Block User", color = PrimaryText) },
+            text = { Text("Block this user? Their posts will be hidden from your feed.", color = SecondaryText) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.blockUser(focusedNote!!.pubkey)
+                        showBlockDialog = false
+                        onBack()
+                    },
+                    colors = ButtonDefaults.textButtonColors(contentColor = LikeRed),
+                ) { Text("Block") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBlockDialog = false }) { Text("Cancel", color = SecondaryText) }
+            },
+            containerColor = SecondaryGroupedBg,
+        )
+    }
+
     GlassScaffold(
         toolbar = {
             Row(
@@ -257,8 +394,16 @@ fun NoteDetailScreen(
                         )
                     }
                     // Thread stats toggle
-                    IconButton(onClick = { /* toggle thread stats */ }, modifier = Modifier.size(40.dp)) {
-                        Icon(NostrVaultIcons.BarChart, "Thread Stats", tint = SecondaryText, modifier = Modifier.size(25.dp))
+                    IconButton(
+                        onClick = viewModel::toggleExpandedEngagement,
+                        modifier = Modifier.size(40.dp),
+                    ) {
+                        Icon(
+                            NostrVaultIcons.BarChart,
+                            "Thread Stats",
+                            tint = if (expandedEngagement) colors.primary else SecondaryText,
+                            modifier = Modifier.size(25.dp),
+                        )
                     }
                     // Reply
                     IconButton(onClick = { focusedNote?.let { onReply(it.id) } }, modifier = Modifier.size(40.dp)) {
@@ -329,11 +474,23 @@ fun NoteDetailScreen(
                         profile = viewModel.profileFor(focusedNote!!.pubkey),
                         stats = viewModel.statsFor(focusedNote!!.id),
                         isLiked = viewModel.isLiked(focusedNote!!.id),
+                        isOwnNote = viewModel.isOwnNote(focusedNote!!.pubkey),
+                        isFollowing = viewModel.isFollowing(focusedNote!!.pubkey),
                         themeColor = colors.primary,
                         onProfileClick = onProfileClick,
                         onLike = { viewModel.likeNote(focusedNote!!.id) },
+                        onLongPressLike = { showEmojiPicker = true },
                         onRepost = { viewModel.repostNote(focusedNote!!.id) },
+                        onQuote = { onQuote(focusedNote!!.id) },
                         onReply = { onReply(focusedNote!!.id) },
+                        onFollow = { viewModel.followUser(focusedNote!!.pubkey) },
+                        onUnfollow = { viewModel.unfollowUser(focusedNote!!.pubkey) },
+                        onBlock = { showBlockDialog = true },
+                        onDelete = { showDeleteDialog = true },
+                        onReport = { viewModel.reportNote(focusedNote!!.id, focusedNote!!.pubkey, "spam") },
+                        onReactionsClick = { showReactorsSheet = true },
+                        onRepostsClick = { showRepostersSheet = true },
+                        onZapsClick = { showZappersSheet = true },
                     )
                 }
 
@@ -358,6 +515,9 @@ fun NoteDetailScreen(
                         isCompact = isCompact,
                         themeColor = colors.primary,
                         viewModel = viewModel,
+                        expandedEngagement = expandedEngagement,
+                        perNoteEngagement = perNoteEngagement,
+                        profiles = profiles,
                         onProfileClick = onProfileClick,
                         onNoteClick = onNoteClick,
                         onFocus = { id -> scrollToNote(id) },
@@ -368,6 +528,43 @@ fun NoteDetailScreen(
                 item { Spacer(Modifier.height(32.dp)) }
             }
         }
+    }
+
+    // ── Bottom sheets ────────────────────────────────────────────
+    if (showReactorsSheet) {
+        ReactorsSheet(
+            reactions = engagementDetails?.reactions ?: emptyList(),
+            profiles = profiles,
+            onProfileClick = onProfileClick,
+            onDismiss = { showReactorsSheet = false },
+        )
+    }
+    if (showZappersSheet) {
+        ZappersSheet(
+            zaps = engagementDetails?.zaps ?: emptyList(),
+            profiles = profiles,
+            onProfileClick = onProfileClick,
+            onDismiss = { showZappersSheet = false },
+        )
+    }
+    if (showRepostersSheet) {
+        RepostersSheet(
+            reposts = engagementDetails?.reposts ?: emptyList(),
+            profiles = profiles,
+            onProfileClick = onProfileClick,
+            onDismiss = { showRepostersSheet = false },
+        )
+    }
+    if (showEmojiPicker && focusedNote != null) {
+        val emojiSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        EmojiPickerSheet(
+            sheetState = emojiSheetState,
+            onDismiss = { showEmojiPicker = false },
+            onSelectEmoji = { emoji ->
+                viewModel.reactToNote(focusedNote!!.id, emoji)
+                showEmojiPicker = false
+            },
+        )
     }
 }
 
@@ -447,6 +644,9 @@ private fun ThreadedReplyNode(
     isCompact: Boolean,
     themeColor: androidx.compose.ui.graphics.Color,
     viewModel: NoteDetailViewModel,
+    expandedEngagement: Boolean,
+    perNoteEngagement: Map<String, EngagementDetails>,
+    profiles: Map<String, FeedProfile>,
     onProfileClick: (String) -> Unit,
     onNoteClick: (String) -> Unit,
     onFocus: (String) -> Unit,
@@ -478,6 +678,44 @@ private fun ThreadedReplyNode(
                 onProfileClick = onProfileClick,
                 onLike = viewModel::likeNote,
             )
+        }
+
+        // Per-note engagement row when thread stats are expanded
+        if (expandedEngagement && !isCompact) {
+            val noteEngagement = perNoteEngagement[reply.id]
+            if (noteEngagement != null) {
+                val reactionCount = noteEngagement.reactions.size
+                val zapCount = noteEngagement.zaps.size
+                val repostCount = noteEngagement.reposts.size
+                if (reactionCount > 0 || zapCount > 0 || repostCount > 0) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.padding(start = 50.dp, top = 2.dp, bottom = 4.dp),
+                    ) {
+                        if (reactionCount > 0) {
+                            Text(
+                                text = "\u2764\uFE0F $reactionCount",
+                                color = SecondaryText,
+                                fontSize = 12.sp,
+                            )
+                        }
+                        if (zapCount > 0) {
+                            Text(
+                                text = "\u26A1 $zapCount",
+                                color = SecondaryText,
+                                fontSize = 12.sp,
+                            )
+                        }
+                        if (repostCount > 0) {
+                            Text(
+                                text = "\uD83D\uDD01 $repostCount",
+                                color = SecondaryText,
+                                fontSize = 12.sp,
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         // Child replies
@@ -521,6 +759,9 @@ private fun ThreadedReplyNode(
                                 isCompact = isCompact,
                                 themeColor = themeColor,
                                 viewModel = viewModel,
+                                expandedEngagement = expandedEngagement,
+                                perNoteEngagement = perNoteEngagement,
+                                profiles = profiles,
                                 onProfileClick = onProfileClick,
                                 onNoteClick = onNoteClick,
                                 onFocus = onFocus,
@@ -535,19 +776,34 @@ private fun ThreadedReplyNode(
 
 // ── Hero note card ──────────────────────────────────────────────
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HeroNoteCard(
     note: FeedNote,
     profile: FeedProfile?,
     stats: NoteStats?,
     isLiked: Boolean,
+    isOwnNote: Boolean,
+    isFollowing: Boolean,
     themeColor: androidx.compose.ui.graphics.Color,
     onProfileClick: (String) -> Unit,
     onLike: () -> Unit,
+    onLongPressLike: () -> Unit,
     onRepost: () -> Unit,
+    onQuote: () -> Unit,
     onReply: () -> Unit,
+    onFollow: () -> Unit,
+    onUnfollow: () -> Unit,
+    onBlock: () -> Unit,
+    onDelete: () -> Unit,
+    onReport: () -> Unit,
+    onReactionsClick: () -> Unit,
+    onRepostsClick: () -> Unit,
+    onZapsClick: () -> Unit,
 ) {
     val dateFormat = remember { SimpleDateFormat("MMM d, yyyy 'at' h:mm a", Locale.getDefault()) }
+    var showMoreMenu by remember { mutableStateOf(false) }
+    var showRepostMenu by remember { mutableStateOf(false) }
 
     Surface(
         color = WindowBackground,
@@ -559,29 +815,79 @@ private fun HeroNoteCard(
             .padding(horizontal = 8.dp, vertical = 4.dp),
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // Author header
+            // Author header with more menu
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.clickable { onProfileClick(note.pubkey) },
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                AsyncImage(
-                    model = profile?.pictureURL,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape),
-                )
-                Spacer(Modifier.width(12.dp))
-                Column {
-                    Text(
-                        text = profile?.bestName ?: note.pubkey.take(8) + "...",
-                        color = PrimaryText,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        .weight(1f)
+                        .clickable { onProfileClick(note.pubkey) },
+                ) {
+                    AsyncImage(
+                        model = profile?.pictureURL,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape),
                     )
-                    profile?.nip05?.let {
-                        Text(text = it, color = SecondaryText, fontSize = 13.sp)
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = profile?.bestName ?: note.pubkey.take(8) + "...",
+                            color = PrimaryText,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        profile?.nip05?.let {
+                            Text(text = it, color = SecondaryText, fontSize = 13.sp)
+                        }
+                    }
+                }
+
+                // More menu button
+                Box {
+                    IconButton(onClick = { showMoreMenu = true }) {
+                        Icon(NostrVaultIcons.More, "More", tint = SecondaryText)
+                    }
+                    DropdownMenu(
+                        expanded = showMoreMenu,
+                        onDismissRequest = { showMoreMenu = false },
+                    ) {
+                        if (isOwnNote) {
+                            DropdownMenuItem(
+                                text = { Text("Delete Post", color = LikeRed) },
+                                onClick = { showMoreMenu = false; onDelete() },
+                                leadingIcon = { Icon(NostrVaultIcons.Delete, null, tint = LikeRed) },
+                            )
+                        } else {
+                            if (isFollowing) {
+                                DropdownMenuItem(
+                                    text = { Text("Unfollow") },
+                                    onClick = { showMoreMenu = false; onUnfollow() },
+                                    leadingIcon = { Icon(NostrVaultIcons.Blocked, null, tint = ZapOrange) },
+                                )
+                            } else {
+                                DropdownMenuItem(
+                                    text = { Text("Follow") },
+                                    onClick = { showMoreMenu = false; onFollow() },
+                                    leadingIcon = { Icon(NostrVaultIcons.PersonAdd, null, tint = RepostGreen) },
+                                )
+                            }
+                            DropdownMenuItem(
+                                text = { Text("Block", color = LikeRed) },
+                                onClick = { showMoreMenu = false; onBlock() },
+                                leadingIcon = { Icon(NostrVaultIcons.Blocked, null, tint = LikeRed) },
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Report", color = LikeRed) },
+                                onClick = { showMoreMenu = false; onReport() },
+                                leadingIcon = { Icon(NostrVaultIcons.Alert, null, tint = LikeRed) },
+                            )
+                        }
                     }
                 }
             }
@@ -616,14 +922,14 @@ private fun HeroNoteCard(
             HorizontalDivider(color = SeparatorColor, thickness = 0.5.dp)
             Spacer(Modifier.height(12.dp))
 
-            // Engagement stats row
+            // Engagement stats row (tappable)
             Row(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                EngagementStat(count = stats?.reactions ?: 0, label = "Likes")
-                EngagementStat(count = stats?.reposts ?: 0, label = "Reposts")
-                EngagementStat(count = stats?.zaps ?: 0, label = "Zaps")
+                EngagementStat(count = stats?.reactions ?: 0, label = "Likes", onClick = onReactionsClick)
+                EngagementStat(count = stats?.reposts ?: 0, label = "Reposts", onClick = onRepostsClick)
+                EngagementStat(count = stats?.zaps ?: 0, label = "Zaps", onClick = onZapsClick)
             }
 
             Spacer(Modifier.height(12.dp))
@@ -638,10 +944,35 @@ private fun HeroNoteCard(
                 IconButton(onClick = onReply) {
                     Icon(NostrVaultIcons.Reply, "Reply", tint = SecondaryText)
                 }
-                IconButton(onClick = onRepost) {
-                    Icon(NostrVaultIcons.Repost, "Repost", tint = SecondaryText)
+                // Repost / Quote dropdown
+                Box {
+                    IconButton(onClick = { showRepostMenu = true }) {
+                        Icon(NostrVaultIcons.Repost, "Repost", tint = SecondaryText)
+                    }
+                    DropdownMenu(
+                        expanded = showRepostMenu,
+                        onDismissRequest = { showRepostMenu = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Repost") },
+                            onClick = { showRepostMenu = false; onRepost() },
+                            leadingIcon = { Icon(NostrVaultIcons.Repost, null, tint = RepostGreen) },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Quote") },
+                            onClick = { showRepostMenu = false; onQuote() },
+                            leadingIcon = { Icon(NostrVaultIcons.Quote, null, tint = SecondaryText) },
+                        )
+                    }
                 }
-                IconButton(onClick = onLike) {
+                // Like with long-press for emoji picker
+                IconButton(
+                    onClick = onLike,
+                    modifier = Modifier.combinedClickable(
+                        onClick = onLike,
+                        onLongClick = onLongPressLike,
+                    ),
+                ) {
                     Icon(
                         imageVector = if (isLiked) NostrVaultIcons.HeartFilled else NostrVaultIcons.Heart,
                         contentDescription = "Like",
@@ -660,8 +991,11 @@ private fun HeroNoteCard(
 }
 
 @Composable
-private fun EngagementStat(count: Int, label: String) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+private fun EngagementStat(count: Int, label: String, onClick: () -> Unit = {}) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.clickable(onClick = onClick),
+    ) {
         Text(
             text = count.toString(),
             color = PrimaryText,

@@ -85,6 +85,22 @@ fun SettingsScreen(
                     onClick = { /* TODO */ },
                 )
             }
+            item {
+                SettingsItem(
+                    icon = NostrVaultIcons.Accounts,
+                    title = "Following Backup",
+                    subtitle = "Snapshots of your following list",
+                    onClick = { onNavigate(Screen.FollowingBackup) },
+                )
+            }
+            item {
+                SettingsItem(
+                    icon = NostrVaultIcons.Edit,
+                    title = "Drafts",
+                    subtitle = "Unsent notes saved automatically",
+                    onClick = { onNavigate(Screen.Drafts) },
+                )
+            }
 
             // Appearance section
             item {
@@ -116,7 +132,7 @@ fun SettingsScreen(
                     icon = NostrVaultIcons.DMs,
                     title = "DM Relays",
                     subtitle = "NIP-17 gift-wrap relay settings",
-                    onClick = { /* TODO */ },
+                    onClick = { onNavigate(Screen.DMRelaySettings) },
                 )
             }
             item {
@@ -124,7 +140,7 @@ fun SettingsScreen(
                     icon = NostrVaultIcons.Media,
                     title = "Blossom Servers",
                     subtitle = "Media upload and mirror configuration",
-                    onClick = { /* TODO */ },
+                    onClick = { onNavigate(Screen.BlossomSettings) },
                 )
             }
 
@@ -137,7 +153,7 @@ fun SettingsScreen(
                     icon = NostrVaultIcons.Blastr,
                     title = "Blastr Broadcasting",
                     subtitle = "Broadcast notes to public relays",
-                    onClick = { /* TODO */ },
+                    onClick = { onNavigate(Screen.BlastrSettings) },
                 )
             }
             item {
@@ -145,7 +161,23 @@ fun SettingsScreen(
                     icon = NostrVaultIcons.PoW,
                     title = "Proof of Work",
                     subtitle = "Mining difficulty for anti-spam",
-                    onClick = { /* TODO */ },
+                    onClick = { onNavigate(Screen.PowSettings) },
+                )
+            }
+            item {
+                SettingsItem(
+                    icon = NostrVaultIcons.Import,
+                    title = "Cloud Backup",
+                    subtitle = "S3-compatible remote backup",
+                    onClick = { onNavigate(Screen.CloudBackupSettings) },
+                )
+            }
+            item {
+                SettingsItem(
+                    icon = NostrVaultIcons.Notifications,
+                    title = "Push Notifications",
+                    subtitle = "FCM push server configuration",
+                    onClick = { onNavigate(Screen.NotificationSettings) },
                 )
             }
             item {
@@ -161,7 +193,7 @@ fun SettingsScreen(
                     icon = NostrVaultIcons.Logs,
                     title = "Relay Logs",
                     subtitle = "View relay process output",
-                    onClick = { /* TODO */ },
+                    onClick = { onNavigate(Screen.LogViewer) },
                 )
             }
 

@@ -47,6 +47,34 @@ data class NoteStats(
 }
 
 // ---------------------------------------------------------------------------
+// Per-note engagement details (who reacted / zapped / reposted)
+// ---------------------------------------------------------------------------
+
+data class ReactionDetail(
+    val id: String,
+    val pubkey: String,
+    val emoji: String,
+)
+
+data class ZapDetail(
+    val id: String,
+    val zapperPubkey: String,
+    val amountSats: Long,
+    val comment: String,
+)
+
+data class RepostDetail(
+    val id: String,
+    val pubkey: String,
+)
+
+data class EngagementDetails(
+    val reactions: List<ReactionDetail> = emptyList(),
+    val zaps: List<ZapDetail> = emptyList(),
+    val reposts: List<RepostDetail> = emptyList(),
+)
+
+// ---------------------------------------------------------------------------
 // Popular notes DVM result
 // ---------------------------------------------------------------------------
 
@@ -94,7 +122,7 @@ data class FeedNote(
     companion object {
         // Regex patterns (compiled once)
         private val MEDIA_REGEX = Regex(
-            """https?://\S+\.(?:jpg|jpeg|png|gif|webp|svg|bmp|tiff|avif|mp4|mov|webm|avi|mkv|m4v|mp3|m4a|wav|ogg|aac|flac|opus)""",
+            """https?://[^\s<>")\]]*\.(?:jpg|jpeg|png|gif|webp|svg|bmp|tiff|avif|mp4|mov|webm|avi|mkv|m4v|mp3|m4a|wav|ogg|aac|flac|opus)(?:[?#][^\s<>")\]]*[^\s<>")\].,;:!?'"])?""",
             RegexOption.IGNORE_CASE,
         )
         private val BLOSSOM_REGEX = Regex(

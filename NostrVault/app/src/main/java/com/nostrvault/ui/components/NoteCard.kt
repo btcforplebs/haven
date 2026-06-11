@@ -2,8 +2,13 @@ package com.nostrvault.ui.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -53,9 +58,11 @@ fun NoteCard(
     onReply: ((String) -> Unit)? = null,
     onShare: ((String) -> Unit)? = null,
     onMore: ((String) -> Unit)? = null,
+    onLongPressLike: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalNostrVaultColors.current
+    val isOled = LocalOledMode.current
     val connectorColor = colors.primary.copy(alpha = 0.3f)
 
     // Thread connector lines drawn behind the card
@@ -106,7 +113,10 @@ fun NoteCard(
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = SecondaryGroupedBg.copy(alpha = 0.85f),
-        border = BorderStroke(0.8.dp, colors.primary.copy(alpha = 0.12f)),
+        border = BorderStroke(
+            if (isOled) 1.dp else 0.8.dp,
+            colors.primary.copy(alpha = if (isOled) 0.18f else 0.12f),
+        ),
         modifier = modifier
             .fillMaxWidth()
             .then(connectorModifier)
@@ -288,6 +298,7 @@ fun NoteCard(
                 onLike = onLike,
                 onZap = onZap,
                 onShare = onShare,
+                onLongPressLike = onLongPressLike,
                 modifier = Modifier.padding(start = 50.dp),
             )
         }
@@ -305,6 +316,7 @@ private fun EngagementBar(
     onLike: ((String) -> Unit)?,
     onZap: ((String) -> Unit)?,
     onShare: ((String) -> Unit)?,
+    onLongPressLike: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalNostrVaultColors.current
@@ -331,13 +343,16 @@ private fun EngagementBar(
             onClick = { onRepost?.invoke(noteId) },
         )
 
-        // Like
+        // Like (with long-press for emoji picker)
         EngagementButton(
             icon = if (isLiked) NostrVaultIcons.HeartFilled else NostrVaultIcons.Heart,
             count = stats?.reactions?.takeIf { it > 0 },
             isActive = isLiked,
             activeColor = LikeRed,
             onClick = { onLike?.invoke(noteId) },
+            onLongClick = if (onLongPressLike != null) {
+                { onLongPressLike.invoke(noteId) }
+            } else null,
         )
 
         // Zap
@@ -360,6 +375,7 @@ private fun EngagementBar(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun EngagementButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
@@ -367,10 +383,15 @@ private fun EngagementButton(
     isActive: Boolean,
     activeColor: androidx.compose.ui.graphics.Color,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.clickable(onClick = onClick),
+        modifier = if (onLongClick != null) {
+            Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+        } else {
+            Modifier.clickable(onClick = onClick)
+        },
     ) {
         Icon(
             imageVector = icon,
@@ -389,32 +410,119 @@ private fun EngagementButton(
     }
 }
 
+private val VIDEO_EXTENSIONS = setOf("mp4", "mov", "webm", "avi", "mkv", "m4v")
+
+private fun isVideoUrl(url: String): Boolean {
+    val ext = url.substringAfterLast('.').substringBefore('?').lowercase()
+    return ext in VIDEO_EXTENSIONS
+}
+
 @Composable
 fun MediaPreviewRow(
     urls: List<String>,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
+    if (urls.size == 1) {
+        SingleMediaPreview(url = urls.first(), modifier = modifier)
+    } else {
+        MediaCarousel(urls = urls, modifier = modifier)
+    }
+}
 
-    Row(
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        modifier = modifier,
+@Composable
+private fun SingleMediaPreview(url: String, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = modifier
+            .fillMaxWidth()
+            .aspectRatio(16f / 9f)
+            .clip(RoundedCornerShape(8.dp))
+            .background(TertiaryGroupedBg),
     ) {
-        for (url in urls.take(4)) {
-            AsyncImage(
-                model = ImageRequest.Builder(context)
-                    .data(url)
-                    .size(160) // ~80dp at 2x density — sufficient for square thumbnails in a 4-up grid
-                    .crossfade(100)
-                    .build(),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .weight(1f)
-                    .aspectRatio(1f)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(TertiaryGroupedBg),
+        AsyncImage(
+            model = ImageRequest.Builder(context)
+                .data(url)
+                .size(800)
+                .crossfade(100)
+                .build(),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
+        if (isVideoUrl(url)) {
+            Icon(
+                imageVector = NostrVaultIcons.PlayCircle,
+                contentDescription = "Video",
+                tint = Color.White.copy(alpha = 0.85f),
+                modifier = Modifier.size(32.dp),
             )
+        }
+    }
+}
+
+@Composable
+private fun MediaCarousel(urls: List<String>, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val pagerState = rememberPagerState(pageCount = { urls.size })
+
+    Column(modifier = modifier) {
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(4f / 3f)
+                .clip(RoundedCornerShape(8.dp)),
+        ) { page ->
+            val url = urls[page]
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(TertiaryGroupedBg),
+            ) {
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(url)
+                        .size(800)
+                        .crossfade(100)
+                        .build(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                if (isVideoUrl(url)) {
+                    Icon(
+                        imageVector = NostrVaultIcons.PlayCircle,
+                        contentDescription = "Video",
+                        tint = Color.White.copy(alpha = 0.85f),
+                        modifier = Modifier.size(32.dp),
+                    )
+                }
+            }
+        }
+
+        // Page indicator dots
+        Row(
+            horizontalArrangement = Arrangement.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp),
+        ) {
+            repeat(urls.size) { i ->
+                Box(
+                    modifier = Modifier
+                        .padding(horizontal = 2.dp)
+                        .size(6.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (i == pagerState.currentPage)
+                                LocalNostrVaultColors.current.primary
+                            else
+                                SecondaryText.copy(alpha = 0.3f)
+                        ),
+                )
+            }
         }
     }
 }

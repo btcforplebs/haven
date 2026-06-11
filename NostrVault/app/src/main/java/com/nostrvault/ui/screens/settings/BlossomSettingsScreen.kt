@@ -1,0 +1,301 @@
+package com.nostrvault.ui.screens.settings
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.nostrvault.data.local.ConfigStore
+import com.nostrvault.service.NostrService
+import com.nostrvault.ui.theme.*
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import javax.inject.Inject
+
+/**
+ * Blossom mirror server configuration.
+ * Matches iOS BlossomSettingsView.
+ */
+@HiltViewModel
+class BlossomSettingsViewModel @Inject constructor(
+    private val configStore: ConfigStore,
+    private val nostrService: NostrService,
+) : ViewModel() {
+
+    private val _mirrors = MutableStateFlow<List<String>>(emptyList())
+    val mirrors = _mirrors.asStateFlow()
+
+    private val _newMirrorUrl = MutableStateFlow("")
+    val newMirrorUrl = _newMirrorUrl.asStateFlow()
+
+    private val _macRelayHttps = MutableStateFlow<String?>(null)
+    val macRelayHttps = _macRelayHttps.asStateFlow()
+
+    private val _publishStatus = MutableStateFlow("")
+    val publishStatus = _publishStatus.asStateFlow()
+
+    init {
+        val config = configStore.config.value
+        _mirrors.value = config.blossomMirrors
+        _macRelayHttps.value = config.macRelayHttpsURL.takeIf { it.isNotBlank() }
+    }
+
+    fun setNewMirrorUrl(url: String) { _newMirrorUrl.value = url }
+
+    fun addMirror() {
+        val url = _newMirrorUrl.value.trim().let {
+            if (!it.startsWith("https://") && !it.startsWith("http://")) "https://$it" else it
+        }
+        if (url.isBlank()) return
+        if (url in _mirrors.value) return
+
+        _mirrors.value = _mirrors.value + url
+        _newMirrorUrl.value = ""
+        saveAndPublish()
+    }
+
+    fun removeMirror(url: String) {
+        _mirrors.value = _mirrors.value - url
+        saveAndPublish()
+    }
+
+    private fun saveAndPublish() {
+        viewModelScope.launch {
+            configStore.update { it.copy(blossomMirrors = _mirrors.value) }
+            try {
+                nostrService.publishServerList()
+                _publishStatus.value = "Server list published"
+            } catch (e: Exception) {
+                _publishStatus.value = "Failed to publish: ${e.message}"
+            }
+        }
+    }
+
+    fun dismissStatus() {
+        _publishStatus.value = ""
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BlossomSettingsScreen(
+    onBack: () -> Unit,
+    viewModel: BlossomSettingsViewModel = hiltViewModel(),
+) {
+    val mirrors by viewModel.mirrors.collectAsState()
+    val newMirrorUrl by viewModel.newMirrorUrl.collectAsState()
+    val macRelayHttps by viewModel.macRelayHttps.collectAsState()
+    val publishStatus by viewModel.publishStatus.collectAsState()
+    val colors = LocalNostrVaultColors.current
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Blossom Servers") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(NostrVaultIcons.Back, contentDescription = "Back")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = WindowBackground,
+                    titleContentColor = PrimaryText,
+                    navigationIconContentColor = PrimaryText,
+                ),
+            )
+        },
+        containerColor = WindowBackground,
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+        ) {
+            // Auto-applied server from Mac relay
+            if (!macRelayHttps.isNullOrBlank()) {
+                Surface(
+                    color = SuccessGreen.copy(alpha = 0.1f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            NostrVaultIcons.Check,
+                            contentDescription = null,
+                            tint = SuccessGreen,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column {
+                            Text(
+                                text = "Auto-Applied Blossom Server",
+                                color = PrimaryText,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                text = macRelayHttps!!,
+                                color = SecondaryText,
+                                fontSize = 12.sp,
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Publish status
+            if (publishStatus.isNotBlank()) {
+                Surface(
+                    color = SuccessGreen.copy(alpha = 0.1f),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    ) {
+                        Icon(
+                            NostrVaultIcons.Check,
+                            contentDescription = null,
+                            tint = SuccessGreen,
+                            modifier = Modifier.size(14.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = publishStatus,
+                            color = SuccessGreen,
+                            fontSize = 12.sp,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = viewModel::dismissStatus) {
+                            Text("OK", color = SecondaryText, fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
+
+            // Section header
+            Text(
+                text = "ADDITIONAL BLOSSOM SERVERS",
+                color = SecondaryText,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 1.sp,
+                modifier = Modifier.padding(start = 16.dp, top = 16.dp, bottom = 8.dp),
+            )
+
+            // Add mirror input
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+            ) {
+                OutlinedTextField(
+                    value = newMirrorUrl,
+                    onValueChange = viewModel::setNewMirrorUrl,
+                    placeholder = { Text("https://blossom.example.com") },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = colors.primary,
+                        unfocusedBorderColor = SeparatorColor,
+                        cursorColor = colors.primary,
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.weight(1f),
+                )
+                Spacer(Modifier.width(8.dp))
+                IconButton(
+                    onClick = viewModel::addMirror,
+                    enabled = newMirrorUrl.isNotBlank(),
+                ) {
+                    Icon(
+                        imageVector = NostrVaultIcons.Create,
+                        contentDescription = "Add",
+                        tint = if (newMirrorUrl.isNotBlank()) colors.primary else TertiaryText,
+                    )
+                }
+            }
+
+            HorizontalDivider(color = SeparatorColor, thickness = 0.5.dp)
+
+            if (mirrors.isEmpty()) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(32.dp),
+                ) {
+                    Text("No additional mirrors configured", color = SecondaryText, fontSize = 15.sp)
+                }
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    items(mirrors) { mirror ->
+                        MirrorRow(
+                            url = mirror,
+                            onRemove = { viewModel.removeMirror(mirror) },
+                        )
+                        HorizontalDivider(
+                            color = SeparatorColor,
+                            thickness = 0.5.dp,
+                            modifier = Modifier.padding(start = 16.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MirrorRow(
+    url: String,
+    onRemove: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        Icon(
+            imageVector = NostrVaultIcons.Blossom,
+            contentDescription = null,
+            tint = LocalNostrVaultColors.current.primary,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(12.dp))
+        Text(
+            text = url.removePrefix("https://"),
+            color = PrimaryText,
+            fontSize = 15.sp,
+            modifier = Modifier.weight(1f),
+        )
+        IconButton(onClick = onRemove) {
+            Icon(
+                imageVector = NostrVaultIcons.Delete,
+                contentDescription = "Remove",
+                tint = ErrorRed,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+    }
+}
