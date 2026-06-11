@@ -86,6 +86,26 @@ class RelayProcessManager: ObservableObject {
     private var bootWatchdogTimer: DispatchSourceTimer?
     private static let bootWatchdogTimeout: TimeInterval = 90
 
+    // MARK: - Lifecycle serialization
+
+    /// All start/stop/restart/backup operations run strictly one-at-a-time,
+    /// in enqueue order. Overlapping a start with a still-running stop used
+    /// to race the Go side's lifecycle globals and corrupt BadgerDB.
+    private var lifecycleChain: Task<Void, Never> = Task {}
+
+    /// Coalescing/cooldown for automatic recovery restarts (Blossom upload
+    /// failures). Each restart cycles the embedded Go relay and BadgerDB;
+    /// concurrent or rapid-fire restarts are what used to crash the app.
+    private var inFlightRestart: Task<Bool, Never>?
+    private var lastRestartFinished: Date?
+    private static let restartCooldown: TimeInterval = 60
+
+    /// BadgerDB LOCK files are only known-stale on the first start after
+    /// process launch. Later in the app's lifetime a LOCK file can belong
+    /// to a live in-process Badger instance; deleting it would let two
+    /// instances open the same directory and silently corrupt it.
+    private var hasClearedLocksThisLaunch = false
+
     // (Log throttling moved to LogStore)
 
     /// Whether the UI is actively visible (popover open / window focused).
@@ -129,15 +149,31 @@ class RelayProcessManager: ObservableObject {
         eventsStoredWhenLastViewed = eventsStored + 2
     }
 
+    /// Enqueue a lifecycle operation behind all previously enqueued ones.
+    /// Serialization guarantees a start can never overlap an in-flight stop.
+    private func enqueueLifecycle(_ op: @escaping @MainActor () async -> Void) {
+        let prev = lifecycleChain
+        lifecycleChain = Task { @MainActor in
+            await prev.value
+            await op()
+        }
+    }
+
     func startRelay(config: HavenConfig, isRetry: Bool = false) {
+        enqueueLifecycle { [weak self] in
+            await self?.performStart(config: config, isRetry: isRetry)
+        }
+    }
+
+    /// The actual start sequence. Must only run on the lifecycle chain.
+    private func performStart(config: HavenConfig, isRetry: Bool) async {
         // Strict guard: Must be idle, not running, and not in the middle of a shutdown
         guard state == .idle && !isRunning && !isShuttingDown else {
             logStore.append(LogEntry(timestamp: Date(), level: "WARN", message: "Cannot start relay: current state is \(state) (running: \(isRunning), shuttingDown: \(isShuttingDown))"))
             return
         }
 
-        // Immediately claim the state so no second call can slip through
-        // while the Task below does async setup work.
+        // Immediately claim the state so no second call can slip through.
         self.state = .booting
         self.lastConfig = config
         self.isReadyForConnections = false
@@ -153,38 +189,34 @@ class RelayProcessManager: ObservableObject {
         // Start log throttler
         startLogThrottler()
 
-        // Background setup task
-        Task {
-            let relayDataDir = ConfigService.shared.relayDataDir
+        let relayDataDir = ConfigService.shared.relayDataDir
 
-            // 1. Ensure directories exist (I/O)
-            RelayConfiguration.ensureDirectories(under: relayDataDir)
+        // 1. Ensure directories exist (I/O)
+        RelayConfiguration.ensureDirectories(under: relayDataDir)
 
-            // 2. Clear Database Locks (Crucial - must happen before start)
-            self.performClearDatabaseLocks(at: relayDataDir)
-            
-            // 3. Copy templates directory — always refresh so new/updated
-            //    templates (e.g. feed.html) are deployed on app update.
-            let destURL = relayDataDir.appendingPathComponent("templates")
-            if let templatesPath = Bundle.main.path(forResource: "templates", ofType: "") {
-                if FileManager.default.fileExists(atPath: destURL.path) {
-                    try? FileManager.default.removeItem(at: destURL)
-                }
-                try? FileManager.default.copyItem(at: URL(fileURLWithPath: templatesPath), to: destURL)
-                await MainActor.run {
-                    self.logStore.append(LogEntry(timestamp: Date(), level: "INFO", message: "Copied templates to \(destURL.path)"))
-                }
-            } else {
-                await MainActor.run {
-                    self.logStore.append(LogEntry(timestamp: Date(), level: "WARN", message: "Templates folder not found in Bundle"))
-                }
-            }
-
-            // Continue with the rest of the startup on the MainActor
-            await MainActor.run {
-                self.continueStartRelay(config: config, relayDataDir: relayDataDir)
-            }
+        // 2. Clear stale database locks — only on the first start after
+        // process launch (see hasClearedLocksThisLaunch). Explicit recovery
+        // paths (Fix Locks button, force clean & restart) clear them
+        // unconditionally after a confirmed stop.
+        if !hasClearedLocksThisLaunch {
+            hasClearedLocksThisLaunch = true
+            performClearDatabaseLocks(at: relayDataDir)
         }
+
+        // 3. Copy templates directory — always refresh so new/updated
+        //    templates (e.g. feed.html) are deployed on app update.
+        let destURL = relayDataDir.appendingPathComponent("templates")
+        if let templatesPath = Bundle.main.path(forResource: "templates", ofType: "") {
+            if FileManager.default.fileExists(atPath: destURL.path) {
+                try? FileManager.default.removeItem(at: destURL)
+            }
+            try? FileManager.default.copyItem(at: URL(fileURLWithPath: templatesPath), to: destURL)
+            logStore.append(LogEntry(timestamp: Date(), level: "INFO", message: "Copied templates to \(destURL.path)"))
+        } else {
+            logStore.append(LogEntry(timestamp: Date(), level: "WARN", message: "Templates folder not found in Bundle"))
+        }
+
+        continueStartRelay(config: config, relayDataDir: relayDataDir)
     }
 
     /// Public method to add logs from other services
@@ -344,7 +376,17 @@ class RelayProcessManager: ObservableObject {
 
     /// Gracefully restart the relay by stopping and restarting it.
     /// Used for automatic recovery when blossom uploads to the local relay fail.
+    /// Concurrent callers coalesce onto one in-flight restart, and a cooldown
+    /// prevents restart storms — rapid stop/start cycling of the embedded Go
+    /// relay is what used to corrupt BadgerDB and crash the app.
     func gracefulRestart() async -> Bool {
+        if let inflight = inFlightRestart {
+            return await inflight.value
+        }
+        if let last = lastRestartFinished, Date().timeIntervalSince(last) < Self.restartCooldown {
+            logStore.append(LogEntry(timestamp: Date(), level: "WARN", message: "Automatic restart suppressed (cooldown) — waiting for relay readiness instead"))
+            return await ensureRelayReady(timeout: 10.0)
+        }
         guard let config = lastConfig else {
             logStore.append(LogEntry(timestamp: Date(), level: "WARN", message: "Cannot restart: no saved config"))
             return false
@@ -352,20 +394,38 @@ class RelayProcessManager: ObservableObject {
 
         logStore.append(LogEntry(timestamp: Date(), level: "INFO", message: "Graceful restart for blossom recovery..."))
 
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            stopRelay {
-                continuation.resume()
+        let restart = Task { @MainActor () -> Bool in
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                self.stopRelay {
+                    continuation.resume()
+                }
             }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            self.startRelay(config: config, isRetry: true)
+            return await self.ensureRelayReady(timeout: 30.0)
         }
-
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
-
-        startRelay(config: config, isRetry: true)
-
-        return await ensureRelayReady(timeout: 30.0)
+        inFlightRestart = restart
+        let result = await restart.value
+        inFlightRestart = nil
+        lastRestartFinished = Date()
+        return result
     }
 
     func stopRelay(completion: (() -> Void)? = nil) {
+        enqueueLifecycle { [weak self] in
+            await self?.performStop()
+            completion?()
+        }
+    }
+
+    /// The actual stop sequence. Must only run on the lifecycle chain.
+    /// Waits for StopRelayC to truly return — the old 5-second timeout that
+    /// "force-reset" state and fired the completion early let callers start
+    /// a new relay cycle while the Go side was still tearing down the old
+    /// one, corrupting BadgerDB. Go-side shutdown is bounded (~15s worst
+    /// case: 4s server shutdown + 10s goroutine drain + DB close), so
+    /// waiting honestly cannot hang.
+    private func performStop() async {
         // Must check if running, booting, or importing
         guard self.isRunning || self.isBooting || self.isImporting else {
             self.state = .idle
@@ -373,7 +433,6 @@ class RelayProcessManager: ObservableObject {
             #if os(macOS)
             NetworkSyncService.shared.stop()
             #endif
-            completion?()
             return
         }
 
@@ -388,87 +447,64 @@ class RelayProcessManager: ObservableObject {
 
         logStore.append(LogEntry(timestamp: Date(), level: "INFO", message: "Stopping C-Shared relay natively..."))
 
-        // Safety timeout: if StopRelayC hangs, force-reset state after 5 seconds
-        let stopTimeoutItem = DispatchWorkItem { [weak self] in
-            guard let self = self, self.state == .stopping else { return }
-            self.logStore.append(LogEntry(timestamp: Date(), level: "WARN", message: "Stop timed out after 5s — force-resetting state"))
-            self.restoreOutput()
-            self.state = .idle
-            self.isRunning = false
-            self.isWotSyncing = false
-            self.isShuttingDown = false
-            #if os(macOS)
-            NetworkSyncService.shared.stop()
-            #endif
-            completion?()
+        // Watchdog: log-only. Never resets state or proceeds while the Go
+        // side is still shutting down.
+        let watchdog = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 25_000_000_000)
+            guard let self, self.state == .stopping else { return }
+            self.logStore.append(LogEntry(timestamp: Date(), level: "ERROR", message: "Relay stop exceeded 25s — still waiting for Go shutdown to finish. Quit and relaunch the app if this persists."))
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0, execute: stopTimeoutItem)
 
-        DispatchQueue.global().async { [weak self] in
-            // Tell the Go side to shut down the server and cancel the context
-            StopRelayC()
-
-            // Wait for OS to fully release DB file locks before allowing restart
-            Thread.sleep(forTimeInterval: 1.0)
-
-            DispatchQueue.main.async {
-                stopTimeoutItem.cancel() // Normal shutdown completed, cancel the timeout
-                guard self?.state == .stopping else { return } // Timeout already fired
-
-                self?.logStore.append(LogEntry(timestamp: Date(), level: "INFO", message: "C-Shared relay natively stopped."))
-                self?.restoreOutput()
-                self?.state = .idle
-                self?.isRunning = false
-                self?.isWotSyncing = false
-                self?.isShuttingDown = false
-                #if os(macOS)
-                NetworkSyncService.shared.stop()
-                #endif
-
-                // If we were stopping to start an import, trigger it now
-                if let importConfig = self?.pendingImportConfig {
-                    self?.pendingImportConfig = nil
-                    self?.importNotes(config: importConfig)
-                }
-
-                completion?()
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global().async {
+                // Tell the Go side to shut down the server, cancel the
+                // context, drain background goroutines, and close the DBs.
+                StopRelayC()
+                // Brief settle so the OS fully releases DB file locks
+                Thread.sleep(forTimeInterval: 0.5)
+                continuation.resume()
             }
+        }
+        watchdog.cancel()
+
+        logStore.append(LogEntry(timestamp: Date(), level: "INFO", message: "C-Shared relay natively stopped."))
+        restoreOutput()
+        state = .idle
+        isRunning = false
+        isWotSyncing = false
+        isShuttingDown = false
+        #if os(macOS)
+        NetworkSyncService.shared.stop()
+        #endif
+
+        // If we were stopping to start an import, trigger it now
+        if let importConfig = pendingImportConfig {
+            pendingImportConfig = nil
+            importNotes(config: importConfig)
         }
     }
     
-    /// Aggressively kill any running haven process, clear all database locks, reset state, and restart.
-    /// This replaces the old "pkill -9 haven" manual step.
+    /// Aggressively stop the relay, clear all database locks, reset state, and restart.
+    /// This replaces the old "pkill -9 haven" manual step. Runs on the
+    /// lifecycle chain: the LOCK files are deleted only after performStop
+    /// has confirmed the in-process relay is fully down, so the clear can
+    /// never hit a live BadgerDB instance.
     func forceCleanAndRestart() {
-        self.state = .stopping
         logStore.append(LogEntry(timestamp: Date(), level: "INFO", message: "Force clean & restart initiated..."))
-        
         let relayDataDir = ConfigService.shared.relayDataDir
-        
-        DispatchQueue.global().async { [weak self] in
-            StopRelayC()
-            
-            // Wait for OS to release file locks
-            Thread.sleep(forTimeInterval: 0.5)
-            
-            self?.performClearDatabaseLocks(at: relayDataDir)
-            
-            DispatchQueue.main.async {
-                self?.state = .idle
-                self?.isRunning = false
-                self?.isBooting = false
-                self?.isLocked = false
-                #if os(macOS)
-                NetworkSyncService.shared.stop()
-                #endif
-                self?.needsLockFix = false
-                self?.showProcessKillAlert = false
-                self?.isShuttingDown = false
-                
-                self?.logStore.append(LogEntry(timestamp: Date(), level: "INFO", message: "Cleanup complete. Restarting relay..."))
-                
-                if let config = self?.lastConfig {
-                    self?.startRelay(config: config, isRetry: true)
-                }
+
+        enqueueLifecycle { [weak self] in
+            guard let self else { return }
+            await self.performStop()
+            self.performClearDatabaseLocks(at: relayDataDir)
+            self.isLocked = false
+            self.needsLockFix = false
+            self.showProcessKillAlert = false
+
+            self.logStore.append(LogEntry(timestamp: Date(), level: "INFO", message: "Cleanup complete. Restarting relay..."))
+
+            if let config = self.lastConfig {
+                await self.performStart(config: config, isRetry: true)
             }
         }
     }
@@ -952,116 +988,99 @@ class RelayProcessManager: ObservableObject {
     }
 
     func runBackupExport(config: HavenConfig, outputPath: String, completion: @escaping @Sendable (Bool) -> Void) {
-        let wasRunning = self.isRunning
-
-        let executeBackup = {
+        enqueueLifecycle { [weak self] in
+            guard let self else { return }
+            let wasRunning = self.isRunning
+            if wasRunning { await self.performStop() }
+            // Relay is confirmed down; any leftover LOCK is stale.
             self.performClearDatabaseLocks(at: ConfigService.shared.relayDataDir)
             self.prepareEnvForBackup(config: config)
 
-            DispatchQueue.global().async {
-                guard let cPath = strdup(outputPath) else {
-                    Task { @MainActor in completion(false) }
-                    return
-                }
-                let result = BackupDatabaseC(cPath)
-                free(cPath)
-                Task { @MainActor in
-                    completion(result == 0)
-                    if wasRunning {
-                        self.startRelay(config: config)
+            let success: Bool = await withCheckedContinuation { continuation in
+                DispatchQueue.global().async {
+                    guard let cPath = strdup(outputPath) else {
+                        continuation.resume(returning: false)
+                        return
                     }
+                    let result = BackupDatabaseC(cPath)
+                    free(cPath)
+                    continuation.resume(returning: result == 0)
                 }
             }
-        }
-
-        if wasRunning {
-            self.stopRelay { executeBackup() }
-        } else {
-            executeBackup()
+            completion(success)
+            if wasRunning {
+                await self.performStart(config: config, isRetry: true)
+            }
         }
     }
 
     func runBackupRestore(config: HavenConfig, inputPath: String, completion: @escaping @Sendable (Bool) -> Void) {
-        let wasRunning = self.isRunning
-
-        let executeRestore = {
+        enqueueLifecycle { [weak self] in
+            guard let self else { return }
+            let wasRunning = self.isRunning
+            if wasRunning { await self.performStop() }
             self.performClearDatabaseLocks(at: ConfigService.shared.relayDataDir)
             self.prepareEnvForBackup(config: config)
 
-            DispatchQueue.global().async {
-                guard let cPath = strdup(inputPath) else {
-                    Task { @MainActor in completion(false) }
-                    return
-                }
-                let result = RestoreDatabaseC(cPath)
-                free(cPath)
-                Task { @MainActor in
-                    completion(result == 0)
-                    if wasRunning {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                            self.startRelay(config: config)
-                        }
+            let success: Bool = await withCheckedContinuation { continuation in
+                DispatchQueue.global().async {
+                    guard let cPath = strdup(inputPath) else {
+                        continuation.resume(returning: false)
+                        return
                     }
+                    let result = RestoreDatabaseC(cPath)
+                    free(cPath)
+                    continuation.resume(returning: result == 0)
                 }
             }
-        }
-
-        if wasRunning {
-            self.stopRelay { executeRestore() }
-        } else {
-            executeRestore()
+            completion(success)
+            if wasRunning {
+                // Brief settle after a restore before reopening the DBs
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                await self.performStart(config: config, isRetry: true)
+            }
         }
     }
 
     func runBackupToCloud(config: HavenConfig) {
-        let wasRunning = self.isRunning
-
-        let executeBackup = {
+        enqueueLifecycle { [weak self] in
+            guard let self else { return }
+            let wasRunning = self.isRunning
+            if wasRunning { await self.performStop() }
             self.performClearDatabaseLocks(at: ConfigService.shared.relayDataDir)
             self.prepareEnvForBackup(config: config)
 
-            DispatchQueue.global().async {
-                let result = BackupToCloudC()
-                Task { @MainActor in
-                    let msg = result == 0 ? "Cloud backup complete" : "Cloud backup failed"
-                    self.logStore.append(LogEntry(timestamp: Date(), level: result == 0 ? "INFO" : "ERROR", message: msg))
-                    if wasRunning {
-                        self.startRelay(config: config)
-                    }
+            let success: Bool = await withCheckedContinuation { continuation in
+                DispatchQueue.global().async {
+                    continuation.resume(returning: BackupToCloudC() == 0)
                 }
             }
-        }
-
-        if wasRunning {
-            self.stopRelay { executeBackup() }
-        } else {
-        executeBackup()
+            let msg = success ? "Cloud backup complete" : "Cloud backup failed"
+            self.logStore.append(LogEntry(timestamp: Date(), level: success ? "INFO" : "ERROR", message: msg))
+            if wasRunning {
+                await self.performStart(config: config, isRetry: true)
+            }
         }
     }
 
     func runRestoreFromCloud(config: HavenConfig) {
-        let wasRunning = self.isRunning
-
-        let executeRestore = {
+        enqueueLifecycle { [weak self] in
+            guard let self else { return }
+            let wasRunning = self.isRunning
+            if wasRunning { await self.performStop() }
             self.performClearDatabaseLocks(at: ConfigService.shared.relayDataDir)
             self.prepareEnvForBackup(config: config)
 
-            DispatchQueue.global().async {
-                let result = RestoreFromCloudC()
-                Task { @MainActor in
-                    let msg = result == 0 ? "Cloud restore complete" : "Cloud restore failed"
-                    self.logStore.append(LogEntry(timestamp: Date(), level: result == 0 ? "INFO" : "ERROR", message: msg))
-                    if wasRunning {
-                        self.startRelay(config: config)
-                    }
+            let success: Bool = await withCheckedContinuation { continuation in
+                DispatchQueue.global().async {
+                    continuation.resume(returning: RestoreFromCloudC() == 0)
                 }
             }
-        }
-
-        if wasRunning {
-            self.stopRelay { executeRestore() }
-        } else {
-            executeRestore()
+            let msg = success ? "Cloud restore complete" : "Cloud restore failed"
+            self.logStore.append(LogEntry(timestamp: Date(), level: success ? "INFO" : "ERROR", message: msg))
+            if wasRunning {
+                await self.performStart(config: config, isRetry: true)
+            }
         }
     }
     

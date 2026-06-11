@@ -62,16 +62,20 @@ class AppDelegate: NSObject, ObservableObject {
         NetworkSyncService.shared.stop()
         NIP46Service.shared.disconnect()
 
-        // Stop the relay — StopRelayC() runs on a background thread inside
-        // stopRelay(), but we must block here briefly so the process doesn't
-        // exit before the Go side has time to flush databases.
+        // Stop the relay directly, bypassing the serialized lifecycle chain —
+        // termination must not wait behind a queued backup or restart. The Go
+        // side's lifecycle mutex makes a direct StopRelayC safe even against
+        // an in-flight operation, and stopping an already-stopped relay is a
+        // no-op. We block briefly so the process doesn't exit before the Go
+        // side has flushed and closed the databases.
         let semaphore = DispatchSemaphore(value: 0)
-        RelayProcessManager.shared.stopRelay {
+        DispatchQueue.global().async {
+            StopRelayC()
             semaphore.signal()
         }
-        // Wait up to 3 seconds for a clean shutdown; if it takes longer the
+        // Wait up to 5 seconds for a clean shutdown; if it takes longer the
         // OS will SIGKILL us anyway.
-        _ = semaphore.wait(timeout: .now() + 3.0)
+        _ = semaphore.wait(timeout: .now() + 5.0)
     }
     
     func openWelcomeWindow() {
