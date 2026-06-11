@@ -17,6 +17,10 @@ class AppDelegate: NSObject, ObservableObject {
         signal(SIGPIPE, SIG_IGN)
 
         #if os(macOS)
+        // Watch sleep/wake so automatic recovery doesn't restart the relay
+        // over connections that are merely re-establishing after wake.
+        SleepWakeMonitor.shared.start()
+
         // Check if setup is complete
         if !ConfigService.shared.config.hasCompletedSetup {
             openWelcomeWindow()

@@ -106,6 +106,24 @@ class RelayProcessManager: ObservableObject {
     /// instances open the same directory and silently corrupt it.
     private var hasClearedLocksThisLaunch = false
 
+    /// App Nap suppression token, held while the relay is running so macOS
+    /// doesn't throttle the embedded Go runtime's timers and sockets.
+    private var relayActivityToken: NSObjectProtocol?
+
+    private func beginRelayActivity() {
+        guard relayActivityToken == nil else { return }
+        relayActivityToken = ProcessInfo.processInfo.beginActivity(
+            options: [.background, .suddenTerminationDisabled],
+            reason: "Haven relay serving connections")
+    }
+
+    private func endRelayActivity() {
+        if let token = relayActivityToken {
+            ProcessInfo.processInfo.endActivity(token)
+            relayActivityToken = nil
+        }
+    }
+
     // (Log throttling moved to LogStore)
 
     /// Whether the UI is actively visible (popover open / window focused).
@@ -303,6 +321,7 @@ class RelayProcessManager: ObservableObject {
         isBooting = true
         bootStatusMessage = "Starting system..."
         startBootWatchdog()
+        beginRelayActivity()
 
         // Launch the C-Shared relay on a background thread
         DispatchQueue.global().async { [weak self] in
@@ -387,6 +406,12 @@ class RelayProcessManager: ObservableObject {
             logStore.append(LogEntry(timestamp: Date(), level: "WARN", message: "Automatic restart suppressed (cooldown) — waiting for relay readiness instead"))
             return await ensureRelayReady(timeout: 10.0)
         }
+        #if os(macOS)
+        if SleepWakeMonitor.shared.isInWakeGracePeriod {
+            logStore.append(LogEntry(timestamp: Date(), level: "INFO", message: "Automatic restart skipped — system just woke from sleep; waiting for relay instead"))
+            return await ensureRelayReady(timeout: 15.0)
+        }
+        #endif
         guard let config = lastConfig else {
             logStore.append(LogEntry(timestamp: Date(), level: "WARN", message: "Cannot restart: no saved config"))
             return false
@@ -469,6 +494,7 @@ class RelayProcessManager: ObservableObject {
 
         logStore.append(LogEntry(timestamp: Date(), level: "INFO", message: "C-Shared relay natively stopped."))
         restoreOutput()
+        endRelayActivity()
         state = .idle
         isRunning = false
         isWotSyncing = false
