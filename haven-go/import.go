@@ -66,10 +66,14 @@ func runImport(ctx context.Context) {
 		config.WotCacheTTLMinutes,
 	)
 
-	// Try to load from cache first
-	if !wotModel.LoadFromCache() {
+	// Try to load from cache first. MarkReady on the cache-hit path also
+	// stores the instance, so GetInstance() below never returns nil.
+	gate := wot.NewCycle()
+	if wotModel.LoadFromCache() {
+		wot.MarkReady(gate, wotModel)
+	} else {
 		// Cache miss or invalid, initialize from network
-		wot.Initialize(ctx, wotModel)
+		wot.Initialize(ctx, wotModel, gate)
 	}
 
 	log.Println("📦 importing notes")

@@ -100,12 +100,12 @@ func main() {
 		// Try to load from cache first - instant startup
 		// Only run full network rebuild if cache is missing or expired
 		cacheLoaded := wotModel.LoadFromCache()
-		wot.ResetReady()
+		gate := wot.NewCycle()
 		if cacheLoaded {
-			wot.MarkReady(wotModel)
+			wot.MarkReady(gate, wotModel)
 			log.Println("  ✓ Web of Trust loaded from cache, skipping rebuild")
 		} else {
-			runsafe.Go("wot.Initialize", func() { wot.Initialize(mainCtx, wotModel) })
+			runsafe.Go("wot.Initialize", func() { wot.Initialize(mainCtx, wotModel, gate) })
 			log.Println("  ✓ Web of Trust initializing from network")
 		}
 

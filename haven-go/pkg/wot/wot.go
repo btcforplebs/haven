@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -22,10 +23,30 @@ type Initializer interface {
 
 var wotInstance atomic.Value
 
-// readyCh is closed once Initialize() finishes, signalling that the WoT
-// graph is fully populated and Has() calls are reliable.
-// Reset via ResetReady() before each Initialize() cycle (e.g. iOS relay restart).
-var readyCh = make(chan struct{})
+// ReadyGate signals completion of one WoT build cycle. Each relay
+// start/stop cycle gets its own gate via NewCycle(); sync.Once makes
+// marking ready idempotent, so a stale Initialize goroutine left over
+// from a cancelled cycle can never double-close the channel (which
+// previously panicked and took the whole host app down).
+type ReadyGate struct {
+	ch   chan struct{}
+	once sync.Once
+}
+
+func newReadyGate() *ReadyGate { return &ReadyGate{ch: make(chan struct{})} }
+
+func (g *ReadyGate) markReady() { g.once.Do(func() { close(g.ch) }) }
+
+// Done returns a channel that closes when this cycle's WoT is ready.
+func (g *ReadyGate) Done() <-chan struct{} { return g.ch }
+
+// currentGate is the gate WaitReady() observes. Stale cycles keep their
+// own gate reference, so marking a superseded gate ready is harmless.
+var currentGate atomic.Pointer[ReadyGate]
+
+func init() {
+	currentGate.Store(newReadyGate())
+}
 
 func GetInstance() Model {
 	val := wotInstance.Load()
@@ -35,40 +56,45 @@ func GetInstance() Model {
 	return val.(Model)
 }
 
-// ResetReady creates a fresh ready channel. Call before Initialize()
-// when the relay is restarted (e.g. iOS stop/start cycle).
-func ResetReady() {
-	readyCh = make(chan struct{})
+// NewCycle installs and returns a fresh ready gate. Call once per relay
+// start cycle, before MarkReady or Initialize.
+func NewCycle() *ReadyGate {
+	g := newReadyGate()
+	currentGate.Store(g)
+	return g
 }
 
-// MarkReady signals WoT is ready without running Initialize().
-// Used when a valid cache was loaded and full rebuild is unnecessary.
-func MarkReady(model Model) {
+// MarkReady signals the given cycle's WoT is ready without running
+// Initialize(). Used when a valid cache was loaded and a rebuild is
+// unnecessary.
+func MarkReady(g *ReadyGate, model Model) {
 	wotInstance.Store(model)
-	select {
-	case <-readyCh:
-		// already closed
-	default:
-		close(readyCh)
-	}
+	g.markReady()
 }
 
-// WaitReady blocks until Initialize() has completed.
+// WaitReady blocks until the current cycle's WoT is ready or ctx is done.
 func WaitReady(ctx context.Context) {
+	g := currentGate.Load()
 	select {
-	case <-readyCh:
+	case <-g.Done():
 	case <-ctx.Done():
 	}
 }
 
-func Initialize(ctx context.Context, model Model) {
+// Initialize builds the WoT and marks the given cycle's gate ready.
+// A cancelled cycle returns without signalling readiness — a half-built
+// graph must not unblock waiters, and the next cycle has its own gate.
+func Initialize(ctx context.Context, model Model, g *ReadyGate) {
 	wotInstance.Store(model)
 	if initializer, ok := model.(Initializer); ok {
 		slog.Info("🌐 Initializing WoT", "model", fmt.Sprintf("%T", model))
 		initializer.Init(ctx)
 		slog.Info("✅ WoT initialized")
 	}
-	close(readyCh)
+	if ctx.Err() != nil {
+		return
+	}
+	g.markReady()
 }
 
 func PeriodicRefresh(ctx context.Context, interval time.Duration) {
