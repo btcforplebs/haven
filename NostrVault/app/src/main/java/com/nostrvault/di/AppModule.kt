@@ -83,7 +83,7 @@ object AppModule {
                 add(GifDecoder.Factory())
                 add(VideoFrameDecoder.Factory())
             }
-            .crossfade(150) // 150ms: smooth but less visual noise than default 200ms during fast scroll
+            .crossfade(false) // Disable crossfade for instant rendering and better scroll performance
             .respectCacheHeaders(false) // Nostr profile pics rarely have proper cache headers
             .build()
 }

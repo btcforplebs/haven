@@ -56,7 +56,7 @@ The complete mapping from `HavenConfig` (Swift) → env var name → `Config` st
 | `ownerNpub` | `OWNER_NPUB` | `OwnerNpub` | `""` |
 | `relayURL` | `RELAY_URL` | `RelayURL` | `""` |
 | `relayPort` | `RELAY_PORT` | `RelayPort` | `3355` |
-| `allowNetworkAccess` | `RELAY_BIND_ADDRESS` | `RelayBindAddress` | `"127.0.0.1"` (false) / `"0.0.0.0"` (true) |
+| — | `RELAY_BIND_ADDRESS` | `RelayBindAddress` | `"127.0.0.1"` (hardcoded in Swift/Kotlin), `"0.0.0.0"` (Go standalone default) |
 | `dbEngine` | `DB_ENGINE` | `DBEngine` | `"badger"` (Swift) / `"lmdb"` (Go) |
 | — | `LMDB_MAPSIZE` | `LmdbMapSize` | `0` (auto-detect) |
 | `blossomPath` | `BLOSSOM_PATH` | `BlossomPath` | `"blossom/"` → full path in env |

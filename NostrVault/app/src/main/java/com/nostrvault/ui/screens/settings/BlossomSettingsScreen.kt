@@ -122,7 +122,7 @@ fun BlossomSettingsScreen(
                 .fillMaxSize()
                 .padding(padding),
         ) {
-            // Auto-applied server from Mac relay
+            // Auto-applied server from Haven relay
             if (!macRelayHttps.isNullOrBlank()) {
                 Surface(
                     color = SuccessGreen.copy(alpha = 0.1f),

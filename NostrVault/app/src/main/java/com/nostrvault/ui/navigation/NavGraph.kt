@@ -13,6 +13,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import kotlinx.coroutines.flow.first
 import com.nostrvault.data.local.ConfigStore
 import com.nostrvault.relay.RelayForegroundService
 import com.nostrvault.service.FeedService

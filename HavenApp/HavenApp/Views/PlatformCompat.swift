@@ -212,11 +212,8 @@ extension View {
 
     @ViewBuilder
     func mediaTabViewStyleCompat() -> some View {
-        #if os(iOS)
-        self.tabViewStyle(PageTabViewStyle(indexDisplayMode: .never))
-        #else
+        // Removed PageTabViewStyle - TabView now fades instead of swiping
         self
-        #endif
     }
 }
 

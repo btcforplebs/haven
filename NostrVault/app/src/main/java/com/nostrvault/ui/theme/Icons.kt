@@ -89,12 +89,14 @@ object NostrVaultIcons {
     val Accounts: ImageVector = Icons.Filled.Key           // person.badge.key
     val Blocked: ImageVector = Icons.Filled.PersonOff      // person.crop.circle.badge.xmark
     val Appearance: ImageVector = Icons.Filled.Palette     // paintpalette
+    @Suppress("DEPRECATION")
     val Feed: ImageVector = Icons.Filled.Feed              // newspaper
     val DMs: ImageVector = Icons.Filled.Forum              // bubble.left.and.bubble.right
     val Notifications: ImageVector = Icons.Filled.NotificationsActive // bell.badge
     val Import: ImageVector = Icons.Filled.Download        // square.and.arrow.down
     val Backup: ImageVector = Icons.Filled.Backup          // externaldrive.fill
     val Following: ImageVector = Icons.Filled.ManageAccounts // person.crop.circle.badge.clock
+    @Suppress("DEPRECATION")
     val Blastr: ImageVector = Icons.Filled.Send             // paperplane
     val Domain: ImageVector = Icons.Filled.Public           // globe
     val PoW: ImageVector = Icons.Filled.Construction        // hammer.fill
@@ -130,6 +132,7 @@ object NostrVaultIcons {
     val Refresh: ImageVector = Icons.Filled.Refresh        // arrow.clockwise
     val Check: ImageVector = Icons.Filled.Check            // checkmark
     val Info: ImageVector = Icons.Filled.Info              // info.circle
+    @Suppress("DEPRECATION")
     val Send: ImageVector = Icons.Filled.Send              // paperplane.fill
     val PersonAdd: ImageVector = Icons.Filled.PersonAdd    // person.badge.plus
     val Verified: ImageVector = Icons.Filled.Verified      // checkmark.seal

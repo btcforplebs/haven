@@ -250,7 +250,7 @@ fun NoteDetailScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showBlockDialog by remember { mutableStateOf(false) }
 
-    // Re-fetch engagement when focus changes
+    // Re-fetch engagement and replies when focus changes
     LaunchedEffect(focusedNoteId) {
         viewModel.fetchEngagement(focusedNoteId)
     }
@@ -287,32 +287,22 @@ fun NoteDetailScreen(
         allReplies.filter { it.parentEventId == heroId }.sortedBy { it.createdAt }
     }
 
-    // Auto-scroll to hero after loading
-    LaunchedEffect(isLoading) {
+    // Auto-scroll to hero note when focus changes or loading completes.
+    // This replaces both the initial scroll and tap-to-focus scroll.
+    LaunchedEffect(focusedNoteId, isLoading) {
         if (!isLoading && note != null) {
-            // Small delay for layout to settle
-            kotlinx.coroutines.delay(200)
-            val heroKey = "hero_${focusedNoteId}"
-            val idx = listState.layoutInfo.totalItemsCount.let { total ->
-                (0 until total).firstOrNull { i ->
-                    listState.layoutInfo.visibleItemsInfo.any { it.key == heroKey }
-                }
-            }
-            // Scroll so hero is roughly centered
-            val parentCount = dynamicParents.size
-            if (parentCount > 0) {
-                listState.animateScrollToItem(parentCount, scrollOffset = -100)
+            // Allow layout to settle after recomposition
+            kotlinx.coroutines.delay(250)
+            val heroIndex = dynamicParents.size
+            if (heroIndex in 0 until listState.layoutInfo.totalItemsCount) {
+                listState.animateScrollToItem(heroIndex, scrollOffset = -100)
             }
         }
     }
 
     fun scrollToNote(targetId: String) {
         focusedNoteId = targetId
-        scope.launch {
-            kotlinx.coroutines.delay(100)
-            val parentCount = dynamicParents.size
-            listState.animateScrollToItem(parentCount, scrollOffset = -100)
-        }
+        // LaunchedEffect(focusedNoteId) handles the actual scroll after recomposition
     }
 
     // Delete confirmation dialog
@@ -457,6 +447,7 @@ fun NoteDetailScreen(
                             profile = viewModel.profileFor(parent.pubkey),
                             stats = viewModel.statsFor(parent.id),
                             isLiked = viewModel.isLiked(parent.id),
+                            isFocused = parent.id == focusedNoteId,
                             parentIsNext = true,
                             onNoteClick = { scrollToNote(parent.id) },
                             onProfileClick = onProfileClick,
@@ -513,6 +504,7 @@ fun NoteDetailScreen(
                         reply = reply,
                         depth = 1,
                         isCompact = isCompact,
+                        focusedNoteId = focusedNoteId,
                         themeColor = colors.primary,
                         viewModel = viewModel,
                         expandedEngagement = expandedEngagement,
@@ -581,7 +573,10 @@ private fun ThreadConnectorLine(color: androidx.compose.ui.graphics.Color) {
     )
 }
 
-// ── Compact parent row ──────────────────────────────────────────
+// ── Compact parent/reply row ─────────────────────────────────────
+// Matches iOS compactParentNoteView / compactReplyView: 28dp avatar,
+// name · timestamp header, 1–2 line content, OLED-aware focus highlight,
+// optional reply count badge.
 
 @Composable
 private fun CompactParentRow(
@@ -590,49 +585,94 @@ private fun CompactParentRow(
     isFocused: Boolean,
     themeColor: androidx.compose.ui.graphics.Color,
     onClick: () -> Unit,
+    childReplyCount: Int = 0,
 ) {
+    val isOled = LocalOledMode.current
+
     Row(
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Top,
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .then(
-                if (isFocused) Modifier.border(
-                    1.dp, themeColor.copy(alpha = 0.5f), RoundedCornerShape(8.dp)
-                ) else Modifier
+            .background(
+                if (isFocused) themeColor.copy(alpha = if (isOled) 0.08f else 0.12f)
+                else SecondaryGroupedBg,
+                RoundedCornerShape(10.dp),
             )
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .border(
+                width = if (isFocused) 1.5.dp else if (isOled) 1.dp else 0.5.dp,
+                color = if (isFocused) themeColor.copy(alpha = if (isOled) 0.6f else 0.4f)
+                        else themeColor.copy(alpha = if (isOled) 0.30f else 0.15f),
+                shape = RoundedCornerShape(10.dp),
+            )
+            .padding(10.dp),
     ) {
-        AsyncImage(
-            model = profile?.pictureURL,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(28.dp)
-                .clip(CircleShape),
+        AvatarImage(
+            url = profile?.pictureURL,
+            pubkey = note.pubkey,
+            size = 28.dp,
+            displayName = profile?.bestName,
         )
         Spacer(Modifier.width(8.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = profile?.bestName ?: note.pubkey.take(8) + "...",
-                color = PrimaryText,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = note.content,
-                color = SecondaryText,
-                fontSize = 12.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            // Header: name · timestamp  (reply count badge on trailing edge)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = profile?.bestName ?: note.pubkey.take(8) + "...",
+                    color = PrimaryText.copy(alpha = if (isOled) 0.85f else 0.9f),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(
+                    text = "· ${formatTimestamp(note.createdAt.time / 1000)}",
+                    color = SecondaryText.copy(alpha = if (isOled) 0.7f else 0.8f),
+                    fontSize = 10.sp,
+                )
+                Spacer(Modifier.weight(1f))
+                // Reply count badge (matches iOS text.bubble + count)
+                if (childReplyCount > 0) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        Icon(
+                            imageVector = NostrVaultIcons.Reply,
+                            contentDescription = null,
+                            tint = SecondaryText.copy(alpha = if (isOled) 0.5f else 0.6f),
+                            modifier = Modifier.size(9.dp),
+                        )
+                        Text(
+                            text = "$childReplyCount",
+                            color = SecondaryText.copy(alpha = if (isOled) 0.5f else 0.6f),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
+            }
+            // Content (2 lines in compact to match iOS)
+            if (note.content.isNotBlank()) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = note.content,
+                    color = PrimaryText.copy(alpha = if (isOled) 0.7f else 0.75f),
+                    fontSize = 12.sp,
+                    maxLines = 2,
+                    lineHeight = 16.sp,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
 
 // ── Threaded reply node (recursive) ─────────────────────────────
+// Matches iOS ThreadedReplyNode: recursive tree rendering with depth-based
+// collapsing, compact/full modes, focus highlight, and thread connector lines.
 
 private const val MAX_INDENT_DEPTH = 5
 private const val COLLAPSE_DEPTH = 3
@@ -642,6 +682,7 @@ private fun ThreadedReplyNode(
     reply: FeedNote,
     depth: Int,
     isCompact: Boolean,
+    focusedNoteId: String,
     themeColor: androidx.compose.ui.graphics.Color,
     viewModel: NoteDetailViewModel,
     expandedEngagement: Boolean,
@@ -652,120 +693,154 @@ private fun ThreadedReplyNode(
     onFocus: (String) -> Unit,
 ) {
     val childReplies = remember(reply.id) { viewModel.childRepliesFor(reply.id) }
-    val indentDp = (minOf(depth - 1, MAX_INDENT_DEPTH) * 16).dp
+    val isFocusedReply = reply.id == focusedNoteId
 
     Column(
-        modifier = Modifier
-            .padding(start = indentDp)
-            .animateContentSize(animationSpec = spring()),
+        modifier = Modifier.animateContentSize(animationSpec = spring()),
     ) {
         // The reply itself
         if (isCompact) {
+            val indentDp = (minOf(depth - 1, MAX_INDENT_DEPTH) * 16).dp
             CompactParentRow(
                 note = reply,
                 profile = viewModel.profileFor(reply.pubkey),
-                isFocused = false,
+                isFocused = isFocusedReply,
                 themeColor = themeColor,
                 onClick = { onFocus(reply.id) },
+                childReplyCount = childReplies.size,
             )
+            // Compact mode: show nested replies without connector lines (iOS parity)
+            if (childReplies.isNotEmpty()) {
+                Column(modifier = Modifier.padding(start = indentDp)) {
+                    Spacer(Modifier.height(6.dp))
+                    for (child in childReplies) {
+                        ThreadedReplyNode(
+                            reply = child,
+                            depth = depth + 1,
+                            isCompact = true,
+                            focusedNoteId = focusedNoteId,
+                            themeColor = themeColor,
+                            viewModel = viewModel,
+                            expandedEngagement = expandedEngagement,
+                            perNoteEngagement = perNoteEngagement,
+                            profiles = profiles,
+                            onProfileClick = onProfileClick,
+                            onNoteClick = onNoteClick,
+                            onFocus = onFocus,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                    }
+                }
+            }
         } else {
             NoteCard(
                 note = reply,
                 profile = viewModel.profileFor(reply.pubkey),
                 stats = viewModel.statsFor(reply.id),
                 isLiked = viewModel.isLiked(reply.id),
+                isFocused = isFocusedReply,
                 onNoteClick = { onFocus(reply.id) },
                 onProfileClick = onProfileClick,
                 onLike = viewModel::likeNote,
             )
-        }
 
-        // Per-note engagement row when thread stats are expanded
-        if (expandedEngagement && !isCompact) {
-            val noteEngagement = perNoteEngagement[reply.id]
-            if (noteEngagement != null) {
-                val reactionCount = noteEngagement.reactions.size
-                val zapCount = noteEngagement.zaps.size
-                val repostCount = noteEngagement.reposts.size
-                if (reactionCount > 0 || zapCount > 0 || repostCount > 0) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.padding(start = 50.dp, top = 2.dp, bottom = 4.dp),
-                    ) {
-                        if (reactionCount > 0) {
-                            Text(
-                                text = "\u2764\uFE0F $reactionCount",
-                                color = SecondaryText,
-                                fontSize = 12.sp,
-                            )
-                        }
-                        if (zapCount > 0) {
-                            Text(
-                                text = "\u26A1 $zapCount",
-                                color = SecondaryText,
-                                fontSize = 12.sp,
-                            )
-                        }
-                        if (repostCount > 0) {
-                            Text(
-                                text = "\uD83D\uDD01 $repostCount",
-                                color = SecondaryText,
-                                fontSize = 12.sp,
-                            )
+            // Per-note engagement row when thread stats are expanded
+            if (expandedEngagement) {
+                val noteEngagement = perNoteEngagement[reply.id]
+                if (noteEngagement != null) {
+                    val reactionCount = noteEngagement.reactions.size
+                    val zapCount = noteEngagement.zaps.size
+                    val repostCount = noteEngagement.reposts.size
+                    if (reactionCount > 0 || zapCount > 0 || repostCount > 0) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.padding(start = 50.dp, top = 2.dp, bottom = 4.dp),
+                        ) {
+                            if (reactionCount > 0) {
+                                Text(
+                                    text = "\u2764\uFE0F $reactionCount",
+                                    color = SecondaryText,
+                                    fontSize = 12.sp,
+                                )
+                            }
+                            if (zapCount > 0) {
+                                Text(
+                                    text = "\u26A1 $zapCount",
+                                    color = SecondaryText,
+                                    fontSize = 12.sp,
+                                )
+                            }
+                            if (repostCount > 0) {
+                                Text(
+                                    text = "\uD83D\uDD01 $repostCount",
+                                    color = SecondaryText,
+                                    fontSize = 12.sp,
+                                )
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Child replies
-        if (childReplies.isNotEmpty()) {
-            if (depth >= COLLAPSE_DEPTH && !isCompact) {
-                // Collapse deep threads to a "Show X more" button
-                TextButton(
-                    onClick = { onFocus(reply.id) },
-                    modifier = Modifier.padding(start = 16.dp, top = 4.dp, bottom = 4.dp),
-                ) {
-                    Icon(
-                        imageVector = NostrVaultIcons.Navigate,
-                        contentDescription = null,
-                        tint = themeColor,
-                        modifier = Modifier.size(14.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = "Show ${childReplies.size} more ${if (childReplies.size == 1) "reply" else "replies"}",
-                        color = themeColor,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
-            } else {
-                // Render children with connector line
-                Row(modifier = Modifier.padding(start = 8.dp).height(IntrinsicSize.Min)) {
-                    // Vertical connector line
-                    Box(
+            // Child replies
+            if (childReplies.isNotEmpty()) {
+                if (depth >= COLLAPSE_DEPTH) {
+                    // Collapse deep threads — matches iOS "Show X more replies" pill
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier
-                            .width(1.5.dp)
-                            .fillMaxHeight()
-                            .background(themeColor.copy(alpha = 0.25f)),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Column {
-                        for (child in childReplies) {
-                            ThreadedReplyNode(
-                                reply = child,
-                                depth = depth + 1,
-                                isCompact = isCompact,
-                                themeColor = themeColor,
-                                viewModel = viewModel,
-                                expandedEngagement = expandedEngagement,
-                                perNoteEngagement = perNoteEngagement,
-                                profiles = profiles,
-                                onProfileClick = onProfileClick,
-                                onNoteClick = onNoteClick,
-                                onFocus = onFocus,
-                            )
+                            .padding(start = 16.dp, top = 4.dp, bottom = 4.dp)
+                            .clickable { onFocus(reply.id) }
+                            .background(themeColor.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                            .padding(vertical = 6.dp, horizontal = 12.dp),
+                    ) {
+                        Icon(
+                            imageVector = NostrVaultIcons.Navigate,
+                            contentDescription = null,
+                            tint = themeColor,
+                            modifier = Modifier.size(11.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "Show ${childReplies.size} more ${if (childReplies.size == 1) "reply" else "replies"}",
+                            color = themeColor,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
+                } else {
+                    // Render children with connector line (matches iOS HStack + Rectangle)
+                    Row(
+                        modifier = Modifier
+                            .padding(start = 8.dp)
+                            .height(IntrinsicSize.Min),
+                    ) {
+                        // Vertical connector line
+                        Box(
+                            modifier = Modifier
+                                .width(1.5.dp)
+                                .fillMaxHeight()
+                                .padding(vertical = 2.dp)
+                                .background(themeColor.copy(alpha = 0.25f)),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            for (child in childReplies) {
+                                ThreadedReplyNode(
+                                    reply = child,
+                                    depth = depth + 1,
+                                    isCompact = false,
+                                    focusedNoteId = focusedNoteId,
+                                    themeColor = themeColor,
+                                    viewModel = viewModel,
+                                    expandedEngagement = expandedEngagement,
+                                    perNoteEngagement = perNoteEngagement,
+                                    profiles = profiles,
+                                    onProfileClick = onProfileClick,
+                                    onNoteClick = onNoteClick,
+                                    onFocus = onFocus,
+                                )
+                            }
                         }
                     }
                 }

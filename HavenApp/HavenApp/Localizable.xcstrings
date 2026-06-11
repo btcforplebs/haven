@@ -57,6 +57,16 @@
         }
       }
     },
+    "%@ account%@ selected" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$@ account%2$@ selected"
+          }
+        }
+      }
+    },
     "%@ configured" : {
 
     },
@@ -460,6 +470,9 @@
 
     },
     "Direct Messages" : {
+
+    },
+    "Discover Accounts" : {
 
     },
     "Dismiss" : {
@@ -1196,6 +1209,9 @@
     "FOLLOWING" : {
 
     },
+    "Following accounts helps personalize your feed. Select any that interest you, or skip to explore on your own." : {
+
+    },
     "FOLLOWS YOU" : {
 
     },
@@ -1467,6 +1483,9 @@
     "No other accounts" : {
 
     },
+    "No packs available" : {
+
+    },
     "No profiles found" : {
 
     },
@@ -1560,6 +1579,12 @@
     "Paid Externally" : {
 
     },
+    "Password must be at least 8 characters" : {
+
+    },
+    "Passwords do not match" : {
+
+    },
     "Paste the bunker:// connection string from your remote signer app." : {
 
     },
@@ -1615,6 +1640,9 @@
 
     },
     "Proof of Work mines a hash prefix on your events, acting as a spam deterrent. Higher difficulty takes longer but signals more effort." : {
+
+    },
+    "Protect Your Key" : {
 
     },
     "Publish .fips Blossom Address" : {
@@ -1789,6 +1817,9 @@
 
     },
     "SEND" : {
+
+    },
+    "Set a password to encrypt your private key. You'll need this password to use Haven." : {
 
     },
     "Set up your relay and start storing your Nostr notes locally" : {
@@ -2994,6 +3025,9 @@
       }
     },
     "Show more" : {
+
+    },
+    "Skip and don't follow" : {
 
     },
     "Slowed Down" : {

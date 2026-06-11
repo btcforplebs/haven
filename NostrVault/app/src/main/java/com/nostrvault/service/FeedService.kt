@@ -758,6 +758,14 @@ class FeedService @Inject constructor(
 
                     // Feed notes → accumulator
                     accumulateEvent(eventObj, relayUrl)
+
+                    // Inject mention events into local relay inbox so they persist
+                    if (subId == "feed-mentions") {
+                        val eventId = eventObj["id"]?.jsonPrimitive?.contentOrNull
+                        if (eventId != null) {
+                            injectExternalEvent(eventObj.toString(), eventId)
+                        }
+                    }
                 }
                 "EOSE" -> {
                     if (parsed.size >= 2) {

@@ -43,6 +43,7 @@ class NostrVaultApp : Application(), ImageLoaderFactory {
 
     override fun newImageLoader(): ImageLoader = imageLoaderProvider.get()
 
+    @Suppress("DEPRECATION")
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         when {

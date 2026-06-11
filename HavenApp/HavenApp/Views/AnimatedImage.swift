@@ -86,6 +86,13 @@ struct AnimatedImage: NSViewRepresentable {
     }
 
     private func loadAsync(url: URL, into view: AspectFillImageView) {
+        // Check in-memory cache first for instant rendering
+        if let cached = MediaCacheService.shared.cachedImage(for: url) {
+            view.image = cached
+            onLoad?(cached.size)
+            return
+        }
+
         Task.detached(priority: .utility) {
             let data: Data?
             if let cached = MediaCacheService.shared.loadFromCache(url: url) {
@@ -97,7 +104,9 @@ struct AnimatedImage: NSViewRepresentable {
             guard let data else { return }
 
             let image: PlatformImage?
-            if url.pathExtension.lowercased() == "gif" || AnimatedImageHelper.isGIFData(data) {
+            let isGIF = url.pathExtension.lowercased() == "gif" || AnimatedImageHelper.isGIFData(data)
+
+            if isGIF {
                 // On macOS, NSImage natively handles animated GIFs when loaded from Data
                 image = NSImage(data: data)
             } else if let targetSize = self.targetSize {
@@ -107,6 +116,14 @@ struct AnimatedImage: NSViewRepresentable {
             }
 
             guard let image else { return }
+
+            // Cache static images and non-animated GIF thumbnails in memory
+            if !isGIF || !self.shouldAnimate {
+                await MainActor.run {
+                    MediaCacheService.shared.cacheImage(image, for: url)
+                }
+            }
+
             await MainActor.run {
                 view.image = image
                 self.onLoad?(image.size)
@@ -210,6 +227,13 @@ struct AnimatedImage: UIViewRepresentable {
     }
 
     private func loadAsync(url: URL, into view: UIImageView) {
+        // Check in-memory cache first for instant rendering
+        if let cached = MediaCacheService.shared.cachedImage(for: url) {
+            view.image = cached
+            onLoad?(cached.size)
+            return
+        }
+
         Task.detached(priority: .utility) {
             let data: Data?
             if let cached = MediaCacheService.shared.loadFromCache(url: url) {
@@ -221,7 +245,9 @@ struct AnimatedImage: UIViewRepresentable {
             guard let data else { return }
 
             let image: UIImage?
-            if url.isGIF || AnimatedImageHelper.isGIFData(data) {
+            let isGIF = url.isGIF || AnimatedImageHelper.isGIFData(data)
+
+            if isGIF {
                 if self.shouldAnimate {
                     image = Self.makeAnimatedGIF(data: data)
                 } else {
@@ -234,6 +260,14 @@ struct AnimatedImage: UIViewRepresentable {
             }
 
             guard let image else { return }
+
+            // Cache static images and non-animated GIF thumbnails in memory
+            if !isGIF || !self.shouldAnimate {
+                await MainActor.run {
+                    MediaCacheService.shared.cacheImage(image, for: url)
+                }
+            }
+
             await MainActor.run {
                 view.image = image
                 self.onLoad?(image.size)

@@ -30,6 +30,7 @@ fun NostrContentText(
     mediaURLs: Set<String> = emptySet(),
     onProfileClick: (String) -> Unit = {},
     onNoteClick: (String) -> Unit = {},
+    onPlainTextClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalNostrVaultColors.current
@@ -75,6 +76,7 @@ fun NostrContentText(
 
     if (annotated.text.isBlank()) return
 
+    @Suppress("DEPRECATION")
     ClickableText(
         text = annotated,
         style = TextStyle(
@@ -91,6 +93,8 @@ fun NostrContentText(
                 try { uriHandler.openUri(it.item) } catch (_: Exception) {}
                 return@ClickableText
             }
+            // No annotation matched — plain text was tapped; propagate to parent
+            onPlainTextClick?.invoke()
         },
         modifier = modifier,
     )

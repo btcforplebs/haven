@@ -39,7 +39,7 @@ fun RetryableAsyncImage(
             model = ImageRequest.Builder(context)
                 .data(model)
                 .setParameter("retry", retryKey, memoryCacheKey = null)
-                .crossfade(true)
+                .crossfade(false) // Instant rendering from cache
                 .build(),
             contentDescription = contentDescription,
             contentScale = contentScale,

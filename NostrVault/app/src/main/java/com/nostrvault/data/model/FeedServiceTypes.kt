@@ -1,5 +1,7 @@
 package com.nostrvault.data.model
 
+import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.Stable
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -33,6 +35,7 @@ object DateAsLongSerializer : KSerializer<Date> {
 // Per-note engagement counts
 // ---------------------------------------------------------------------------
 
+@Stable
 @Serializable
 data class NoteStats(
     var reactionCount: Int = 0,
@@ -93,6 +96,7 @@ data class PopularNoteResult(
 // FeedNote
 // ---------------------------------------------------------------------------
 
+@Immutable
 @Serializable
 data class FeedNote(
     val id: String,
@@ -327,6 +331,7 @@ data class FeedNote(
 // FeedProfile
 // ---------------------------------------------------------------------------
 
+@Stable
 @Serializable
 data class FeedProfile(
     val pubkey: String,

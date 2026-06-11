@@ -1,18 +1,18 @@
 import Foundation
 import Combine
 
-/// Helper to identify if a host is local or on the local network (LAN/Tailscale/mDNS)
+/// Helper to identify if a host is local or on the local network (LAN/mDNS)
 func isLocalNetworkHost(_ host: String?) -> Bool {
     guard let host = host?.lowercased() else { return false }
     if host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0" || host == "::1" || host == "[::1]" {
         return true
     }
-    // Match local private network subnets (192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12, 100.64.0.0/10)
-    if host.hasPrefix("192.168.") || host.hasPrefix("10.") || host.hasPrefix("172.") || host.hasPrefix("100.") {
+    // Match local private network subnets (192.168.0.0/16, 10.0.0.0/8, 172.16.0.0/12)
+    if host.hasPrefix("192.168.") || host.hasPrefix("10.") || host.hasPrefix("172.") {
         return true
     }
     // Match local network domain names
-    if host.hasSuffix(".local") || host.hasSuffix(".ts.net") {
+    if host.hasSuffix(".local") {
         return true
     }
     return false

@@ -7,8 +7,17 @@ struct RetryableAsyncImage: View {
     var targetSize: CGSize? = nil
     @State private var id = UUID()
     @State private var retryCount = 0
-    @State private var cachedImage: PlatformImage? = nil
+    @State private var cachedImage: PlatformImage?
     @State private var isLoading = false
+
+    init(url: URL, contentMode: ContentMode, targetSize: CGSize? = nil) {
+        self.url = url
+        self.contentMode = contentMode
+        self.targetSize = targetSize
+        // Seed from in-memory cache for instant rendering
+        _cachedImage = State(initialValue: MediaCacheService.shared.cachedImage(for: url))
+        _isLoading = State(initialValue: false)
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -90,12 +99,17 @@ struct RetryableAsyncImage: View {
     }
 
     private func checkCache() {
-        // 1. Try to load it directly from disk cache (General cache or Blossom)
+        // If we already have it from init (in-memory cache), we're done
+        if cachedImage != nil { return }
+
+        // 2. Try to load it directly from disk cache (General cache or Blossom)
         if let data = MediaCacheService.shared.loadFromCache(url: url) {
             Task {
                 if let image = await decode(data: data) {
                     await MainActor.run {
                         self.cachedImage = image
+                        // Cache in memory for next time
+                        MediaCacheService.shared.cacheImage(image, for: url)
                     }
                 } else {
                     await handleMissedCache()
@@ -125,6 +139,8 @@ struct RetryableAsyncImage: View {
                 await MainActor.run {
                     self.cachedImage = image
                     self.isLoading = false
+                    // Cache in memory for next time
+                    MediaCacheService.shared.cacheImage(image, for: url)
                 }
             } else {
                 await MainActor.run {

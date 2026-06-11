@@ -8,7 +8,7 @@ import java.net.InetAddress
  * note content).
  *
  * The app runs an on-device Nostr relay, Blossom server, and Haven bridge on
- * `https://localhost:<port>`, and may sit on a LAN/Tailscale network. Without a
+ * `https://localhost:<port>`, and may sit on a LAN. Without a
  * guard, a hostile note containing `http://127.0.0.1:<relayPort>/...` (or a public
  * URL that 302-redirects there) would make the app issue requests to its own
  * internal services or to other LAN hosts.
@@ -36,8 +36,6 @@ object UrlSafety {
         val h = host.lowercase().trim().removeSurrounding("[", "]")
         if (h.isEmpty()) return true
         if (h == "localhost" || h.endsWith(".localhost")) return true
-        // Tailscale magic-DNS names resolve to the tailnet (treated as internal).
-        if (h.endsWith(".ts.net")) return true
 
         return try {
             // Resolve ALL addresses; reject if ANY is internal (defends against a

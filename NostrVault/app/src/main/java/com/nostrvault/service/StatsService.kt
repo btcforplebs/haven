@@ -11,6 +11,7 @@ import java.io.FileInputStream
 import java.security.cert.X509Certificate
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 import javax.net.ssl.SSLContext
@@ -155,7 +156,7 @@ class StatsService @Inject constructor(
         return suspendCancellableCoroutine { cont ->
             val client = WebSocketClient(url = relayUrl, scope = scope, trustLocalhost = isLocalhost(relayUrl))
             val pendingKinds = kinds.toMutableSet()
-            var completed = false
+            val completed = AtomicBoolean(false)
 
             scope.launch {
                 client.messages.collect { msg ->
@@ -178,8 +179,7 @@ class StatsService @Inject constructor(
                                         pendingKinds.remove(kind)
                                     }
 
-                                    if (pendingKinds.isEmpty() && !completed) {
-                                        completed = true
+                                    if (pendingKinds.isEmpty() && completed.compareAndSet(false, true)) {
                                         client.disconnect()
                                         cont.resume(results.toMap()) {}
                                     }
@@ -202,8 +202,7 @@ class StatsService @Inject constructor(
             // Timeout
             scope.launch {
                 delay(10_000)
-                if (!completed) {
-                    completed = true
+                if (completed.compareAndSet(false, true)) {
                     client.disconnect()
                     cont.resume(results.toMap()) {}
                 }
@@ -384,8 +383,7 @@ class StatsService @Inject constructor(
         sslSocketFactory(sslContext.socketFactory, trustManager)
         hostnameVerifier { hostname, _ ->
             hostname == "127.0.0.1" || hostname == "localhost" ||
-                hostname.startsWith("192.168.") || hostname.startsWith("10.") ||
-                hostname.endsWith(".ts.net")
+                hostname.startsWith("192.168.") || hostname.startsWith("10.")
         }
         return this
     }

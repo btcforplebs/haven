@@ -40,7 +40,7 @@ enum RelayConfiguration {
         #else
         let enableTLS = "0"
         #endif
-        let relayBindAddress = config.allowNetworkAccess ? "::" : "127.0.0.1"
+        let relayBindAddress = "127.0.0.1"
 
         return [
             "OWNER_NPUB": cleanNpub,

@@ -2480,7 +2480,11 @@ struct DMSettingsView: View {
         var relays = configService.config.dmRelays
 
         // Always include local relay
+        #if os(macOS)
+        let localRelay = "ws://127.0.0.1:\(configService.config.relayPort)"
+        #else
         let localRelay = "wss://127.0.0.1:\(configService.config.relayPort)"
+        #endif
         if !relays.contains(localRelay) {
             relays.insert(localRelay, at: 0)
         }

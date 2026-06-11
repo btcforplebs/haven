@@ -406,7 +406,6 @@ class RelayForegroundService : Service() {
             val envDict = RelayConfiguration.generateEnvDictionary(
                 config = config,
                 relayDataDir = relayDataDir,
-                allowNetworkAccess = config.allowNetworkAccess,
             )
             for ((key, value) in envDict) {
                 HavenBridge.setEnv(key, value)
@@ -513,7 +512,10 @@ class RelayForegroundService : Service() {
                         val relayDataDir = File(filesDir, "relay_data")
                         clearDatabaseLocks(relayDataDir)
                         retryCount = 0
-                        startGoRelay()
+                        // Enqueue restart through serviceScope to serialize with other lifecycle ops
+                        serviceScope.launch {
+                            startGoRelay()
+                        }
                         break
                     }
                 }

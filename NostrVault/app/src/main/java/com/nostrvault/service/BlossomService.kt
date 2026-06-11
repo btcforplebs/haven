@@ -589,8 +589,7 @@ class BlossomService @Inject constructor(
         sslSocketFactory(sslContext.socketFactory, trustManager)
         hostnameVerifier { hostname, _ ->
             hostname == "127.0.0.1" || hostname == "localhost" ||
-                hostname.startsWith("192.168.") || hostname.startsWith("10.") ||
-                hostname.endsWith(".ts.net")
+                hostname.startsWith("192.168.") || hostname.startsWith("10.")
         }
         return this
     }

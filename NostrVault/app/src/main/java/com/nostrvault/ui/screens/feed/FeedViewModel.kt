@@ -215,6 +215,19 @@ class FeedViewModel @Inject constructor(
         feedService.clearRestoredScrollPosition()
     }
 
+    // ── Parent note cache (for inline reply previews) ──────────
+
+    val parentNotesCache: StateFlow<Map<String, FeedNote>> = feedService.parentNotesCache
+    val parentIsNextNote: StateFlow<Set<String>> = feedService.parentIsNextNote
+
+    fun parentNoteFor(eventId: String): FeedNote? = parentNotesCache.value[eventId]
+
+    fun isParentNext(noteId: String): Boolean = parentIsNextNote.value.contains(noteId)
+
+    fun fetchMissingParentNote(parentEventId: String) {
+        feedService.fetchMissingNote(parentEventId)
+    }
+
     // ── Helpers ──────────────────────────────────────────────────
 
     fun profileFor(pubkey: String): FeedProfile? = profiles.value[pubkey]

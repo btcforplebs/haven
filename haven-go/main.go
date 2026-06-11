@@ -9,8 +9,10 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
+	"strconv"
 
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/spf13/afero"
@@ -132,7 +134,7 @@ func main() {
 		dynamicRelayHandler(w, r)
 	})
 
-	addr := fmt.Sprintf("%s:%d", config.RelayBindAddress, config.RelayPort)
+	addr := net.JoinHostPort(config.RelayBindAddress, strconv.Itoa(config.RelayPort))
 
 	log.Printf("🔗 listening at %s", addr)
 	if err := http.ListenAndServe(addr, nil); err != nil {

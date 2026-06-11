@@ -33,25 +33,22 @@ object RelayConfiguration {
      *
      * @param config The relay configuration
      * @param relayDataDir Absolute path to the relay data directory
-     * @param allowNetworkAccess Whether to bind to all interfaces (::) or localhost only
      */
     fun generateEnvDictionary(
         config: HavenConfig,
         relayDataDir: File,
-        allowNetworkAccess: Boolean = false,
     ): Map<String, String> {
         val cleanNpub = config.ownerNpub
             .trim()
             .filter { it.isLetterOrDigit() }
 
-        val relayBindAddress = if (allowNetworkAccess) "::" else "127.0.0.1"
+        val relayBindAddress = "127.0.0.1"
 
         // Disable TLS for local relay -- localhost (127.0.0.1) is exempt from
         // Android's cleartext traffic restrictions, and the self-signed cert
         // generation can fail on some devices/Android versions, causing the
         // Go relay to fall back to HTTP while the client expects WSS.
-        // When network access is enabled (remote), TLS should be re-enabled.
-        val enableTLS = if (allowNetworkAccess) "1" else "0"
+        val enableTLS = "0"
 
         return mapOf(
             "OWNER_NPUB" to cleanNpub,
@@ -194,8 +191,6 @@ data class HavenConfig(
     val dbEngine: String = "badger",
     val blossomPath: String = "blossom",
     val logLevel: String = "info",
-    val allowNetworkAccess: Boolean = false,
-
     // Setup
     val hasCompletedSetup: Boolean = false,
     val setupMode: String = "full", // "full", "browse", or "newuser"
@@ -285,7 +280,7 @@ data class HavenConfig(
         "wss://relay.btcforplebs.com",
     ),
 
-    // Mac Relay (wss:// URL to a remote Mac Haven relay to sync missed notes)
+    // Haven Relay (wss:// URL to a remote Haven relay to sync missed notes)
     val macRelayURL: String = "",
 
     // Blossom
@@ -345,7 +340,7 @@ data class HavenConfig(
     val localInboxURL: String?
         get() = nostrURL?.let { "$it/inbox" }
 
-    // ── Mac Relay Derived URLs ──────────────────────────────────
+    // ── Haven Relay Derived URLs ──────────────────────────────────
 
     /** Strips any scheme and trailing slashes from macRelayURL to give the bare host[:port]. */
     val macRelayNormalizedBase: String
@@ -370,7 +365,7 @@ data class HavenConfig(
     val macRelayHttpsURL: String
         get() = macRelayNormalizedBase.let { if (it.isEmpty()) "" else "https://$it" }
 
-    // ── Active Relay Lists (with Mac relay prepended) ───────────
+    // ── Active Relay Lists (with Haven relay prepended) ───────────
 
     /** Active inbox/feed relays (user-configured or defaults). */
     val activeInboxRelays: List<String>
@@ -381,7 +376,7 @@ data class HavenConfig(
             "wss://relay.btcforplebs.com",
         )
 
-    /** Active feed relays, including the Mac relay if configured. */
+    /** Active feed relays, including the Haven relay if configured. */
     val activeFeedRelays: List<String>
         get() {
             val relays = (feedRelays ?: activeInboxRelays).toMutableList()
@@ -392,7 +387,7 @@ data class HavenConfig(
             return relays
         }
 
-    /** Active blastr relays, including the Mac relay if configured. */
+    /** Active blastr relays, including the Haven relay if configured. */
     val activeBlastrRelays: List<String>
         get() {
             val relays = blastrRelays.ifEmpty {
@@ -405,7 +400,7 @@ data class HavenConfig(
             return relays
         }
 
-    /** Active import seed relays, including the Mac relay if configured. */
+    /** Active import seed relays, including the Haven relay if configured. */
     val activeImportSeedRelays: List<String>
         get() {
             val relays = importSeedRelays.toMutableList()
@@ -416,7 +411,7 @@ data class HavenConfig(
             return relays
         }
 
-    /** Active blossom mirror servers, including the Mac relay if configured. */
+    /** Active blossom mirror servers, including the Haven relay if configured. */
     val activeBlossomMirrors: List<String>
         get() {
             val mirrors = blossomMirrors.toMutableList()

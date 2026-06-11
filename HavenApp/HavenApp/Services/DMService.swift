@@ -251,7 +251,11 @@ class DMService: ObservableObject {
     private func inboxRelayURL() -> URL? {
         let config = ConfigService.shared.config
         let port = config.relayPort
+        #if os(macOS)
+        return URL(string: "ws://127.0.0.1:\(port)/inbox")
+        #else
         return URL(string: "wss://127.0.0.1:\(port)/inbox")
+        #endif
     }
 
     private func getActivePrivateKey() throws -> String {
@@ -1100,7 +1104,11 @@ class DMService: ObservableObject {
     private func chatRelayURL() -> URL? {
         let config = ConfigService.shared.config
         let port = config.relayPort
+        #if os(macOS)
+        return URL(string: "ws://127.0.0.1:\(port)/chat")
+        #else
         return URL(string: "wss://127.0.0.1:\(port)/chat")
+        #endif
     }
 
     private func fetchRecipientDMRelays(_ pubkey: String) async -> [String] {

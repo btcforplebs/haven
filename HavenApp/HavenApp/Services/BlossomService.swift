@@ -348,7 +348,7 @@ class BlossomService: @unchecked Sendable {
             guard let h = host.host?.lowercased() else { return false }
             return h == "localhost" || h == "127.0.0.1" || h == "0.0.0.0"
         } ?? false
-        // isLocalNetwork: includes Tailscale/LAN — used for HTTPS skip (don't force https on LAN)
+        // isLocalNetwork: includes LAN — used for HTTPS skip (don't force https on LAN)
         let isLocalNetwork = parsedURL.map { isLocalhost($0) } ?? false
 
         for attempt in 0..<maxRetries {
@@ -357,7 +357,7 @@ class BlossomService: @unchecked Sendable {
                 return nil
             }
 
-            // Ensure HTTPS for remote servers (skip for localhost and LAN/Tailscale)
+            // Ensure HTTPS for remote servers (skip for localhost and LAN)
             if serverURL.scheme == "http" && !isLocalNetwork {
                 var components = URLComponents(url: serverURL, resolvingAgainstBaseURL: false)
                 components?.scheme = "https"

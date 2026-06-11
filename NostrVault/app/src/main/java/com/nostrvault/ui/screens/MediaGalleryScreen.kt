@@ -608,7 +608,7 @@ private fun MediaGridCell(
             model = ImageRequest.Builder(context)
                 .data(item.localFile ?: item.displayUrl)
                 .size(360, 360)
-                .crossfade(true)
+                .crossfade(false) // Instant rendering for grid thumbnails
                 .build(),
             contentDescription = null,
             contentScale = ContentScale.Crop,
@@ -685,7 +685,7 @@ private fun MediaListRow(
                 model = ImageRequest.Builder(context)
                     .data(item.localFile ?: item.displayUrl)
                     .size(160, 160)
-                    .crossfade(true)
+                    .crossfade(false) // Instant rendering for list thumbnails
                     .build(),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,

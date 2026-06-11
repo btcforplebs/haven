@@ -777,6 +777,7 @@ struct NoteDetailView: View {
                     )
                     .frame(maxWidth: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .transition(.opacity.animation(.spring(response: 0.25, dampingFraction: 0.75)))
                 }
             }
             .mediaTabViewStyleCompat()

@@ -6,7 +6,7 @@ import AudioToolbox
 
 // MARK: - Design System
 
-private enum WizardColors {
+enum WizardColors {
     static let bgPrimary = Color(red: 0.035, green: 0.035, blue: 0.043)      // #09090B
     static let bgCard = Color(red: 0.094, green: 0.094, blue: 0.106)          // #18181B
     static let bgElevated = Color(red: 0.153, green: 0.153, blue: 0.165)      // #27272A
@@ -27,7 +27,7 @@ private enum WizardColors {
     )
 }
 
-private enum WizardAnimations {
+enum WizardAnimations {
     static let springEnter: Animation = .spring(response: 0.6, dampingFraction: 0.8)
     static let springBounce: Animation = .spring(response: 0.5, dampingFraction: 0.6)
     static let springGentle: Animation = .spring(response: 0.8, dampingFraction: 0.9)
@@ -68,7 +68,7 @@ private struct AmbientGradientView: View {
 
 // MARK: - Shared Components
 
-private struct WizardPrimaryButton: View {
+struct WizardPrimaryButton: View {
     let title: String
     let action: () -> Void
     var disabled: Bool = false
@@ -113,7 +113,7 @@ private struct WizardSkipLink: View {
     }
 }
 
-private struct WizardGlassCard<Content: View>: View {
+struct WizardGlassCard<Content: View>: View {
     var isSelected: Bool = false
     let content: () -> Content
 
@@ -233,7 +233,7 @@ struct SetupWizardView: View {
         switch setupPath {
         case .none: return 3 // welcome, path, identity
         case .browse: return 4 // welcome, path, identity, import, done (4 dots, last = complete)
-        case .newToNostr: return 4 // welcome, path, intro, done
+        case .newToNostr: return 5 // welcome, path, intro, follows, done
         case .full: return isIOSDevice ? 8 : 7  // welcome, path, identity, relay, import, media, wallet, (notif), done
         }
     }
@@ -242,7 +242,7 @@ struct SetupWizardView: View {
         // Map actual step numbers to dot indices
         let fullSteps: [Int] = isIOSDevice ? [0, 1, 2, 3, 4, 5, 6, 7, 8] : [0, 1, 2, 3, 4, 5, 6, 8]
         let browseSteps: [Int] = [0, 1, 2, 4, 8]
-        let newUserSteps: [Int] = [0, 1, 9, 8]
+        let newUserSteps: [Int] = [0, 1, 9, 10, 8]
         let steps: [Int]
         switch setupPath {
         case .browse: steps = browseSteps
@@ -375,6 +375,29 @@ struct SetupWizardView: View {
                     saveIntermediateConfig()
                     direction = .forward
                     withAnimation(WizardAnimations.springEnter) {
+                        currentStep = 10
+                    }
+                }
+            )
+        case 10:
+            InitialFollowsStepView(
+                onContinue: { selectedNpubs in
+                    // Follow selected accounts
+                    var currentFollows = configService.config.whitelistedNpubs
+                    for npub in selectedNpubs where !currentFollows.contains(npub) {
+                        currentFollows.append(npub)
+                    }
+                    configService.config.whitelistedNpubs = currentFollows
+                    configService.save()
+
+                    direction = .forward
+                    withAnimation(WizardAnimations.springEnter) {
+                        currentStep = 8
+                    }
+                },
+                onSkip: {
+                    direction = .forward
+                    withAnimation(WizardAnimations.springEnter) {
                         currentStep = 8
                     }
                 }
@@ -404,7 +427,7 @@ struct SetupWizardView: View {
             }
         }
         // Save intermediate config at key points
-        if currentStep >= 3 || (currentStep == 8 && setupPath == .browse) || currentStep == 9 {
+        if currentStep >= 3 || (currentStep == 8 && setupPath == .browse) || currentStep == 9 || currentStep == 10 {
             saveIntermediateConfig()
         }
     }
@@ -414,11 +437,13 @@ struct SetupWizardView: View {
         withAnimation(WizardAnimations.springEnter) {
             if currentStep == 9 {
                 currentStep = 1 // New to Nostr: back to choose path
+            } else if currentStep == 10 {
+                currentStep = 9 // Initial Follows: back to intro
             } else if currentStep == 4 && setupPath == .browse {
                 currentStep = 2 // Browse: back from import to identity (skip relay config)
             } else if currentStep == 8 {
                 if setupPath == .newToNostr {
-                    currentStep = 9 // New to Nostr: back to intro
+                    currentStep = 10 // New to Nostr: back to initial follows
                 } else if setupPath == .browse {
                     currentStep = 4 // Browse: back to import
                 } else if isIOSDevice {
@@ -797,6 +822,9 @@ private struct NostrIntroStep: View {
     @State private var generatedKeys = false
     @State private var isGenerating = false
     @State private var error: String?
+    @State private var keyPassword = ""
+    @State private var confirmPassword = ""
+    @State private var showPassword = false
 
     var body: some View {
         VStack(spacing: 20) {
@@ -882,7 +910,109 @@ private struct NostrIntroStep: View {
                 }
                 .transition(.move(edge: .bottom).combined(with: .opacity))
 
-                WizardPrimaryButton(title: "Continue", action: onContinue)
+                // Card 4: Password protection
+                WizardGlassCard(isSelected: false) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Protect Your Key")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(WizardColors.textPrimary)
+
+                        Text("Set a password to encrypt your private key. You'll need this password to use Haven.")
+                            .font(.system(size: 13))
+                            .foregroundColor(WizardColors.textSecondary)
+                            .lineSpacing(2)
+
+                        VStack(spacing: 10) {
+                            HStack {
+                                if showPassword {
+                                    TextField("Password (minimum 8 characters)", text: $keyPassword)
+                                        .font(.system(size: 14))
+                                        .foregroundColor(WizardColors.textPrimary)
+                                        .textFieldStyle(.plain)
+                                        .autocapitalization(.none)
+                                        .disableAutocorrection(true)
+                                } else {
+                                    SecureField("Password (minimum 8 characters)", text: $keyPassword)
+                                        .font(.system(size: 14))
+                                        .foregroundColor(WizardColors.textPrimary)
+                                        .textFieldStyle(.plain)
+                                        .autocapitalization(.none)
+                                        .disableAutocorrection(true)
+                                }
+                                Button {
+                                    showPassword.toggle()
+                                } label: {
+                                    Image(systemName: showPassword ? "eye.slash" : "eye")
+                                        .font(.system(size: 14))
+                                        .foregroundColor(WizardColors.textMuted)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .padding(12)
+                            .background(WizardColors.bgElevated)
+                            .cornerRadius(8)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(WizardColors.borderSubtle, lineWidth: 1)
+                            )
+
+                            if showPassword {
+                                TextField("Confirm password", text: $confirmPassword)
+                                    .font(.system(size: 14))
+                                    .foregroundColor(WizardColors.textPrimary)
+                                    .textFieldStyle(.plain)
+                                    .autocapitalization(.none)
+                                    .disableAutocorrection(true)
+                                    .padding(12)
+                                    .background(WizardColors.bgElevated)
+                                    .cornerRadius(8)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(WizardColors.borderSubtle, lineWidth: 1)
+                                    )
+                            } else {
+                                SecureField("Confirm password", text: $confirmPassword)
+                                    .font(.system(size: 14))
+                                    .foregroundColor(WizardColors.textPrimary)
+                                    .textFieldStyle(.plain)
+                                    .autocapitalization(.none)
+                                    .disableAutocorrection(true)
+                                    .padding(12)
+                                    .background(WizardColors.bgElevated)
+                                    .cornerRadius(8)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .stroke(WizardColors.borderSubtle, lineWidth: 1)
+                                    )
+                            }
+                        }
+
+                        if !keyPassword.isEmpty && keyPassword.count < 8 {
+                            HStack(spacing: 4) {
+                                Image(systemName: "exclamationmark.circle")
+                                    .font(.system(size: 12))
+                                Text("Password must be at least 8 characters")
+                                    .font(.system(size: 12))
+                            }
+                            .foregroundColor(WizardColors.error)
+                        }
+
+                        if !confirmPassword.isEmpty && keyPassword != confirmPassword {
+                            HStack(spacing: 4) {
+                                Image(systemName: "exclamationmark.circle")
+                                    .font(.system(size: 12))
+                                Text("Passwords do not match")
+                                    .font(.system(size: 12))
+                            }
+                            .foregroundColor(WizardColors.error)
+                        }
+                    }
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+
+                WizardPrimaryButton(title: "Continue", action: validateAndContinue)
+                    .disabled(!isPasswordValid)
+                    .opacity(isPasswordValid ? 1.0 : 0.5)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             } else {
                 if let errorText = error {
@@ -941,14 +1071,20 @@ private struct NostrIntroStep: View {
             nsec = generatedNsec
         }
 
-        // Auto-generate a password for NIP-49 encryption
-        let randomBytes = (0..<32).map { _ in UInt8.random(in: 0...255) }
-        nsecPassword = Data(randomBytes).base64EncodedString()
-
         withAnimation(WizardAnimations.springBounce) {
             generatedKeys = true
         }
         isGenerating = false
+    }
+
+    private var isPasswordValid: Bool {
+        !keyPassword.isEmpty && keyPassword.count >= 8 && keyPassword == confirmPassword
+    }
+
+    private func validateAndContinue() {
+        guard isPasswordValid else { return }
+        nsecPassword = keyPassword
+        onContinue()
     }
 }
 
@@ -1044,7 +1180,7 @@ private struct IdentityStepView: View {
                             .textInputAutocapitalization(.never)
                             .keyboardType(.emailAddress)
                             #endif
-                            .onChange(of: identityInput) { newValue in
+                            .onChange(of: identityInput) { _, newValue in
                                 nip05Error = nil
                                 resolvedFromNIP05 = nil
                                 let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)

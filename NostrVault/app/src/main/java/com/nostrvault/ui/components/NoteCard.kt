@@ -44,6 +44,7 @@ fun NoteCard(
     quotedNotes: Map<String, FeedNote> = emptyMap(),
     isLiked: Boolean = false,
     isZapped: Boolean = false,
+    isFocused: Boolean = false,
     showReplyContext: Boolean = false,
     parentIsNext: Boolean = false,
     hasReplyBelow: Boolean = false,
@@ -99,24 +100,14 @@ fun NoteCard(
         Modifier
     }
 
-    // Parent note preview (when this note is a reply and parent isn't the card above)
-    if (note.isReply && !parentIsNext && parentNote != null) {
-        ParentNotePreview(
-            parentNote = parentNote,
-            parentProfile = profiles[parentNote.pubkey],
-            connectorColor = connectorColor,
-            onClick = { onNoteClick(parentNote.id) },
-            modifier = modifier.padding(start = 24.dp),
-        )
-    }
-
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = SecondaryGroupedBg.copy(alpha = 0.85f),
         border = BorderStroke(
-            if (isOled) 1.dp else 0.8.dp,
-            colors.primary.copy(alpha = if (isOled) 0.18f else 0.12f),
+            if (isFocused) 2.dp else if (isOled) 1.dp else 0.8.dp,
+            if (isFocused) colors.primary else colors.primary.copy(alpha = if (isOled) 0.18f else 0.12f),
         ),
+        shadowElevation = if (isFocused) 4.dp else 0.dp,
         modifier = modifier
             .fillMaxWidth()
             .then(connectorModifier)
@@ -125,6 +116,29 @@ fun NoteCard(
         Column(
             modifier = Modifier.padding(14.dp),
         ) {
+            // Parent note preview (inside card, matching iOS)
+            val showParentPreview = note.isReply && !parentIsNext && note.parentEventId != null
+            if (showParentPreview) {
+                if (parentNote != null) {
+                    ParentNotePreview(
+                        parentNote = parentNote,
+                        parentProfile = profiles[parentNote.pubkey],
+                        connectorColor = connectorColor,
+                        onClick = { onNoteClick(parentNote.id) },
+                    )
+                } else {
+                    ParentNoteSkeleton(connectorColor = connectorColor)
+                }
+                // Connector stub bridging parent preview to current note's avatar
+                Box(
+                    modifier = Modifier
+                        .padding(start = 19.dp) // center of 40dp avatar - 1dp half width
+                        .width(2.dp)
+                        .height(8.dp)
+                        .background(connectorColor),
+                )
+            }
+
             // Repost attribution
             if (note.repostedBy != null) {
                 Row(
@@ -240,6 +254,7 @@ fun NoteCard(
                     mediaURLs = note.mediaURLs.toSet(),
                     onProfileClick = onProfileClick,
                     onNoteClick = onNoteClick,
+                    onPlainTextClick = { onNoteClick(note.id) },
                     modifier = Modifier.padding(start = 50.dp),
                 )
             }
@@ -530,8 +545,10 @@ private fun MediaCarousel(urls: List<String>, modifier: Modifier = Modifier) {
 // ── Parent note preview ──────────────────────────────────────────
 
 /**
- * Collapsed parent note preview shown above a reply card when the parent
+ * Parent note preview shown inside a reply card when the parent
  * is not the immediately preceding card in the feed.
+ * Matches the iOS layout: 40dp avatar + connector line on the left,
+ * name/timestamp + content + media on the right.
  */
 @Composable
 private fun ParentNotePreview(
@@ -541,48 +558,173 @@ private fun ParentNotePreview(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+
     Row(
-        verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .drawBehind {
-                // Vertical connector line from this preview down to the card below
-                val lineX = 10.dp.toPx() // 24dp avatar center - 14dp card padding
-                drawLine(
-                    color = connectorColor,
-                    start = Offset(lineX, size.height * 0.5f),
-                    end = Offset(lineX, size.height),
-                    strokeWidth = 2.dp.toPx(),
+            .height(IntrinsicSize.Min)
+            .clickable(onClick = onClick),
+    ) {
+        // Left column: avatar + connector line (matches iOS VStack)
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.fillMaxHeight(),
+        ) {
+            AvatarImage(
+                url = parentProfile?.pictureURL,
+                pubkey = parentNote.pubkey,
+                size = 40.dp,
+                displayName = parentProfile?.bestName,
+            )
+            // Connector line extending down to current note
+            Box(
+                modifier = Modifier
+                    .width(2.dp)
+                    .weight(1f)
+                    .background(connectorColor),
+            )
+        }
+
+        Spacer(Modifier.width(12.dp))
+
+        // Right column: header + content + media
+        Column(modifier = Modifier.weight(1f)) {
+            // Header: name + NIP-05 badge + timestamp
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(top = 4.dp),
+            ) {
+                Text(
+                    text = parentProfile?.bestName ?: parentNote.pubkey.take(8) + "...",
+                    color = Color(0xFFD9D9D9), // iOS: rgb(0.85, 0.85, 0.85)
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+
+                if (!parentProfile?.nip05.isNullOrBlank()) {
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        imageVector = NostrVaultIcons.Verified,
+                        contentDescription = "Verified",
+                        tint = Color(0xFF33CC99),
+                        modifier = Modifier.size(12.dp),
+                    )
+                }
+
+                Spacer(Modifier.weight(1f))
+
+                Text(
+                    text = formatTimestamp(parentNote.createdAt.time / 1000),
+                    color = SecondaryText,
+                    fontSize = 11.sp,
                 )
             }
-            .padding(vertical = 4.dp),
+
+            // Content text (2 lines max, matching iOS)
+            if (parentNote.content.isNotBlank()) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = parentNote.content.replace("\n", " "),
+                    color = Color(0xFFB3B3B3), // iOS: rgb(0.7, 0.7, 0.7)
+                    fontSize = 14.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+
+            // First media thumbnail (matching iOS 150pt max height)
+            if (parentNote.mediaURLs.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(parentNote.mediaURLs.first())
+                        .size(360)
+                        .crossfade(100)
+                        .build(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 150.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(TertiaryGroupedBg),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Skeleton placeholder for a parent note that is still being fetched.
+ * Matches the iOS skeleton layout (circle + placeholder bars + connector).
+ */
+@Composable
+private fun ParentNoteSkeleton(
+    connectorColor: Color,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(IntrinsicSize.Min),
     ) {
-        AvatarImage(
-            url = parentProfile?.pictureURL,
-            pubkey = parentNote.pubkey,
-            size = 24.dp,
-            displayName = parentProfile?.bestName,
-        )
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text = parentProfile?.bestName ?: parentNote.pubkey.take(8) + "...",
-            color = SecondaryText,
-            fontWeight = FontWeight.Medium,
-            fontSize = 12.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f, fill = false),
-        )
-        Spacer(Modifier.width(6.dp))
-        Text(
-            text = parentNote.content.take(80).replace("\n", " "),
-            color = TertiaryText,
-            fontSize = 12.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
+        // Left column: circle placeholder + connector
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.fillMaxHeight(),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(TertiaryGroupedBg),
+            )
+            Box(
+                modifier = Modifier
+                    .width(2.dp)
+                    .weight(1f)
+                    .background(connectorColor),
+            )
+        }
+
+        Spacer(Modifier.width(12.dp))
+
+        // Right column: skeleton bars
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(top = 4.dp),
+        ) {
+            Row {
+                Box(
+                    modifier = Modifier
+                        .width(80.dp)
+                        .height(12.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(TertiaryGroupedBg),
+                )
+                Spacer(Modifier.weight(1f))
+                Box(
+                    modifier = Modifier
+                        .width(40.dp)
+                        .height(10.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(TertiaryGroupedBg),
+                )
+            }
+            Spacer(Modifier.height(5.dp))
+            Box(
+                modifier = Modifier
+                    .width(180.dp)
+                    .height(12.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(TertiaryGroupedBg),
+            )
+        }
     }
 }
 

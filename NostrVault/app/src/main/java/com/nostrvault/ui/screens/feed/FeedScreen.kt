@@ -1,14 +1,8 @@
 package com.nostrvault.ui.screens.feed
 
 import android.content.Intent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -74,6 +68,8 @@ fun FeedScreen(
     val popularFilter by viewModel.popularFilter.collectAsState()
     val showEngagementStats by viewModel.showEngagementStats.collectAsState()
     val pendingCount by viewModel.pendingNoteCount.collectAsState()
+    val parentNotes by viewModel.parentNotesCache.collectAsState()
+    val parentIsNext by viewModel.parentIsNextNote.collectAsState()
     val listState = rememberLazyListState()
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -101,6 +97,9 @@ fun FeedScreen(
     // Broadcast sheet state
     var broadcastNoteId by remember { mutableStateOf<String?>(null) }
     val broadcastSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    // Feed config sheet state
+    var showFeedConfig by remember { mutableStateOf(false) }
 
     // Trigger load-more when near bottom
     val shouldLoadMore by remember {
@@ -140,12 +139,24 @@ fun FeedScreen(
         }
     }
 
-    // Auto-apply pending notes when at top with auto-load enabled
-    LaunchedEffect(pendingCount, autoLoad, isAtTop) {
-        if (pendingCount > 0 && autoLoad && isAtTop) {
-            delay(1500)
-            viewModel.applyPendingNotes()
-        }
+    // Auto-apply pending notes when at top with auto-load enabled.
+    // Uses snapshotFlow so that rapid pendingCount changes don't restart
+    // the effect (unlike LaunchedEffect with pendingCount as a key).
+    LaunchedEffect(Unit) {
+        snapshotFlow { pendingCount > 0 && autoLoad && isAtTop }
+            .collect { shouldApply ->
+                if (shouldApply) {
+                    // Brief debounce to batch rapid arrivals
+                    delay(150)
+                    // Re-check — user may have scrolled away during debounce
+                    if (isAtTop) {
+                        viewModel.applyPendingNotes()
+                        // Keyed LazyColumn keeps the old first item in view
+                        // after a prepend — snap back to show the new notes.
+                        listState.scrollToItem(0)
+                    }
+                }
+            }
     }
 
     // Handle tab re-selection: scroll to top or refresh if already at top
@@ -154,7 +165,7 @@ fun FeedScreen(
             if (isAtTop) {
                 viewModel.refresh()
             } else {
-                listState.animateScrollToItem(0)
+                listState.scrollToItem(0) // Instant scroll for better performance
             }
         }
     }
@@ -180,6 +191,7 @@ fun FeedScreen(
                 onToggleMediaFollowing = viewModel::toggleMediaFollowing,
                 onSetPopularFilter = viewModel::setPopularFilter,
                 onToggleEngagementStats = viewModel::toggleShowEngagementStats,
+                onOpenFeedDashboard = { showFeedConfig = true },
             )
         },
         floatingActionButton = {
@@ -216,68 +228,83 @@ fun FeedScreen(
                     items(
                         items = notes,
                         key = { it.id },
+                        contentType = { note ->
+                            if (isCompact && expandedNoteId != note.id) "compact" else "full"
+                        }
                     ) { note ->
                         val isExpanded = isCompact && expandedNoteId == note.id
                         val showCompact = isCompact && !isExpanded
 
                         // Cache profile lookups to avoid redundant map reads during recomposition
-                        val noteProfile = remember(note.pubkey, allProfiles) {
+                        val noteProfile = remember(note.id, note.pubkey) {
                             viewModel.profileFor(note.pubkey)
                         }
-                        val repostedByProfile = remember(note.repostedBy, allProfiles) {
+                        val repostedByProfile = remember(note.id, note.repostedBy) {
                             note.repostedBy?.let { viewModel.profileFor(it) }
                         }
 
-                        Crossfade(
-                            targetState = showCompact,
-                            animationSpec = tween(150),
-                            label = "note_expand",
-                        ) { compact ->
-                            if (compact) {
-                                CompactNoteCard(
-                                    note = note,
-                                    profile = noteProfile,
-                                    repostedByProfile = repostedByProfile,
-                                    onNoteClick = { id ->
-                                        // Expand inline first instead of navigating
-                                        expandedNoteId = id
-                                    },
-                                    onProfileClick = onProfileClick,
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
-                                )
-                            } else {
-                                val replyToProfile = remember(note.replyToPubkey, allProfiles) {
-                                    note.replyToPubkey?.let { viewModel.profileFor(it) }
-                                }
-                                NoteCard(
-                                    note = note,
-                                    profile = noteProfile,
-                                    stats = viewModel.statsFor(note.id),
-                                    profiles = allProfiles,
-                                    isLiked = viewModel.isLiked(note.id),
-                                    isZapped = viewModel.isZapped(note.id),
-                                    repostedByProfile = repostedByProfile,
-                                    replyToProfile = replyToProfile,
-                                    onNoteClick = onNoteClick,
-                                    onProfileClick = onProfileClick,
-                                    onLike = viewModel::likeNote,
-                                    onRepost = viewModel::repostNote,
-                                    onZap = { id -> zapNoteId = id },
-                                    onReply = onReply ?: { _ -> onCompose() },
-                                    onShare = { id ->
-                                        val shareNote = notes.find { it.id == id }
-                                        val shareText = shareNote?.content ?: "nostr:${id}"
-                                        val intent = Intent(Intent.ACTION_SEND).apply {
-                                            type = "text/plain"
-                                            putExtra(Intent.EXTRA_TEXT, shareText)
-                                        }
-                                        context.startActivity(Intent.createChooser(intent, "Share Note"))
-                                    },
-                                    onMore = { id -> moreMenuNoteId = id },
-                                    onLongPressLike = { id -> emojiPickerNoteId = id },
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                )
+                        // Remove expensive Crossfade animation for better scroll performance
+                        if (showCompact) {
+                            CompactNoteCard(
+                                note = note,
+                                profile = noteProfile,
+                                repostedByProfile = repostedByProfile,
+                                onNoteClick = { id ->
+                                    // Expand inline first instead of navigating
+                                    expandedNoteId = id
+                                },
+                                onProfileClick = onProfileClick,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+                            )
+                        } else {
+                            val replyToProfile = remember(note.id, note.replyToPubkey) {
+                                note.replyToPubkey?.let { viewModel.profileFor(it) }
                             }
+
+                            // Fetch parent note if this is a reply and parent isn't cached
+                            // Move outside of LaunchedEffect for better performance
+                            val parentEventId = note.parentEventId
+                            if (parentEventId != null) {
+                                LaunchedEffect(note.id, parentEventId) {
+                                    if (viewModel.parentNoteFor(parentEventId) == null) {
+                                        viewModel.fetchMissingParentNote(parentEventId)
+                                    }
+                                }
+                            }
+
+                            val parentNote = parentEventId?.let { viewModel.parentNoteFor(it) }
+                            val isParentNext = parentEventId?.let { viewModel.isParentNext(note.id) } ?: false
+
+                            NoteCard(
+                                note = note,
+                                profile = noteProfile,
+                                stats = viewModel.statsFor(note.id),
+                                profiles = allProfiles,
+                                isLiked = viewModel.isLiked(note.id),
+                                isZapped = viewModel.isZapped(note.id),
+                                repostedByProfile = repostedByProfile,
+                                replyToProfile = replyToProfile,
+                                parentNote = parentNote,
+                                parentIsNext = isParentNext,
+                                onNoteClick = onNoteClick,
+                                onProfileClick = onProfileClick,
+                                onLike = viewModel::likeNote,
+                                onRepost = viewModel::repostNote,
+                                onZap = { id -> zapNoteId = id },
+                                onReply = onReply ?: { _ -> onCompose() },
+                                onShare = { id ->
+                                    val shareNote = notes.find { it.id == id }
+                                    val shareText = shareNote?.content ?: "nostr:${id}"
+                                    val intent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_TEXT, shareText)
+                                    }
+                                    context.startActivity(Intent.createChooser(intent, "Share Note"))
+                                },
+                                onMore = { id -> moreMenuNoteId = id },
+                                onLongPressLike = { id -> emojiPickerNoteId = id },
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                            )
                         }
                     }
 
@@ -301,21 +328,18 @@ fun FeedScreen(
         }
 
             // Floating "New Posts" pill
-            AnimatedVisibility(
-                visible = pendingCount > 0 && (!autoLoad || !isAtTop),
-                enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
-                exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut(),
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = padding.calculateTopPadding() + 12.dp)
-                    .zIndex(1f),
-            ) {
+            // Remove AnimatedVisibility for better performance
+            if (pendingCount > 0 && (!autoLoad || !isAtTop)) {
                 NewPostsPill(
                     count = pendingCount,
                     onClick = {
                         viewModel.applyPendingNotes()
-                        scope.launch { listState.animateScrollToItem(0) }
+                        scope.launch { listState.scrollToItem(0) } // Instant scroll for better performance
                     },
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = padding.calculateTopPadding() + 12.dp)
+                        .zIndex(1f)
                 )
             }
         }
@@ -456,6 +480,24 @@ fun FeedScreen(
             onDismiss = { broadcastNoteId = null },
         )
     }
+
+    // Feed config sheet (matches iOS feed dashboard)
+    if (showFeedConfig) {
+        com.nostrvault.ui.screens.dashboard.FeedConfigSheet(
+            showReposts = showReposts,
+            showReplies = showReplies,
+            autoLoadNewNotes = autoLoad,
+            feedRelays = viewModel.configStoreRef.config.value.activeFeedRelays,
+            onToggleReposts = { viewModel.toggleShowReposts() },
+            onToggleReplies = { viewModel.toggleShowReplies() },
+            onToggleAutoLoad = { viewModel.toggleAutoLoad() },
+            onManageRelays = {
+                showFeedConfig = false
+                onNavigateToSettings()
+            },
+            onDismiss = { showFeedConfig = false },
+        )
+    }
 }
 
 // ── Top bar ──────────────────────────────────────────────────────
@@ -480,6 +522,7 @@ private fun FeedTopBar(
     onToggleMediaFollowing: () -> Unit,
     onSetPopularFilter: (PopularFilter) -> Unit,
     onToggleEngagementStats: () -> Unit,
+    onOpenFeedDashboard: () -> Unit,
 ) {
     val colors = LocalNostrVaultColors.current
     var feedModeExpanded by remember { mutableStateOf(false) }
@@ -499,16 +542,24 @@ private fun FeedTopBar(
             .statusBarsPadding()
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
-        // ── Leading pill: connection dot + feed mode dropdown
+        // ── Leading pill: connection dot (clickable for dashboard) + feed mode dropdown
         GlassPill(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            // Connection status dot
+            // Connection status dot - clickable to open Feed Dashboard (matches iOS)
             Box(
                 modifier = Modifier
-                    .size(10.dp)
-                    .shadow(4.dp, CircleShape)
+                    .size(30.dp)
                     .clip(CircleShape)
-                    .background(dotColor),
-            )
+                    .clickable(onClick = onOpenFeedDashboard)
+                    .wrapContentSize(Alignment.Center),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .shadow(4.dp, CircleShape)
+                        .clip(CircleShape)
+                        .background(dotColor),
+                )
+            }
 
             // Feed mode dropdown
             Box {
@@ -702,13 +753,14 @@ private fun EmptyFeedPlaceholder(mode: FeedMode) {
 // ── New posts pill ──────────────────────────────────────────────
 
 @Composable
-private fun NewPostsPill(count: Int, onClick: () -> Unit) {
+private fun NewPostsPill(count: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val colors = LocalNostrVaultColors.current
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(50),
         color = colors.primary,
         shadowElevation = 8.dp,
+        modifier = modifier,
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,

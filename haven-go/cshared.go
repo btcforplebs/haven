@@ -15,6 +15,7 @@ import (
 	"log"
 	"log/slog"
 	"math/bits"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -215,7 +216,7 @@ func StartRelayC(importMode bool) {
 			dynamicRelayHandler(w, r)
 		})
 
-		addr := fmt.Sprintf("%s:%d", config.RelayBindAddress, config.RelayPort)
+		addr := net.JoinHostPort(config.RelayBindAddress, strconv.Itoa(config.RelayPort))
 		cycle.server = &http.Server{Addr: addr, Handler: mux}
 
 		// Only enable HTTPS when HAVEN_ENABLE_TLS=1 (iOS needs it for App Transport Security;

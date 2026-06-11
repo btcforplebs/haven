@@ -135,7 +135,7 @@ fun CompactNoteCard(
                     model = ImageRequest.Builder(context)
                         .data(note.mediaURLs.first())
                         .size(96) // 48dp at 2x density
-                        .crossfade(100)
+                        .crossfade(false) // Disable crossfade for instant rendering
                         .build(),
                     contentDescription = null,
                     contentScale = ContentScale.Crop,

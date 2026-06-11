@@ -29,7 +29,7 @@ import javax.net.ssl.X509TrustManager
  * Features:
  * - 25-second ping interval (matches iOS keepalive)
  * - Exponential backoff reconnection (up to 10 attempts)
- * - Localhost trust for self-signed certs (local relay, Tailscale, LAN)
+ * - Localhost trust for self-signed certs (local relay, LAN)
  * - SharedFlow for message delivery (replaces Combine PassthroughSubject)
  * - StateFlow for connection state
  */
@@ -69,8 +69,7 @@ class WebSocketClient(
                 .sslSocketFactory(sslContext.socketFactory, trustManager)
                 .hostnameVerifier { hostname, _ ->
                     hostname == "127.0.0.1" || hostname == "localhost" ||
-                        hostname.startsWith("192.168.") || hostname.startsWith("10.") ||
-                        hostname.endsWith(".ts.net")
+                        hostname.startsWith("192.168.") || hostname.startsWith("10.")
                 }
                 .build()
         }
@@ -90,6 +89,7 @@ class WebSocketClient(
     @Volatile var lastError: String? = null
         private set
 
+    private val socketLock = Any()
     private var webSocket: WebSocket? = null
     private var reconnectAttempts = 0
     private var reconnectJob: Job? = null
@@ -107,13 +107,17 @@ class WebSocketClient(
     fun disconnect() {
         shouldReconnect = false
         reconnectJob?.cancel()
-        webSocket?.close(1000, "Client disconnect")
-        webSocket = null
+        synchronized(socketLock) {
+            webSocket?.close(1000, "Client disconnect")
+            webSocket = null
+        }
         _connectionState.value = ConnectionState.DISCONNECTED
     }
 
     fun send(message: String): Boolean {
-        return webSocket?.send(message) ?: false
+        synchronized(socketLock) {
+            return webSocket?.send(message) ?: false
+        }
     }
 
     private fun doConnect() {
@@ -135,7 +139,8 @@ class WebSocketClient(
             return
         }
 
-        webSocket = client.newWebSocket(request, object : WebSocketListener() {
+        synchronized(socketLock) {
+            webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.d(TAG, "Connected to $url")
                 _connectionState.value = ConnectionState.CONNECTED
@@ -163,7 +168,8 @@ class WebSocketClient(
                 _connectionState.value = ConnectionState.DISCONNECTED
                 scheduleReconnect()
             }
-        })
+            })
+        }
     }
 
     /**

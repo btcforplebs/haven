@@ -22,6 +22,10 @@ class FeedService: ObservableObject {
         let stored = ConfigService.shared.config.defaultFeedMode.lowercased()
         return FeedMode.allCases.first { $0.rawValue.lowercased() == stored } ?? .following
     }()
+    /// True when the feed was auto-switched from Following → Popular because
+    /// the user has no follows yet. Cleared on the first follow action so the
+    /// feed reverts to Following automatically.
+    private var didAutoSwitchToPopular = false
     @Published var mediaFeedMode: MediaFeedMode = .following
     @Published var notes: [FeedNote] = []
     /// O(1) lookup index for notes by ID. Maintained alongside `notes` mutations.
@@ -695,6 +699,17 @@ class FeedService: ObservableObject {
 
         loadContactList { [weak self] in
             guard let self = self else { return }
+
+            // Auto-switch new users with no follows to Popular so they
+            // don't land on an empty Following feed.
+            if self.followedPubkeys.isEmpty && self.feedMode == .following {
+                self.didAutoSwitchToPopular = true
+                self.feedMode = .popular
+                self.recomputeFilteredNotes()
+                self.loadPopularFeed()
+                return
+            }
+
             if self.feedMode == .discovery {
                 self.loadExtendedNetwork { [weak self] in
                     self?.subscribeToAllRelays()
@@ -1626,6 +1641,13 @@ class FeedService: ObservableObject {
             contactListPTags = result.pTags
             followedPubkeys = result.pubkeys
             publishContactList()
+
+            // Auto-switch back to Following now that the user has follows.
+            if didAutoSwitchToPopular {
+                didAutoSwitchToPopular = false
+                switchMode(.following)
+            }
+
             return .success(())
         }
     }
