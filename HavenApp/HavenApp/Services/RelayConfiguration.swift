@@ -37,10 +37,11 @@ enum RelayConfiguration {
 
         #if os(iOS)
         let enableTLS = "1"
+        let relayBindAddress = "127.0.0.1"
         #else
         let enableTLS = "0"
+        let relayBindAddress = "0.0.0.0"
         #endif
-        let relayBindAddress = "127.0.0.1"
 
         return [
             "OWNER_NPUB": cleanNpub,
