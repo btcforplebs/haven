@@ -172,6 +172,18 @@ class FeedService: ObservableObject {
     private var feedClients: [String: WebSocketClient] = [:]
     private var cancellables = Set<AnyCancellable>()
     private var seenIds = Set<String>()
+    private static let maxSeenIds = 10_000
+
+    /// Rebuild seenIds from currently retained notes once it outgrows the
+    /// cap. The set otherwise grows for every note ever observed — a
+    /// long-running session accumulates entries for notes evicted long ago.
+    private func trimSeenIdsIfNeeded() {
+        guard seenIds.count > Self.maxSeenIds else { return }
+        var retained = Set(notes.map { $0.id })
+        retained.formUnion(pendingNotes.map { $0.id })
+        retained.formUnion(noteBuffer.map { $0.id })
+        seenIds = retained
+    }
     /// Timestamp (unix seconds) of the newest event successfully processed.
     /// Used on resume to narrow the relay filter to only the gap period.
     private var lastEventTimestamp: Int64 = 0
@@ -989,6 +1001,7 @@ class FeedService: ObservableObject {
                 notes.removeLast(notes.count - Self.maxNotes)
             }
             seenIds.insert(note.id)
+            trimSeenIdsIfNeeded()
             recomputeFilteredNotes()
         }
     }
@@ -2263,6 +2276,8 @@ class FeedService: ObservableObject {
                 parentIdsToFetch.append(parentId)
             }
         }
+        trimSeenIdsIfNeeded()
+
         for parentId in parentIdsToFetch {
             fetchMissingNote(id: parentId)
         }

@@ -74,6 +74,15 @@ class DMService: ObservableObject {
     /// Cancelled on reconnect to prevent stale clients from firing events.
     private var connectionCancellables = Set<AnyCancellable>()
     private var seenGiftWrapIds = Set<String>()
+    private let maxSeenGiftWrapIds = 10_000
+
+    /// Rebuild the dedup set from retained conversation messages once it
+    /// outgrows the cap — it otherwise accumulates an entry for every gift
+    /// wrap ever observed across a long-running session.
+    private func trimSeenGiftWrapIdsIfNeeded() {
+        guard seenGiftWrapIds.count > maxSeenGiftWrapIds else { return }
+        seenGiftWrapIds = Set(conversations.flatMap { $0.messages.map { $0.id } })
+    }
     private var dmUpdateSubject = PassthroughSubject<Void, Never>()
     private let processingQueue = DispatchQueue(label: "com.haven.dm-processing", qos: .userInitiated)
     private var pendingAuthChallenge: String?
@@ -880,6 +889,7 @@ class DMService: ObservableObject {
         guard !seenGiftWrapIds.contains(event.id) else { return }
 
         seenGiftWrapIds.insert(event.id)
+        trimSeenGiftWrapIdsIfNeeded()
 
         let generation = self.switchGeneration
 
@@ -958,6 +968,7 @@ class DMService: ObservableObject {
         guard !seenGiftWrapIds.contains(event.id) else { return }
 
         seenGiftWrapIds.insert(event.id)
+        trimSeenGiftWrapIdsIfNeeded()
 
         let generation = self.switchGeneration
 

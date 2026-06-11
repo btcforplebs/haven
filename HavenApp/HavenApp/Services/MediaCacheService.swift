@@ -70,9 +70,14 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
 
     // User-flagged 404 URLs (persisted to UserDefaults). Filtering uses this set to
     // route flagged items to the dedicated 404 bucket in the viewer.
-    private var notFoundURLs: Set<String> = []
+    // Keyed by URL with the date it was flagged: entries expire after
+    // notFoundMaxAge and the map is capped, so a media-heavy feed can't
+    // grow UserDefaults (deserialized in full on every launch) forever.
+    private var notFoundURLs: [String: Date] = [:]
     private let notFoundLock = NSLock()
     private let notFoundDefaultsKey = "MediaCacheService.notFoundURLs"
+    private let notFoundMaxAge: TimeInterval = 7 * 24 * 3600
+    private let notFoundMaxCount = 500
 
     #if !os(iOS)
     private var memoryPressureSource: DispatchSourceMemoryPressure?
@@ -90,9 +95,17 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
 
         createCacheDirectory()
 
-        if let stored = UserDefaults.standard.array(forKey: notFoundDefaultsKey) as? [String] {
-            notFoundURLs = Set(stored)
+        let cutoff = Date().addingTimeInterval(-notFoundMaxAge)
+        if let stored = UserDefaults.standard.dictionary(forKey: notFoundDefaultsKey) as? [String: Date] {
+            notFoundURLs = stored.filter { $0.value > cutoff }
+        } else if let legacy = UserDefaults.standard.array(forKey: notFoundDefaultsKey) as? [String] {
+            // Migrate the old un-dated [String] format; stamp with now so
+            // existing entries age out on the normal schedule.
+            let now = Date()
+            notFoundURLs = Dictionary(uniqueKeysWithValues: legacy.map { ($0, now) })
         }
+        // Re-persist so expiry and the legacy-format migration stick.
+        UserDefaults.standard.set(notFoundURLs, forKey: notFoundDefaultsKey)
 
         // Respond to memory pressure by purging in-memory caches
         #if os(iOS)
@@ -145,19 +158,26 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
     func isKnown404(url: URL) -> Bool {
         notFoundLock.lock()
         defer { notFoundLock.unlock() }
-        return notFoundURLs.contains(url.absoluteString)
+        return notFoundURLs[url.absoluteString] != nil
     }
 
     func known404Set() -> Set<String> {
         notFoundLock.lock()
         defer { notFoundLock.unlock() }
-        return notFoundURLs
+        return Set(notFoundURLs.keys)
     }
 
     func markNotFound(url: URL) {
         notFoundLock.lock()
-        let inserted = notFoundURLs.insert(url.absoluteString).inserted
-        let snapshot = Array(notFoundURLs)
+        let inserted = notFoundURLs.updateValue(Date(), forKey: url.absoluteString) == nil
+        if notFoundURLs.count > notFoundMaxCount {
+            // Drop the oldest entries to stay within the cap
+            let sorted = notFoundURLs.sorted { $0.value < $1.value }
+            for (key, _) in sorted.prefix(notFoundURLs.count - notFoundMaxCount) {
+                notFoundURLs.removeValue(forKey: key)
+            }
+        }
+        let snapshot = notFoundURLs
         notFoundLock.unlock()
         guard inserted else { return }
         UserDefaults.standard.set(snapshot, forKey: notFoundDefaultsKey)
@@ -166,8 +186,8 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
 
     func unmarkNotFound(url: URL) {
         notFoundLock.lock()
-        let removed = notFoundURLs.remove(url.absoluteString) != nil
-        let snapshot = Array(notFoundURLs)
+        let removed = notFoundURLs.removeValue(forKey: url.absoluteString) != nil
+        let snapshot = notFoundURLs
         notFoundLock.unlock()
         guard removed else { return }
         UserDefaults.standard.set(snapshot, forKey: notFoundDefaultsKey)

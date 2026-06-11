@@ -735,8 +735,17 @@ class RelayProcessManager: ObservableObject {
                 }
             }
 
-            // Open a persistent file handle for the log file
+            // Open a persistent file handle for the log file. Rotate first
+            // when large — the log is append-only and a menu-bar app can run
+            // for months between launches.
             let logFileURL = directory.appendingPathComponent("relay.log")
+            let maxLogSize = 5 * 1024 * 1024
+            if let size = (try? FileManager.default.attributesOfItem(atPath: logFileURL.path))?[.size] as? Int,
+               size > maxLogSize {
+                let rotatedURL = directory.appendingPathComponent("relay.log.1")
+                try? FileManager.default.removeItem(at: rotatedURL)
+                try? FileManager.default.moveItem(at: logFileURL, to: rotatedURL)
+            }
             if !FileManager.default.fileExists(atPath: logFileURL.path) {
                 FileManager.default.createFile(atPath: logFileURL.path, contents: nil)
             }
