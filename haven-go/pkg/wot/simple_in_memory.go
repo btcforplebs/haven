@@ -15,6 +15,8 @@ import (
 
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/puzpuzpuz/xsync/v4"
+
+	"github.com/barrydeen/haven/pkg/runsafe"
 )
 
 const DefaultWotLevel = 3
@@ -297,27 +299,31 @@ func (wt *SimpleInMemory) Refresh(ctx context.Context) {
 func latestEventByKindAndPubkey(ctx context.Context, events <-chan nostr.RelayEvent, counter *atomic.Int64) <-chan *nostr.Event {
 	ch := make(chan *nostr.Event)
 	go func() {
+		// ch must close even if the body panics, otherwise the consumer
+		// in Refresh() blocks forever.
 		defer close(ch)
-		latestEvents := make(map[string]*nostr.Event)
-		for ev := range events {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-				counter.Add(1)
-				key := fmt.Sprintf("%d:%s", ev.Kind, ev.PubKey)
-				if old, ok := latestEvents[key]; !ok || ev.CreatedAt > old.CreatedAt {
-					latestEvents[key] = ev.Event
+		runsafe.Run("wot.latestEventByKindAndPubkey", func() {
+			latestEvents := make(map[string]*nostr.Event)
+			for ev := range events {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					counter.Add(1)
+					key := fmt.Sprintf("%d:%s", ev.Kind, ev.PubKey)
+					if old, ok := latestEvents[key]; !ok || ev.CreatedAt > old.CreatedAt {
+						latestEvents[key] = ev.Event
+					}
 				}
 			}
-		}
-		for _, ev := range latestEvents {
-			select {
-			case <-ctx.Done():
-				return
-			case ch <- ev:
+			for _, ev := range latestEvents {
+				select {
+				case <-ctx.Done():
+					return
+				case ch <- ev:
+				}
 			}
-		}
+		})
 	}()
 	return ch
 }

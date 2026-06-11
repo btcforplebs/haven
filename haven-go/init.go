@@ -19,6 +19,8 @@ import (
 	"github.com/fiatjaf/khatru/policies"
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/spf13/afero"
+
+	"github.com/barrydeen/haven/pkg/runsafe"
 )
 
 // Global variables used by both desktop (main.go) and iOS (cshared.go)
@@ -360,7 +362,7 @@ func initRelays(ctx context.Context) error {
 
 	outboxRelay.StoreEvent = append(outboxRelay.StoreEvent, outboxDB.SaveEvent, func(ctx context.Context, event *nostr.Event) error {
 		slog.Info("event stored")
-		go blast(ctx, event)
+		runsafe.Go("blast", func() { blast(ctx, event) })
 		return nil
 	})
 	outboxRelay.QueryEvents = append(outboxRelay.QueryEvents, outboxDB.QueryEvents)

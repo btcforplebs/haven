@@ -25,6 +25,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/barrydeen/haven/pkg/runsafe"
 	"github.com/barrydeen/haven/pkg/wot"
 	"github.com/mailru/easyjson"
 	"github.com/nbd-wtf/go-nostr"
@@ -166,7 +167,7 @@ func StartRelayC(importMode bool) {
 	log.Println("✅ Databases ready")
 
 	log.Println("⏳ Starting background services [3/3]")
-	go func() {
+	runsafe.Go("background-setup", func() {
 		// Initialize WOT (can take time, so run in background)
 		log.Println("  → Initializing Web of Trust")
 		wotModel := wot.NewSimpleInMemory(
@@ -188,14 +189,14 @@ func StartRelayC(importMode bool) {
 			wot.MarkReady(wotModel)
 			log.Println("  ✓ Web of Trust loaded from cache, skipping rebuild")
 		} else {
-			go wot.Initialize(csharedCtx, wotModel)
+			runsafe.Go("wot.Initialize", func() { wot.Initialize(csharedCtx, wotModel) })
 			log.Println("  ✓ Web of Trust initializing from network")
 		}
 
-		go subscribeInboxAndChat(csharedCtx)
-		go startPeriodicCloudBackups(csharedCtx)
-		go wot.PeriodicRefresh(csharedCtx, config.WotRefreshInterval)
-	}()
+		runsafe.Go("subscribeInboxAndChat", func() { subscribeInboxAndChat(csharedCtx) })
+		runsafe.Go("periodicCloudBackups", func() { startPeriodicCloudBackups(csharedCtx) })
+		runsafe.Go("wot.PeriodicRefresh", func() { wot.PeriodicRefresh(csharedCtx, config.WotRefreshInterval) })
+	})
 
 	// Use a fresh ServeMux each cycle so stop/start never panics on
 	// duplicate pattern registration in the default mux.
@@ -237,13 +238,13 @@ func StartRelayC(importMode bool) {
 
 	// Start server in background and give it a moment to bind before continuing
 	serverReady := make(chan error, 1)
-	go func() {
+	runsafe.Go("http-server", func() {
 		if certPath != "" && keyPath != "" {
 			serverReady <- globalServer.ListenAndServeTLS(certPath, keyPath)
 		} else {
 			serverReady <- globalServer.ListenAndServe()
 		}
-	}()
+	})
 
 	// Brief delay to ensure server binds to port before returning
 	time.Sleep(100 * time.Millisecond)

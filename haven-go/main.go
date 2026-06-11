@@ -15,6 +15,7 @@ import (
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/spf13/afero"
 
+	"github.com/barrydeen/haven/pkg/runsafe"
 	"github.com/barrydeen/haven/pkg/wot"
 )
 
@@ -95,7 +96,7 @@ func main() {
 	if err := initRelays(mainCtx); err != nil {
 		log.Fatal("🚫 error initializing databases/relays:", err)
 	}
-	go func() {
+	runsafe.Go("background-setup", func() {
 		// Try to load from cache first - instant startup
 		// Only run full network rebuild if cache is missing or expired
 		cacheLoaded := wotModel.LoadFromCache()
@@ -104,14 +105,14 @@ func main() {
 			wot.MarkReady(wotModel)
 			log.Println("  ✓ Web of Trust loaded from cache, skipping rebuild")
 		} else {
-			go wot.Initialize(mainCtx, wotModel)
+			runsafe.Go("wot.Initialize", func() { wot.Initialize(mainCtx, wotModel) })
 			log.Println("  ✓ Web of Trust initializing from network")
 		}
 
-		go subscribeInboxAndChat(mainCtx)
-		go startPeriodicCloudBackups(mainCtx)
-		go wot.PeriodicRefresh(mainCtx, config.WotRefreshInterval)
-	}()
+		runsafe.Go("subscribeInboxAndChat", func() { subscribeInboxAndChat(mainCtx) })
+		runsafe.Go("periodicCloudBackups", func() { startPeriodicCloudBackups(mainCtx) })
+		runsafe.Go("wot.PeriodicRefresh", func() { wot.PeriodicRefresh(mainCtx, config.WotRefreshInterval) })
+	})
 
 	http.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("templates/static"))))
 

@@ -13,6 +13,7 @@ import (
 	"github.com/fiatjaf/eventstore"
 	"github.com/nbd-wtf/go-nostr"
 
+	"github.com/barrydeen/haven/pkg/runsafe"
 	"github.com/barrydeen/haven/pkg/wot"
 )
 
@@ -106,21 +107,25 @@ func importOwnerNotes(ctx context.Context) {
 			defer cancel()
 			batchImportedNotes := 0
 
-			events := pool.FetchMany(ctx, config.ImportSeedRelays, filter)
-			for ev := range events {
-				if ctx.Err() != nil {
-					break // Stop the loop on timeout
+			// done must be signalled even if the fetch loop panics,
+			// otherwise the select below waits out the full timeout.
+			runsafe.Run("importOwnerNotes.fetch", func() {
+				events := pool.FetchMany(ctx, config.ImportSeedRelays, filter)
+				for ev := range events {
+					if ctx.Err() != nil {
+						break // Stop the loop on timeout
+					}
+					if _, ok := config.BlacklistedPubKeys[ev.PubKey]; ok {
+						slog.Debug("🚫 skipping event from blacklisted pubkey", "pubkey", ev.PubKey, "id", ev.ID)
+						continue
+					}
+					if err := wdb.Publish(ctx, *ev.Event); err != nil {
+						log.Println("🚫  error importing note", ev.ID, ":", err)
+						nFailedImportNotes++
+					}
+					batchImportedNotes++
 				}
-				if _, ok := config.BlacklistedPubKeys[ev.PubKey]; ok {
-					slog.Debug("🚫 skipping event from blacklisted pubkey", "pubkey", ev.PubKey, "id", ev.ID)
-					continue
-				}
-				if err := wdb.Publish(ctx, *ev.Event); err != nil {
-					log.Println("🚫  error importing note", ev.ID, ":", err)
-					nFailedImportNotes++
-				}
-				batchImportedNotes++
-			}
+			})
 			done <- batchImportedNotes
 			close(done)
 		}()
@@ -171,37 +176,41 @@ func importTaggedNotes(ctx context.Context) {
 	log.Println("📦 importing inbox notes, please wait up to", timeout)
 
 	go func() {
-		events := pool.FetchMany(ctx, config.ImportSeedRelays, filter)
-		for ev := range events {
-			if ctx.Err() != nil {
-				break // Stop the loop on timeout
-			}
+		// done must close even if the fetch loop panics, otherwise the
+		// select below waits out the full timeout.
+		defer close(done)
+		runsafe.Run("importTaggedNotes.fetch", func() {
+			events := pool.FetchMany(ctx, config.ImportSeedRelays, filter)
+			for ev := range events {
+				if ctx.Err() != nil {
+					break // Stop the loop on timeout
+				}
 
-			if _, ok := config.BlacklistedPubKeys[ev.PubKey]; ok {
-				slog.Debug("🚫 skipping tagged event from blacklisted pubkey", "pubkey", ev.PubKey, "id", ev.ID)
-				continue
-			}
-
-			if !wot.GetInstance().Has(ctx, ev.PubKey) && ev.Kind != nostr.KindGiftWrap {
-				continue
-			}
-			for tag := range ev.Tags.FindAll("p") {
-				if len(tag) < 2 {
+				if _, ok := config.BlacklistedPubKeys[ev.PubKey]; ok {
+					slog.Debug("🚫 skipping tagged event from blacklisted pubkey", "pubkey", ev.PubKey, "id", ev.ID)
 					continue
 				}
-				if _, ok := config.WhitelistedPubKeys[tag[1]]; ok {
-					dbToWrite := wdbInbox
-					if ev.Kind == nostr.KindGiftWrap {
-						dbToWrite = wdbChat
+
+				if !wot.GetInstance().Has(ctx, ev.PubKey) && ev.Kind != nostr.KindGiftWrap {
+					continue
+				}
+				for tag := range ev.Tags.FindAll("p") {
+					if len(tag) < 2 {
+						continue
 					}
-					if err := dbToWrite.Publish(ctx, *ev.Event); err != nil {
-						log.Println("🚫 error importing tagged note", ev.ID, ":", err)
+					if _, ok := config.WhitelistedPubKeys[tag[1]]; ok {
+						dbToWrite := wdbInbox
+						if ev.Kind == nostr.KindGiftWrap {
+							dbToWrite = wdbChat
+						}
+						if err := dbToWrite.Publish(ctx, *ev.Event); err != nil {
+							log.Println("🚫 error importing tagged note", ev.ID, ":", err)
+						}
+						taggedImportedNotes++
 					}
-					taggedImportedNotes++
 				}
 			}
-		}
-		close(done)
+		})
 	}()
 
 	select {

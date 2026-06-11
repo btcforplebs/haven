@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/nbd-wtf/go-nostr"
+
+	"github.com/barrydeen/haven/pkg/runsafe"
 )
 
 func blast(ctx context.Context, ev *nostr.Event) {
@@ -21,10 +23,14 @@ func blast(ctx context.Context, ev *nostr.Event) {
 	for _, url := range config.BlastrRelays {
 		wg.Add(1)
 		go func(relayURL string) {
+			// wg.Done must run even if publishing panics, otherwise
+			// wg.Wait() below blocks this goroutine's parent forever.
 			defer wg.Done()
-			if publishWithRetry(ctx, relayURL, ev, timeout, maxRetries) {
-				successCount.Add(1)
-			}
+			runsafe.Run("blastr.publish", func() {
+				if publishWithRetry(ctx, relayURL, ev, timeout, maxRetries) {
+					successCount.Add(1)
+				}
+			})
 		}(url)
 	}
 
