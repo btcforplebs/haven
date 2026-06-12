@@ -379,12 +379,20 @@ class BlossomService @Inject constructor(
 
         val allHashes = mutableSetOf<String>()
 
+        // Sign one BUD-02 list auth event (kind 24242) and reuse it across mirrors
+        // so servers that require auth return the list instead of 403/empty. The
+        // event is server-agnostic (no "x"/"u" tag), so a single signature is valid
+        // everywhere — and signing once avoids per-mirror external-signer (Amber)
+        // round-trips. Matches iOS mirrorAllFromExternal.
+        val listAuth = createAuthHeader("list")
+
         // Fetch blob lists from each mirror
         for (mirror in mirrors) {
             try {
                 val request = Request.Builder()
                     .url("$mirror/list/$ownerPubkey")
                     .get()
+                    .apply { if (listAuth.isNotEmpty()) addHeader("Authorization", "Nostr $listAuth") }
                     .build()
 
                 val response = remoteClient.newCall(request).execute()
@@ -513,15 +521,17 @@ class BlossomService @Inject constructor(
      */
     private suspend fun createAuthHeader(
         operation: String,
-        sha256: String,
+        sha256: String? = null,
         uploadUrl: String? = null,
     ): String {
         val expiration = (System.currentTimeMillis() / 1000) + 3600 // 1 hour (matches iOS)
         val tags = mutableListOf(
             listOf("t", operation),
-            listOf("x", sha256),
-            listOf("expiration", expiration.toString()),
         )
+        // The "x" tag scopes auth to a specific blob; list/server-wide ops carry
+        // no hash (matches iOS BUD-02 /list auth).
+        sha256?.let { tags.add(listOf("x", it)) }
+        tags.add(listOf("expiration", expiration.toString()))
         uploadUrl?.let { tags.add(listOf("u", it)) }
 
         // Use signEventAsync so external signers (Amber NIP-55, NIP-46) work.
@@ -532,7 +542,7 @@ class BlossomService @Inject constructor(
         val event = try {
             nostrService.signEventAsync(
                 kind = AUTH_KIND,
-                content = "Blossom $operation ${sha256.take(8)}",
+                content = if (sha256 != null) "Blossom $operation ${sha256.take(8)}" else "Blossom $operation",
                 tags = tags,
                 forceOwner = true,
             )
