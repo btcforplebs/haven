@@ -409,6 +409,19 @@ class BlossomService @Inject constructor(
         // Filter to hashes not in local Blossom
         val missing = allHashes.filter { !mediaCacheService.isInLocalBlossom(it) }
         onLogMessage?.invoke("Found ${missing.size} blobs to mirror")
+        if (missing.isEmpty()) return@withContext
+
+        // Sign ONE upload auth (t=upload, no "x") and reuse it for every local save.
+        // The local relay (khatru/blossom) authorizes uploads on the "t"/expiration
+        // tags only — it does not bind the auth to a specific blob hash — so a single
+        // signature covers the whole batch. This avoids one signing request per blob,
+        // which with an external signer (Amber) relaunches its approval Activity over
+        // and over and stalls the pull. One list + one upload prompt covers it all.
+        val uploadAuth = createAuthHeader("upload")
+        if (uploadAuth.isEmpty()) {
+            onLogMessage?.invoke("Mirror aborted: could not sign upload auth (signer unavailable)")
+            return@withContext
+        }
 
         var completed = 0
         for (hash in missing) {
@@ -417,7 +430,7 @@ class BlossomService @Inject constructor(
                 try {
                     val data = downloadFromMirrors(hash)
                     if (data != null) {
-                        saveToLocalRelay(data, hash, "application/octet-stream")
+                        saveToLocalRelay(data, hash, "application/octet-stream", uploadAuth)
                     }
                 } finally {
                     mirrorSemaphore.release()
