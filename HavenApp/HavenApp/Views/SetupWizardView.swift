@@ -929,14 +929,12 @@ private struct NostrIntroStep: View {
                                         .font(.system(size: 14))
                                         .foregroundColor(WizardColors.textPrimary)
                                         .textFieldStyle(.plain)
-                                        .autocapitalization(.none)
                                         .disableAutocorrection(true)
                                 } else {
                                     SecureField("Password (minimum 8 characters)", text: $keyPassword)
                                         .font(.system(size: 14))
                                         .foregroundColor(WizardColors.textPrimary)
                                         .textFieldStyle(.plain)
-                                        .autocapitalization(.none)
                                         .disableAutocorrection(true)
                                 }
                                 Button {
@@ -961,7 +959,6 @@ private struct NostrIntroStep: View {
                                     .font(.system(size: 14))
                                     .foregroundColor(WizardColors.textPrimary)
                                     .textFieldStyle(.plain)
-                                    .autocapitalization(.none)
                                     .disableAutocorrection(true)
                                     .padding(12)
                                     .background(WizardColors.bgElevated)
@@ -975,7 +972,6 @@ private struct NostrIntroStep: View {
                                     .font(.system(size: 14))
                                     .foregroundColor(WizardColors.textPrimary)
                                     .textFieldStyle(.plain)
-                                    .autocapitalization(.none)
                                     .disableAutocorrection(true)
                                     .padding(12)
                                     .background(WizardColors.bgElevated)
