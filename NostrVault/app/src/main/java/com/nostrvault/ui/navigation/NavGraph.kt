@@ -28,6 +28,7 @@ import com.nostrvault.ui.screens.*
 import com.nostrvault.ui.screens.dashboard.LogViewerScreen
 import com.nostrvault.ui.screens.dm.DMInboxScreen
 import com.nostrvault.ui.screens.dm.DMThreadScreen
+import com.nostrvault.ui.screens.dm.NewMessageScreen
 import com.nostrvault.ui.screens.feed.FeedScreen
 import com.nostrvault.ui.screens.groups.GroupBrowserScreen
 import com.nostrvault.ui.screens.groups.GroupChatScreen
@@ -39,11 +40,10 @@ import com.nostrvault.ui.screens.settings.AccountSettingsScreen
 import com.nostrvault.ui.screens.settings.AppearanceSettingsScreen
 import com.nostrvault.ui.screens.settings.BlastrSettingsScreen
 import com.nostrvault.ui.screens.settings.BlossomSettingsScreen
-import com.nostrvault.ui.screens.settings.CloudBackupScreen
-import com.nostrvault.ui.screens.settings.DMRelaySettingsScreen
 import com.nostrvault.ui.screens.settings.FollowingBackupScreen
 import com.nostrvault.ui.screens.settings.NotificationSettingsScreen
 import com.nostrvault.ui.screens.settings.PowSettingsScreen
+import com.nostrvault.ui.screens.settings.HavenRelaySettingsScreen
 import com.nostrvault.ui.screens.settings.RelayListEditorScreen
 import com.nostrvault.ui.screens.settings.SettingsScreen
 import kotlinx.coroutines.flow.StateFlow
@@ -175,6 +175,9 @@ fun NostrVaultNavHost(
                     onConversationClick = { pubkey ->
                         navController.navigate(Screen.DMThread.createRoute(pubkey))
                     },
+                    onNewMessage = {
+                        navController.navigate(Screen.NewMessage.createRoute())
+                    },
                 )
             }
 
@@ -194,11 +197,23 @@ fun NostrVaultNavHost(
                     onEditProfile = {
                         navController.navigate(Screen.ProfileEdit.route)
                     },
+                    onCompose = {
+                        navController.navigate(Screen.ComposeNote.createRoute())
+                    },
+                    onReply = { noteId ->
+                        navController.navigate(Screen.ComposeNote.createRoute(replyToNoteId = noteId))
+                    },
+                    onQuote = { noteId ->
+                        navController.navigate(Screen.ComposeNote.createRoute(quoteToNoteId = noteId))
+                    },
                     onNavigateToDMs = {
                         navController.navigate(Screen.DMInbox.route)
                     },
                     onNavigateToSettings = {
                         navController.navigate(Screen.Settings.route)
+                    },
+                    onNavigateToDMThread = { pk ->
+                        navController.navigate(Screen.DMThread.createRoute(pk))
                     },
                     onBack = { navController.popBackStack() },
                 )
@@ -237,6 +252,22 @@ fun NostrVaultNavHost(
                     counterpartyPubkey = pubkey,
                     onProfileClick = { pk ->
                         navController.navigate(Screen.Profile.createRoute(pk))
+                    },
+                    onBack = { navController.popBackStack() },
+                )
+            }
+
+            composable(
+                route = Screen.NewMessage.route,
+                arguments = listOf(
+                    navArgument("pubkey") { type = NavType.StringType; nullable = true; defaultValue = null },
+                ),
+            ) {
+                NewMessageScreen(
+                    onMessageSent = { recipientHex ->
+                        navController.navigate(Screen.DMThread.createRoute(recipientHex)) {
+                            popUpTo(Screen.NewMessage.route) { inclusive = true }
+                        }
                     },
                     onBack = { navController.popBackStack() },
                 )
@@ -397,12 +428,6 @@ fun NostrVaultNavHost(
                 )
             }
 
-            composable(Screen.DMRelaySettings.route) {
-                DMRelaySettingsScreen(
-                    onBack = { navController.popBackStack() },
-                )
-            }
-
             composable(Screen.BlastrSettings.route) {
                 BlastrSettingsScreen(
                     onBack = { navController.popBackStack() },
@@ -421,12 +446,6 @@ fun NostrVaultNavHost(
                 )
             }
 
-            composable(Screen.CloudBackupSettings.route) {
-                CloudBackupScreen(
-                    onBack = { navController.popBackStack() },
-                )
-            }
-
             composable(Screen.FollowingBackup.route) {
                 FollowingBackupScreen(
                     onBack = { navController.popBackStack() },
@@ -435,6 +454,12 @@ fun NostrVaultNavHost(
 
             composable(Screen.NotificationSettings.route) {
                 NotificationSettingsScreen(
+                    onBack = { navController.popBackStack() },
+                )
+            }
+
+            composable(Screen.HavenRelaySettings.route) {
+                HavenRelaySettingsScreen(
                     onBack = { navController.popBackStack() },
                 )
             }

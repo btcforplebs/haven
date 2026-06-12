@@ -1319,8 +1319,6 @@ class NostrService @Inject constructor(
         }.distinct().take(8)
         if (relayUrls.isEmpty()) { onResult(emptyList()); return }
 
-        Log.d(TAG, "fetchProfileNotes: pk=${pubkey.take(12)}… querying ${relayUrls.size} relays: $relayUrls")
-
         val subId = "profile-${UUID.randomUUID().toString().take(8)}"
         val collected = java.util.concurrent.ConcurrentHashMap<String, FeedNote>()
 
@@ -1363,7 +1361,6 @@ class NostrService @Inject constructor(
                                     }
                                 }
                                 if (type == "EOSE" && sid == subId) {
-                                    Log.d(TAG, "fetchProfileNotes: EOSE from $relayUrl, collected=${collected.size}")
                                     onResult(collected.values.sortedByDescending { it.createdAt })
                                 }
                             } catch (_: Exception) {}
@@ -1373,14 +1370,163 @@ class NostrService @Inject constructor(
                     subscribed.await()
                     client.connect()
                     val filter = """{"kinds":[1],"authors":["$pubkey"],"limit":50}"""
-                    val sent = client.send("[\"REQ\",\"$subId\",$filter]")
-                    Log.d(TAG, "fetchProfileNotes: REQ sent to $relayUrl ok=$sent")
+                    client.send("[\"REQ\",\"$subId\",$filter]")
 
                     delay(TEMP_CLIENT_DISCONNECT_MS)
                     client.disconnect()
                     tempClientsLock.withLock { temporaryClients.remove(client) }
                 } catch (_: Exception) {}
             }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Profile streaming (iOS ProfileView.fetchAuthorNotes parity)
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * Build a [ProfileStream] for [pubkey] over the local relay + a few feed
+     * relays + the user's NIP-65 relays. The caller assigns callbacks then calls
+     * [ProfileStream.start], and must call [ProfileStream.close] when done.
+     */
+    fun profileStream(pubkey: String): ProfileStream {
+        val config = configStore.config.value
+        val relays = buildList {
+            config.nostrURL?.let { add(it) }
+            val feed = config.activeFeedRelays.ifEmpty {
+                listOf("wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol")
+            }
+            addAll(feed.take(3))
+            // NIP-65: also query the user's own preferred relays so their notes
+            // are found even when they don't post to the common public relays.
+            _relayLists.value[pubkey]?.let { addAll(it.take(3)) }
+        }.distinct().take(6)
+        return ProfileStream(pubkey, relays)
+    }
+
+    /**
+     * A persistent multi-relay subscription for one profile view. Mirrors iOS
+     * ProfileView's profileClients: one combined REQ (notes + metadata + contacts
+     * + followers + tagged) kept open so [loadOlder]/[loadOlderTagged] can page on
+     * the same sockets. Callbacks may fire on any thread; assign them before
+     * calling [start].
+     */
+    inner class ProfileStream(
+        val pubkey: String,
+        private val relayUrls: List<String>,
+    ) {
+        private val clients = java.util.concurrent.CopyOnWriteArrayList<WebSocketClient>()
+        private val jobs = java.util.concurrent.CopyOnWriteArrayList<Job>()
+        private val ourHexKeys: Set<String> =
+            setOfNotNull(configStore.activeAccountHexPubkey.value.takeIf { it.isNotEmpty() })
+        private val initialSubId = "profile-${UUID.randomUUID().toString().take(6)}"
+
+        /** Note authored by [pubkey] (kinds 1/6/30023). */
+        var onNote: ((FeedNote) -> Unit)? = null
+        /** Note by someone else that p-tags [pubkey] (Tagged tab). */
+        var onTagged: ((FeedNote) -> Unit)? = null
+        /** [pubkey]'s own contact list: (followingCount, followsMe). */
+        var onContacts: ((Int, Boolean) -> Unit)? = null
+        /** A pubkey whose contact list includes [pubkey] (a follower). */
+        var onFollower: ((String) -> Unit)? = null
+        /** EOSE subId — prefix is "profile-" (initial), "older-", or "older-tagged-". */
+        var onEose: ((String) -> Unit)? = null
+
+        fun start() {
+            for (relayUrl in relayUrls) {
+                val client = WebSocketClient(url = relayUrl, scope = scope, trustLocalhost = isLocalUrl(relayUrl))
+                clients.add(client)
+                tempClientsLock.withLock { temporaryClients.add(client) }
+
+                // Subscribe to messages BEFORE connecting (replay=0 SharedFlow).
+                val subscribed = CompletableDeferred<Unit>()
+                jobs.add(scope.launch {
+                    client.messages
+                        .onSubscription { subscribed.complete(Unit) }
+                        .collect { msg -> handleMessage(msg) }
+                })
+                // (Re)send the combined REQ on every CONNECTED transition.
+                jobs.add(scope.launch {
+                    client.connectionState.collect { state ->
+                        if (state == WebSocketClient.ConnectionState.CONNECTED) {
+                            client.send(buildInitialReq())
+                        }
+                    }
+                })
+                jobs.add(scope.launch {
+                    subscribed.await()
+                    client.connect()
+                })
+            }
+        }
+
+        private fun buildInitialReq(): String {
+            val notes = """{"kinds":[1,6,30023],"authors":["$pubkey"],"limit":50}"""
+            val meta = """{"kinds":[0],"authors":["$pubkey"],"limit":1}"""
+            val contacts = """{"kinds":[3],"authors":["$pubkey"],"limit":1}"""
+            val followers = """{"kinds":[3],"#p":["$pubkey"],"limit":100}"""
+            val tagged = """{"kinds":[1,6,30023],"#p":["$pubkey"],"limit":50}"""
+            return "[\"REQ\",\"$initialSubId\",$notes,$meta,$contacts,$followers,$tagged]"
+        }
+
+        fun loadOlder(until: Long) {
+            val subId = "older-${UUID.randomUUID().toString().take(6)}"
+            val filter = """{"kinds":[1,6,30023],"authors":["$pubkey"],"until":$until,"limit":50}"""
+            clients.forEach { it.send("[\"REQ\",\"$subId\",$filter]") }
+        }
+
+        fun loadOlderTagged(until: Long) {
+            val subId = "older-tagged-${UUID.randomUUID().toString().take(6)}"
+            val filter = """{"kinds":[1,6,30023],"#p":["$pubkey"],"until":$until,"limit":50}"""
+            clients.forEach { it.send("[\"REQ\",\"$subId\",$filter]") }
+        }
+
+        fun close() {
+            jobs.forEach { it.cancel() }
+            jobs.clear()
+            clients.forEach { c ->
+                c.disconnect()
+                tempClientsLock.withLock { temporaryClients.remove(c) }
+            }
+            clients.clear()
+        }
+
+        private fun handleMessage(msg: String) {
+            try {
+                val parsed = json.parseToJsonElement(msg).jsonArray
+                if (parsed.size < 2) return
+                val type = parsed[0].jsonPrimitive.contentOrNull ?: return
+                val sid = parsed[1].jsonPrimitive.contentOrNull ?: return
+                if (type == "EOSE") { onEose?.invoke(sid); return }
+                if (type != "EVENT" || parsed.size < 3) return
+                val ev = parsed[2].jsonObject
+                val id = ev["id"]?.jsonPrimitive?.contentOrNull ?: return
+                val evPubkey = ev["pubkey"]?.jsonPrimitive?.contentOrNull ?: return
+                val content = ev["content"]?.jsonPrimitive?.contentOrNull ?: ""
+                val createdAt = ev["created_at"]?.jsonPrimitive?.longOrNull ?: 0L
+                val kind = ev["kind"]?.jsonPrimitive?.intOrNull ?: return
+                val tags: List<List<String>> = try {
+                    ev["tags"]?.jsonArray?.map { t -> t.jsonArray.map { it.jsonPrimitive.content } } ?: emptyList()
+                } catch (_: Exception) { emptyList() }
+
+                when {
+                    kind == 0 && evPubkey == pubkey -> parseAndCacheProfile(pubkey, content)
+                    kind == 3 && evPubkey == pubkey -> {
+                        val pTags = tags.filter { it.size >= 2 && it[0] == "p" }
+                        val following = pTags.map { it[1] }.filter { it != pubkey }.distinct().size
+                        val followsMe = ourHexKeys.isNotEmpty() && pTags.any { ourHexKeys.contains(it[1]) }
+                        onContacts?.invoke(following, followsMe)
+                    }
+                    kind == 3 && evPubkey != pubkey -> onFollower?.invoke(evPubkey)
+                    kind == 1 || kind == 6 || kind == 30023 -> {
+                        if (evPubkey == pubkey) {
+                            onNote?.invoke(FeedNote.fromEvent(id, evPubkey, content, tags, createdAt, kind))
+                        } else if (tags.any { it.size >= 2 && it[0] == "p" && it[1] == pubkey }) {
+                            onTagged?.invoke(FeedNote.fromEvent(id, evPubkey, content, tags, createdAt, kind))
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
         }
     }
 
