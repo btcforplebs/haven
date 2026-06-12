@@ -43,15 +43,26 @@ class ConfigStore @Inject constructor(
 
     /** Load config from disk or create defaults. */
     fun reload() {
-        _config.value = try {
+        var loaded = try {
             if (configFile.exists()) {
-                json.decodeFromString(configFile.readText())
+                json.decodeFromString<HavenConfig>(configFile.readText())
             } else {
                 HavenConfig()
             }
         } catch (_: Exception) {
             HavenConfig()
         }
+
+        // Ensure runtime paths are always populated — these are derived from the
+        // app's filesystem and intentionally not persisted, but every service that
+        // reads config.relayDataDir depends on them being present.
+        val relayDir = File(context.filesDir, "relay_data")
+        loaded = loaded.copy(
+            relayDataDir = relayDir.absolutePath,
+            appSupportDir = context.filesDir.absolutePath,
+        )
+
+        _config.value = loaded
 
         // Restore active account hex pubkey from persisted ownerNpub so that
         // profile navigation works on subsequent app launches (not just setup).

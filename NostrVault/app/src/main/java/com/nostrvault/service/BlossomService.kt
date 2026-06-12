@@ -76,14 +76,13 @@ class BlossomService @Inject constructor(
         contentType: String,
         onProgress: ((Float) -> Unit)? = null,
     ): String? = withContext(Dispatchers.IO) {
-        // 1. Save to local relay
-        saveToLocalRelay(data, sha256, contentType)
+        val localUrl = localBlossomURL()
+        val localOk = if (localUrl != null) saveToLocalRelay(data, sha256, contentType) else false
 
-        // 2. Mirror to external servers
         val mirrors = configStore.config.value.activeBlossomMirrors
-        if (mirrors.isEmpty()) return@withContext null
+        if (mirrors.isEmpty()) return@withContext if (localOk) "$localUrl/$sha256" else null
 
-        var firstExternalUrl: String? = null
+        val firstExternalUrl = java.util.concurrent.atomic.AtomicReference<String?>(null)
         val jobs = mirrors.map { mirrorUrl ->
             async {
                 try {
@@ -93,7 +92,7 @@ class BlossomService @Inject constructor(
                         sha256 = sha256,
                         contentType = contentType,
                     )
-                    if (firstExternalUrl == null) firstExternalUrl = url
+                    firstExternalUrl.compareAndSet(null, url)
                     url
                 } catch (e: Exception) {
                     Log.w(TAG, "Mirror to $mirrorUrl failed: ${e.message}")
@@ -102,7 +101,7 @@ class BlossomService @Inject constructor(
             }
         }
         jobs.awaitAll()
-        firstExternalUrl
+        firstExternalUrl.get() ?: if (localOk) "$localUrl/$sha256" else null
     }
 
     suspend fun uploadAndMirror(
@@ -111,12 +110,13 @@ class BlossomService @Inject constructor(
         contentType: String,
         onProgress: ((Float) -> Unit)? = null,
     ): String? = withContext(Dispatchers.IO) {
-        saveToLocalRelay(fileURL, sha256, contentType)
+        val localUrl = localBlossomURL()
+        val localOk = if (localUrl != null) saveToLocalRelay(fileURL, sha256, contentType) else false
 
         val mirrors = configStore.config.value.activeBlossomMirrors
-        if (mirrors.isEmpty()) return@withContext null
+        if (mirrors.isEmpty()) return@withContext if (localOk) "$localUrl/$sha256" else null
 
-        var firstExternalUrl: String? = null
+        val firstExternalUrl = java.util.concurrent.atomic.AtomicReference<String?>(null)
         val jobs = mirrors.map { mirrorUrl ->
             async {
                 try {
@@ -126,7 +126,7 @@ class BlossomService @Inject constructor(
                         sha256 = sha256,
                         contentType = contentType,
                     )
-                    if (firstExternalUrl == null) firstExternalUrl = url
+                    firstExternalUrl.compareAndSet(null, url)
                     url
                 } catch (e: Exception) {
                     Log.w(TAG, "Mirror to $mirrorUrl failed: ${e.message}")
@@ -135,7 +135,7 @@ class BlossomService @Inject constructor(
             }
         }
         jobs.awaitAll()
-        firstExternalUrl
+        firstExternalUrl.get() ?: if (localOk) "$localUrl/$sha256" else null
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -219,7 +219,9 @@ class BlossomService @Inject constructor(
                     return@withContext "$serverUrl/$sha256"
                 }
 
-                lastError = IOException("Upload failed: ${response.code} ${response.message}")
+                val errorBody = response.body?.string()?.take(500) ?: ""
+                Log.w(TAG, "Mirror $serverUrl returned HTTP ${response.code}: $errorBody")
+                lastError = IOException("HTTP ${response.code}: $errorBody")
 
                 if (attempt < MAX_UPLOAD_RETRIES - 1) {
                     delay(1000L * (attempt + 1)) // Linear backoff
@@ -520,8 +522,8 @@ class BlossomService @Inject constructor(
     fun localBlossomURL(): String? {
         val config = configStore.config.value
         val port = config.relayPort ?: return null
-        // Android uses https://localhost:port (with self-signed cert trust)
-        return "https://localhost:$port"
+        // Android relay runs without TLS (HAVEN_ENABLE_TLS=0), so plain HTTP.
+        return "http://localhost:$port"
     }
 
     private fun isLocalhost(url: String): Boolean {

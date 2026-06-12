@@ -56,7 +56,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
+import java.io.File
 import java.text.NumberFormat
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -81,6 +83,13 @@ class DashboardViewModel @Inject constructor(
         private const val MAX_LOCAL_NOTES = 500
         private const val LOAD_TIMEOUT_MS = 15_000L
         private const val LOAD_MORE_TIMEOUT_MS = 8_000L
+        private const val MAX_ALL_EVENTS = 2000
+        private const val ALL_EVENTS_TRIM_SLACK = 200
+        private const val MAX_SEEN_IDS = 10_000
+        private const val MAX_ZAP_RECEIPT_CACHE = 500
+        private const val SNAPSHOT_MAX_EVENTS = 500
+        private const val SNAPSHOT_MAX_AGE_MS = 24 * 60 * 60 * 1000L // 24 hours
+        private const val SNAPSHOT_FILE = "vault_snapshot.json"
     }
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -164,6 +173,10 @@ class DashboardViewModel @Inject constructor(
     private val _zapMap = MutableStateFlow<Map<String, List<Pair<String, Long>>>>(emptyMap())
     val zapMap: StateFlow<Map<String, List<Pair<String, Long>>>> = _zapMap.asStateFlow()
 
+    /** noteId -> created_at of the most recent reaction on it */
+    private val _latestReactionDates = MutableStateFlow<Map<String, Long>>(emptyMap())
+    val latestReactionDates: StateFlow<Map<String, Long>> = _latestReactionDates.asStateFlow()
+
     // ── Connection / loading ─────────────────────────────────────
 
     private val _isRefreshing = MutableStateFlow(false)
@@ -198,7 +211,16 @@ class DashboardViewModel @Inject constructor(
     private val allEvents = mutableListOf<NostrEvent>()
     private val allEventsMutex = Mutex()
     private val seenIds = ConcurrentHashMap.newKeySet<String>()
-    private var localClient: WebSocketClient? = null
+
+    /** Newest created_at seen — lets resume re-subscribes fetch only the gap. */
+    @Volatile
+    private var newestEventCreatedAt = 0L
+
+    // Persistent local relay connections (outbox + inbox)
+    private var outboxClient: WebSocketClient? = null
+    private var inboxClient: WebSocketClient? = null
+    private var clientJobs = mutableListOf<Job>()
+    private var isFullReload = false
 
     private val zapReceiptCache = ConcurrentHashMap<String, ParsedZapReceipt>()
     private val requestedMissingIds = ConcurrentHashMap.newKeySet<String>()
@@ -209,26 +231,31 @@ class DashboardViewModel @Inject constructor(
     private var updateGeneration = 0
     private var maxDisplayedItems = 50
 
-    private var connectionRetryCount = 0
-
     init {
         loadStats()
 
-        // Fallback: readyForConnections fires 3s after RUNNING. If the
-        // relayStatus RUNNING handler below already connected, _isRefreshing
-        // will be true and we skip the duplicate call.
+        // Restore disk snapshot immediately — show cached events before the relay is ready
+        viewModelScope.launch {
+            val restored = restoreSnapshotIfAvailable()
+            if (restored) {
+                _notesHasLoadedOnce.value = true
+                updateDisplayData(updateGeneration)
+                Log.d(TAG, "Vault snapshot restored: ${allEvents.size} events")
+            }
+        }
+
+        // Wait for readyForConnections (fires 500ms after RUNNING) before
+        // establishing WebSocket connections to the local relay.
         viewModelScope.launch {
             RelayForegroundService.readyForConnections.collect { ready ->
                 Log.d(TAG, "readyForConnections=$ready, notesLoaded=${_notesHasLoadedOnce.value}, color=${_connectionColor.value}")
-                if (ready && !_notesHasLoadedOnce.value && !_isRefreshing.value) {
-                    loadLocalRelayNotes()
+                if (ready && (!_notesHasLoadedOnce.value || _connectionColor.value == "red")) {
+                    connectToLocalRelay()
                 }
             }
         }
 
-        // Connect as soon as relay is RUNNING — no 3s wait. The relay's TCP
-        // health check already passed before this status is set, so the
-        // WebSocket endpoint is reachable.
+        // Status display: update connection UI text during lifecycle transitions
         viewModelScope.launch {
             RelayForegroundService.relayStatus.collect { status ->
                 when (status) {
@@ -241,8 +268,10 @@ class DashboardViewModel @Inject constructor(
                         _connectionColor.value = "yellow"
                     }
                     RelayForegroundService.RelayStatus.RUNNING -> {
-                        if (!_notesHasLoadedOnce.value && !_isRefreshing.value) {
-                            loadLocalRelayNotes()
+                        // Don't connect here -- wait for readyForConnections
+                        if (!_notesHasLoadedOnce.value) {
+                            _connectionStatus.value = "Relay starting..."
+                            _connectionColor.value = "yellow"
                         }
                     }
                     RelayForegroundService.RelayStatus.OFFLINE -> {
@@ -267,16 +296,47 @@ class DashboardViewModel @Inject constructor(
 
     /**
      * Called when the app returns to the foreground.
-     * Re-establishes WebSocket connection to the local relay if needed.
+     * Re-sends subscriptions on existing connections or reconnects if dropped.
      */
     fun onResume() {
-        val relayUp = RelayForegroundService.relayStatus.value == RelayForegroundService.RelayStatus.RUNNING
-        val needsReconnect = _connectionColor.value != "green" || localClient == null
-        if (relayUp && needsReconnect && !_isRefreshing.value) {
-            loadLocalRelayNotes()
+        // Surface cached data immediately — don't wait for new events
+        if (allEvents.isNotEmpty()) {
+            _notesHasLoadedOnce.value = true
+            scheduleUpdateDisplayData()
         }
-        // Always refresh stats on resume
+
+        val relayUp = RelayForegroundService.relayStatus.value == RelayForegroundService.RelayStatus.RUNNING
+        val relayReady = RelayForegroundService.readyForConnections.value
+        if (!relayUp || !relayReady) {
+            loadStats()
+            return
+        }
+
+        val outboxUp = outboxClient?.connectionState?.value == WebSocketClient.ConnectionState.CONNECTED
+        val inboxUp = inboxClient?.connectionState?.value == WebSocketClient.ConnectionState.CONNECTED
+
+        if (outboxUp && inboxUp) {
+            // Already connected — re-send subscription to catch up on missed events
+            val authors = buildAuthorSet()
+            val ownerHex = nostrService.activeHexPubkey
+            outboxClient?.let { sendVaultSubscription(it, "vault-outbox", authors, ownerHex) }
+            inboxClient?.let { sendVaultSubscription(it, "vault-inbox", authors, ownerHex) }
+        } else if (outboxClient != null) {
+            // Connection dropped — give auto-reconnect a fresh retry budget
+            outboxClient?.resetReconnect()
+            inboxClient?.resetReconnect()
+        } else {
+            // No clients at all — full connect
+            connectToLocalRelay()
+        }
+
         loadStats()
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        persistSnapshot()
+        disconnectFromLocalRelay()
     }
 
     // ── Stats ────────────────────────────────────────────────────
@@ -440,222 +500,305 @@ class DashboardViewModel @Inject constructor(
 
     // ── Local relay notes ────────────────────────────────────────
 
+    // ── Local relay notes (persistent connections) ──────────────
+
+    /**
+     * Thin wrapper for pull-to-refresh. Full reload clears state.
+     */
     fun loadLocalRelayNotes() {
+        isFullReload = true
+        seenIds.clear()
+        viewModelScope.launch {
+            allEventsMutex.withLock { allEvents.clear() }
+        }
+        _isRefreshing.value = true
+        connectToLocalRelay()
+    }
+
+    /**
+     * Creates persistent WebSocket connections to the local relay (outbox + inbox).
+     * Message collectors feed into shared allEvents; subscriptions are sent
+     * automatically when the connection reaches CONNECTED state.
+     */
+    private fun connectToLocalRelay() {
         val config = configStore.config.value
         if (config.nostrURL == null) {
             _connectionStatus.value = "No local relay"
             _connectionColor.value = "red"
             return
         }
-        // For local relay, always use plain ws:// to match the TLS-disabled
-        // Go relay. Localhost is exempt from Android cleartext restrictions.
         val localUrl = "ws://127.0.0.1:${config.relayPort}"
-
-        // Build author set: owner + whitelisted pubkeys
+        val inboxUrl = "$localUrl/inbox"
         val ownerHex = nostrService.activeHexPubkey
+        val authors = buildAuthorSet()
+
+        Log.d(TAG, "connectToLocalRelay: outbox=$localUrl, inbox=$inboxUrl, authors=${authors.size}, fullReload=$isFullReload")
+
+        disconnectFromLocalRelay()
+
+        _connectionStatus.value = "Connecting..."
+        _connectionColor.value = "yellow"
+
+        // --- Outbox connection ---
+        val outbox = WebSocketClient(url = localUrl, scope = viewModelScope, trustLocalhost = true)
+        outboxClient = outbox
+
+        val outboxMsgJob = viewModelScope.launch(Dispatchers.IO) {
+            outbox.messages.collect { msg -> processRelayMessage(msg, localUrl) }
+        }
+        val outboxStateJob = viewModelScope.launch {
+            outbox.connectionState.collect { state ->
+                when (state) {
+                    WebSocketClient.ConnectionState.CONNECTED -> {
+                        sendVaultSubscription(outbox, "vault-outbox", authors, ownerHex)
+                        updateConnectionStatus()
+                    }
+                    WebSocketClient.ConnectionState.DISCONNECTED -> updateConnectionStatus()
+                    else -> {}
+                }
+            }
+        }
+
+        // --- Inbox connection ---
+        val inbox = WebSocketClient(url = inboxUrl, scope = viewModelScope, trustLocalhost = true)
+        inboxClient = inbox
+
+        val inboxMsgJob = viewModelScope.launch(Dispatchers.IO) {
+            inbox.messages.collect { msg -> processRelayMessage(msg, inboxUrl) }
+        }
+        val inboxStateJob = viewModelScope.launch {
+            inbox.connectionState.collect { state ->
+                when (state) {
+                    WebSocketClient.ConnectionState.CONNECTED -> {
+                        sendVaultSubscription(inbox, "vault-inbox", authors, ownerHex)
+                        updateConnectionStatus()
+                    }
+                    WebSocketClient.ConnectionState.DISCONNECTED -> updateConnectionStatus()
+                    else -> {}
+                }
+            }
+        }
+
+        clientJobs = mutableListOf(outboxMsgJob, outboxStateJob, inboxMsgJob, inboxStateJob)
+        outbox.connect()
+        inbox.connect()
+    }
+
+    /**
+     * Sends a Nostr REQ subscription on an existing connection.
+     */
+    private fun sendVaultSubscription(
+        client: WebSocketClient,
+        subId: String,
+        authors: Set<String>,
+        ownerHex: String,
+    ) {
+        val authorsJson = authors.joinToString(",") { "\"$it\"" }
+        // Always cap the stored-event replay. Without a limit the relay dumps the
+        // entire vault history on every connect. When we already hold events
+        // (resume re-subscribe), only ask for the gap since the newest one.
+        val newest = newestEventCreatedAt
+        val sinceClause = if (!isFullReload && newest > 0) ",\"since\":${newest - 60}" else ""
+
+        val authorFilter = """{"kinds":[1,6,7,30023,9735],"authors":[$authorsJson]$sinceClause,"limit":500}"""
+
+        val filters = if (ownerHex.isNotEmpty()) {
+            val mentionsFilter = """{"kinds":[1,6,7,30023,9735],"#p":["$ownerHex"]$sinceClause,"limit":200}"""
+            "$authorFilter,$mentionsFilter"
+        } else {
+            authorFilter
+        }
+
+        Log.d(TAG, "sendVaultSubscription: subId=$subId, fullReload=$isFullReload")
+        client.send("""["REQ","$subId",$filters]""")
+    }
+
+    /**
+     * Processes a single relay message from either the outbox or inbox connection.
+     * Deduplicates via seenIds, routes metadata to NostrService, accumulates
+     * content events into allEvents, and schedules a display update.
+     */
+    private suspend fun processRelayMessage(msg: String, relayUrl: String) {
+        try {
+            val parsed = json.parseToJsonElement(msg).jsonArray
+            val type = parsed[0].jsonPrimitive.contentOrNull ?: return
+
+            when (type) {
+                "EVENT" -> {
+                    if (parsed.size < 3) return
+                    val eventObj = parsed[2].jsonObject
+                    val id = eventObj["id"]?.jsonPrimitive?.contentOrNull ?: return
+                    if (!seenIds.add(id)) return
+
+                    val pubkey = eventObj["pubkey"]?.jsonPrimitive?.contentOrNull ?: return
+                    val kind = eventObj["kind"]?.jsonPrimitive?.intOrNull ?: return
+                    val content = eventObj["content"]?.jsonPrimitive?.contentOrNull ?: ""
+                    val createdAt = eventObj["created_at"]?.jsonPrimitive?.longOrNull ?: return
+                    val sig = eventObj["sig"]?.jsonPrimitive?.contentOrNull ?: ""
+                    val tags = eventObj["tags"]?.jsonArray?.map { tagArr ->
+                        tagArr.jsonArray.map { it.jsonPrimitive.contentOrNull ?: "" }
+                    } ?: emptyList()
+
+                    // Metadata events go to NostrService
+                    if (kind in listOf(0, 10002, 10050, 10063, 10000)) {
+                        nostrService.processRelayMessage(msg, relayUrl)
+                        return
+                    }
+
+                    val nostrEvent = NostrEvent(
+                        id = id,
+                        pubkey = pubkey,
+                        createdAt = createdAt,
+                        kind = kind,
+                        tags = tags,
+                        content = content,
+                        sig = sig,
+                    )
+
+                    allEventsMutex.withLock {
+                        allEvents.add(nostrEvent)
+                        trimAllEventsLocked()
+                    }
+                    // Future-dated junk must not poison the resume catch-up window
+                    val nowSecs = System.currentTimeMillis() / 1000
+                    if (createdAt > newestEventCreatedAt && createdAt <= nowSecs + 60) {
+                        newestEventCreatedAt = createdAt
+                    }
+
+                    if (seenIds.size > MAX_SEEN_IDS) {
+                        val retained = allEventsMutex.withLock { allEvents.mapTo(HashSet()) { it.id } }
+                        seenIds.retainAll(retained)
+                        seenIds.add(id)
+                    }
+
+                    nostrService.fetchMissingProfiles(listOf(pubkey))
+                    scheduleUpdateDisplayData()
+                }
+                "EOSE" -> {
+                    handleEOSE()
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Parse error: ${e.message}")
+        }
+    }
+
+    /** Caller must hold [allEventsMutex]. Trims oldest events past the cap. */
+    private fun trimAllEventsLocked() {
+        if (allEvents.size > MAX_ALL_EVENTS + ALL_EVENTS_TRIM_SLACK) {
+            allEvents.sortByDescending { it.createdAt }
+            allEvents.subList(MAX_ALL_EVENTS, allEvents.size).clear()
+        }
+    }
+
+    /**
+     * Called when a relay sends EOSE (end of stored events).
+     * Updates connection state and stops the refresh spinner.
+     */
+    private fun handleEOSE() {
+        viewModelScope.launch(Dispatchers.Main.immediate) {
+            _isRefreshing.value = false
+            _notesHasLoadedOnce.value = true
+            isFullReload = false
+            updateConnectionStatus()
+            // All stored events are in — bypass the debounce
+            updateJob?.cancel()
+            updateGeneration++
+            updateDisplayData(updateGeneration)
+        }
+    }
+
+    // ── Connection helpers ────────────────────────────────────────
+
+    private fun disconnectFromLocalRelay() {
+        clientJobs.forEach { it.cancel() }
+        clientJobs.clear()
+        outboxClient?.disconnect()
+        inboxClient?.disconnect()
+        outboxClient = null
+        inboxClient = null
+    }
+
+    // ── Snapshot persistence ─────────────────────────────────────
+
+    fun persistSnapshot() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val dir = configStore.config.value.appSupportDir ?: return@launch
+                val events = allEventsMutex.withLock {
+                    allEvents.sortedByDescending { it.createdAt }.take(SNAPSHOT_MAX_EVENTS)
+                }
+                if (events.isEmpty()) return@launch
+                val snapshot = DiskVaultSnapshot(
+                    events = events,
+                    savedAt = System.currentTimeMillis(),
+                )
+                File(dir, SNAPSHOT_FILE).writeText(json.encodeToString(snapshot))
+            } catch (e: Exception) {
+                Log.w(TAG, "Vault snapshot save failed: ${e.message}")
+            }
+        }
+    }
+
+    private suspend fun restoreSnapshotIfAvailable(): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val dir = configStore.config.value.appSupportDir ?: return@withContext false
+            val file = File(dir, SNAPSHOT_FILE)
+            if (!file.exists()) return@withContext false
+
+            val snapshot = json.decodeFromString<DiskVaultSnapshot>(file.readText())
+            if (System.currentTimeMillis() - snapshot.savedAt > SNAPSHOT_MAX_AGE_MS) {
+                file.delete()
+                return@withContext false
+            }
+
+            allEventsMutex.withLock {
+                for (event in snapshot.events) {
+                    allEvents.add(event)
+                    seenIds.add(event.id)
+                }
+                newestEventCreatedAt = allEvents.maxOfOrNull { it.createdAt } ?: 0L
+            }
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "Vault snapshot restore failed: ${e.message}")
+            false
+        }
+    }
+
+    private fun buildAuthorSet(): Set<String> {
+        val config = configStore.config.value
         val authors = mutableSetOf<String>()
+        val ownerHex = nostrService.activeHexPubkey
         if (ownerHex.isNotEmpty()) authors.add(ownerHex)
         config.whitelistedNpubs?.forEach { npub ->
             nostrService.npubToHex(npub)?.let { authors.add(it) }
         }
+        return authors
+    }
 
-        Log.d(TAG, "loadLocalRelayNotes: url=$localUrl, authors=${authors.size}, ownerHex=${ownerHex.take(16)}...")
-
-        _isRefreshing.value = true
-        _connectionStatus.value = "Connecting..."
-        _connectionColor.value = "yellow"
-        seenIds.clear()
-
-        viewModelScope.launch(Dispatchers.IO) {
-            localClient?.disconnect()
-            allEventsMutex.withLock { allEvents.clear() }
-
-            val contentNotes = mutableListOf<FeedNote>()
-            val rawEvents = mutableListOf<NostrEvent>()
-            val client = WebSocketClient(url = localUrl, scope = viewModelScope, trustLocalhost = true)
-            localClient = client
-            val subId = "local-vault-${UUID.randomUUID().toString().take(8)}"
-            var eoseReceived = false
-
-            val collectJob = launch {
-                client.messages.collect { msg ->
-                    try {
-                        val parsed = json.parseToJsonElement(msg).jsonArray
-                        val type = parsed[0].jsonPrimitive.contentOrNull ?: return@collect
-
-                        when (type) {
-                            "EVENT" -> {
-                                if (parsed.size < 3) return@collect
-                                val eventObj = parsed[2].jsonObject
-                                val id = eventObj["id"]?.jsonPrimitive?.contentOrNull ?: return@collect
-                                if (!seenIds.add(id)) return@collect
-
-                                val pubkey = eventObj["pubkey"]?.jsonPrimitive?.contentOrNull ?: return@collect
-                                val kind = eventObj["kind"]?.jsonPrimitive?.intOrNull ?: return@collect
-                                val content = eventObj["content"]?.jsonPrimitive?.contentOrNull ?: ""
-                                val createdAt = eventObj["created_at"]?.jsonPrimitive?.longOrNull ?: return@collect
-                                val sig = eventObj["sig"]?.jsonPrimitive?.contentOrNull ?: ""
-                                val tags = eventObj["tags"]?.jsonArray?.map { tagArr ->
-                                    tagArr.jsonArray.map { it.jsonPrimitive.contentOrNull ?: "" }
-                                } ?: emptyList()
-
-                                // Process metadata events via NostrService
-                                if (kind in listOf(0, 10002, 10050, 10063, 10000)) {
-                                    nostrService.processRelayMessage(msg, localUrl)
-                                    return@collect
-                                }
-
-                                // Store all non-metadata events for vault processing
-                                val nostrEvent = NostrEvent(
-                                    id = id,
-                                    pubkey = pubkey,
-                                    createdAt = createdAt,
-                                    kind = kind,
-                                    tags = tags,
-                                    content = content,
-                                    sig = sig,
-                                )
-                                rawEvents.add(nostrEvent)
-
-                                // Build FeedNote list for content notes
-                                if (kind in listOf(1, 6, 30023)) {
-                                    val note = FeedNote.fromEvent(id, pubkey, content, tags, createdAt, kind)
-                                    if (!note.isNoiseOrSpam()) {
-                                        contentNotes.add(note)
-                                    }
-                                }
-
-                                // Fetch profiles for reactors and zappers
-                                nostrService.fetchMissingProfiles(listOf(pubkey))
-                            }
-                            "EOSE" -> {
-                                eoseReceived = true
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Parse error: ${e.message}")
-                    }
-                }
+    private fun updateConnectionStatus() {
+        val outboxConnected = outboxClient?.connectionState?.value == WebSocketClient.ConnectionState.CONNECTED
+        val inboxConnected = inboxClient?.connectionState?.value == WebSocketClient.ConnectionState.CONNECTED
+        when {
+            outboxConnected && inboxConnected -> {
+                val count = _displayNotes.value.size
+                _connectionStatus.value = if (count > 0) "Local ($count)" else "Live"
+                _connectionColor.value = "green"
             }
-
-            Log.d(TAG, "Connecting WebSocket to $localUrl...")
-            client.connect()
-
-            // Wait for connection
-            var waited = 0L
-            while (client.connectionState.value != WebSocketClient.ConnectionState.CONNECTED && waited < 5000) {
-                delay(100)
-                waited += 100
+            outboxConnected || inboxConnected -> {
+                _connectionStatus.value = "Partial"
+                _connectionColor.value = "yellow"
             }
-
-            if (client.connectionState.value == WebSocketClient.ConnectionState.CONNECTED) {
-                Log.d(TAG, "Connected to local relay, sending subscription with ${authors.size} authors")
-                withContext(Dispatchers.Main.immediate) {
-                    _connectionStatus.value = "Loading..."
-                    _connectionColor.value = "yellow"
-                }
-
-                // Build author-scoped filters to fetch the owner's notes and engagement
-                val authorsJson = authors.joinToString(",") { "\"$it\"" }
-                val authorFilter = """{"kinds":[1,6,7,30023,9735],"authors":[$authorsJson],"limit":500}"""
-
-                val filters = if (ownerHex.isNotEmpty()) {
-                    // Second filter: notes/reactions mentioning the owner
-                    val mentionsFilter = """{"kinds":[1,6,7,30023,9735],"#p":["$ownerHex"],"limit":200}"""
-                    "$authorFilter,$mentionsFilter"
-                } else {
-                    authorFilter
-                }
-
-                val sent = client.send("[\"REQ\",\"$subId\",$filters]")
-                if (!sent) {
-                    Log.w(TAG, "send() returned false -- subscription not delivered")
-                    withContext(Dispatchers.Main.immediate) {
-                        _connectionStatus.value = "Offline"
-                        _connectionColor.value = "red"
-                        _isRefreshing.value = false
-                    }
-                    collectJob.cancel()
-                    client.disconnect()
-                    return@launch
-                }
-
-                // Wait for EOSE or timeout
-                val deadline = System.currentTimeMillis() + LOAD_TIMEOUT_MS
-                while (!eoseReceived && System.currentTimeMillis() < deadline) {
-                    delay(200)
-                }
-
-                // Query inbox for tagged notes (stored in separate DB on the relay)
-                val inboxUrl = "$localUrl/inbox"
-                Log.d(TAG, "Querying inbox at $inboxUrl for tagged notes...")
-                val (inboxRaw, inboxNotes) = queryRelayEndpoint(inboxUrl, filters, "local-inbox", LOAD_TIMEOUT_MS)
-                rawEvents.addAll(inboxRaw)
-                contentNotes.addAll(inboxNotes)
-                Log.d(TAG, "Inbox complete: ${inboxRaw.size} events, ${inboxNotes.size} notes")
-
-                Log.d(TAG, "Load complete: eoseReceived=$eoseReceived, rawEvents=${rawEvents.size}, contentNotes=${contentNotes.size}")
-
-                // Store all events
-                allEventsMutex.withLock {
-                    allEvents.addAll(rawEvents)
-                }
-
-                withContext(Dispatchers.Main.immediate) {
-                    val sorted = contentNotes.sortedByDescending { it.createdAt }.take(MAX_LOCAL_NOTES)
-                    _displayNotes.value = sorted
-                    _connectionStatus.value = "Local (${sorted.size})"
-                    _connectionColor.value = "green"
-                    _isRefreshing.value = false
-                    _notesHasLoadedOnce.value = true
-                    connectionRetryCount = 0
-                }
-
-                // Trigger display data update for current mode
-                scheduleUpdateDisplayData()
-            } else {
-                val errorDetail = client.lastError ?: "timeout"
-                Log.w(TAG, "Connection failed after ${waited}ms (state=${client.connectionState.value}, error=$errorDetail)")
-                collectJob.cancel()
-                client.disconnect()
-
-                // Single retry: wait 3s and try again if relay is still ready
-                if (connectionRetryCount < 1 && RelayForegroundService.readyForConnections.value) {
-                    connectionRetryCount++
-                    Log.d(TAG, "Scheduling retry in 3s (attempt $connectionRetryCount)")
-                    withContext(Dispatchers.Main.immediate) {
-                        _connectionStatus.value = "Retrying..."
-                        _connectionColor.value = "yellow"
-                        _isRefreshing.value = false
-                    }
-                    delay(3000)
-                    if (RelayForegroundService.readyForConnections.value && !_notesHasLoadedOnce.value) {
-                        loadLocalRelayNotes()
-                    } else {
-                        withContext(Dispatchers.Main.immediate) {
-                            _connectionStatus.value = "Offline"
-                            _connectionColor.value = "red"
-                        }
-                        connectionRetryCount = 0
-                    }
-                } else {
-                    withContext(Dispatchers.Main.immediate) {
-                        // Show error detail in status for debugging
-                        _connectionStatus.value = if (errorDetail.length > 30) {
-                            "Err: ${errorDetail.take(30)}..."
-                        } else {
-                            "Err: $errorDetail"
-                        }
-                        _connectionColor.value = "red"
-                        _isRefreshing.value = false
-                    }
-                    connectionRetryCount = 0
-                }
-                return@launch
+            outboxClient != null -> {
+                // Clients exist but not connected yet (connecting/reconnecting)
+                _connectionStatus.value = "Connecting..."
+                _connectionColor.value = "yellow"
             }
-
-            collectJob.cancel()
-            client.disconnect()
+            else -> {
+                _connectionStatus.value = "Offline"
+                _connectionColor.value = "red"
+            }
         }
     }
 
@@ -702,6 +845,7 @@ class DashboardViewModel @Inject constructor(
                 allEventsMutex.withLock {
                     allEvents.addAll(outboxRaw)
                     allEvents.addAll(inboxRaw)
+                    trimAllEventsLocked()
                 }
 
                 withContext(Dispatchers.Main.immediate) {
@@ -764,8 +908,11 @@ class DashboardViewModel @Inject constructor(
         updateJob?.cancel()
         updateGeneration++
         val gen = updateGeneration
+        // Longer debounce during the initial stored-event burst; 150ms (matching
+        // iOS) once live. EOSE bypasses this entirely via handleEOSE().
+        val debounceMs = if (!_notesHasLoadedOnce.value) 500L else 150L
         updateJob = viewModelScope.launch {
-            delay(150) // 150ms debounce matching iOS
+            delay(debounceMs)
             if (gen != updateGeneration) return@launch
             updateDisplayData(gen)
         }
@@ -776,13 +923,24 @@ class DashboardViewModel @Inject constructor(
         val events = allEventsMutex.withLock { allEvents.toList() }
         val owner = nostrService.activeHexPubkey
         val whitelist = resolveWhitelistedHexPubkeys()
-        val noteKinds = listOf(1, 6, 30023)
+
+        // Partition once instead of re-scanning the full list per kind
+        val noteEvents = ArrayList<NostrEvent>(events.size)
+        val reactionEvents = ArrayList<NostrEvent>()
+        val zapEvents = ArrayList<NostrEvent>()
+        for (event in events) {
+            when (event.kind) {
+                1, 6, 30023 -> noteEvents.add(event)
+                7 -> reactionEvents.add(event)
+                9735 -> zapEvents.add(event)
+            }
+        }
 
         when (currentMode) {
             VaultViewMode.NOTES -> {
                 val currentFilter = _contentFilter.value
 
-                val filtered = events.filter { event ->
+                val filtered = noteEvents.filter { event ->
                     if (event.kind !in listOf(1, 30023)) return@filter false
 
                     when (currentFilter) {
@@ -811,17 +969,20 @@ class DashboardViewModel @Inject constructor(
 
                 // Build reaction map for displayed notes
                 val rxMap = mutableMapOf<String, MutableList<Pair<String, String>>>()
-                for (event in events) {
-                    if (event.kind != 7) continue
+                val latestReaction = mutableMapOf<String, Long>()
+                for (event in reactionEvents) {
                     val targetId = event.tags.firstOrNull { it.size >= 2 && it[0] == "e" && displayedIds.contains(it[1]) }?.get(1) ?: continue
                     val emoji = if (event.content.isEmpty()) "+" else event.content
                     rxMap.getOrPut(targetId) { mutableListOf() }.add(Pair(event.pubkey, emoji))
+                    val existing = latestReaction[targetId]
+                    if (existing == null || event.createdAt > existing) {
+                        latestReaction[targetId] = event.createdAt
+                    }
                 }
 
                 // Build zap map for displayed notes
                 val zMap = mutableMapOf<String, MutableList<Pair<String, Long>>>()
-                for (event in events) {
-                    if (event.kind != 9735) continue
+                for (event in zapEvents) {
                     val targetId = event.tags.firstOrNull { it.size >= 2 && it[0] == "e" && displayedIds.contains(it[1]) }?.get(1) ?: continue
                     val parsed = parseZapReceipt(event) ?: continue
                     zMap.getOrPut(targetId) { mutableListOf() }.add(Pair(parsed.senderPubkey, parsed.amountSats))
@@ -832,6 +993,7 @@ class DashboardViewModel @Inject constructor(
                     _displayNotes.value = displaySlice
                     _reactionMap.value = rxMap
                     _zapMap.value = zMap
+                    _latestReactionDates.value = latestReaction
                     _notesHasLoadedOnce.value = true
                     _connectionStatus.value = "Local (${displaySlice.size})"
                 }
@@ -843,8 +1005,8 @@ class DashboardViewModel @Inject constructor(
                 if (currentLikesFilter == VaultLikesFilter.MY_LIKES) {
                     // My Likes: notes I reacted to
                     val myLikeDates = mutableMapOf<String, Long>()
-                    for (event in events) {
-                        if (event.kind != 7 || event.pubkey != owner) continue
+                    for (event in reactionEvents) {
+                        if (event.pubkey != owner) continue
                         val targetId = event.tags.firstOrNull { it.size >= 2 && it[0] == "e" }?.get(1) ?: continue
                         val existing = myLikeDates[targetId]
                         if (existing == null || event.createdAt > existing) {
@@ -853,8 +1015,8 @@ class DashboardViewModel @Inject constructor(
                     }
 
                     val myLikedNoteIds = myLikeDates.keys
-                    val filtered = events
-                        .filter { it.kind in noteKinds && myLikedNoteIds.contains(it.id) }
+                    val filtered = noteEvents
+                        .filter { myLikedNoteIds.contains(it.id) }
                         .sortedByDescending { myLikeDates[it.id] ?: 0L }
 
                     val displaySlice = filtered.take(maxDisplayedItems).map { event ->
@@ -865,20 +1027,21 @@ class DashboardViewModel @Inject constructor(
                     withContext(Dispatchers.Main.immediate) {
                         _displayLikedNotes.value = displaySlice
                         _reactionMap.value = emptyMap()
+                        _latestReactionDates.value = emptyMap()
                         if (displaySlice.isNotEmpty()) _likesHasLoadedOnce.value = true
                     }
                 } else {
                     // Incoming reactions on target note sets
                     val targetNoteIds: Set<String> = when (currentLikesFilter) {
                         VaultLikesFilter.ON_MY_NOTES ->
-                            events.filter { it.pubkey == owner && it.kind in noteKinds }.map { it.id }.toSet()
+                            noteEvents.filter { it.pubkey == owner }.map { it.id }.toSet()
                         VaultLikesFilter.ON_TAGGED ->
-                            events.filter {
-                                it.kind in noteKinds && it.pubkey != owner &&
+                            noteEvents.filter {
+                                it.pubkey != owner &&
                                     it.tags.any { t -> t.size >= 2 && t[0] == "p" && t[1] == owner }
                             }.map { it.id }.toSet()
                         VaultLikesFilter.ON_WHITELISTED ->
-                            events.filter { it.kind in noteKinds && whitelist.contains(it.pubkey) }.map { it.id }.toSet()
+                            noteEvents.filter { whitelist.contains(it.pubkey) }.map { it.id }.toSet()
                         else -> emptySet()
                     }
 
@@ -886,8 +1049,7 @@ class DashboardViewModel @Inject constructor(
                     val rxMap = mutableMapOf<String, MutableList<Pair<String, String>>>()
                     val latestReaction = mutableMapOf<String, Long>()
 
-                    for (event in events) {
-                        if (event.kind != 7) continue
+                    for (event in reactionEvents) {
                         if (excludeSelf && event.pubkey == owner) continue
                         val targetId = event.tags.firstOrNull {
                             it.size >= 2 && it[0] == "e" && targetNoteIds.contains(it[1])
@@ -901,8 +1063,8 @@ class DashboardViewModel @Inject constructor(
                     }
 
                     val likedNoteIds = rxMap.keys
-                    val filtered = events
-                        .filter { it.kind in noteKinds && likedNoteIds.contains(it.id) }
+                    val filtered = noteEvents
+                        .filter { likedNoteIds.contains(it.id) }
                         .sortedWith(compareByDescending<NostrEvent> { latestReaction[it.id] ?: 0L }
                             .thenByDescending { it.createdAt })
 
@@ -914,6 +1076,7 @@ class DashboardViewModel @Inject constructor(
                     withContext(Dispatchers.Main.immediate) {
                         _displayLikedNotes.value = displaySlice
                         _reactionMap.value = rxMap
+                        _latestReactionDates.value = latestReaction
                         if (displaySlice.isNotEmpty()) _likesHasLoadedOnce.value = true
                     }
                 }
@@ -921,12 +1084,11 @@ class DashboardViewModel @Inject constructor(
 
             VaultViewMode.ZAPS -> {
                 val currentZapsFilter = _zapsFilter.value
-                val zapReceipts = events.filter { it.kind == 9735 }
 
                 // Parse all zap receipts (with caching)
                 data class ParsedEntry(val receiptId: String, val parsed: ParsedZapReceipt)
                 val parsedReceipts = mutableListOf<ParsedEntry>()
-                for (receipt in zapReceipts) {
+                for (receipt in zapEvents) {
                     val parsed = parseZapReceipt(receipt) ?: continue
                     parsedReceipts.add(ParsedEntry(receipt.id, parsed))
                 }
@@ -937,7 +1099,7 @@ class DashboardViewModel @Inject constructor(
                         .mapNotNull { it.parsed.targetNoteId }
                         .toSet()
 
-                    val filtered = events.filter { it.kind in noteKinds && myZappedNoteIds.contains(it.id) }
+                    val filtered = noteEvents.filter { myZappedNoteIds.contains(it.id) }
                     val displaySlice = filtered.take(maxDisplayedItems).map { event ->
                         FeedNote.fromEvent(event.id, event.pubkey, event.content, event.tags, event.createdAt, event.kind)
                     }
@@ -952,14 +1114,14 @@ class DashboardViewModel @Inject constructor(
                     // Incoming zaps on target note sets
                     val targetNoteIds: Set<String> = when (currentZapsFilter) {
                         VaultZapsFilter.ON_MY_NOTES ->
-                            events.filter { it.pubkey == owner && it.kind in noteKinds }.map { it.id }.toSet()
+                            noteEvents.filter { it.pubkey == owner }.map { it.id }.toSet()
                         VaultZapsFilter.ON_TAGGED ->
-                            events.filter {
-                                it.kind in noteKinds && it.pubkey != owner &&
+                            noteEvents.filter {
+                                it.pubkey != owner &&
                                     it.tags.any { t -> t.size >= 2 && t[0] == "p" && t[1] == owner }
                             }.map { it.id }.toSet()
                         VaultZapsFilter.ON_WHITELISTED ->
-                            events.filter { it.kind in noteKinds && whitelist.contains(it.pubkey) }.map { it.id }.toSet()
+                            noteEvents.filter { whitelist.contains(it.pubkey) }.map { it.id }.toSet()
                         else -> emptySet()
                     }
 
@@ -975,8 +1137,8 @@ class DashboardViewModel @Inject constructor(
 
                     val zappedNoteIds = zMap.keys
                     val zapTotals = zMap.mapValues { (_, zappers) -> zappers.sumOf { it.second } }
-                    val filtered = events
-                        .filter { it.kind in noteKinds && zappedNoteIds.contains(it.id) }
+                    val filtered = noteEvents
+                        .filter { zappedNoteIds.contains(it.id) }
                         .sortedByDescending { zapTotals[it.id] ?: 0L }
 
                     val displaySlice = filtered.take(maxDisplayedItems).map { event ->
@@ -1069,6 +1231,7 @@ class DashboardViewModel @Inject constructor(
                     seenIds.add(event.id)
                 }
             }
+            trimAllEventsLocked()
         }
     }
 
@@ -1120,6 +1283,10 @@ class DashboardViewModel @Inject constructor(
 
             val parsed = ParsedZapReceipt(senderPubkey, targetId, amountSats)
             zapReceiptCache[event.id] = parsed
+            if (zapReceiptCache.size > MAX_ZAP_RECEIPT_CACHE) {
+                val toRemove = zapReceiptCache.keys.take(zapReceiptCache.size - MAX_ZAP_RECEIPT_CACHE)
+                toRemove.forEach { zapReceiptCache.remove(it) }
+            }
             return parsed
         } catch (_: Exception) {
             return null
@@ -1132,17 +1299,6 @@ class DashboardViewModel @Inject constructor(
 
     fun isWhitelisted(pubkey: String): Boolean =
         resolveWhitelistedHexPubkeys().contains(pubkey)
-
-    fun getReactionDate(noteId: String, reactorPubkey: String): java.util.Date? {
-        val events = runBlocking { allEventsMutex.withLock { allEvents.toList() } }
-        return events
-            .filter { event ->
-                event.kind == 7 &&
-                event.tags.any { tag -> tag.size >= 2 && tag[0] == "e" && tag[1] == noteId } &&
-                event.pubkey == reactorPubkey
-            }
-            .maxOfOrNull { event -> java.util.Date(event.createdAt * 1000) }
-    }
 
     /**
      * Query a relay endpoint, collecting events until EOSE or timeout.
@@ -1236,10 +1392,6 @@ class DashboardViewModel @Inject constructor(
         return Pair(rawEvents, contentNotes)
     }
 
-    override fun onCleared() {
-        super.onCleared()
-        localClient?.disconnect()
-    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1347,6 +1499,10 @@ fun DashboardScreen(
     // Reconnect to local relay when the app returns to the foreground
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         viewModel.onResume()
+    }
+    // Save snapshot when the app goes to background so next cold launch is instant
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
+        viewModel.persistSnapshot()
     }
 
     // Start/stop log polling based on relay status
@@ -1696,6 +1852,7 @@ private fun NotesContent(
     onProfileClick: (String) -> Unit,
 ) {
     val colors = LocalNostrVaultColors.current
+    val latestReactionDates by viewModel.latestReactionDates.collectAsState()
 
     if (notes.isEmpty() && (isRefreshing || !hasLoadedOnce)) {
         SkeletonFeed(count = 5)
@@ -1747,9 +1904,7 @@ private fun NotesContent(
                     profile = viewModel.profileFor(note.pubkey),
                     profiles = allProfiles,
                     reactors = reactionMap[note.id] ?: emptyList(),
-                    latestReactionDate = reactionMap[note.id]?.mapNotNull {
-                        viewModel.getReactionDate(note.id, it.first)
-                    }?.maxOrNull(),
+                    latestReactionDate = latestReactionDates[note.id]?.let { java.util.Date(it * 1000) },
                     zappers = zapMap[note.id] ?: emptyList(),
                     noteType = noteType,
                     layoutMode = if (isCompact) VaultNoteLayoutMode.COMPACT else VaultNoteLayoutMode.EXPANDED,
@@ -1798,6 +1953,7 @@ private fun LikesContent(
     onProfileClick: (String) -> Unit,
 ) {
     val colors = LocalNostrVaultColors.current
+    val latestReactionDates by viewModel.latestReactionDates.collectAsState()
 
     if (notes.isEmpty() && (isRefreshing || !hasLoadedOnce)) {
         Box(
@@ -1873,9 +2029,7 @@ private fun LikesContent(
                     profile = viewModel.profileFor(note.pubkey),
                     profiles = allProfiles,
                     reactors = reactionMap[note.id] ?: emptyList(),
-                    latestReactionDate = reactionMap[note.id]?.mapNotNull {
-                        viewModel.getReactionDate(note.id, it.first)
-                    }?.maxOrNull(),
+                    latestReactionDate = latestReactionDates[note.id]?.let { java.util.Date(it * 1000) },
                     noteType = noteType,
                     layoutMode = if (isCompact) VaultNoteLayoutMode.COMPACT else VaultNoteLayoutMode.EXPANDED,
                     onNoteClick = onNoteClick,
@@ -2459,3 +2613,9 @@ private fun StatsCard(
         }
     }
 }
+
+@kotlinx.serialization.Serializable
+data class DiskVaultSnapshot(
+    val events: List<com.nostrvault.service.NostrEvent>,
+    val savedAt: Long,
+)

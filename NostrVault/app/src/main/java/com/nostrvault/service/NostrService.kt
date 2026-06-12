@@ -499,7 +499,7 @@ class NostrService @Inject constructor(
         if (!markSeen(id)) return
 
         // Extract media URLs from content
-        val mediaItems = extractMediaURLs(content, pubkey, tags)
+        val mediaItems = extractMediaURLs(content, pubkey, tags, createdAt)
 
         val event = NostrEvent(
             id = id,
@@ -1458,7 +1458,7 @@ class NostrService @Inject constructor(
 
     fun injectEvent(event: NostrEvent) {
         if (!markSeen(event.id)) return
-        val mediaItems = extractMediaURLs(event.content, event.pubkey, event.tags)
+        val mediaItems = extractMediaURLs(event.content, event.pubkey, event.tags, event.createdAt)
         bufferLock.withLock {
             eventBuffer.add(event to mediaItems)
         }
@@ -1469,7 +1469,7 @@ class NostrService @Inject constructor(
     // Utilities
     // ══════════════════════════════════════════════════════════════════
 
-    fun extractMediaURLs(content: String, pubkey: String, tags: List<List<String>>): List<MediaItem> {
+    fun extractMediaURLs(content: String, pubkey: String, tags: List<List<String>>, createdAt: Long = 0L): List<MediaItem> {
         val urls = mutableListOf<MediaItem>()
         val urlRegex = Regex("""https?://\S+\.(jpg|jpeg|png|gif|webp|mp4|mov|webm|mp3|wav|ogg)""", RegexOption.IGNORE_CASE)
         for (match in urlRegex.findAll(content)) {
@@ -1486,6 +1486,7 @@ class NostrService @Inject constructor(
                     url = urlStr,
                     type = mediaType,
                     pubkey = pubkey,
+                    createdAt = createdAt,
                 )
             )
         }
@@ -1497,7 +1498,8 @@ class NostrService @Inject constructor(
                         url = tag[1],
                         type = MediaType.UNKNOWN,
                         pubkey = pubkey,
-                )
+                        createdAt = createdAt,
+                    )
                 )
             }
         }
@@ -1602,6 +1604,7 @@ class NostrService @Inject constructor(
 // Data types
 // ══════════════════════════════════════════════════════════════════
 
+@kotlinx.serialization.Serializable
 data class NostrEvent(
     val id: String,
     val pubkey: String,
@@ -1620,6 +1623,7 @@ data class MediaItem(
     val pubkey: String? = null,
     val tags: List<List<String>>? = null,
     val mimeType: String? = null,
+    val createdAt: Long = 0L,
 ) {
     val isAnimatedGIF: Boolean
         get() = url.lowercase().endsWith(".gif")

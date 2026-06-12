@@ -66,8 +66,7 @@ class FeedService @Inject constructor(
         private const val SNAPSHOT_MAX_AGE_MS = 24 * 60 * 60 * 1000L // 24 hours
         private const val SNAPSHOT_MAX_NOTES = 200
         private const val EXTENDED_NETWORK_CACHE_MS = 60 * 60 * 1000L // 1 hour
-        private const val MAX_SEEN_IDS = 50_000
-        private const val TRIM_SEEN_IDS = 40_000
+        private const val MAX_SEEN_IDS = 10_000
         private const val RECOMPUTE_DEBOUNCE_MS = 50L
         private const val AVATAR_PREWARM_COUNT = 80 // Warm cache for ~4 screens of visible notes
     }
@@ -198,6 +197,9 @@ class FeedService @Inject constructor(
     // completes, so disconnect() alone leaves these coroutines (and the client)
     // pinned in memory forever.
     private val feedClientJobs = ConcurrentHashMap<String, MutableList<Job>>()
+    // Relays whose auxiliary subscriptions (reactions/zaps) have been sent for the
+    // current connection. Cleared on disconnect/teardown so reconnects re-send.
+    private val auxSubsSent = ConcurrentHashMap.newKeySet<String>()
 
     // Background accumulator
     private val accumulator = BackgroundAccumulator()
@@ -603,6 +605,7 @@ class FeedService @Inject constructor(
     private fun teardownFeedClient(relayUrl: String) {
         feedClientJobs.remove(relayUrl)?.forEach { it.cancel() }
         feedClients.remove(relayUrl)?.disconnect()
+        auxSubsSent.remove(relayUrl)
     }
 
     /** Cancel and disconnect every feed client. */
@@ -611,9 +614,11 @@ class FeedService @Inject constructor(
         feedClientJobs.clear()
         feedClients.values.forEach { it.disconnect() }
         feedClients.clear()
+        auxSubsSent.clear()
     }
 
-    private fun connectFeedRelay(relayUrl: String) {
+    /** Subscription id of the primary feed REQ for the current mode. */
+    private fun primaryFeedSubId(): String {
         val label = when (_feedMode.value) {
             FeedMode.FOLLOWING -> "following"
             FeedMode.DISCOVERY -> "discovery"
@@ -621,7 +626,11 @@ class FeedService @Inject constructor(
             FeedMode.MEDIA -> "media"
             FeedMode.POPULAR -> "popular"
         }
-        val subId = "feed-$label"
+        return "feed-$label"
+    }
+
+    private fun connectFeedRelay(relayUrl: String) {
+        val subId = primaryFeedSubId()
 
         val client = WebSocketClient(
             url = relayUrl,
@@ -645,9 +654,14 @@ class FeedService @Inject constructor(
                 when (state) {
                     WebSocketClient.ConnectionState.CONNECTED -> {
                         sendPrimaryFeedSubscription(relayUrl, subId)
+                        // Mentions go out with the primary feed — they double as
+                        // notifications, so they must not wait for feed EOSE.
+                        sendMentionSubscription(relayUrl)
                         updateFeedConnectionStatus()
                     }
                     WebSocketClient.ConnectionState.DISCONNECTED -> {
+                        // New connection gets a fresh auxiliary-subscription pass
+                        auxSubsSent.remove(relayUrl)
                         updateFeedConnectionStatus()
                     }
                     else -> {}
@@ -791,13 +805,16 @@ class FeedService @Inject constructor(
             tagArr.jsonArray.map { it.jsonPrimitive.contentOrNull ?: "" }
         } ?: emptyList()
 
-        // Dedup
+        // Dedup. On overflow, rebuild from currently retained notes (iOS parity)
+        // instead of FIFO-evicting — keeps the set aligned with what's displayed.
         val isNew = seenIdsLock.withLock {
             val added = seenIds.add(id)
             if (added && seenIds.size > MAX_SEEN_IDS) {
-                val iter = seenIds.iterator()
-                val toRemove = seenIds.size - TRIM_SEEN_IDS
-                repeat(toRemove) { if (iter.hasNext()) { iter.next(); iter.remove() } }
+                val retained = HashSet<String>(_notes.value.size + _pendingNotes.value.size + 100)
+                _notes.value.forEach { retained.add(it.id) }
+                _pendingNotes.value.forEach { retained.add(it.id) }
+                seenIds.retainAll(retained)
+                seenIds.add(id)
             }
             added
         }
@@ -844,8 +861,10 @@ class FeedService @Inject constructor(
     }
 
     private fun handleFeedEOSE(subId: String, relayUrl: String) {
-        // For primary feed subscription EOSE, defer auxiliary subscriptions
-        if (subId.startsWith("feed-")) {
+        // Auxiliary subscriptions fire once per connection, on the PRIMARY feed's
+        // EOSE only. A prefix match here would also fire on the auxiliary subs'
+        // own EOSEs and loop forever (REQ → EOSE → REQ ...) against every relay.
+        if (subId == primaryFeedSubId() && auxSubsSent.add(relayUrl)) {
             sendAuxiliarySubscriptions(relayUrl)
         }
 
@@ -859,13 +878,17 @@ class FeedService @Inject constructor(
         }
     }
 
+    private fun sendMentionSubscription(relayUrl: String) {
+        val client = feedClients[relayUrl] ?: return
+        val ownerHex = nostrService.activeHexPubkey
+        if (ownerHex.isEmpty()) return
+        val mentionFilter = """{"kinds":[1,6,30023],"#p":["$ownerHex"],"limit":50}"""
+        client.send("[\"REQ\",\"feed-mentions\",$mentionFilter]")
+    }
+
     private fun sendAuxiliarySubscriptions(relayUrl: String) {
         val client = feedClients[relayUrl] ?: return
         val ownerHex = nostrService.activeHexPubkey
-
-        // Mentions
-        val mentionFilter = """{"kinds":[1,6,30023],"#p":["$ownerHex"],"limit":50}"""
-        client.send("[\"REQ\",\"feed-mentions\",${mentionFilter}]")
 
         // Reactions from followed
         val follows = _followedPubkeys.value.take(200)

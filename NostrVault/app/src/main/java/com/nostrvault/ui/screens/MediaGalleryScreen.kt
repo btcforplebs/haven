@@ -251,11 +251,25 @@ class MediaGalleryViewModel @Inject constructor(
 
                 notificationManager.updateUploadProgress(uploadId, 1.0f)
 
-                if (resultUrl != null || blossomService.localBlossomURL() != null) {
-                    notificationManager.markUploadSuccess(uploadId)
-                    refresh()
-                } else {
-                    notificationManager.markUploadFailed(uploadId, "Upload failed")
+                val localBase = blossomService.localBlossomURL()
+                val isLocalOnly = resultUrl != null && localBase != null && resultUrl.startsWith(localBase)
+                val hasMirrors = configStore.config.value.activeBlossomMirrors.isNotEmpty()
+
+                when {
+                    resultUrl != null && !isLocalOnly -> {
+                        notificationManager.markUploadSuccess(uploadId)
+                        refresh()
+                    }
+                    isLocalOnly -> {
+                        notificationManager.markUploadSuccess(uploadId)
+                        if (hasMirrors) {
+                            notificationManager.showToast("Saved locally — mirrors unavailable")
+                        }
+                        refresh()
+                    }
+                    else -> {
+                        notificationManager.markUploadFailed(uploadId, "Upload failed — relay not running")
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Upload failed", e)
@@ -264,6 +278,21 @@ class MediaGalleryViewModel @Inject constructor(
                 tempFile?.let { withContext(NonCancellable + Dispatchers.IO) { it.delete() } }
                 _isUploading.value = false
             }
+        }
+    }
+
+    private val _mirrorCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val mirrorCounts: StateFlow<Map<String, Int>> = _mirrorCounts.asStateFlow()
+
+    val totalMirrors: Int
+        get() = configStore.config.value.activeBlossomMirrors.size
+
+    fun loadMirrorCount(sha256: String) {
+        if (_mirrorCounts.value.containsKey(sha256)) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val status = blossomService.checkMirrorStatus(sha256)
+            val count = status.values.count { it }
+            _mirrorCounts.update { it + (sha256 to count) }
         }
     }
 
@@ -313,6 +342,8 @@ fun MediaGalleryScreen(
     val mediaItems by viewModel.mediaItems.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val isUploading by viewModel.isUploading.collectAsState()
+    val mirrorCounts by viewModel.mirrorCounts.collectAsState()
+    val totalMirrors = viewModel.totalMirrors
     var activeFilter by remember { mutableStateOf(MediaTypeFilter.ALL) }
     var locationFilter by remember { mutableStateOf(MediaLocationFilter.ALL) }
     var layoutMode by remember { mutableStateOf(MediaLayoutMode.GRID) }
@@ -559,6 +590,9 @@ fun MediaGalleryScreen(
                         items = filteredItems,
                         key = { _, item -> item.sha256 },
                     ) { index, item ->
+                        if (item.isLocal) {
+                            LaunchedEffect(item.sha256) { viewModel.loadMirrorCount(item.sha256) }
+                        }
                         MediaListRow(
                             item = item,
                             index = index,
@@ -571,6 +605,8 @@ fun MediaGalleryScreen(
                             onDismissMenu = { contextMenuTarget = null },
                             mediaCacheService = mediaCacheService,
                             clipboardManager = clipboardManager,
+                            mirrorCount = if (item.isLocal) mirrorCounts[item.sha256] else null,
+                            totalMirrors = totalMirrors,
                         )
                     }
                 }
@@ -659,6 +695,8 @@ private fun MediaListRow(
     onDismissMenu: () -> Unit,
     mediaCacheService: MediaCacheService,
     clipboardManager: androidx.compose.ui.platform.ClipboardManager,
+    mirrorCount: Int? = null,
+    totalMirrors: Int = 0,
 ) {
     val context = LocalContext.current
     val colors = LocalNostrVaultColors.current
@@ -739,6 +777,30 @@ private fun MediaListRow(
                         contentDescription = "Local",
                         tint = Color(0xFF4CAF50),
                         modifier = Modifier.size(14.dp),
+                    )
+                }
+            }
+            // Mirror count badge (local items only, when mirrors are configured)
+            if (item.isLocal && totalMirrors > 0) {
+                Spacer(Modifier.height(3.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    val badgeColor = when {
+                        mirrorCount == null -> TertiaryText
+                        mirrorCount == totalMirrors -> Color(0xFF4CAF50)
+                        mirrorCount > 0 -> Color(0xFFFF9800)
+                        else -> TertiaryText
+                    }
+                    Icon(
+                        imageVector = NostrVaultIcons.Cloud,
+                        contentDescription = null,
+                        tint = badgeColor,
+                        modifier = Modifier.size(12.dp),
+                    )
+                    Spacer(Modifier.width(3.dp))
+                    Text(
+                        text = if (mirrorCount == null) "…" else "$mirrorCount / $totalMirrors",
+                        color = badgeColor,
+                        fontSize = 11.sp,
                     )
                 }
             }

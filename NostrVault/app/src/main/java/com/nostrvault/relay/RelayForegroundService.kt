@@ -455,9 +455,11 @@ class RelayForegroundService : Service() {
             updateNotification(RelayStatus.RUNNING)
             Log.i(TAG, "Go relay started successfully and health check passed")
 
-            // Staggered startup: delay feed connections by 3s so relay stabilises first
+            // Staggered startup: brief delay before client connections so the relay
+            // settles first. The TCP health check above already proved it's listening,
+            // so 500ms of margin is plenty for localhost.
             serviceScope.launch {
-                delay(3000)
+                delay(500)
                 _readyForConnections.value = true
             }
 
