@@ -379,12 +379,13 @@ class BlossomService @Inject constructor(
 
         val allHashes = mutableSetOf<String>()
 
-        // Sign one BUD-02 list auth event (kind 24242) and reuse it across mirrors
-        // so servers that require auth return the list instead of 403/empty. The
-        // event is server-agnostic (no "x"/"u" tag), so a single signature is valid
-        // everywhere — and signing once avoids per-mirror external-signer (Amber)
-        // round-trips. Matches iOS mirrorAllFromExternal.
-        val listAuth = createAuthHeader("list")
+        // Sign ONE kind 24242 auth event for the ENTIRE mirror-in and reuse it for
+        // both the remote /list and every local /upload. It carries both "t" verbs
+        // (list + upload) and no "x", so the relay accepts it for either operation
+        // (upload isn't bound to a blob hash; list matches the "list" verb). This is
+        // a single signer round-trip — one Amber/NIP-46 prompt for the whole pull,
+        // instead of one per mirror plus one per blob.
+        val batchAuth = createAuthHeader(listOf("list", "upload"))
 
         // Fetch blob lists from each mirror
         for (mirror in mirrors) {
@@ -392,7 +393,7 @@ class BlossomService @Inject constructor(
                 val request = Request.Builder()
                     .url("$mirror/list/$ownerPubkey")
                     .get()
-                    .apply { if (listAuth.isNotEmpty()) addHeader("Authorization", "Nostr $listAuth") }
+                    .apply { if (batchAuth.isNotEmpty()) addHeader("Authorization", "Nostr $batchAuth") }
                     .build()
 
                 val response = remoteClient.newCall(request).execute()
@@ -410,16 +411,8 @@ class BlossomService @Inject constructor(
         val missing = allHashes.filter { !mediaCacheService.isInLocalBlossom(it) }
         onLogMessage?.invoke("Found ${missing.size} blobs to mirror")
         if (missing.isEmpty()) return@withContext
-
-        // Sign ONE upload auth (t=upload, no "x") and reuse it for every local save.
-        // The local relay (khatru/blossom) authorizes uploads on the "t"/expiration
-        // tags only — it does not bind the auth to a specific blob hash — so a single
-        // signature covers the whole batch. This avoids one signing request per blob,
-        // which with an external signer (Amber) relaunches its approval Activity over
-        // and over and stalls the pull. One list + one upload prompt covers it all.
-        val uploadAuth = createAuthHeader("upload")
-        if (uploadAuth.isEmpty()) {
-            onLogMessage?.invoke("Mirror aborted: could not sign upload auth (signer unavailable)")
+        if (batchAuth.isEmpty()) {
+            onLogMessage?.invoke("Mirror aborted: could not sign auth event (signer unavailable)")
             return@withContext
         }
 
@@ -430,7 +423,7 @@ class BlossomService @Inject constructor(
                 try {
                     val data = downloadFromMirrors(hash)
                     if (data != null) {
-                        saveToLocalRelay(data, hash, "application/octet-stream", uploadAuth)
+                        saveToLocalRelay(data, hash, "application/octet-stream", batchAuth)
                     }
                 } finally {
                     mirrorSemaphore.release()
@@ -536,17 +529,31 @@ class BlossomService @Inject constructor(
         operation: String,
         sha256: String? = null,
         uploadUrl: String? = null,
+    ): String = createAuthHeader(listOf(operation), sha256, uploadUrl)
+
+    /**
+     * Create a Blossom auth header that authorizes several operations at once by
+     * carrying one "t" tag per verb (e.g. ["list", "upload"]). The relay matches
+     * the request's verb against any present "t" tag, so a single signed event —
+     * and therefore a single signer round-trip — can cover the whole mirror-in
+     * (remote /list + local /upload). Critical for external signers (Amber/NIP-46
+     * bunker) that prompt per signature.
+     */
+    private suspend fun createAuthHeader(
+        operations: List<String>,
+        sha256: String? = null,
+        uploadUrl: String? = null,
     ): String {
         val expiration = (System.currentTimeMillis() / 1000) + 3600 // 1 hour (matches iOS)
-        val tags = mutableListOf(
-            listOf("t", operation),
-        )
+        val tags = mutableListOf<List<String>>()
+        operations.forEach { tags.add(listOf("t", it)) }
         // The "x" tag scopes auth to a specific blob; list/server-wide ops carry
         // no hash (matches iOS BUD-02 /list auth).
         sha256?.let { tags.add(listOf("x", it)) }
         tags.add(listOf("expiration", expiration.toString()))
         uploadUrl?.let { tags.add(listOf("u", it)) }
 
+        val label = operations.joinToString("+")
         // Use signEventAsync so external signers (Amber NIP-55, NIP-46) work.
         // The synchronous signEvent only handles a locally-stored key and returns
         // null under Amber (no on-device key) → empty auth header → servers reject
@@ -555,12 +562,12 @@ class BlossomService @Inject constructor(
         val event = try {
             nostrService.signEventAsync(
                 kind = AUTH_KIND,
-                content = if (sha256 != null) "Blossom $operation ${sha256.take(8)}" else "Blossom $operation",
+                content = if (sha256 != null) "Blossom $label ${sha256.take(8)}" else "Blossom $label",
                 tags = tags,
                 forceOwner = true,
             )
         } catch (e: Exception) {
-            Log.e(TAG, "Blossom auth signing failed ($operation): ${e.message}")
+            Log.e(TAG, "Blossom auth signing failed ($label): ${e.message}")
             null
         } ?: return ""
 
