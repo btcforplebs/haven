@@ -343,6 +343,8 @@ data class FeedProfile(
     var lud16: String? = null,
     var lud06: String? = null,
     var website: String? = null,
+    /** Epoch millis of the last successful metadata fetch; null for legacy/unstamped entries. */
+    var fetchedAt: Long? = null,
 ) {
     /** Best display name: display_name > name > truncated pubkey. */
     val bestName: String
