@@ -1,6 +1,14 @@
 package com.nostrvault.ui.screens.feed
 
 import android.content.Intent
+import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -16,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -82,9 +91,44 @@ fun FeedScreen(
         expandedNoteId = null
     }
 
+    // Batch-fetch all missing parent notes whenever the visible notes list changes.
+    // One REQ with all IDs instead of one REQ per item.
+    LaunchedEffect(notes) {
+        val missingIds = notes.mapNotNull { note ->
+            note.parentEventId?.takeIf { viewModel.parentNoteFor(it) == null }
+        }.distinct()
+        if (missingIds.isNotEmpty()) {
+            viewModel.fetchMissingParentNotes(missingIds)
+        }
+    }
+
+    // Batch-fetch any embedded quoted notes (nostr:note1.../nevent1...) referenced
+    // by the visible notes. Decoded to hex and fetched via the same path as parents.
+    LaunchedEffect(notes) {
+        val quotedIds = notes.flatMap { it.quotedEventIds }.distinct()
+        if (quotedIds.isNotEmpty()) {
+            viewModel.fetchMissingQuotedNotes(quotedIds)
+        }
+    }
+
+    // Once quoted notes resolve, fetch their authors' profiles if not already cached.
+    LaunchedEffect(notes, parentNotes) {
+        val quotedIds = notes.flatMap { it.quotedEventIds }.distinct()
+        if (quotedIds.isNotEmpty()) {
+            viewModel.fetchMissingQuotedProfiles(quotedIds)
+        }
+    }
+
     // Zap sheet state
     var zapNoteId by remember { mutableStateOf<String?>(null) }
     val zapSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
+    // Zap result feedback
+    LaunchedEffect(Unit) {
+        viewModel.zapMessage.collect { msg ->
+            Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+        }
+    }
 
     // More menu / delete confirmation state
     var deleteNoteId by remember { mutableStateOf<String?>(null) }
@@ -119,6 +163,45 @@ fun FeedScreen(
         }
     }
 
+    // Scroll-direction detection → drives the bottom-bar + FAB condense animation.
+    // Mirrors iOS's ScrollDirectionModifier: we write to the shared
+    // feedScrollingDown flag ONLY on a direction *flip* (never per-frame), with a
+    // small threshold to debounce jitter and a force-expand when scrolled to the
+    // very top. Because the flag is read only by the bottom bar + FAB (never by a
+    // feed row), flips don't recompose the LazyColumn — no scroll-jank.
+    LaunchedEffect(listState) {
+        var lastIndex = listState.firstVisibleItemIndex
+        var lastOffset = listState.firstVisibleItemScrollOffset
+        var scrollingDown = false
+        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
+            .collect { (index, offset) ->
+                if (index == 0 && offset < 8) {
+                    // At the very top → always expanded.
+                    if (scrollingDown) {
+                        scrollingDown = false
+                        viewModel.setFeedScrollingDown(false)
+                    }
+                } else {
+                    val down = if (index != lastIndex) index > lastIndex else offset - lastOffset > 8
+                    val up = if (index != lastIndex) index < lastIndex else lastOffset - offset > 8
+                    if (down && !scrollingDown) {
+                        scrollingDown = true
+                        viewModel.setFeedScrollingDown(true)
+                    } else if (up && scrollingDown) {
+                        scrollingDown = false
+                        viewModel.setFeedScrollingDown(false)
+                    }
+                }
+                lastIndex = index
+                lastOffset = offset
+            }
+    }
+
+    // Reset to expanded when leaving the feed (iOS resets on tab switch).
+    DisposableEffect(Unit) {
+        onDispose { viewModel.setFeedScrollingDown(false) }
+    }
+
     // Save scroll position for snapshot persistence (debounced on scroll stop)
     LaunchedEffect(listState.isScrollInProgress) {
         if (!listState.isScrollInProgress) {
@@ -150,12 +233,40 @@ fun FeedScreen(
                     delay(150)
                     // Re-check — user may have scrolled away during debounce
                     if (isAtTop) {
+                        // The reveal effect below performs the scroll once the
+                        // prepend has actually landed in the list — scrolling
+                        // here (even after a fixed delay) races composition and
+                        // strands the new post above the viewport.
                         viewModel.applyPendingNotes()
-                        // Keyed LazyColumn keeps the old first item in view
-                        // after a prepend — snap back to show the new notes.
-                        listState.scrollToItem(0)
                     }
                 }
+            }
+    }
+
+    // iOS-parity reveal. The keyed LazyColumn anchors the previous top item
+    // whenever notes are prepended, which strands the new notes above the
+    // viewport (only their bottom edge peeks out behind the translucent
+    // toolbar) — SwiftUI's ScrollView doesn't anchor, so iOS reveals new
+    // posts naturally. Watching the first note id is the only reliable
+    // signal that a prepend has actually composed; fixed delays race the
+    // filter-recompute debounce and the frame clock. When the first id
+    // changes while the user is (or just was) at the top, scroll to the
+    // absolute top so the new post lands fully in view below the toolbar.
+    // Also covers replies, which insert directly and bypass pendingNotes.
+    LaunchedEffect(Unit) {
+        var prevFirstId: String? = null
+        var wasAtTop = true
+        snapshotFlow { notes.firstOrNull()?.id to isAtTop }
+            .collect { (firstId, atTop) ->
+                // Prepend = first id changed but the old first note is still
+                // in the list (a refresh/reload replaces it entirely).
+                val prepended = firstId != null && prevFirstId != null &&
+                    firstId != prevFirstId && notes.any { it.id == prevFirstId }
+                if (prepended && (wasAtTop || atTop)) {
+                    listState.animateScrollToItem(0)
+                }
+                prevFirstId = firstId
+                wasAtTop = atTop
             }
     }
 
@@ -195,13 +306,26 @@ fun FeedScreen(
             )
         },
         floatingActionButton = {
-            FloatingActionButton(
-                onClick = onCompose,
-                modifier = Modifier.padding(bottom = 88.dp),
-                containerColor = LocalNostrVaultColors.current.primary,
-                contentColor = PrimaryText,
+            // Reading the flag inside this slot keeps recomposition scoped to the
+            // FAB — the feed list never re-renders when it shows/hides.
+            val scrollingDown by viewModel.feedScrollingDown.collectAsState()
+            val fabSpring = spring<Float>(
+                dampingRatio = 0.75f,
+                stiffness = Spring.StiffnessMediumLow,
+            )
+            AnimatedVisibility(
+                visible = !scrollingDown,
+                enter = scaleIn(animationSpec = fabSpring, initialScale = 0.5f) + fadeIn(fabSpring),
+                exit = scaleOut(animationSpec = fabSpring, targetScale = 0.5f) + fadeOut(fabSpring),
             ) {
-                Icon(NostrVaultIcons.Create, contentDescription = "Compose")
+                FloatingActionButton(
+                    onClick = onCompose,
+                    modifier = Modifier.padding(bottom = 88.dp),
+                    containerColor = LocalNostrVaultColors.current.primary,
+                    contentColor = PrimaryText,
+                ) {
+                    Icon(NostrVaultIcons.Create, contentDescription = "Compose")
+                }
             }
         },
     ) { padding ->
@@ -261,25 +385,29 @@ fun FeedScreen(
                                 note.replyToPubkey?.let { viewModel.profileFor(it) }
                             }
 
-                            // Fetch parent note if this is a reply and parent isn't cached
-                            // Move outside of LaunchedEffect for better performance
                             val parentEventId = note.parentEventId
-                            if (parentEventId != null) {
-                                LaunchedEffect(note.id, parentEventId) {
-                                    if (viewModel.parentNoteFor(parentEventId) == null) {
-                                        viewModel.fetchMissingParentNote(parentEventId)
-                                    }
-                                }
-                            }
-
                             val parentNote = parentEventId?.let { viewModel.parentNoteFor(it) }
                             val isParentNext = parentEventId?.let { viewModel.isParentNext(note.id) } ?: false
+
+                            // Resolve embedded quoted notes, keyed by their original
+                            // bech32 identifier (matches NoteCard's lookup). Keyed on
+                            // parentNotes so the map rebuilds when a quoted note arrives.
+                            val quotedNotesMap = remember(note.id, note.quotedEventIds, parentNotes) {
+                                if (note.quotedEventIds.isEmpty()) {
+                                    emptyMap()
+                                } else {
+                                    note.quotedEventIds.mapNotNull { qid ->
+                                        viewModel.quotedNoteFor(qid)?.let { qid to it }
+                                    }.toMap()
+                                }
+                            }
 
                             NoteCard(
                                 note = note,
                                 profile = noteProfile,
                                 stats = viewModel.statsFor(note.id),
                                 profiles = allProfiles,
+                                quotedNotes = quotedNotesMap,
                                 isLiked = viewModel.isLiked(note.id),
                                 isZapped = viewModel.isZapped(note.id),
                                 repostedByProfile = repostedByProfile,
@@ -292,6 +420,7 @@ fun FeedScreen(
                                 onRepost = viewModel::repostNote,
                                 onZap = { id -> zapNoteId = id },
                                 onReply = onReply ?: { _ -> onCompose() },
+                                onQuote = onQuote,
                                 onShare = { id ->
                                     val shareNote = notes.find { it.id == id }
                                     val shareText = shareNote?.content ?: "nostr:${id}"
@@ -301,7 +430,10 @@ fun FeedScreen(
                                     }
                                     context.startActivity(Intent.createChooser(intent, "Share Note"))
                                 },
-                                onMore = { id -> moreMenuNoteId = id },
+                                onBroadcast = { id -> broadcastNoteId = id },
+                                onMore = if (viewModel.isOwnNote(note.pubkey)) {
+                                    { id -> moreMenuNoteId = id }
+                                } else null,
                                 onLongPressLike = { id -> emojiPickerNoteId = id },
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                             )
@@ -334,7 +466,10 @@ fun FeedScreen(
                     count = pendingCount,
                     onClick = {
                         viewModel.applyPendingNotes()
-                        scope.launch { listState.scrollToItem(0) } // Instant scroll for better performance
+                        // Scroll toward the top right away; if the animation
+                        // outruns the prepend, the reveal effect snaps the
+                        // last bit once the new first note composes.
+                        scope.launch { listState.animateScrollToItem(0) }
                     },
                     modifier = Modifier
                         .align(Alignment.TopCenter)
@@ -367,44 +502,6 @@ fun FeedScreen(
             title = { Text("Actions") },
             text = {
                 Column {
-                    // Quote
-                    if (onQuote != null) {
-                        TextButton(
-                            onClick = {
-                                moreMenuNoteId?.let { onQuote(it) }
-                                moreMenuNoteId = null
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Icon(NostrVaultIcons.Quote, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text("Quote Post")
-                            }
-                        }
-                    }
-
-                    // Broadcast
-                    TextButton(
-                        onClick = {
-                            broadcastNoteId = moreMenuNoteId
-                            moreMenuNoteId = null
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Icon(NostrVaultIcons.Send, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Broadcast")
-                        }
-                    }
-
                     // Delete (own notes only)
                     if (isOwn) {
                         TextButton(
@@ -755,30 +852,36 @@ private fun EmptyFeedPlaceholder(mode: FeedMode) {
 @Composable
 private fun NewPostsPill(count: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val colors = LocalNostrVaultColors.current
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(50),
-        color = colors.primary,
-        shadowElevation = 8.dp,
-        modifier = modifier,
+    // Mirrors iOS: Capsule fill(havenPurple/theme primary), white content,
+    // soft offset drop shadow (black 40%, radius 8, y+4), 10/20 padding,
+    // arrow.up size 12 bold + "N New Posts" size 13 bold.
+    val shape = RoundedCornerShape(50)
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .shadow(
+                elevation = 8.dp,
+                shape = shape,
+                ambientColor = Color.Black.copy(alpha = 0.4f),
+                spotColor = Color.Black.copy(alpha = 0.4f),
+            )
+            .clip(shape)
+            .background(colors.primary)
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp, horizontal = 20.dp),
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(vertical = 10.dp, horizontal = 20.dp),
-        ) {
-            Icon(
-                imageVector = NostrVaultIcons.ArrowUp,
-                contentDescription = null,
-                tint = PrimaryText,
-                modifier = Modifier.size(14.dp),
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = "$count New Post${if (count != 1) "s" else ""}",
-                fontWeight = FontWeight.Bold,
-                fontSize = 13.sp,
-                color = PrimaryText,
-            )
-        }
+        Icon(
+            imageVector = NostrVaultIcons.ArrowUp,
+            contentDescription = null,
+            tint = PrimaryText,
+            modifier = Modifier.size(12.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = "$count New Posts",
+            fontWeight = FontWeight.Bold,
+            fontSize = 13.sp,
+            color = PrimaryText,
+        )
     }
 }
