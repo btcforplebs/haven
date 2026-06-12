@@ -19,6 +19,7 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.*
+import kotlin.coroutines.resume
 import java.net.URL
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -1356,6 +1357,81 @@ class NostrService @Inject constructor(
                     client.disconnect()
                     tempClientsLock.withLock { temporaryClients.remove(client) }
                 } catch (_: Exception) {}
+            }
+        }
+    }
+
+    /**
+     * Fetch the owner's media-bearing notes from the local relay (and inbox relays).
+     *
+     * Queries kinds 1 (text notes), 1063 (NIP-94 file metadata) and 30023
+     * (long-form) authored by [pubkey]. Returns [FeedNote]s with their
+     * media URLs already extracted (regex + imeta) by [FeedNote.fromEvent].
+     *
+     * Used by the media gallery to surface media referenced in the user's own
+     * notes that may not exist as a local Blossom blob — iOS parity.
+     */
+    suspend fun fetchOwnerMediaNotes(pubkey: String): List<FeedNote> = suspendCancellableCoroutine { cont ->
+        val config = configStore.config.value
+        val relayUrls = buildList {
+            config.nostrURL?.let { add(it) }
+            config.inboxRelays?.let { addAll(it) }
+        }.distinct().take(5)
+        if (relayUrls.isEmpty()) { cont.resume(emptyList()); return@suspendCancellableCoroutine }
+
+        val subId = "ownermedia-${UUID.randomUUID().toString().take(8)}"
+        val collected = java.util.concurrent.ConcurrentHashMap<String, FeedNote>()
+        val resumed = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        fun finish() {
+            if (resumed.compareAndSet(false, true)) {
+                cont.resume(collected.values.sortedByDescending { it.createdAt })
+            }
+        }
+
+        for (relayUrl in relayUrls) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val client = WebSocketClient(url = relayUrl, scope = scope, trustLocalhost = relayUrl.contains("localhost") || relayUrl.contains("127.0.0.1"))
+                    tempClientsLock.withLock { temporaryClients.add(client) }
+
+                    scope.launch {
+                        client.messages.collect { msg ->
+                            try {
+                                val parsed = json.parseToJsonElement(msg).jsonArray
+                                if (parsed.size < 2) return@collect
+                                val type = parsed[0].jsonPrimitive.contentOrNull ?: return@collect
+                                val sid = parsed[1].jsonPrimitive.contentOrNull ?: return@collect
+                                if (sid != subId) return@collect
+                                if (type == "EVENT" && parsed.size >= 3) {
+                                    val ev = parsed[2].jsonObject
+                                    val id = ev["id"]?.jsonPrimitive?.contentOrNull ?: return@collect
+                                    val pk = ev["pubkey"]?.jsonPrimitive?.contentOrNull ?: return@collect
+                                    val content = ev["content"]?.jsonPrimitive?.contentOrNull ?: ""
+                                    val createdAt = ev["created_at"]?.jsonPrimitive?.longOrNull ?: 0L
+                                    val kind = ev["kind"]?.jsonPrimitive?.intOrNull ?: return@collect
+                                    val tags: List<List<String>> = try {
+                                        ev["tags"]?.jsonArray?.map { t -> t.jsonArray.map { it.jsonPrimitive.content } } ?: emptyList()
+                                    } catch (_: Exception) { emptyList() }
+                                    collected[id] = FeedNote.fromEvent(id, pk, content, tags, createdAt, kind)
+                                } else if (type == "EOSE") {
+                                    finish()
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    }
+
+                    client.connect()
+                    val filter = """{"kinds":[1,1063,30023],"authors":["$pubkey"],"limit":500}"""
+                    client.send("[\"REQ\",\"$subId\",$filter]")
+
+                    delay(TEMP_CLIENT_DISCONNECT_MS)
+                    client.disconnect()
+                    tempClientsLock.withLock { temporaryClients.remove(client) }
+                    finish()
+                } catch (_: Exception) {
+                    finish()
+                }
             }
         }
     }
