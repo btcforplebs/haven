@@ -274,73 +274,80 @@ private fun ExpandedLayout(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.weight(1f),
             ) {
-                // Name (iOS line 249-251)
-                Text(
-                    text = displayName,
-                    color = PrimaryText,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
-                )
+                // Leading group (name + badges + note type) fills the row so the
+                // timestamp pins flush-right. A single weighted child here avoids
+                // the two-weight tug-of-war that left the time floating mid-row.
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    // Name (iOS line 249-251)
+                    Text(
+                        text = displayName,
+                        color = PrimaryText,
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+
+                    Spacer(Modifier.width(6.dp))
+
+                    // Reposted badge (iOS lines 253-261)
+                    if (note.repostedBy != null) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp),
+                        ) {
+                            Icon(
+                                imageVector = NostrVaultIcons.Repost,
+                                contentDescription = null,
+                                tint = RepostGreen,
+                                modifier = Modifier.size(10.dp),
+                            )
+                            Text(
+                                text = "Reposted",
+                                color = RepostGreen,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
+                    }
+
+                    // Reply badge (iOS lines 263-271)
+                    if (note.isReply) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(3.dp),
+                        ) {
+                            Icon(
+                                imageVector = NostrVaultIcons.Reply,
+                                contentDescription = null,
+                                tint = LocalNostrVaultColors.current.primary.copy(alpha = 0.7f),
+                                modifier = Modifier.size(10.dp),
+                            )
+                            Text(
+                                text = "Reply",
+                                color = LocalNostrVaultColors.current.primary.copy(alpha = 0.7f),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
+                    }
+
+                    // Note type icon (iOS lines 273-275)
+                    Icon(
+                        imageVector = noteType.icon,
+                        contentDescription = null,
+                        tint = noteType.color,
+                        modifier = Modifier.size(10.dp),
+                    )
+                }
 
                 Spacer(Modifier.width(6.dp))
-
-                // Reposted badge (iOS lines 253-261)
-                if (note.repostedBy != null) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(3.dp),
-                    ) {
-                        Icon(
-                            imageVector = NostrVaultIcons.Repost,
-                            contentDescription = null,
-                            tint = RepostGreen,
-                            modifier = Modifier.size(10.dp),
-                        )
-                        Text(
-                            text = "Reposted",
-                            color = RepostGreen,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium,
-                        )
-                    }
-                    Spacer(Modifier.width(6.dp))
-                }
-
-                // Reply badge (iOS lines 263-271)
-                if (note.isReply) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(3.dp),
-                    ) {
-                        Icon(
-                            imageVector = NostrVaultIcons.Reply,
-                            contentDescription = null,
-                            tint = LocalNostrVaultColors.current.primary.copy(alpha = 0.7f),
-                            modifier = Modifier.size(10.dp),
-                        )
-                        Text(
-                            text = "Reply",
-                            color = LocalNostrVaultColors.current.primary.copy(alpha = 0.7f),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Medium,
-                        )
-                    }
-                    Spacer(Modifier.width(6.dp))
-                }
-
-                // Note type icon (iOS lines 273-275)
-                Icon(
-                    imageVector = noteType.icon,
-                    contentDescription = null,
-                    tint = noteType.color,
-                    modifier = Modifier.size(10.dp),
-                )
-
-                // Spacer pushes time to far right (iOS line 277)
-                Spacer(Modifier.weight(1f))
 
                 // Timestamp (iOS lines 279-282)
                 Text(
