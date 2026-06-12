@@ -506,6 +506,13 @@ class DashboardViewModel @Inject constructor(
      * Thin wrapper for pull-to-refresh. Full reload clears state.
      */
     fun loadLocalRelayNotes() {
+        // Pull-to-refresh: ask the embedded relay to fetch newly tagged events
+        // (replies, reactions, zaps, reposts, mentions, DMs) and the owner's own
+        // notes from external relays into the local DBs. Injected events then
+        // stream in over the local subscription opened below. Non-blocking.
+        runCatching { com.nostrvault.relay.HavenBridge.requestRelaySync() }
+            .onFailure { Log.w(TAG, "requestRelaySync failed: ${it.message}") }
+
         isFullReload = true
         seenIds.clear()
         viewModelScope.launch {
