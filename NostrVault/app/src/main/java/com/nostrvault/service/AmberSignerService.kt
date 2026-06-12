@@ -8,6 +8,8 @@ import android.util.Log
 import com.nostrvault.data.local.ConfigStore
 import com.nostrvault.relay.HavenBridge
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import java.util.UUID
 import javax.inject.Inject
@@ -30,6 +32,14 @@ class AmberSignerService @Inject constructor(
         private const val DEFAULT_PACKAGE = "com.greenart7c3.nostrsigner"
         private const val INTENT_TIMEOUT_MS = 120_000L // 2 minutes for user interaction
     }
+
+    /**
+     * Serializes all signer round-trips. Amber funnels signing through a single
+     * activity / content-provider and silently drops requests that arrive while
+     * another is in flight. Concurrent callers (e.g. mirroring many blobs at
+     * once) must queue, or signatures are lost ("Amber ignored it, moved too fast").
+     */
+    private val signerLock = Mutex()
 
     /** Cached after first successful get_public_key call. */
     var cachedPubkey: String? = null
@@ -128,30 +138,33 @@ class AmberSignerService @Inject constructor(
             return null
         }
 
-        // Try content provider first (silent background signing)
-        tryContentProviderSign(unsignedEventJson, currentUser)?.let { return it }
+        // Serialize: concurrent signs race Amber's single activity and get dropped.
+        return signerLock.withLock {
+            // Try content provider first (silent background signing)
+            tryContentProviderSign(unsignedEventJson, currentUser)?.let { return@withLock it }
 
-        // Intent fallback (launches Amber for approval)
-        val requestId = UUID.randomUUID().toString()
-        val intent = buildIntent("sign_event", requestId).apply {
-            data = Uri.parse("nostrsigner:$unsignedEventJson")
-            putExtra("current_user", currentUser)
-        }
+            // Intent fallback (launches Amber for approval)
+            val requestId = UUID.randomUUID().toString()
+            val intent = buildIntent("sign_event", requestId).apply {
+                data = Uri.parse("nostrsigner:$unsignedEventJson")
+                putExtra("current_user", currentUser)
+            }
 
-        val result = withTimeoutOrNull(INTENT_TIMEOUT_MS) {
-            AmberResultBridge.launchAndAwait(intent, requestId)
-        }
+            val result = withTimeoutOrNull(INTENT_TIMEOUT_MS) {
+                AmberResultBridge.launchAndAwait(intent, requestId)
+            }
 
-        if (result == null) {
-            Log.w(TAG, "Amber sign_event timed out")
-            return null
-        }
-
-        return if (!result.rejected && result.resultCode == android.app.Activity.RESULT_OK) {
-            result.event
-        } else {
-            Log.w(TAG, "Amber sign_event rejected")
-            null
+            when {
+                result == null -> {
+                    Log.w(TAG, "Amber sign_event timed out")
+                    null
+                }
+                !result.rejected && result.resultCode == android.app.Activity.RESULT_OK -> result.event
+                else -> {
+                    Log.w(TAG, "Amber sign_event rejected")
+                    null
+                }
+            }
         }
     }
 
