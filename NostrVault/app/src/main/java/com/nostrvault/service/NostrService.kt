@@ -1340,9 +1340,11 @@ class NostrService @Inject constructor(
                             .onSubscription { subscribed.complete(Unit) }
                             .collect { msg ->
                             try {
-                                Log.d(TAG, "fetchProfileNotes: RX from $relayUrl: ${msg.take(80)}")
                                 val parsed = json.parseToJsonElement(msg).jsonArray
-                                if (parsed.size < 3) return@collect
+                                // EOSE frames are ["EOSE", subId] (size 2). A < 3
+                                // guard dropped them before the EOSE handler, so the
+                                // collected notes were never delivered via onResult.
+                                if (parsed.size < 2) return@collect
                                 val type = parsed[0].jsonPrimitive.contentOrNull ?: return@collect
                                 val sid = parsed[1].jsonPrimitive.contentOrNull ?: return@collect
                                 if (type == "EVENT" && sid == subId) {
@@ -1575,7 +1577,10 @@ class NostrService @Inject constructor(
                         client.messages.collect { msg ->
                             try {
                                 val parsed = json.parseToJsonElement(msg).jsonArray
-                                if (parsed.size < 3) return@collect
+                                // EOSE is ["EOSE", subId] (size 2); a < 3 guard dropped
+                                // it so onEose never fired and replies/thread results
+                                // were never delivered. Same bug as fetchProfileNotes.
+                                if (parsed.size < 2) return@collect
                                 val type = parsed[0].jsonPrimitive.contentOrNull ?: return@collect
                                 val sid = parsed[1].jsonPrimitive.contentOrNull ?: return@collect
                                 if (type == "EVENT" && sid == subId) {
