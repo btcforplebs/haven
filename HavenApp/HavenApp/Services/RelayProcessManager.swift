@@ -57,10 +57,8 @@ class RelayProcessManager: ObservableObject {
     @Published var cpuUsage: Double = 0
     @Published var activeConnections: Int = 0
     @Published var eventsStored: Int = 0
+    /// Red dot: true only when events from OTHERS arrive in your inbox/chat relay.
     @Published var hasNewRelayActivity: Bool = false
-    private var eventsStoredWhenLastViewed: Int = 0
-    /// Grace period after user posts — suppress activity dot for own events
-    private var activitySuppressedUntil: Date?
 
     private var outputPipe: Pipe?
     private var stderrPipe: Pipe?
@@ -154,17 +152,7 @@ class RelayProcessManager: ObservableObject {
     typealias LogEntry = RelayLogParser.LogEntry
     
     func markRelayViewed() {
-        eventsStoredWhenLastViewed = eventsStored
         hasNewRelayActivity = false
-    }
-
-    /// Suppress the relay activity red dot briefly after the user posts their own event.
-    func suppressActivityForOwnPost() {
-        // Use a longer suppression window to account for relay processing time and network latency
-        activitySuppressedUntil = Date().addingTimeInterval(5)
-        // Account for user's post plus potential batch/echo events
-        // Buffer of +2 handles edge cases where post is batched with incoming events
-        eventsStoredWhenLastViewed = eventsStored + 2
     }
 
     /// Enqueue a lifecycle operation behind all previously enqueued ones.
@@ -612,7 +600,6 @@ class RelayProcessManager: ObservableObject {
         // Reset the log-based event counter so import counts don't
         // carry over and corrupt the post-import stats refresh.
         eventsStored = 0
-        eventsStoredWhenLastViewed = 0
         hasNewRelayActivity = false
 
         let relayDataDir = ConfigService.shared.relayDataDir
@@ -915,10 +902,11 @@ class RelayProcessManager: ObservableObject {
         // Metrics
         if batch.eventsStoredDelta != 0 {
             eventsStored += batch.eventsStoredDelta
-            let suppressed = activitySuppressedUntil.map { Date() < $0 } ?? false
-            if !suppressed && eventsStored > eventsStoredWhenLastViewed {
-                hasNewRelayActivity = true
-            }
+        }
+        // Red dot reflects only inbound activity from OTHERS (events tagging you /
+        // DMs) — never your own posts, blasts, or private/outbox writes.
+        if batch.inboxActivityDelta > 0 {
+            hasNewRelayActivity = true
         }
         if batch.connectionsDelta != 0 {
             activeConnections = max(0, activeConnections + batch.connectionsDelta)

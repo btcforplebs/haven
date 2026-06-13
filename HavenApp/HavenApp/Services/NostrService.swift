@@ -976,8 +976,8 @@ class NostrService: ObservableObject {
     /// Posts an event to the local relay and broadcasts to configured relays
     func postEvent(_ event: NostrEvent) {
         print("NostrService: postEvent called – id=\(event.id.prefix(8)) kind=\(event.kind) sig=\(event.sig.prefix(8))")
-        // Suppress the relay activity red dot for this self-authored event
-        RelayProcessManager.shared.suppressActivityForOwnPost()
+        // Note: the relay-activity red dot is driven solely by inbound events from
+        // others (see RelayProcessManager), so self-authored posts never trigger it.
 
         // Update local state immediately for instant feedback
         DispatchQueue.main.async { [weak self] in

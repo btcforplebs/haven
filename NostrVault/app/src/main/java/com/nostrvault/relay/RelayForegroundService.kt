@@ -12,6 +12,10 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.nostrvault.MainActivity
 import com.nostrvault.R
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -131,21 +135,26 @@ class RelayForegroundService : Service() {
         }
 
         // ── Relay activity badge ────────────────────────────────
+        // The red dot reflects ONLY inbound events from other people (replies,
+        // reactions, zaps, reposts, DMs that tag you). It is driven by the live
+        // log poller (see LogStore) detecting "in your inbox" / "in your chat
+        // relay" lines -- NOT by the total stored-event count, which also grows
+        // from your own posts, blasts, and private/outbox writes.
         private val _hasNewRelayActivity = MutableStateFlow(false)
         val hasNewRelayActivity: StateFlow<Boolean> = _hasNewRelayActivity.asStateFlow()
 
-        private var eventsStoredWhenLastViewed = 0
-
         fun markRelayViewed() {
-            eventsStoredWhenLastViewed = _eventsStored.value
             _hasNewRelayActivity.value = false
         }
 
+        /** Light the red dot for an event that arrived from someone else. */
+        fun markInboxActivity() {
+            _hasNewRelayActivity.value = true
+        }
+
+        /** Update the displayed event-count stat. Does NOT affect the red dot. */
         fun updateEventsStored(count: Int) {
             _eventsStored.value = count
-            if (count > eventsStoredWhenLastViewed) {
-                _hasNewRelayActivity.value = true
-            }
         }
 
         fun start(context: Context) {
@@ -161,6 +170,13 @@ class RelayForegroundService : Service() {
 
     enum class RelayStatus { BOOTING, IMPORTING, RUNNING, OFFLINE }
 
+    /** Hilt accessor so this (non-injected) Service can reach the LogStore singleton. */
+    @EntryPoint
+    @InstallIn(SingletonComponent::class)
+    interface LogStoreEntryPoint {
+        fun logStore(): LogStore
+    }
+
     // ── Lifecycle state machine (replaces bare `relayStarted` boolean) ──
 
     private enum class LifecycleState { IDLE, BOOTING, RUNNING, STOPPING }
@@ -175,7 +191,19 @@ class RelayForegroundService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var healthWatchdogJob: Job? = null
 
+    private val logStore: LogStore by lazy {
+        EntryPointAccessors.fromApplication(applicationContext, LogStoreEntryPoint::class.java).logStore()
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        // Own the live log poller for the whole service lifetime so the relay-activity
+        // red dot is detected continuously (not only while the Dashboard is on-screen).
+        // The poll loop idles harmlessly until the Go relay is loaded.
+        logStore.startPolling(serviceScope)
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {

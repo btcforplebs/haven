@@ -1659,16 +1659,9 @@ fun DashboardScreen(
         viewModel.persistSnapshot()
     }
 
-    // Start/stop log polling based on relay status
-    val logRelayStatus by RelayForegroundService.relayStatus.collectAsState()
-    LaunchedEffect(logRelayStatus) {
-        when (logRelayStatus) {
-            RelayForegroundService.RelayStatus.BOOTING,
-            RelayForegroundService.RelayStatus.IMPORTING,
-            RelayForegroundService.RelayStatus.RUNNING -> logStore.startPolling(this)
-            RelayForegroundService.RelayStatus.OFFLINE -> logStore.stopPolling()
-        }
-    }
+    // Log polling is owned by RelayForegroundService for the relay's whole lifetime
+    // (so the relay-activity red dot is detected continuously, not just while this
+    // screen is visible). The console just observes logStore.logs below.
 
     // Connection dot color for FAB
     val dotColor = when (connectionColor) {

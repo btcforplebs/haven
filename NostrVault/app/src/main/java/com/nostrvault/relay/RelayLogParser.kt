@@ -71,6 +71,10 @@ object RelayLogParser {
         var stopBooting: Boolean = false,
         var stopWotSyncing: Boolean = false,
         var eventsStoredDelta: Int = 0,
+        // Inbound events from OTHERS that tag you (replies, reactions, zaps,
+        // reposts, DMs / gift-wraps). Drives the "new relay activity" red dot --
+        // deliberately excludes your own posts/blasts and private/outbox writes.
+        var inboxActivityDelta: Int = 0,
         var connectionsDelta: Int = 0,
         var isLocked: Boolean = false,
         var isPortConflict: Boolean = false,
@@ -179,6 +183,14 @@ object RelayLogParser {
             line.contains("blasted event") -> {
                 batch.eventsStoredDelta += 1
             }
+        }
+
+        // Activity from OTHERS only -- the inbox/chat import handler logs these
+        // exclusively for events authored by other people that tag you. Your own
+        // posts ("event stored"/"blasted event") never hit this path, so this is
+        // the precise signal for the "new relay activity" red dot.
+        if (line.contains("in your inbox") || line.contains("in your chat relay")) {
+            batch.inboxActivityDelta += 1
         }
 
         // ---- Booting status ----

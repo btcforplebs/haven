@@ -60,6 +60,12 @@ class LogStore @Inject constructor() {
                         if (HavenBridge.isLoaded) HavenBridge.getImportLog() else null
                     }
                     if (!message.isNullOrBlank()) {
+                        // Light the red dot only for inbound events from OTHERS. The
+                        // relay logs these phrases exclusively in its inbox/chat import
+                        // handler; your own posts/blasts never produce them.
+                        if (message.contains("in your inbox") || message.contains("in your chat relay")) {
+                            RelayForegroundService.markInboxActivity()
+                        }
                         val entry = RelayLogParser.LogEntry.parse(message)
                         addEntry(entry)
                     }
