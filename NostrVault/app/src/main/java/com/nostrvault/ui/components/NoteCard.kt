@@ -330,9 +330,11 @@ fun NoteCard(
 
             Spacer(Modifier.height(8.dp))
 
-            // Engagement bar
+            // Engagement bar — use effectiveEventId so that interactions
+            // (reply, like, repost, zap) target the original note for kind-6
+            // reposts, not the repost wrapper event.
             EngagementBar(
-                noteId = note.id,
+                noteId = note.effectiveEventId,
                 isLiked = isLiked,
                 isZapped = isZapped,
                 onReply = onReply,

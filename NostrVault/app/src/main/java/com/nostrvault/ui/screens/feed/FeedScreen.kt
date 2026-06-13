@@ -393,7 +393,7 @@ fun FeedScreen(
                                 onReply = onReply ?: { _ -> onCompose() },
                                 onQuote = onQuote,
                                 onShare = { id ->
-                                    val shareNote = notes.find { it.id == id }
+                                    val shareNote = notes.find { it.id == id || it.effectiveEventId == id }
                                     val shareText = shareNote?.content ?: "nostr:${id}"
                                     val intent = Intent(Intent.ACTION_SEND).apply {
                                         type = "text/plain"
@@ -465,7 +465,7 @@ fun FeedScreen(
 
     // More menu dropdown
     if (moreMenuNoteId != null) {
-        val targetNote = notes.find { it.id == moreMenuNoteId }
+        val targetNote = notes.find { it.id == moreMenuNoteId || it.effectiveEventId == moreMenuNoteId }
         val isOwn = targetNote != null && viewModel.isOwnNote(targetNote.pubkey)
 
         AlertDialog(
@@ -537,7 +537,7 @@ fun FeedScreen(
     }
 
     // Broadcast sheet
-    val broadcastNote = broadcastNoteId?.let { id -> notes.find { it.id == id } }
+    val broadcastNote = broadcastNoteId?.let { id -> notes.find { it.id == id || it.effectiveEventId == id } }
     if (broadcastNote != null) {
         BroadcastSheet(
             note = broadcastNote,

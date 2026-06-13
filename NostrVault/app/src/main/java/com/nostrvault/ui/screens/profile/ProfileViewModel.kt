@@ -230,6 +230,7 @@ class ProfileViewModel @Inject constructor(
         if (note.pubkey != _pubkey.value) return
         if (!seenNoteIds.add(note.id)) return
         _profileNotes.value = (_profileNotes.value + note).sortedByDescending { it.createdAt }
+        feedService.cacheNote(note)
     }
 
     @Synchronized
@@ -239,6 +240,7 @@ class ProfileViewModel @Inject constructor(
             nostrService.fetchMissingProfiles(listOf(note.pubkey))
         }
         _taggedNotes.value = (_taggedNotes.value + note).sortedByDescending { it.createdAt }
+        feedService.cacheNote(note)
     }
 
     /** Infinite-scroll: page older notes (or tagged) on the open stream sockets. */

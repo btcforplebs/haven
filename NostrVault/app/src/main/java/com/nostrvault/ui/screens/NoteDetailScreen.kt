@@ -157,6 +157,7 @@ class NoteDetailViewModel @Inject constructor(
      */
     private fun startThreadLoad(foundNote: FeedNote, showLoadingStates: Boolean = true) {
         _note.value = foundNote
+        feedService.cacheNote(foundNote)
 
         // Add the opened note into the reply pool immediately so it shows up as
         // a child when its parent is focused. Without this, legacy notes that
@@ -228,6 +229,7 @@ class NoteDetailViewModel @Inject constructor(
         _allReplies.value = (_allReplies.value + incoming)
             .distinctBy { it.id }
             .sortedBy { it.createdAt }
+        incoming.forEach { feedService.cacheNote(it) }
     }
 
     /**

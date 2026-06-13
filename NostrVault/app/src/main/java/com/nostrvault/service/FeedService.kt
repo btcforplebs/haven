@@ -1333,7 +1333,24 @@ class FeedService @Inject constructor(
     }
 
     fun findNote(id: String): FeedNote? {
-        return _notes.value.firstOrNull { it.id == id }
+        return _notes.value.firstOrNull { it.id == id || it.effectiveEventId == id }
+            ?: _parentNotesCache.value[id]
+    }
+
+    /**
+     * Register a note in the supplementary cache so that [findNote] can locate
+     * it even when the note isn't part of the main feed list. Called by
+     * ProfileViewModel and NoteDetailViewModel so ComposeNoteScreen can resolve
+     * reply/quote targets loaded outside the feed.
+     */
+    fun cacheNote(note: FeedNote) {
+        var updated = _parentNotesCache.value + (note.id to note)
+        // For kind-6 reposts, also cache under the original note's ID so
+        // lookups by effectiveEventId succeed.
+        if (note.effectiveEventId != note.id) {
+            updated = updated + (note.effectiveEventId to note)
+        }
+        _parentNotesCache.value = updated
     }
 
     // ══════════════════════════════════════════════════════════════════
