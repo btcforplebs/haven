@@ -39,6 +39,10 @@ class BlossomDashboardViewModel @Inject constructor(
     private val _isLoadingStats = MutableStateFlow(true)
     val isLoadingStats: StateFlow<Boolean> = _isLoadingStats.asStateFlow()
 
+    /** Number of local blobs present on every reachable mirror (fully backed up). */
+    private val _backedUpCount = MutableStateFlow(0)
+    val backedUpCount: StateFlow<Int> = _backedUpCount.asStateFlow()
+
     // ── Mirrors ───────────────────────────────────────────────
 
     private val _mirrors = MutableStateFlow<List<MirrorInfo>>(emptyList())
@@ -54,6 +58,10 @@ class BlossomDashboardViewModel @Inject constructor(
 
     private val _syncMessage = MutableStateFlow("")
     val syncMessage: StateFlow<String> = _syncMessage.asStateFlow()
+
+    /** Progress of the active pull/push, 0f..1f. */
+    private val _syncProgress = MutableStateFlow(0f)
+    val syncProgress: StateFlow<Float> = _syncProgress.asStateFlow()
 
     // ── Activity logs ─────────────────────────────────────────
 
@@ -79,10 +87,11 @@ class BlossomDashboardViewModel @Inject constructor(
             _mirrors.value = mirrorUrls.map { MirrorInfo(url = it) }
 
             // Load blob stats
+            var localBlobs = emptyList<com.nostrvault.service.BlobDescriptor>()
             try {
-                val blobs = statsService.fetchBlobList(nostrService.ownerHexPubkey)
-                _totalFiles.value = blobs.size
-                _totalSize.value = blobs.sumOf { it.size ?: 0L }
+                localBlobs = statsService.fetchBlobList(nostrService.ownerHexPubkey)
+                _totalFiles.value = localBlobs.size
+                _totalSize.value = localBlobs.sumOf { it.size ?: 0L }
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to load blob stats: ${e.message}")
             }
@@ -91,7 +100,46 @@ class BlossomDashboardViewModel @Inject constructor(
 
             // Health check mirrors in parallel
             checkMirrorHealth()
+
+            // Compute backup coverage in the background (one /list call per mirror)
+            computeBackedUpCount(localBlobs, mirrorUrls)
         }
+    }
+
+    /**
+     * A blob counts as backed up when it is present on every reachable mirror.
+     * Costs one `/list/<pubkey>` request per mirror, not per blob. Mirrors that
+     * fail to respond are excluded rather than treated as missing the blob.
+     */
+    private suspend fun computeBackedUpCount(
+        localBlobs: List<com.nostrvault.service.BlobDescriptor>,
+        mirrorUrls: List<String>,
+    ) {
+        if (localBlobs.isEmpty() || mirrorUrls.isEmpty()) {
+            _backedUpCount.value = 0
+            return
+        }
+
+        val pubkey = nostrService.ownerHexPubkey
+        val mirrorHashSets = mirrorUrls.map { mirror ->
+            viewModelScope.async(Dispatchers.IO) {
+                try {
+                    statsService.fetchBlobList(pubkey, mirror)
+                        .mapNotNull { it.sha256?.lowercase() }
+                        .toSet()
+                } catch (e: Exception) {
+                    null // unreachable — exclude from the "all mirrors" check
+                }
+            }
+        }.awaitAll().filterNotNull()
+
+        if (mirrorHashSets.isEmpty()) {
+            _backedUpCount.value = 0
+            return
+        }
+
+        val localHashes = localBlobs.mapNotNull { it.sha256?.lowercase() }
+        _backedUpCount.value = localHashes.count { hash -> mirrorHashSets.all { hash in it } }
     }
 
     fun checkMirrorHealth() {
@@ -118,6 +166,7 @@ class BlossomDashboardViewModel @Inject constructor(
     fun pullFromNotes() {
         if (_isPulling.value) return
         _isPulling.value = true
+        _syncProgress.value = 0f
         _syncMessage.value = "Scanning notes for media..."
         addLog("Starting pull from notes...", BlossomActivityLog.LogLevel.INFO)
 
@@ -139,6 +188,7 @@ class BlossomDashboardViewModel @Inject constructor(
 
                 blossomService.mirrorAllFromExternal(
                     onProgress = { pct ->
+                        _syncProgress.value = pct
                         _syncMessage.value = "Mirroring... ${(pct * 100).toInt()}%"
                     },
                     onLogMessage = { msg ->
@@ -161,6 +211,7 @@ class BlossomDashboardViewModel @Inject constructor(
     fun pushToMirrors() {
         if (_isPushing.value) return
         _isPushing.value = true
+        _syncProgress.value = 0f
         _syncMessage.value = "Pushing to mirrors..."
         addLog("Starting push to mirrors...", BlossomActivityLog.LogLevel.INFO)
 
@@ -169,21 +220,21 @@ class BlossomDashboardViewModel @Inject constructor(
                 val blobs = statsService.fetchBlobList(nostrService.ownerHexPubkey)
                 var pushed = 0
 
-                for (blob in blobs) {
+                for ((index, blob) in blobs.withIndex()) {
                     val sha256 = blob.sha256 ?: continue
                     try {
                         blossomService.pushLocalToMirrors(sha256)
                         pushed++
-                        if (pushed % 10 == 0) {
-                            _syncMessage.value = "Pushed $pushed/${blobs.size}..."
-                        }
                     } catch (e: Exception) {
                         addLog("Failed to push ${sha256.take(8)}: ${e.message}", BlossomActivityLog.LogLevel.WARNING)
                     }
+                    _syncProgress.value = (index + 1).toFloat() / blobs.size
+                    _syncMessage.value = "Pushed ${index + 1}/${blobs.size}..."
                 }
 
                 addLog("Push complete: $pushed files synced", BlossomActivityLog.LogLevel.SUCCESS)
                 _syncMessage.value = "Push complete: $pushed files"
+                loadDashboard()
             } catch (e: Exception) {
                 addLog("Push failed: ${e.message}", BlossomActivityLog.LogLevel.ERROR)
                 _syncMessage.value = "Push failed"

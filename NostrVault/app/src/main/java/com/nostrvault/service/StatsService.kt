@@ -218,10 +218,16 @@ class StatsService @Inject constructor(
     // Blossom blob listing
     // ══════════════════════════════════════════════════════════════════
 
-    suspend fun fetchBlobList(pubkey: String): List<BlobDescriptor> = withContext(Dispatchers.IO) {
-        val config = configStore.config.value
-        val baseUrl = config.nostrURL ?: return@withContext emptyList()
-        val httpUrl = wsToHttp(baseUrl)
+    suspend fun fetchBlobList(pubkey: String): List<BlobDescriptor> =
+        fetchBlobList(pubkey, configStore.config.value.nostrURL)
+
+    /**
+     * List the blobs a server holds for [pubkey] via the Blossom `/list/<pubkey>`
+     * endpoint. [baseUrl] may be the local relay (wss/ws) or an external mirror (https).
+     */
+    suspend fun fetchBlobList(pubkey: String, baseUrl: String?): List<BlobDescriptor> = withContext(Dispatchers.IO) {
+        val resolvedBase = baseUrl ?: return@withContext emptyList()
+        val httpUrl = wsToHttp(resolvedBase)
 
         try {
             val request = okhttp3.Request.Builder()
@@ -232,7 +238,7 @@ class StatsService @Inject constructor(
             val clientBuilder = okhttp3.OkHttpClient.Builder()
                 .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
                 .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-            if (isLocalhost(baseUrl)) clientBuilder.applyLocalhostTrust()
+            if (isLocalhost(resolvedBase)) clientBuilder.applyLocalhostTrust()
             val client = clientBuilder.build()
 
             val response = client.newCall(request).execute()

@@ -8,6 +8,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -27,14 +28,18 @@ fun BlossomDashboardScreen(
     val totalFiles by viewModel.totalFiles.collectAsState()
     val totalSize by viewModel.totalSize.collectAsState()
     val isLoadingStats by viewModel.isLoadingStats.collectAsState()
+    val backedUpCount by viewModel.backedUpCount.collectAsState()
     val mirrors by viewModel.mirrors.collectAsState()
     val isPulling by viewModel.isPulling.collectAsState()
     val isPushing by viewModel.isPushing.collectAsState()
     val syncMessage by viewModel.syncMessage.collectAsState()
+    val syncProgress by viewModel.syncProgress.collectAsState()
     val activityLogs by viewModel.activityLogs.collectAsState()
 
     val colors = LocalNostrVaultColors.current
     val activeMirrors = mirrors.count { it.isHealthy == true }
+    val backupPercentage = if (totalFiles > 0) (backedUpCount * 100) / totalFiles else 0
+    val needsBackupCount = (totalFiles - backedUpCount).coerceAtLeast(0)
 
     Scaffold(
         topBar = {
@@ -109,9 +114,10 @@ fun BlossomDashboardScreen(
                         modifier = Modifier.weight(1f),
                     )
                     BlossomStatCard(
-                        title = "Configured",
-                        value = "${mirrors.size}",
-                        icon = NostrVaultIcons.Settings,
+                        title = "Backed Up",
+                        value = "$backupPercentage%",
+                        icon = NostrVaultIcons.Verified,
+                        iconTint = if (backupPercentage == 100) SuccessGreen else ZapOrange,
                         modifier = Modifier.weight(1f),
                     )
                 }
@@ -143,9 +149,9 @@ fun BlossomDashboardScreen(
                 )
                 ActionButton(
                     icon = NostrVaultIcons.UploadIcon,
-                    title = "Push",
+                    title = if (needsBackupCount > 0) "Backup $needsBackupCount" else "100% Backed Up",
                     isLoading = isPushing,
-                    enabled = !isPulling && !isPushing,
+                    enabled = !isPulling && !isPushing && needsBackupCount > 0,
                     modifier = Modifier.weight(1f),
                     onClick = viewModel::pushToMirrors,
                 )
@@ -158,8 +164,36 @@ fun BlossomDashboardScreen(
                 )
             }
 
-            // Sync message
-            if (syncMessage.isNotBlank()) {
+            // Inline sync progress while a pull/push is running (matches iOS)
+            if (isPulling || isPushing) {
+                Spacer(Modifier.height(12.dp))
+                Surface(
+                    color = SecondaryGroupedBg,
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        LinearProgressIndicator(
+                            progress = { syncProgress },
+                            color = colors.primary,
+                            trackColor = TertiaryGroupedBg,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        if (syncMessage.isNotBlank()) {
+                            Text(
+                                text = syncMessage,
+                                color = SecondaryText,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                            )
+                        }
+                    }
+                }
+            } else if (syncMessage.isNotBlank()) {
+                // Idle completion message (e.g. "Push complete")
                 Spacer(Modifier.height(8.dp))
                 Text(
                     text = syncMessage,
@@ -200,6 +234,7 @@ private fun BlossomStatCard(
     value: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     modifier: Modifier = Modifier,
+    iconTint: androidx.compose.ui.graphics.Color? = null,
 ) {
     val colors = LocalNostrVaultColors.current
 
@@ -212,7 +247,7 @@ private fun BlossomStatCard(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = colors.primary,
+                tint = iconTint ?: colors.primary,
                 modifier = Modifier.size(20.dp),
             )
             Spacer(Modifier.height(8.dp))
