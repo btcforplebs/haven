@@ -148,6 +148,10 @@ class DashboardViewModel @Inject constructor(
     private val _exportUri = MutableStateFlow<android.net.Uri?>(null)
     val exportUri = _exportUri.asStateFlow()
 
+    // ── EOSE tracking per relay ──────────────────────────────────
+    private val relayEoseReceived = ConcurrentHashMap<String, Boolean>()
+    private val activeRelayUrls = mutableSetOf<String>()
+
     // ── View mode & filters ──────────────────────────────────────
 
     private val _viewMode = MutableStateFlow(VaultViewMode.NOTES)
@@ -333,13 +337,19 @@ class DashboardViewModel @Inject constructor(
             // Already connected — re-send subscription to catch up on missed events
             val authors = buildAuthorSet()
             val ownerHex = nostrService.activeHexPubkey
-            outboxClient?.let { sendVaultSubscription(it, "vault-outbox", authors, ownerHex) }
-            inboxClient?.let { sendVaultSubscription(it, "vault-inbox", authors, ownerHex) }
+            val config = configStore.config.value
+            val localUrl = config.nostrURL ?: ""
+            val inboxUrl = if (localUrl.isNotEmpty()) "$localUrl/inbox" else ""
+            val macWss = config.macRelayWssURL
+            val macInboxUrl = if (macWss.isNotEmpty()) "$macWss/inbox" else ""
+
+            outboxClient?.let { sendVaultSubscription(it, "vault-outbox", authors, ownerHex, localUrl) }
+            inboxClient?.let { sendVaultSubscription(it, "vault-inbox", authors, ownerHex, inboxUrl) }
             // Re-pull the Mac relay (source of truth) too so we converge on its data
             macOutboxClient?.takeIf { it.connectionState.value == WebSocketClient.ConnectionState.CONNECTED }
-                ?.let { sendVaultSubscription(it, "vault-mac-outbox", authors, ownerHex) }
+                ?.let { sendVaultSubscription(it, "vault-mac-outbox", authors, ownerHex, macWss) }
             macInboxClient?.takeIf { it.connectionState.value == WebSocketClient.ConnectionState.CONNECTED }
-                ?.let { sendVaultSubscription(it, "vault-mac-inbox", authors, ownerHex) }
+                ?.let { sendVaultSubscription(it, "vault-mac-inbox", authors, ownerHex, macInboxUrl) }
         } else if (outboxClient != null) {
             // Connection dropped — give auto-reconnect a fresh retry budget
             outboxClient?.resetReconnect()
@@ -534,11 +544,7 @@ class DashboardViewModel @Inject constructor(
         runCatching { com.nostrvault.relay.HavenBridge.requestRelaySync() }
             .onFailure { Log.w(TAG, "requestRelaySync failed: ${it.message}") }
 
-        isFullReload = true
-        seenIds.clear()
-        viewModelScope.launch {
-            allEventsMutex.withLock { allEvents.clear() }
-        }
+        // Keep existing data and only fetch new events (don't clear or full reload)
         _isRefreshing.value = true
         connectToLocalRelay()
     }
@@ -578,7 +584,7 @@ class DashboardViewModel @Inject constructor(
             outbox.connectionState.collect { state ->
                 when (state) {
                     WebSocketClient.ConnectionState.CONNECTED -> {
-                        sendVaultSubscription(outbox, "vault-outbox", authors, ownerHex)
+                        sendVaultSubscription(outbox, "vault-outbox", authors, ownerHex, localUrl)
                         updateConnectionStatus()
                     }
                     WebSocketClient.ConnectionState.DISCONNECTED -> updateConnectionStatus()
@@ -598,7 +604,7 @@ class DashboardViewModel @Inject constructor(
             inbox.connectionState.collect { state ->
                 when (state) {
                     WebSocketClient.ConnectionState.CONNECTED -> {
-                        sendVaultSubscription(inbox, "vault-inbox", authors, ownerHex)
+                        sendVaultSubscription(inbox, "vault-inbox", authors, ownerHex, inboxUrl)
                         updateConnectionStatus()
                     }
                     WebSocketClient.ConnectionState.DISCONNECTED -> updateConnectionStatus()
@@ -627,7 +633,7 @@ class DashboardViewModel @Inject constructor(
                 macOutbox.connectionState.collect { state ->
                     when (state) {
                         WebSocketClient.ConnectionState.CONNECTED ->
-                            sendVaultSubscription(macOutbox, "vault-mac-outbox", authors, ownerHex)
+                            sendVaultSubscription(macOutbox, "vault-mac-outbox", authors, ownerHex, macWss)
                         else -> {}
                     }
                 }
@@ -642,7 +648,7 @@ class DashboardViewModel @Inject constructor(
                 macInbox.connectionState.collect { state ->
                     when (state) {
                         WebSocketClient.ConnectionState.CONNECTED ->
-                            sendVaultSubscription(macInbox, "vault-mac-inbox", authors, ownerHex)
+                            sendVaultSubscription(macInbox, "vault-mac-inbox", authors, ownerHex, macInboxUrl)
                         else -> {}
                     }
                 }
@@ -664,7 +670,12 @@ class DashboardViewModel @Inject constructor(
         subId: String,
         authors: Set<String>,
         ownerHex: String,
+        relayUrl: String,
     ) {
+        // Track this relay as active and reset EOSE tracking
+        activeRelayUrls.add(relayUrl)
+        relayEoseReceived[relayUrl] = false
+
         val authorsJson = authors.joinToString(",") { "\"$it\"" }
         // Always cap the stored-event replay. Without a limit the relay dumps the
         // entire vault history on every connect. When we already hold events
@@ -675,7 +686,10 @@ class DashboardViewModel @Inject constructor(
         val authorFilter = """{"kinds":[1,6,7,30023,9735],"authors":[$authorsJson]$sinceClause,"limit":500}"""
 
         val filters = if (ownerHex.isNotEmpty()) {
-            val mentionsFilter = """{"kinds":[1,6,7,30023,9735],"#p":["$ownerHex"]$sinceClause,"limit":200}"""
+            // IMPORTANT: Mentions filter should NOT use sinceClause - we want ALL notes
+            // where the user is tagged, not just recent ones. This fixes the bug where
+            // older tagged notes never appear in the TAGGED filter.
+            val mentionsFilter = """{"kinds":[1,6,7,30023,9735],"#p":["$ownerHex"],"limit":500}"""
             "$authorFilter,$mentionsFilter"
         } else {
             authorFilter
@@ -747,7 +761,19 @@ class DashboardViewModel @Inject constructor(
                     scheduleUpdateDisplayData()
                 }
                 "EOSE" -> {
-                    handleEOSE()
+                    if (parsed.size >= 2) {
+                        val subId = parsed[1].jsonPrimitive.contentOrNull
+                        val eventCount = allEventsMutex.withLock { allEvents.size }
+                        Log.d(TAG, "EOSE received from $relayUrl, subId=$subId, total events loaded: $eventCount")
+
+                        // Track that this relay has sent EOSE
+                        relayEoseReceived[relayUrl] = true
+
+                        // If all connected relays have sent EOSE, finalize loading
+                        if (allRelaysFinished()) {
+                            handleEOSE()
+                        }
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -764,7 +790,20 @@ class DashboardViewModel @Inject constructor(
     }
 
     /**
-     * Called when a relay sends EOSE (end of stored events).
+     * Checks if all connected relays have sent EOSE.
+     */
+    private fun allRelaysFinished(): Boolean {
+        // If no relays are active, consider it finished
+        if (activeRelayUrls.isEmpty()) return true
+
+        // Check if all active relays have sent EOSE
+        return activeRelayUrls.all { url ->
+            relayEoseReceived[url] == true
+        }
+    }
+
+    /**
+     * Called when all relays have sent EOSE (end of stored events).
      * Updates connection state and stops the refresh spinner.
      */
     private fun handleEOSE() {
@@ -793,6 +832,10 @@ class DashboardViewModel @Inject constructor(
         inboxClient = null
         macOutboxClient = null
         macInboxClient = null
+
+        // Clear EOSE tracking state
+        activeRelayUrls.clear()
+        relayEoseReceived.clear()
     }
 
     // ── Snapshot persistence ─────────────────────────────────────
@@ -879,6 +922,7 @@ class DashboardViewModel @Inject constructor(
     }
 
     fun loadMore() {
+        Log.d(TAG, "loadMore called: isLoadingMore=${_isLoadingMore.value}, viewMode=${_viewMode.value}, notesCount=${_displayNotes.value.size}")
         if (_isLoadingMore.value) return
         val currentNotes = _displayNotes.value
         if (currentNotes.isEmpty()) return
@@ -887,7 +931,10 @@ class DashboardViewModel @Inject constructor(
         if (_viewMode.value == VaultViewMode.NOTES) {
             val oldest = currentNotes.lastOrNull()?.createdAt ?: return
             val config = configStore.config.value
-            if (config.nostrURL == null) return
+            if (config.nostrURL == null) {
+                Log.w(TAG, "loadMore: No relay URL configured")
+                return
+            }
             val localUrl = "ws://127.0.0.1:${config.relayPort}"
 
             // Build author set matching loadLocalRelayNotes
@@ -906,7 +953,7 @@ class DashboardViewModel @Inject constructor(
                 val authorFilter = """{"kinds":[1,6,7,30023,9735],"authors":[$authorsJson],"until":$untilSecs,"limit":200}"""
 
                 val filters = if (ownerHex.isNotEmpty()) {
-                    val mentionsFilter = """{"kinds":[1,6,7,30023,9735],"#p":["$ownerHex"],"until":$untilSecs,"limit":100}"""
+                    val mentionsFilter = """{"kinds":[1,6,7,30023,9735],"#p":["$ownerHex"],"until":$untilSecs,"limit":300}"""
                     "$authorFilter,$mentionsFilter"
                 } else {
                     authorFilter
@@ -1017,7 +1064,18 @@ class DashboardViewModel @Inject constructor(
                 val currentFilter = _contentFilter.value
 
                 val filtered = noteEvents.filter { event ->
-                    if (event.kind !in listOf(1, 30023)) return@filter false
+                    // Log all events before kind filtering to see what we're dropping
+                    val hasUserPTag = event.tags.any { it.size >= 2 && it[0] == "p" && it[1] == owner }
+                    if (hasUserPTag && event.pubkey != owner) {
+                        Log.d(TAG, "Event with user p-tag BEFORE filter: id=${event.id.take(8)}, kind=${event.kind}, from=${event.pubkey.take(8)}")
+                    }
+
+                    if (event.kind !in listOf(1, 6, 30023)) {
+                        if (hasUserPTag && event.pubkey != owner) {
+                            Log.w(TAG, "DROPPING event kind ${event.kind} that tags user: id=${event.id.take(8)}")
+                        }
+                        return@filter false
+                    }
 
                     when (currentFilter) {
                         VaultContentFilter.ALL -> {
@@ -1028,7 +1086,11 @@ class DashboardViewModel @Inject constructor(
                         }
                         VaultContentFilter.MINE -> event.pubkey == owner
                         VaultContentFilter.TAGGED -> {
-                            event.pubkey != owner && event.tags.any { it.size >= 2 && it[0] == "p" && it[1] == owner }
+                            val tagged = event.pubkey != owner && event.tags.any { it.size >= 2 && it[0] == "p" && it[1] == owner }
+                            if (tagged) {
+                                Log.d(TAG, "TAGGED note included: id=${event.id.take(8)}, from=${event.pubkey.take(8)}, kind=${event.kind}")
+                            }
+                            tagged
                         }
                         VaultContentFilter.WHITELIST -> {
                             whitelist.contains(event.pubkey) && event.pubkey != owner
@@ -1036,10 +1098,20 @@ class DashboardViewModel @Inject constructor(
                     }
                 }.sortedByDescending { it.createdAt }
 
+                Log.d(TAG, "NOTES mode: filter=${currentFilter.displayName}, total=${filtered.size} notes, maxDisplayedItems=$maxDisplayedItems")
+
                 // Convert to FeedNote for display
                 val displaySlice = filtered.take(maxDisplayedItems).map { event ->
                     FeedNote.fromEvent(event.id, event.pubkey, event.content, event.tags, event.createdAt, event.kind)
                 }.filter { !it.isNoiseOrSpam() }
+
+                val droppedBySpamFilter = (filtered.size.coerceAtMost(maxDisplayedItems)) - displaySlice.size
+                if (droppedBySpamFilter > 0) {
+                    Log.w(TAG, "Spam filter dropped $droppedBySpamFilter notes")
+                }
+                if (filtered.size > maxDisplayedItems) {
+                    Log.w(TAG, "Display limit: showing ${maxDisplayedItems} of ${filtered.size} filtered notes (${filtered.size - maxDisplayedItems} hidden)")
+                }
 
                 val displayedIds = displaySlice.map { it.id }.toSet()
 
@@ -1565,11 +1637,17 @@ fun DashboardScreen(
     val shouldLoadMore by remember {
         derivedStateOf {
             val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-            lastVisible >= listState.layoutInfo.totalItemsCount - 5
+            val total = listState.layoutInfo.totalItemsCount
+            val result = lastVisible >= total - 5
+            result
         }
     }
-    LaunchedEffect(shouldLoadMore) {
-        if (shouldLoadMore) viewModel.loadMore()
+    LaunchedEffect(shouldLoadMore, isRefreshing) {
+        android.util.Log.d("DashboardScreen", "shouldLoadMore=$shouldLoadMore, isRefreshing=$isRefreshing, items=${listState.layoutInfo.totalItemsCount}")
+        if (shouldLoadMore && !isRefreshing) {
+            android.util.Log.d("DashboardScreen", "Triggering loadMore()")
+            viewModel.loadMore()
+        }
     }
 
     // Reconnect to local relay when the app returns to the foreground

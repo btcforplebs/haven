@@ -1480,8 +1480,17 @@ class FeedService @Inject constructor(
                                     withContext(Dispatchers.Main.immediate) {
                                         var updated = _parentNotesCache.value + (id to note)
                                         if (updated.size > 500) {
-                                            val referencedIds = _notes.value.mapNotNull { it.parentEventId }.toSet()
+                                            // Include both parent and quoted event IDs when determining referenced notes
+                                            val referencedIds = _notes.value.flatMap { note ->
+                                                listOfNotNull(note.parentEventId) + note.quotedEventIds
+                                            }.toSet()
+
+                                            // LRU eviction: keep most recently created referenced notes
                                             updated = updated.filter { it.key in referencedIds }
+                                                .toList()
+                                                .sortedByDescending { it.second.createdAt }
+                                                .take(500)
+                                                .toMap()
                                         }
                                         _parentNotesCache.value = updated
                                     }
