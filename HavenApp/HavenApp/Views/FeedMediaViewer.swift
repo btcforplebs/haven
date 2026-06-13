@@ -49,6 +49,11 @@ struct FeedMediaPager: View {
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .automatic))
+                // A PageTabViewStyle TabView needs a definite size or it collapses
+                // (renders as a small square and stops paging). Fill the screen like
+                // MediaGalleryViewer's pager does.
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .ignoresSafeArea()
             }
         }
         #else
