@@ -228,6 +228,20 @@ class FeedService @Inject constructor(
     private val _scrollToTopRequest = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     val scrollToTopRequest: SharedFlow<Unit> = _scrollToTopRequest.asSharedFlow()
 
+    // Condensed-bar relay action: open the relay dashboard sheet (iOS parity with
+    // the collapsed antenna's openRelayDashboard). DashboardScreen subscribes.
+    private val _relayDashboardRequest = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    val relayDashboardRequest: SharedFlow<Unit> = _relayDashboardRequest.asSharedFlow()
+
+    // Optimistic note insertion: emitted immediately when a note is signed,
+    // before relay confirmation. NoteDetailViewModel subscribes to show replies inline.
+    private val _optimisticNote = MutableSharedFlow<FeedNote>(extraBufferCapacity = 8)
+    val optimisticNote: SharedFlow<FeedNote> = _optimisticNote.asSharedFlow()
+
+    fun emitOptimisticNote(note: FeedNote) {
+        _optimisticNote.tryEmit(note)
+    }
+
     // Extended network caching
     private var lastExtendedNetworkLoadTime = 0L
 
@@ -296,6 +310,11 @@ class FeedService @Inject constructor(
     fun switchMode(mode: FeedMode) {
         if (mode == _feedMode.value) return
         _feedMode.value = mode
+
+        // Pending notes are raw, unfiltered for the previous mode — drop them so
+        // the "New Posts" count doesn't carry over stale entries. Live subs for
+        // the new mode will repopulate.
+        _pendingNotes.value = emptyList()
 
         when (mode) {
             FeedMode.POPULAR -> loadPopularFeed()
@@ -551,6 +570,18 @@ class FeedService @Inject constructor(
             config.nostrURL?.let { add(it) }
             config.localInboxURL?.let { add(it) }
             config.inboxRelays?.let { addAll(it) }
+            // Follows publish to feed/blastr relays, not just the local + inbox
+            // set. Mirror iOS (externalRelayURLs) and the fetchReplies fix so
+            // follows who post elsewhere actually appear in the feed.
+            addAll(config.activeFeedRelays)
+            addAll(config.activeBlastrRelays)
+            if (config.activeFeedRelays.isEmpty() &&
+                config.activeBlastrRelays.isEmpty() &&
+                config.inboxRelays.isNullOrEmpty()) {
+                add("wss://relay.damus.io")
+                add("wss://relay.primal.net")
+                add("wss://nos.lol")
+            }
         }.distinct()
 
         // Disconnect stale clients that are no longer in the relay set,
@@ -681,7 +712,9 @@ class FeedService @Inject constructor(
             append("{\"kinds\":[1,6,30023]")
             when (_feedMode.value) {
                 FeedMode.FOLLOWING -> {
-                    val authors = _followedPubkeys.value.take(500)
+                    // Send the full follow list (iOS does not cap); capping at
+                    // 500 silently hid notes from any follows beyond that.
+                    val authors = _followedPubkeys.value
                     if (authors.isNotEmpty()) {
                         append(",\"authors\":[${authors.joinToString(",") { "\"$it\"" }}]")
                     }
@@ -936,15 +969,37 @@ class FeedService @Inject constructor(
     }
 
     private fun deliverBackgroundBatch(batch: BackgroundAccumulator.Snapshot) {
-        // Apply notes
+        // Apply notes.
+        //
+        // iOS-parity auto-reveal: brand-new top-of-feed posts are NOT inserted
+        // directly (that would push the feed under the user's scroll, hiding the
+        // new note above the keyed LazyColumn's anchor). Instead they are staged
+        // as pendingNotes. FeedScreen auto-applies them (and snaps to top) when
+        // the user is already at the top with auto-load on, or surfaces the
+        // "New Posts" pill otherwise.
+        //
+        // Older notes (pagination) and replies always insert directly so they
+        // slot into place without a pill. During the initial load — or whenever
+        // the feed is empty — everything inserts directly so the feed populates
+        // instead of hiding behind a pill.
         if (batch.notes.isNotEmpty()) {
-            val currentNotes = _notes.value.toMutableList()
-            currentNotes.addAll(batch.notes)
-            currentNotes.sortByDescending { it.createdAt }
-            if (currentNotes.size > MAX_FEED_NOTES) {
-                _notes.value = currentNotes.take(MAX_FEED_NOTES)
+            if (isInitialLoad || _notes.value.isEmpty()) {
+                insertNotesDirect(batch.notes)
             } else {
-                _notes.value = currentNotes
+                // 60s clock-drift grace, matching iOS flushNoteBuffer.
+                val newestMillis = _notes.value.first().createdAt.time
+                val driftThreshold = newestMillis - 60_000L
+                val toPending = ArrayList<FeedNote>()
+                val toAdd = ArrayList<FeedNote>()
+                for (note in batch.notes) {
+                    if (note.createdAt.time > driftThreshold && !note.isReply) {
+                        toPending.add(note)
+                    } else {
+                        toAdd.add(note)
+                    }
+                }
+                if (toAdd.isNotEmpty()) insertNotesDirect(toAdd)
+                if (toPending.isNotEmpty()) stagePendingNotes(toPending)
             }
         }
 
@@ -978,6 +1033,31 @@ class FeedService @Inject constructor(
         recomputeFilteredNotes()
     }
 
+    /** Insert notes directly into the visible feed, re-sorting newest-first and capping size. */
+    private fun insertNotesDirect(newNotes: List<FeedNote>) {
+        val currentNotes = _notes.value.toMutableList()
+        currentNotes.addAll(newNotes)
+        currentNotes.sortByDescending { it.createdAt }
+        _notes.value = if (currentNotes.size > MAX_FEED_NOTES) {
+            currentNotes.take(MAX_FEED_NOTES)
+        } else {
+            currentNotes
+        }
+    }
+
+    /**
+     * Stage brand-new top-of-feed notes as pending (the "New Posts" buffer).
+     * Deduplicated by id, sorted newest-first, capped at MAX_PENDING_NOTES.
+     */
+    private fun stagePendingNotes(newNotes: List<FeedNote>) {
+        val unique = LinkedHashMap<String, FeedNote>()
+        for (note in _pendingNotes.value) unique[note.id] = note
+        for (note in newNotes) unique.putIfAbsent(note.id, note)
+        var sorted = unique.values.sortedByDescending { it.createdAt }
+        if (sorted.size > MAX_PENDING_NOTES) sorted = sorted.take(MAX_PENDING_NOTES)
+        _pendingNotes.value = sorted
+    }
+
     // ══════════════════════════════════════════════════════════════════
     // Filtering
     // ══════════════════════════════════════════════════════════════════
@@ -997,7 +1077,11 @@ class FeedService @Inject constructor(
 
     private fun doRecomputeFilteredNotes() {
         val config = configStore.config.value
-        val blockedPubkeys = config.blockedNpubs?.mapNotNull { nostrService.npubToHex(it) }?.toSet() ?: emptySet()
+        val blockedPubkeys = config.blockedForActiveAccount()
+            .mapNotNull { nostrService.npubToHex(it) }.toSet()
+        val throttledPubkeys = config.throttledForActiveAccount()
+            .mapNotNull { (npub, max) -> nostrService.npubToHex(npub)?.let { it to max } }
+            .toMap()
 
         _filteredNotes.value = feedFilterEngine.filterFeedNotes(
             notes = _notes.value,
@@ -1009,6 +1093,7 @@ class FeedService @Inject constructor(
             wotPubkeys = _wotPubkeys.value,
             popularFilter = _popularFilter.value,
             popularNoteScores = _popularNoteScores.value,
+            throttledPubkeys = throttledPubkeys,
         )
 
         _filteredMediaNotes.value = feedFilterEngine.filterMediaNotes(
@@ -1016,6 +1101,7 @@ class FeedService @Inject constructor(
             blocked = blockedPubkeys,
             wotPubkeys = _wotPubkeys.value,
             isGlobalMedia = _mediaFeedMode.value == MediaFeedMode.GLOBAL,
+            throttledPubkeys = throttledPubkeys,
         )
 
         _parentIsNextNote.value = feedFilterEngine.computeParentIsNext(_filteredNotes.value)
@@ -1228,6 +1314,20 @@ class FeedService @Inject constructor(
         _restoredScrollPosition.value = null
     }
 
+    /**
+     * Drives the scroll-condense animation of the bottom nav bar + compose FAB
+     * (iOS parity with FeedService.feedScrollingDown). StateFlow dedups equal
+     * values, so the feed screen can call this freely; only an actual flip
+     * publishes, keeping the bar/FAB the sole recomposing consumers.
+     */
+    fun requestRelayDashboard() {
+        _relayDashboardRequest.tryEmit(Unit)
+    }
+
+    fun setFeedScrollingDown(value: Boolean) {
+        _feedScrollingDown.value = value
+    }
+
     fun requestScrollToTop() {
         _scrollToTopRequest.tryEmit(Unit)
     }
@@ -1252,6 +1352,10 @@ class FeedService @Inject constructor(
         val relayUrls = buildList {
             config.nostrURL?.let { add(it) }
             config.inboxRelays?.let { addAll(it) }
+            // Match the live feed relay set so paginating older notes also
+            // reaches follows who publish to feed/blastr relays.
+            addAll(config.activeFeedRelays)
+            addAll(config.activeBlastrRelays)
         }.distinct()
 
         scope.launch(Dispatchers.IO) {
@@ -1280,7 +1384,8 @@ class FeedService @Inject constructor(
                     val filter = buildString {
                         append("{\"kinds\":[1,6,30023]")
                         if (_feedMode.value == FeedMode.FOLLOWING) {
-                            val authors = _followedPubkeys.value.take(500)
+                            // Full follow list (matches the live feed; iOS uncapped).
+                            val authors = _followedPubkeys.value
                             if (authors.isNotEmpty()) {
                                 append(",\"authors\":[${authors.joinToString(",") { "\"$it\"" }}]")
                             }
@@ -1370,6 +1475,116 @@ class FeedService @Inject constructor(
             collectors.forEach { it.cancel() }
             tempClients.forEach { it.disconnect() }
         }
+    }
+
+    fun fetchMissingNotesBatch(ids: List<String>) {
+        val missing = ids.filter { !_parentNotesCache.value.containsKey(it) }.distinct()
+        if (missing.isEmpty()) return
+
+        scope.launch(Dispatchers.IO) {
+            val config = configStore.config.value
+            val relayUrls = buildList {
+                config.nostrURL?.let { add(it) }
+                config.inboxRelays?.let { addAll(it) }
+                // Quoted/parent notes are often from external authors who publish
+                // to feed/blastr relays, not the local+inbox set. Match the live
+                // feed relay set (relay-set parity) so these actually resolve.
+                addAll(config.activeFeedRelays)
+                addAll(config.activeBlastrRelays)
+            }.distinct()
+
+            // Chunk to stay within relay filter limits
+            for (chunk in missing.chunked(50)) {
+                val chunkSet = chunk.toSet()
+                val subId = "pnbatch-${UUID.randomUUID().toString().take(8)}"
+                val idsJson = chunk.joinToString(",") { "\"$it\"" }
+                val filter = """{"ids":[$idsJson]}"""
+
+                val tempClients = mutableListOf<WebSocketClient>()
+                val collectors = mutableListOf<Job>()
+                for (relayUrl in relayUrls) {
+                    val existingClient = feedClients[relayUrl]
+                    val client: WebSocketClient
+                    if (existingClient != null) {
+                        client = existingClient
+                    } else {
+                        client = WebSocketClient(url = relayUrl, scope = scope, trustLocalhost = relayUrl.contains("localhost") || relayUrl.contains("127.0.0.1"))
+                        tempClients.add(client)
+                        client.connect()
+                    }
+
+                    collectors.add(scope.launch {
+                        client.messages.collect { msg ->
+                            try {
+                                val parsed = json.parseToJsonElement(msg).jsonArray
+                                if (parsed.size >= 3 && parsed[0].jsonPrimitive.contentOrNull == "EVENT") {
+                                    val eventObj = parsed[2].jsonObject
+                                    val eventId = eventObj["id"]?.jsonPrimitive?.contentOrNull ?: return@collect
+                                    if (eventId !in chunkSet) return@collect
+                                    val pubkey = eventObj["pubkey"]?.jsonPrimitive?.contentOrNull ?: return@collect
+                                    val content = eventObj["content"]?.jsonPrimitive?.contentOrNull ?: ""
+                                    val tags = eventObj["tags"]?.jsonArray?.map { t -> t.jsonArray.map { it.jsonPrimitive.contentOrNull ?: "" } } ?: emptyList()
+                                    val createdAt = eventObj["created_at"]?.jsonPrimitive?.longOrNull ?: return@collect
+                                    val kind = eventObj["kind"]?.jsonPrimitive?.intOrNull ?: return@collect
+
+                                    val note = FeedNote.fromEvent(eventId, pubkey, content, tags, createdAt, kind)
+                                    withContext(Dispatchers.Main.immediate) {
+                                        var updated = _parentNotesCache.value + (eventId to note)
+                                        if (updated.size > 500) {
+                                            val referencedIds = _notes.value.mapNotNull { it.parentEventId }.toSet()
+                                            updated = updated.filter { it.key in referencedIds }
+                                        }
+                                        _parentNotesCache.value = updated
+                                    }
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    })
+
+                    client.send("[\"REQ\",\"$subId\",$filter]")
+                }
+
+                delay(NOTE_FETCH_TIMEOUT_MS)
+                collectors.forEach { it.cancel() }
+                tempClients.forEach { it.disconnect() }
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Quoted note resolution (embedded nostr:note1/nevent1 previews)
+    // ══════════════════════════════════════════════════════════════════
+
+    /**
+     * Decode a quoted-note bech32 identifier to a hex event id.
+     * `naddr1` is an addressable-event coordinate (not a single event id),
+     * so it can't be fetched this way and returns null.
+     */
+    private fun decodeQuotedId(identifier: String): String? = when {
+        identifier.startsWith("note1", ignoreCase = true) -> HavenBridge.decodeNote(identifier)
+        identifier.startsWith("nevent1", ignoreCase = true) -> HavenBridge.decodeNevent(identifier)
+        else -> null
+    }
+
+    /** Resolve a quoted-note identifier to a cached note, if already fetched. */
+    fun quotedNoteFor(identifier: String): FeedNote? {
+        val hex = decodeQuotedId(identifier) ?: return null
+        return _parentNotesCache.value[hex] ?: findNote(hex)
+    }
+
+    /** Batch-fetch quoted notes (by hex id) that aren't cached yet. */
+    fun fetchMissingQuotedNotes(identifiers: List<String>) {
+        val hexIds = identifiers.mapNotNull { decodeQuotedId(it) }.distinct()
+        if (hexIds.isNotEmpty()) fetchMissingNotesBatch(hexIds)
+    }
+
+    /** Fetch profiles for the authors of resolved quoted notes that lack one. */
+    fun fetchMissingQuotedProfiles(identifiers: List<String>) {
+        val missingAuthors = identifiers
+            .mapNotNull { quotedNoteFor(it)?.pubkey }
+            .filter { nostrService.profiles.value[it] == null }
+            .distinct()
+        if (missingAuthors.isNotEmpty()) nostrService.fetchMissingProfiles(missingAuthors)
     }
 
     // ══════════════════════════════════════════════════════════════════

@@ -1,14 +1,18 @@
 package com.nostrvault.ui.screens
 
+import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -46,6 +50,7 @@ import com.nostrvault.service.FeedService
 import com.nostrvault.service.MediaItem
 import com.nostrvault.service.MediaType
 import com.nostrvault.service.NostrService
+import com.nostrvault.relay.HavenBridge
 import com.nostrvault.service.PendingPostManager
 import com.nostrvault.ui.components.QuotedNoteCard
 import com.nostrvault.ui.theme.*
@@ -154,9 +159,7 @@ class ComposeNoteViewModel @Inject constructor(
             if (quoted != null) {
                 _quotedProfile.value = nostrService.profiles.value[quoted.pubkey]
             }
-            if (_content.value.isEmpty()) {
-                _content.value = "\nnostr:${quoteToNoteId}"
-            }
+            // nostr: reference is appended to content at publish time, not pre-populated
         }
     }
 
@@ -265,7 +268,10 @@ class ComposeNoteViewModel @Inject constructor(
             val blossomDir = config.relayDataDir?.let { File(it, config.blossomPath) } ?: return@withContext emptyList()
             if (!blossomDir.exists()) return@withContext emptyList()
 
-            val baseURL = blossomService.localBlossomURL() ?: return@withContext emptyList()
+            val localBase = blossomService.localBlossomURL() ?: return@withContext emptyList()
+            // Prefer an external mirror so the inserted URL is publicly accessible in published notes
+            val externalBase = config.activeBlossomMirrors
+                .firstOrNull { url -> !url.contains("localhost") && !url.contains("127.0.0.1") }
             val items = mutableListOf<MediaItem>()
 
             blossomDir.listFiles()?.forEach { file ->
@@ -276,7 +282,6 @@ class ComposeNoteViewModel @Inject constructor(
                 val sha256 = file.nameWithoutExtension
                 if (sha256.length != 64 || !sha256.all { it in "0123456789abcdef" }) return@forEach
 
-                // Detect media type
                 val extension = file.extension.lowercase()
                 val mediaType = when (extension) {
                     "jpg", "jpeg", "png", "gif", "webp" -> MediaType.IMAGE
@@ -286,9 +291,12 @@ class ComposeNoteViewModel @Inject constructor(
                 }
 
                 if (mediaType != MediaType.UNKNOWN) {
+                    // Use external mirror URL (BUD-01: {server}/{sha256}) so links work in published notes;
+                    // fall back to local URL only when no mirrors are configured.
+                    val insertUrl = if (externalBase != null) "$externalBase/$sha256" else "$localBase/$filename"
                     items.add(
                         MediaItem(
-                            url = "$baseURL/$filename",
+                            url = insertUrl,
                             type = mediaType,
                             pubkey = nostrService.ownerHexPubkey,
                             tags = null,
@@ -353,12 +361,31 @@ class ComposeNoteViewModel @Inject constructor(
                 // 2. Build tags
                 val tags = buildReplyTags().toMutableList()
                 if (quoteToNoteId != null) {
-                    tags.add(listOf("q", quoteToNoteId))
+                    val relayHint = configStore.config.value.nostrURL ?: ""
+                    val quotedPubkey = feedService.findNote(quoteToNoteId)?.pubkey ?: ""
+                    tags.add(listOf("q", quoteToNoteId, relayHint, quotedPubkey))
+                    if (quotedPubkey.isNotEmpty() && tags.none { it.size >= 2 && it[0] == "p" && it[1] == quotedPubkey }) {
+                        tags.add(listOf("p", quotedPubkey))
+                    }
+                    val note1 = HavenBridge.hexToNote1(quoteToNoteId)
+                    if (note1 != null) finalContent += "\nnostr:$note1"
                 }
 
                 // 3. Sign and publish
                 val event = nostrService.signEventAsync(kind = 1, content = finalContent, tags = tags)
                 if (event != null) {
+                    // Optimistic insert: inject the note immediately so the thread
+                    // view shows it before relay confirmation (mirrors iOS behavior).
+                    feedService.emitOptimisticNote(
+                        FeedNote.fromEvent(
+                            id = event.id,
+                            pubkey = event.pubkey,
+                            content = finalContent,
+                            tags = tags,
+                            createdAt = event.createdAt,
+                            kind = 1,
+                        )
+                    )
                     val replyNote = replyToNoteId?.let { feedService.findNote(it) }
                     val quoteNote = quoteToNoteId?.let { feedService.findNote(it) }
                     pendingPostManager.startPost(
@@ -833,7 +860,7 @@ private fun AttachmentGrid(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun BlossomMediaPickerSheet(
     onDismiss: () -> Unit,
@@ -914,7 +941,14 @@ private fun BlossomMediaPickerSheet(
                             modifier = Modifier
                                 .aspectRatio(1f)
                                 .clip(RoundedCornerShape(8.dp))
-                                .clickable { onSelect(item.url) }
+                                .combinedClickable(
+                                    onClick = { onSelect(item.url) },
+                                    onLongClick = {
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        clipboard.setPrimaryClip(ClipData.newPlainText("Blossom URL", item.url))
+                                        Toast.makeText(context, "Link copied", Toast.LENGTH_SHORT).show()
+                                    }
+                                )
                         ) {
                             AsyncImage(
                                 model = item.url,

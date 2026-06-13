@@ -4,7 +4,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.fillMaxSize
@@ -25,11 +24,12 @@ import com.nostrvault.ui.navigation.NostrVaultNavHost
 import com.nostrvault.ui.notification.NotificationManager
 import com.nostrvault.ui.theme.NostrVaultTheme
 import com.nostrvault.ui.theme.WindowBackground
+import androidx.fragment.app.FragmentActivity
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 
 @AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
 
     @Inject lateinit var configStore: ConfigStore
     @Inject lateinit var dmService: DMService
@@ -152,6 +152,10 @@ class MainActivity : ComponentActivity() {
         // Restore the snapshot for instant UI, then reconnect in the background.
         if (configStore.config.value.hasCompletedSetup) {
             feedService.resumeFeed()
+            // Start DM listeners once, then catch up from external relays each
+            // time the app returns to the foreground.
+            dmService.startIfNeeded()
+            dmService.syncOnForeground()
         }
     }
 

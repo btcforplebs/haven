@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.util.Log
 import android.util.LruCache
+import com.nostrvault.data.local.ConfigStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
@@ -29,6 +30,7 @@ import javax.inject.Singleton
 @Singleton
 class MediaCacheService @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val configStore: ConfigStore,
 ) {
     companion object {
         private const val TAG = "MediaCacheService"
@@ -203,6 +205,8 @@ class MediaCacheService @Inject constructor(
 
     fun saveToCache(url: String, data: ByteArray) {
         if (data.size < MIN_CACHE_SIZE) return
+        // Respect the user's "Disable Media Cache" advanced setting.
+        if (configStore.config.value.disableMediaCache) return
         val file = cachePath(url)
         file.writeBytes(data)
     }
@@ -423,7 +427,9 @@ class MediaCacheService @Inject constructor(
         imageCache.evictAll()
     }
 
-    fun evictExpiredFiles(ttlDays: Int = TTL_DAYS) {
+    fun evictExpiredFiles(ttlDays: Int = configStore.config.value.cacheTTLDays.takeIf { it > 0 } ?: TTL_DAYS) {
+        // ttlDays <= 0 means "Never" — skip eviction entirely.
+        if (ttlDays <= 0) return
         scope.launch {
             val cutoff = System.currentTimeMillis() - (ttlDays * 24 * 60 * 60 * 1000L)
             cacheDirectory.listFiles()?.forEach { file ->

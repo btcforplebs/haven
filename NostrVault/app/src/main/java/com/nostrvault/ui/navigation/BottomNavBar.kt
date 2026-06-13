@@ -1,7 +1,16 @@
 package com.nostrvault.ui.navigation
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -69,11 +78,16 @@ fun BottomNavBar(
     currentRoute: String?,
     activeAccountPubkey: String,
     isOwner: Boolean,
+    condensed: Boolean = false,
     hasUnreadDMs: Boolean = false,
     hasNewRelayActivity: Boolean = false,
     onNavigate: (Screen) -> Unit,
     onReselect: (Screen) -> Unit = {},
     onAccountSwitcher: () -> Unit,
+    condensedActionIcon: ImageVector = NostrVaultIcons.Create,
+    condensedActionTint: Color? = null,
+    onCondensedAction: () -> Unit = {},
+    onExpand: () -> Unit = {},
 ) {
     val colors = LocalNostrVaultColors.current
     val isOled = LocalOledMode.current
@@ -85,56 +99,200 @@ fun BottomNavBar(
             .padding(horizontal = 24.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .glassPillBackground(isOled = isOled, accentColor = colors.primary)
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            for (item in bottomNavItems) {
-                val isProfileTab = item.screen == Screen.Profile
-                val selected = if (isProfileTab) {
-                    currentRoute?.startsWith("profile") == true
-                } else {
-                    currentRoute == item.screen.route
-                }
-
-                if (isProfileTab) {
-                    ProfileTab(
-                        selected = selected,
-                        selectedColor = colors.primary,
-                        isOwner = isOwner,
-                        showBadge = hasUnreadDMs,
-                        onClick = {
-                            if (selected) {
-                                onReselect(Screen.Profile)
-                            } else {
-                                onNavigate(Screen.Profile)
-                            }
-                        },
-                        onLongClick = onAccountSwitcher,
-                        modifier = Modifier.weight(1f),
-                    )
-                } else {
-                    NavTab(
-                        icon = item.icon,
-                        label = item.label,
-                        selected = selected,
-                        selectedColor = colors.primary,
-                        showBadge = item.screen == Screen.Dashboard && hasNewRelayActivity,
-                        onClick = {
-                            if (selected) {
-                                onReselect(item.screen)
-                            } else {
-                                onNavigate(item.screen)
-                            }
-                        },
-                        modifier = Modifier.weight(1f),
-                    )
-                }
+        // Morph between the full 5-tab row and a condensed avatar + compose
+        // cluster. SizeTransform shrinks the glass pill inward from both sides;
+        // the cross-fade + scale mirrors the iOS distillation. The spring is
+        // tuned to match iOS's tab-bar feel (response 0.5, damping 0.82).
+        AnimatedContent(
+            targetState = condensed,
+            transitionSpec = {
+                val barSpring = spring<Float>(dampingRatio = 0.82f, stiffness = 320f)
+                (fadeIn(barSpring) + scaleIn(barSpring, initialScale = 0.9f)) togetherWith
+                    (fadeOut(barSpring) + scaleOut(barSpring, targetScale = 0.9f)) using
+                    SizeTransform(clip = false) { _, _ ->
+                        spring(dampingRatio = 0.82f, stiffness = 320f)
+                    }
+            },
+            label = "navBarCondense",
+        ) { isCondensed ->
+            if (isCondensed) {
+                CondensedNavCluster(
+                    isOwner = isOwner,
+                    showBadge = hasUnreadDMs || hasNewRelayActivity,
+                    primaryColor = colors.primary,
+                    isOled = isOled,
+                    actionIcon = condensedActionIcon,
+                    actionTint = condensedActionTint ?: colors.primary,
+                    onAction = onCondensedAction,
+                    onExpand = onExpand,
+                    onAccountSwitcher = onAccountSwitcher,
+                )
+            } else {
+                ExpandedNavRow(
+                    currentRoute = currentRoute,
+                    primaryColor = colors.primary,
+                    isOled = isOled,
+                    isOwner = isOwner,
+                    hasUnreadDMs = hasUnreadDMs,
+                    hasNewRelayActivity = hasNewRelayActivity,
+                    onNavigate = onNavigate,
+                    onReselect = onReselect,
+                    onAccountSwitcher = onAccountSwitcher,
+                )
             }
+        }
+    }
+}
+
+@Composable
+private fun ExpandedNavRow(
+    currentRoute: String?,
+    primaryColor: Color,
+    isOled: Boolean,
+    isOwner: Boolean,
+    hasUnreadDMs: Boolean,
+    hasNewRelayActivity: Boolean,
+    onNavigate: (Screen) -> Unit,
+    onReselect: (Screen) -> Unit,
+    onAccountSwitcher: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .glassPillBackground(isOled = isOled, accentColor = primaryColor)
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        for (item in bottomNavItems) {
+            val isProfileTab = item.screen == Screen.Profile
+            val selected = if (isProfileTab) {
+                currentRoute?.startsWith("profile") == true
+            } else {
+                currentRoute == item.screen.route
+            }
+
+            if (isProfileTab) {
+                ProfileTab(
+                    selected = selected,
+                    selectedColor = primaryColor,
+                    isOwner = isOwner,
+                    showBadge = hasUnreadDMs,
+                    onClick = {
+                        if (selected) {
+                            onReselect(Screen.Profile)
+                        } else {
+                            onNavigate(Screen.Profile)
+                        }
+                    },
+                    onLongClick = onAccountSwitcher,
+                    modifier = Modifier.weight(1f),
+                )
+            } else {
+                NavTab(
+                    icon = item.icon,
+                    label = item.label,
+                    selected = selected,
+                    selectedColor = primaryColor,
+                    showBadge = item.screen == Screen.Dashboard && hasNewRelayActivity,
+                    onClick = {
+                        if (selected) {
+                            onReselect(item.screen)
+                        } else {
+                            onNavigate(item.screen)
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * Collapsed form of the nav bar shown while scrolling the feed: the bar
+ * distills to "who am I" (avatar — tap to expand, long-press to switch
+ * accounts) plus the single most likely action (compose). Mirrors iOS's
+ * collapsedContent.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun CondensedNavCluster(
+    isOwner: Boolean,
+    showBadge: Boolean,
+    primaryColor: Color,
+    isOled: Boolean,
+    actionIcon: ImageVector,
+    actionTint: Color,
+    onAction: () -> Unit,
+    onExpand: () -> Unit,
+    onAccountSwitcher: () -> Unit,
+) {
+    val haptic = LocalHapticFeedback.current
+    val ringColor = if (isOwner) primaryColor else Color(0xFFFF9500)
+
+    Row(
+        modifier = Modifier
+            .glassPillBackground(isOled = isOled, accentColor = primaryColor)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Avatar — tap to expand the bar, long-press to switch accounts.
+        Box(
+            modifier = Modifier
+                .clip(CircleShape)
+                .combinedClickable(
+                    onClick = onExpand,
+                    onLongClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onAccountSwitcher()
+                    },
+                ),
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .border(width = 1.5.dp, color = ringColor, shape = CircleShape)
+                    .padding(2.dp)
+                    .clip(CircleShape)
+                    .background(SecondaryGroupedBg),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = NostrVaultIcons.AccountCircle,
+                    contentDescription = "Profile",
+                    tint = primaryColor,
+                    modifier = Modifier.size(28.dp),
+                )
+            }
+            if (showBadge) {
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .align(Alignment.TopEnd)
+                        .offset(x = 2.dp, y = (-2).dp)
+                        .background(ErrorRed, CircleShape),
+                )
+            }
+        }
+
+        // Contextual action — compose / Blossom upload / relay dashboard,
+        // depending on the active tab (icon + tint supplied by the caller).
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(actionTint.copy(alpha = 0.15f))
+                .combinedClickableCompat(onClick = onAction),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = actionIcon,
+                contentDescription = "Action",
+                tint = actionTint,
+                modifier = Modifier.size(20.dp),
+            )
         }
     }
 }

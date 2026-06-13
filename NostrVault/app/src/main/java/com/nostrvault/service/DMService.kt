@@ -70,12 +70,20 @@ class DMService @Inject constructor(
     private val injectedDmIds = ConcurrentHashMap.newKeySet<String>()
     private var switchGeneration = 0
     private var lastExternalFetchTimestamp = 0L
+    private var hasStarted = false
 
     // ══════════════════════════════════════════════════════════════════
     // Lifecycle
     // ══════════════════════════════════════════════════════════════════
 
+    /** Start listening once (idempotent). Used from app lifecycle hooks. */
+    fun startIfNeeded() {
+        if (hasStarted) return
+        startListening()
+    }
+
     fun startListening() {
+        hasStarted = true
         switchGeneration++
         val generation = switchGeneration
 
@@ -491,7 +499,9 @@ class DMService @Inject constructor(
                 }
 
                 val tags = listOf(listOf("p", recipientHexPubkey))
-                val event = nostrService.signEvent(kind = 4, content = encrypted, tags = tags)
+                // Use the async, signing-mode-aware path so NIP-04 sends work under
+                // Amber / NIP-46 (the sync signEvent only handles a local key).
+                val event = nostrService.signEventAsync(kind = 4, content = encrypted, tags = tags)
                     ?: throw Exception("Signing failed")
 
                 if (switchGeneration != generation) return@withContext
@@ -627,8 +637,8 @@ class DMService @Inject constructor(
     fun markConversationRead(pubkey: String) = markRead(pubkey)
 
     /** Alias for sendDM, used by DMThreadViewModel. */
-    suspend fun sendMessage(recipientPubkey: String, content: String) {
-        sendDM(content, recipientPubkey)
+    suspend fun sendMessage(recipientPubkey: String, content: String, useNIP04: Boolean = false) {
+        sendDM(content, recipientPubkey, useNIP04)
     }
 
     // ══════════════════════════════════════════════════════════════════

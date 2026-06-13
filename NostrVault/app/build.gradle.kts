@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -7,9 +9,23 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) load(f.inputStream())
+}
+
 android {
     namespace = "com.nostrvault"
     compileSdk = 35
+
+    signingConfigs {
+        create("release") {
+            storeFile = file(localProps["KEYSTORE_PATH"] as String)
+            storePassword = localProps["KEYSTORE_PASSWORD"] as String
+            keyAlias = localProps["KEY_ALIAS"] as String
+            keyPassword = localProps["KEY_PASSWORD"] as String
+        }
+    }
 
     defaultConfig {
         applicationId = "com.nostrvault.app"
@@ -33,7 +49,7 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -111,6 +127,10 @@ dependencies {
     // Activity
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.core:core-ktx:1.15.0")
+
+    // Fragment (FragmentActivity host) + Biometric (reveal-key auth)
+    implementation("androidx.fragment:fragment-ktx:1.8.5")
+    implementation("androidx.biometric:biometric:1.1.0")
 
     // ---- Dependency Injection (Hilt) ----
     implementation("com.google.dagger:hilt-android:2.53.1")

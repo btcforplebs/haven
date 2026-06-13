@@ -21,6 +21,10 @@ sealed class Screen(val route: String) {
     data object DMThread : Screen("dm_thread/{pubkey}") {
         fun createRoute(pubkey: String) = "dm_thread/$pubkey"
     }
+    data object NewMessage : Screen("new_message?pubkey={pubkey}") {
+        fun createRoute(pubkey: String? = null) =
+            if (pubkey != null) "new_message?pubkey=$pubkey" else "new_message"
+    }
     data object ComposeNote : Screen("compose?replyTo={replyTo}&quoteTo={quoteTo}&draftId={draftId}") {
         fun createRoute(
             replyToNoteId: String? = null,
@@ -56,14 +60,17 @@ sealed class Screen(val route: String) {
     data object Settings : Screen("settings")
     data object AppearanceSettings : Screen("settings/appearance")
     data object AccountSettings : Screen("settings/accounts")
+    data object BlockedSettings : Screen("settings/blocked")
     data object RelayListEditor : Screen("settings/relays")
-    data object DMRelaySettings : Screen("settings/dm_relays")
     data object BlastrSettings : Screen("settings/blastr")
     data object BlossomSettings : Screen("settings/blossom")
     data object PowSettings : Screen("settings/pow")
-    data object CloudBackupSettings : Screen("settings/cloud_backup")
+    data object AdvancedSettings : Screen("settings/advanced")
+    data object ImportSettings : Screen("settings/import")
+    data object BackupSettings : Screen("settings/backup")
     data object FollowingBackup : Screen("settings/following_backup")
     data object NotificationSettings : Screen("settings/notifications")
+    data object HavenRelaySettings : Screen("settings/haven_relay")
 
     // Dashboard
     data object Dashboard : Screen("dashboard")

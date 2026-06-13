@@ -1,0 +1,188 @@
+package com.nostrvault.ui.screens.settings
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.ViewModel
+import com.nostrvault.data.local.ConfigStore
+import com.nostrvault.relay.HavenConfig
+import com.nostrvault.service.RelayImportService
+import com.nostrvault.ui.theme.*
+import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.StateFlow
+import javax.inject.Inject
+
+@HiltViewModel
+class ImportSettingsViewModel @Inject constructor(
+    private val configStore: ConfigStore,
+    private val relayImportService: RelayImportService,
+) : ViewModel() {
+    val config: StateFlow<HavenConfig> = configStore.config
+    val isImporting = relayImportService.isImporting
+    val importProgress = relayImportService.importProgress
+    val statusMessage = relayImportService.importStatusMessage
+
+    fun setStartDate(date: String) = configStore.update { it.copy(importStartDate = date) }
+
+    fun addSeedRelay(url: String) {
+        val clean = url.trim().let { if (it.startsWith("wss://") || it.startsWith("ws://")) it else "wss://$it" }
+        configStore.update { cfg ->
+            if (clean in cfg.importSeedRelays) cfg
+            else cfg.copy(importSeedRelays = cfg.importSeedRelays + clean)
+        }
+    }
+
+    fun removeSeedRelay(url: String) =
+        configStore.update { it.copy(importSeedRelays = it.importSeedRelays.filter { r -> r != url }) }
+
+    fun startImport() = relayImportService.importNotes()
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ImportSettingsScreen(
+    onBack: () -> Unit,
+    viewModel: ImportSettingsViewModel = hiltViewModel(),
+) {
+    val config by viewModel.config.collectAsState()
+    val isImporting by viewModel.isImporting.collectAsState()
+    val progress by viewModel.importProgress.collectAsState()
+    val status by viewModel.statusMessage.collectAsState()
+    val colors = LocalNostrVaultColors.current
+
+    var newRelay by remember { mutableStateOf("") }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Import") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(NostrVaultIcons.Back, contentDescription = "Back")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = WindowBackground,
+                    titleContentColor = PrimaryText,
+                    navigationIconContentColor = PrimaryText,
+                ),
+            )
+        },
+        containerColor = WindowBackground,
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+        ) {
+            SectionLabel("Import Configuration")
+            OutlinedTextField(
+                value = config.importStartDate,
+                onValueChange = viewModel::setStartDate,
+                label = { Text("Start Date (YYYY-MM-DD)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = PrimaryText,
+                    unfocusedTextColor = PrimaryText,
+                    cursorColor = colors.primary,
+                    focusedBorderColor = colors.primary,
+                ),
+            )
+            Text(
+                "Notes will be fetched starting from this date.",
+                color = SecondaryText, fontSize = 12.sp,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+
+            Spacer(Modifier.height(20.dp))
+
+            SectionLabel("Seed Relays")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = newRelay,
+                    onValueChange = { newRelay = it },
+                    placeholder = { Text("wss://relay.example.com") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = PrimaryText,
+                        unfocusedTextColor = PrimaryText,
+                        cursorColor = colors.primary,
+                        focusedBorderColor = colors.primary,
+                    ),
+                )
+                Spacer(Modifier.width(8.dp))
+                Button(
+                    onClick = { viewModel.addSeedRelay(newRelay); newRelay = "" },
+                    enabled = newRelay.isNotBlank(),
+                    colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
+                ) { Text("Add") }
+            }
+            Spacer(Modifier.height(8.dp))
+            config.importSeedRelays.forEach { relay ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                ) {
+                    Text(relay, color = PrimaryText, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    IconButton(onClick = { viewModel.removeSeedRelay(relay) }) {
+                        Icon(NostrVaultIcons.Dismiss, contentDescription = "Remove", tint = ErrorRed)
+                    }
+                }
+            }
+            Text(
+                "The import fetches your own notes and notes where you are tagged. " +
+                    "Make sure your npub is set correctly.",
+                color = SecondaryText, fontSize = 12.sp,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+
+            Spacer(Modifier.height(24.dp))
+
+            if (isImporting) {
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier.fillMaxWidth(),
+                    color = colors.primary,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(status, color = SecondaryText, fontSize = 13.sp)
+            } else {
+                Button(
+                    onClick = { viewModel.startImport() },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
+                ) { Text("Start Import") }
+                if (status.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(status, color = SecondaryText, fontSize = 13.sp)
+                }
+            }
+
+            Spacer(Modifier.height(32.dp))
+        }
+    }
+}
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text = text.uppercase(),
+        color = SecondaryText,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = 1.sp,
+        modifier = Modifier.padding(bottom = 8.dp),
+    )
+}

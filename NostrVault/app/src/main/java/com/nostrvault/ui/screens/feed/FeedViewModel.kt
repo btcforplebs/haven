@@ -11,6 +11,7 @@ import com.nostrvault.data.model.PopularFilter
 import com.nostrvault.service.FeedService
 import com.nostrvault.service.NostrService
 import com.nostrvault.service.ScrollPosition
+import com.nostrvault.service.ZapSendService
 import com.nostrvault.ui.notification.NotificationManager
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Job
@@ -29,7 +30,12 @@ class FeedViewModel @Inject constructor(
     private val nostrService: NostrService,
     private val configStore: ConfigStore,
     private val notificationManager: NotificationManager,
+    private val zapSendService: ZapSendService,
 ) : ViewModel() {
+
+    // Zap result feedback for the UI (toast)
+    private val _zapMessage = MutableSharedFlow<String>(extraBufferCapacity = 4)
+    val zapMessage: SharedFlow<String> = _zapMessage
 
     // ── Feed state ───────────────────────────────────────────────
 
@@ -40,6 +46,11 @@ class FeedViewModel @Inject constructor(
     val zappedEventIds: StateFlow<Map<String, Int>> = feedService.zappedEventIds
     val connectionStatus: StateFlow<String> = feedService.connectionStatus
     val connectionColor: StateFlow<String> = feedService.connectionColor
+
+    // ── Scroll-condense state (bottom bar + FAB) ────────────────
+    val feedScrollingDown: StateFlow<Boolean> = feedService.feedScrollingDown
+
+    fun setFeedScrollingDown(value: Boolean) = feedService.setFeedScrollingDown(value)
 
     // ── Pending notes (new posts indicator) ────────────────────
     val pendingNoteCount: StateFlow<Int> = feedService.pendingNotes
@@ -182,7 +193,17 @@ class FeedViewModel @Inject constructor(
 
     fun zapNote(noteId: String, amount: Int = 21) {
         viewModelScope.launch {
-            feedService.zapNote(noteId, amount = amount.toLong())
+            val note = feedService.findNote(noteId)
+            if (note == null) {
+                _zapMessage.emit("Note not found")
+                return@launch
+            }
+            // Real NIP-57 zap; effective id redirects kind-6 reposts to the
+            // reposted event. ZapSendService bumps local stats on success.
+            zapSendService.zapNote(note.effectiveEventId, note.pubkey, amount).fold(
+                onSuccess = { _zapMessage.emit("Zapped ⚡$amount sats") },
+                onFailure = { e -> _zapMessage.emit(e.message ?: "Zap failed") },
+            )
         }
     }
 
@@ -227,6 +248,20 @@ class FeedViewModel @Inject constructor(
     fun fetchMissingParentNote(parentEventId: String) {
         feedService.fetchMissingNote(parentEventId)
     }
+
+    fun fetchMissingParentNotes(parentEventIds: List<String>) {
+        feedService.fetchMissingNotesBatch(parentEventIds)
+    }
+
+    // ── Quoted note cache (for embedded nostr:note1/nevent1 previews) ──
+
+    fun quotedNoteFor(identifier: String): FeedNote? = feedService.quotedNoteFor(identifier)
+
+    fun fetchMissingQuotedNotes(identifiers: List<String>) =
+        feedService.fetchMissingQuotedNotes(identifiers)
+
+    fun fetchMissingQuotedProfiles(identifiers: List<String>) =
+        feedService.fetchMissingQuotedProfiles(identifiers)
 
     // ── Helpers ──────────────────────────────────────────────────
 

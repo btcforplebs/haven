@@ -203,6 +203,73 @@ class RelayImportService @Inject constructor(
     }
 
     /**
+     * Restore the relay database from a Nostr Vault JSONL backup zip.
+     * @param inputPath absolute path to the backup file
+     */
+    fun importDatabase(inputPath: String) {
+        if (_isImporting.value || _isExporting.value) return
+
+        scope.launch {
+            _isExporting.value = true
+            _exportStatusMessage.value = "Restoring database..."
+
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    HavenBridge.restoreDatabase(inputPath)
+                }
+
+                if (result == 0) {
+                    _exportStatusMessage.value = "Database restored successfully"
+                    Log.i(TAG, "Database restore completed: $inputPath")
+                } else {
+                    _exportStatusMessage.value = "Database restore failed"
+                    Log.e(TAG, "Database restore failed with code: $result")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Database restore error: ${e.message}", e)
+                _exportStatusMessage.value = "Restore error: ${e.message}"
+            } finally {
+                _isExporting.value = false
+            }
+        }
+    }
+
+    /**
+     * Restore Blossom media files from a zip backup into the blossom directory.
+     * @param inputPath absolute path to the backup zip
+     */
+    fun importBlossom(inputPath: String) {
+        if (_isImporting.value || _isExporting.value) return
+
+        scope.launch {
+            _isExporting.value = true
+            _exportStatusMessage.value = "Restoring media files..."
+
+            try {
+                val relayDataDir = File(context.filesDir, "relay_data")
+                val blossomDir = File(relayDataDir, "blossom").absolutePath
+
+                val result = withContext(Dispatchers.IO) {
+                    HavenBridge.unzipDirectory(inputPath, blossomDir)
+                }
+
+                if (result == 0) {
+                    _exportStatusMessage.value = "Media restored successfully"
+                    Log.i(TAG, "Blossom restore completed: $inputPath")
+                } else {
+                    _exportStatusMessage.value = "Media restore failed"
+                    Log.e(TAG, "Blossom restore failed with code: $result")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Blossom restore error: ${e.message}", e)
+                _exportStatusMessage.value = "Restore error: ${e.message}"
+            } finally {
+                _isExporting.value = false
+            }
+        }
+    }
+
+    /**
      * Dismiss the import completed state so the progress section hides.
      */
     fun dismissImportProgress() {

@@ -4,8 +4,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,6 +51,9 @@ class DMInboxViewModel @Inject constructor(
     private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
+
     init {
         viewModelScope.launch {
             dmService.loadConversations()
@@ -60,16 +66,31 @@ class DMInboxViewModel @Inject constructor(
     }
 
     fun profileFor(pubkey: String): FeedProfile? = profiles.value[pubkey]
+
+    fun markAllAsRead() = dmService.markAllAsRead()
+
+    fun refresh() {
+        viewModelScope.launch {
+            _isRefreshing.value = true
+            dmService.refresh()
+            kotlinx.coroutines.delay(800)
+            // Re-fetch profiles for any newly surfaced conversations.
+            nostrService.fetchMissingProfiles(conversations.value.map { it.id }.distinct())
+            _isRefreshing.value = false
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DMInboxScreen(
     onConversationClick: (String) -> Unit,
+    onNewMessage: () -> Unit = {},
     viewModel: DMInboxViewModel = hiltViewModel(),
 ) {
     val conversations by viewModel.conversations.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
+    val isRefreshing by viewModel.isRefreshing.collectAsState()
     val colors = LocalNostrVaultColors.current
 
     GlassScaffold(
@@ -96,10 +117,10 @@ fun DMInboxScreen(
 
                 // Trailing pill: compose new message
                 GlassPill {
-                    IconButton(onClick = { /* mark all read */ }, modifier = Modifier.size(40.dp)) {
+                    IconButton(onClick = { viewModel.markAllAsRead() }, modifier = Modifier.size(40.dp)) {
                         Icon(NostrVaultIcons.MarkAllRead, "Mark all read", tint = colors.primary, modifier = Modifier.size(25.dp))
                     }
-                    IconButton(onClick = { /* new message */ }, modifier = Modifier.size(40.dp)) {
+                    IconButton(onClick = onNewMessage, modifier = Modifier.size(40.dp)) {
                         Icon(NostrVaultIcons.Edit, "New Message", tint = colors.primary, modifier = Modifier.size(25.dp))
                     }
                 }
@@ -115,47 +136,56 @@ fun DMInboxScreen(
             ) {
                 CircularProgressIndicator(color = colors.primary)
             }
-        } else if (conversations.isEmpty()) {
-            Box(
-                contentAlignment = Alignment.Center,
+        } else {
+            PullToRefreshBox(
+                isRefreshing = isRefreshing,
+                onRefresh = viewModel::refresh,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding),
             ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = NostrVaultIcons.DMs,
-                        contentDescription = null,
-                        tint = TertiaryText,
-                        modifier = Modifier.size(48.dp),
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        text = "No messages yet",
-                        color = SecondaryText,
-                        fontSize = 16.sp,
-                    )
-                }
-            }
-        } else {
-            LazyColumn(
-                contentPadding = padding,
-                modifier = Modifier.fillMaxSize(),
-            ) {
-                items(
-                    items = conversations,
-                    key = { it.id },
-                ) { conversation ->
-                    ConversationRow(
-                        conversation = conversation,
-                        profile = viewModel.profileFor(conversation.id),
-                        onClick = { onConversationClick(conversation.id) },
-                    )
-                    HorizontalDivider(
-                        color = SeparatorColor,
-                        thickness = 0.5.dp,
-                        modifier = Modifier.padding(start = 72.dp),
-                    )
+                if (conversations.isEmpty()) {
+                    // Scrollable empty state so the pull-to-refresh gesture works.
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        Spacer(Modifier.height(120.dp))
+                        Icon(
+                            imageVector = NostrVaultIcons.DMs,
+                            contentDescription = null,
+                            tint = TertiaryText,
+                            modifier = Modifier.size(48.dp),
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            text = "No messages yet",
+                            color = SecondaryText,
+                            fontSize = 16.sp,
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        items(
+                            items = conversations,
+                            key = { it.id },
+                        ) { conversation ->
+                            ConversationRow(
+                                conversation = conversation,
+                                profile = viewModel.profileFor(conversation.id),
+                                onClick = { onConversationClick(conversation.id) },
+                            )
+                            HorizontalDivider(
+                                color = SeparatorColor,
+                                thickness = 0.5.dp,
+                                modifier = Modifier.padding(start = 72.dp),
+                            )
+                        }
+                    }
                 }
             }
         }

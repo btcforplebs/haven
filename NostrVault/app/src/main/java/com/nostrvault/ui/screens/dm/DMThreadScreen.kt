@@ -1,6 +1,7 @@
 package com.nostrvault.ui.screens.dm
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -58,6 +59,15 @@ class DMThreadViewModel @Inject constructor(
 
     val myPubkey: String get() = configStore.activeAccountHexPubkey.value
 
+    /** Whether this conversation already contains any NIP-04 (legacy) messages. */
+    val hasNIP04Messages: StateFlow<Boolean> = messages
+        .map { msgs -> msgs.any { it.isNIP04 } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    /** Selected send protocol. false = NIP-17 (default, encrypted), true = NIP-04 (legacy). */
+    private val _useNIP04 = MutableStateFlow(false)
+    val useNIP04 = _useNIP04.asStateFlow()
+
     private val _messageText = MutableStateFlow("")
     val messageText = _messageText.asStateFlow()
 
@@ -73,6 +83,8 @@ class DMThreadViewModel @Inject constructor(
 
     fun setMessageText(text: String) { _messageText.value = text }
 
+    fun toggleProtocol() { _useNIP04.value = !_useNIP04.value }
+
     fun sendMessage() {
         val text = _messageText.value.trim()
         if (text.isBlank() || _isSending.value) return
@@ -80,7 +92,7 @@ class DMThreadViewModel @Inject constructor(
         viewModelScope.launch {
             _isSending.value = true
             _messageText.value = ""
-            dmService.sendMessage(counterpartyPubkey, text)
+            dmService.sendMessage(counterpartyPubkey, text, _useNIP04.value)
             _isSending.value = false
         }
     }
@@ -98,6 +110,8 @@ fun DMThreadScreen(
     val counterpartyProfile by viewModel.counterpartyProfile.collectAsState()
     val messageText by viewModel.messageText.collectAsState()
     val isSending by viewModel.isSending.collectAsState()
+    val useNIP04 by viewModel.useNIP04.collectAsState()
+    val hasNIP04Messages by viewModel.hasNIP04Messages.collectAsState()
     val listState = rememberLazyListState()
     val colors = LocalNostrVaultColors.current
 
@@ -146,47 +160,122 @@ fun DMThreadScreen(
             )
         },
         bottomBar = {
-            MessageInputBar(
-                text = messageText,
-                isSending = isSending,
-                onTextChange = viewModel::setMessageText,
-                onSend = viewModel::sendMessage,
-            )
+            Column {
+                ProtocolToggleRow(
+                    useNIP04 = useNIP04,
+                    onToggle = viewModel::toggleProtocol,
+                )
+                MessageInputBar(
+                    text = messageText,
+                    isSending = isSending,
+                    onTextChange = viewModel::setMessageText,
+                    onSend = viewModel::sendMessage,
+                )
+            }
         },
         containerColor = WindowBackground,
     ) { padding ->
-        if (messages.isEmpty()) {
-            Box(
-                contentAlignment = Alignment.Center,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-            ) {
-                Text(
-                    text = "Start a conversation",
-                    color = SecondaryText,
-                    fontSize = 15.sp,
-                )
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding),
+        ) {
+            if (hasNIP04Messages) {
+                NIP04WarningBanner()
             }
-        } else {
-            LazyColumn(
-                state = listState,
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-            ) {
-                items(
-                    items = messages,
-                    key = { it.id },
-                ) { message ->
-                    MessageBubble(
-                        message = message,
-                        isFromMe = message.senderPubkey == viewModel.myPubkey,
+
+            if (messages.isEmpty()) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    Text(
+                        text = "Start a conversation",
+                        color = SecondaryText,
+                        fontSize = 15.sp,
                     )
                 }
+            } else {
+                LazyColumn(
+                    state = listState,
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    items(
+                        items = messages,
+                        key = { it.id },
+                    ) { message ->
+                        MessageBubble(
+                            message = message,
+                            isFromMe = message.senderPubkey == viewModel.myPubkey,
+                        )
+                    }
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun NIP04WarningBanner() {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ZapOrange.copy(alpha = 0.08f))
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+    ) {
+        Icon(
+            imageVector = NostrVaultIcons.Alert,
+            contentDescription = null,
+            tint = ZapOrange.copy(alpha = 0.9f),
+            modifier = Modifier.size(13.dp),
+        )
+        Text(
+            text = "Some messages use NIP-04 (legacy encryption). New messages default to NIP-17.",
+            color = ZapOrange.copy(alpha = 0.9f),
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+        )
+    }
+}
+
+@Composable
+private fun ProtocolToggleRow(
+    useNIP04: Boolean,
+    onToggle: () -> Unit,
+) {
+    val colors = LocalNostrVaultColors.current
+    Surface(color = WindowBackground) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+        ) {
+            Icon(
+                imageVector = if (useNIP04) NostrVaultIcons.LockOpen else NostrVaultIcons.Lock,
+                contentDescription = null,
+                tint = if (useNIP04) ZapOrange.copy(alpha = 0.8f) else colors.primary.copy(alpha = 0.7f),
+                modifier = Modifier.size(12.dp),
+            )
+            Text(
+                text = if (useNIP04) "NIP-04 (legacy)" else "NIP-17 (encrypted)",
+                color = SecondaryText.copy(alpha = 0.8f),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+            )
+            Spacer(Modifier.weight(1f))
+            Text(
+                text = "Switch",
+                color = colors.primary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.clickable(onClick = onToggle),
+            )
         }
     }
 }
@@ -220,6 +309,26 @@ private fun MessageBubble(
                     fontSize = 15.sp,
                     lineHeight = 20.sp,
                 )
+                if (message.isNIP04) {
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        Icon(
+                            imageVector = NostrVaultIcons.LockOpen,
+                            contentDescription = null,
+                            tint = ZapOrange.copy(alpha = 0.8f),
+                            modifier = Modifier.size(10.dp),
+                        )
+                        Text(
+                            text = "NIP-04",
+                            color = ZapOrange.copy(alpha = 0.8f),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                    }
+                }
                 Spacer(Modifier.height(4.dp))
                 Text(
                     text = timeFormat.format(Date(message.timestamp * 1000)),
@@ -287,16 +396,4 @@ private fun MessageInputBar(
             }
         }
     }
-}
-
-// Make Row clickable in TopAppBar title
-@Composable
-private fun Modifier.clickable(onClick: () -> Unit): Modifier {
-    return this.then(
-        Modifier.clickable(onClick = onClick)
-    )
-}
-
-private fun Modifier.clickable(onClick: () -> Unit, nothing: Nothing? = null): Modifier {
-    return this
 }

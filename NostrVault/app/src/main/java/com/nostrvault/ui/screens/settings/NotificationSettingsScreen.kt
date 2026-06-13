@@ -13,109 +13,49 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.viewModelScope
 import com.nostrvault.data.local.ConfigStore
+import com.nostrvault.data.model.FeedProfile
+import com.nostrvault.relay.HavenBridge
+import com.nostrvault.relay.HavenConfig
+import com.nostrvault.relay.PushPrefs
+import com.nostrvault.service.NostrService
 import com.nostrvault.service.PushNotificationService
+import com.nostrvault.ui.components.AvatarImage
 import com.nostrvault.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.StateFlow
 import javax.inject.Inject
 
 @HiltViewModel
 class NotificationSettingsViewModel @Inject constructor(
     private val configStore: ConfigStore,
     private val pushService: PushNotificationService,
+    private val nostrService: NostrService,
 ) : ViewModel() {
-
+    val config: StateFlow<HavenConfig> = configStore.config
+    val profiles: StateFlow<Map<String, FeedProfile>> = nostrService.profiles
     val registrationStatus = pushService.registrationStatus
 
-    private val _enabled = MutableStateFlow(false)
-    val enabled = _enabled.asStateFlow()
+    fun hexFor(npub: String): String = HavenBridge.decodeNpub(npub) ?: ""
+    fun profileFor(npub: String): FeedProfile? = profiles.value[hexFor(npub)]
 
-    private val _serverUrl = MutableStateFlow("")
-    val serverUrl = _serverUrl.asStateFlow()
-
-    private val _mentions = MutableStateFlow(true)
-    val mentions = _mentions.asStateFlow()
-
-    private val _replies = MutableStateFlow(true)
-    val replies = _replies.asStateFlow()
-
-    private val _dms = MutableStateFlow(true)
-    val dms = _dms.asStateFlow()
-
-    private val _zaps = MutableStateFlow(true)
-    val zaps = _zaps.asStateFlow()
-
-    private val _reactions = MutableStateFlow(false)
-    val reactions = _reactions.asStateFlow()
-
-    private val _reposts = MutableStateFlow(false)
-    val reposts = _reposts.asStateFlow()
-
-    init {
-        val config = configStore.config.value
-        _enabled.value = config.enablePushNotifications
-        _serverUrl.value = config.pushServerURL
-        _mentions.value = config.pushNotifyMentions
-        _replies.value = config.pushNotifyReplies
-        _dms.value = config.pushNotifyDMs
-        _zaps.value = config.pushNotifyZaps
-        _reactions.value = config.pushNotifyReactions
-        _reposts.value = config.pushNotifyReposts
+    fun ensureProfiles(npubs: List<String>) {
+        val hexes = npubs.mapNotNull { HavenBridge.decodeNpub(it) }
+        if (hexes.isNotEmpty()) nostrService.fetchMissingProfiles(hexes)
     }
 
     fun toggleEnabled(on: Boolean) {
-        _enabled.value = on
-        save { it.copy(enablePushNotifications = on) }
+        configStore.update { it.copy(enablePushNotifications = on) }
+        if (on) pushService.registerIfReady() else pushService.unregister()
     }
 
-    fun setServerUrl(url: String) {
-        _serverUrl.value = url
-        save { it.copy(pushServerURL = url) }
-    }
+    fun setServerUrl(url: String) = configStore.update { it.copy(pushServerURL = url) }
 
-    fun toggleMentions(on: Boolean) {
-        _mentions.value = on
-        save { it.copy(pushNotifyMentions = on) }
-    }
+    fun registerNow() = pushService.registerIfReady()
 
-    fun toggleReplies(on: Boolean) {
-        _replies.value = on
-        save { it.copy(pushNotifyReplies = on) }
-    }
-
-    fun toggleDMs(on: Boolean) {
-        _dms.value = on
-        save { it.copy(pushNotifyDMs = on) }
-    }
-
-    fun toggleZaps(on: Boolean) {
-        _zaps.value = on
-        save { it.copy(pushNotifyZaps = on) }
-    }
-
-    fun toggleReactions(on: Boolean) {
-        _reactions.value = on
-        save { it.copy(pushNotifyReactions = on) }
-    }
-
-    fun toggleReposts(on: Boolean) {
-        _reposts.value = on
-        save { it.copy(pushNotifyReposts = on) }
-    }
-
-    fun registerNow() {
-        pushService.registerIfReady()
-    }
-
-    private fun save(
-        transform: (com.nostrvault.relay.HavenConfig) -> com.nostrvault.relay.HavenConfig,
-    ) {
-        viewModelScope.launch {
-            configStore.update(transform)
+    fun setPref(npub: String, transform: (PushPrefs) -> PushPrefs) {
+        configStore.update { cfg ->
+            cfg.copy(pushPrefsPerAccount = cfg.pushPrefsPerAccount + (npub to transform(cfg.pushPrefsFor(npub))))
         }
     }
 }
@@ -126,16 +66,14 @@ fun NotificationSettingsScreen(
     onBack: () -> Unit,
     viewModel: NotificationSettingsViewModel = hiltViewModel(),
 ) {
-    val enabled by viewModel.enabled.collectAsState()
-    val serverUrl by viewModel.serverUrl.collectAsState()
-    val mentions by viewModel.mentions.collectAsState()
-    val replies by viewModel.replies.collectAsState()
-    val dms by viewModel.dms.collectAsState()
-    val zaps by viewModel.zaps.collectAsState()
-    val reactions by viewModel.reactions.collectAsState()
-    val reposts by viewModel.reposts.collectAsState()
+    val config by viewModel.config.collectAsState()
+    val profiles by viewModel.profiles.collectAsState()
     val status by viewModel.registrationStatus.collectAsState()
     val colors = LocalNostrVaultColors.current
+    val enabled = config.enablePushNotifications
+    val accounts = config.allAccountNpubs()
+
+    LaunchedEffect(accounts) { viewModel.ensureProfiles(accounts) }
 
     Scaffold(
         topBar = {
@@ -163,45 +101,25 @@ fun NotificationSettingsScreen(
                 .padding(16.dp),
         ) {
             // Master toggle
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Enable Push Notifications",
-                        color = PrimaryText,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        text = "Receive notifications when the app is closed",
-                        color = SecondaryText,
-                        fontSize = 13.sp,
-                    )
+                    Text("Enable Push Notifications", color = PrimaryText, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Receive notifications when the app is closed", color = SecondaryText, fontSize = 13.sp)
                 }
                 Switch(
                     checked = enabled,
                     onCheckedChange = viewModel::toggleEnabled,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = PrimaryText,
-                        checkedTrackColor = colors.primary,
-                    ),
+                    colors = SwitchDefaults.colors(checkedThumbColor = PrimaryText, checkedTrackColor = colors.primary),
                 )
             }
 
             Spacer(Modifier.height(24.dp))
 
             // Push server URL
-            Text(
-                text = "Push Server URL",
-                color = PrimaryText,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
+            Text("Push Server URL", color = PrimaryText, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(4.dp))
             OutlinedTextField(
-                value = serverUrl,
+                value = config.pushServerURL,
                 onValueChange = viewModel::setServerUrl,
                 placeholder = { Text("https://push.example.com", color = PlaceholderText) },
                 singleLine = true,
@@ -232,95 +150,57 @@ fun NotificationSettingsScreen(
                 PushNotificationService.RegistrationStatus.FAILED -> ErrorRed
                 else -> TertiaryText
             }
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "Status: $statusText",
-                    color = statusColor,
-                    fontSize = 13.sp,
-                )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Status: $statusText", color = statusColor, fontSize = 13.sp)
                 if (enabled && status != PushNotificationService.RegistrationStatus.REGISTERING) {
                     Spacer(Modifier.width(12.dp))
                     TextButton(onClick = viewModel::registerNow) {
-                        Text(
-                            text = "Register Now",
-                            color = colors.primary,
-                            fontSize = 13.sp,
-                        )
+                        Text("Register Now", color = colors.primary, fontSize = 13.sp)
                     }
                 }
             }
 
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(24.dp))
 
-            // Notification type toggles
-            Text(
-                text = "NOTIFICATION TYPES",
-                color = SecondaryText,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 1.sp,
-            )
-            Spacer(Modifier.height(12.dp))
-
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = SecondaryGroupedBg,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column {
-                    NotificationToggle(
-                        title = "Mentions",
-                        subtitle = "When someone mentions you in a note",
-                        checked = mentions,
-                        enabled = enabled,
-                        onToggle = viewModel::toggleMentions,
-                    )
-                    HorizontalDivider(color = TertiaryGroupedBg, thickness = 0.5.dp)
-                    NotificationToggle(
-                        title = "Replies",
-                        subtitle = "Replies to your notes",
-                        checked = replies,
-                        enabled = enabled,
-                        onToggle = viewModel::toggleReplies,
-                    )
-                    HorizontalDivider(color = TertiaryGroupedBg, thickness = 0.5.dp)
-                    NotificationToggle(
-                        title = "Direct Messages",
-                        subtitle = "New DMs from contacts",
-                        checked = dms,
-                        enabled = enabled,
-                        onToggle = viewModel::toggleDMs,
-                    )
-                    HorizontalDivider(color = TertiaryGroupedBg, thickness = 0.5.dp)
-                    NotificationToggle(
-                        title = "Zaps",
-                        subtitle = "When someone zaps your notes",
-                        checked = zaps,
-                        enabled = enabled,
-                        onToggle = viewModel::toggleZaps,
-                    )
-                    HorizontalDivider(color = TertiaryGroupedBg, thickness = 0.5.dp)
-                    NotificationToggle(
-                        title = "Reactions",
-                        subtitle = "Likes and reactions to your notes",
-                        checked = reactions,
-                        enabled = enabled,
-                        onToggle = viewModel::toggleReactions,
-                    )
-                    HorizontalDivider(color = TertiaryGroupedBg, thickness = 0.5.dp)
-                    NotificationToggle(
-                        title = "Reposts",
-                        subtitle = "When someone reposts your notes",
-                        checked = reposts,
-                        enabled = enabled,
-                        onToggle = viewModel::toggleReposts,
-                    )
+            // Per-account notification preferences
+            accounts.forEach { npub ->
+                val isOwner = npub == config.ownerNpub
+                val name = viewModel.profileFor(npub)?.bestName ?: if (isOwner) "Owner" else npub.take(12) + "..."
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)) {
+                    AvatarImage(url = viewModel.profileFor(npub)?.pictureURL, pubkey = viewModel.hexFor(npub), size = 28.dp, displayName = name)
+                    Spacer(Modifier.width(8.dp))
+                    Text(name, color = PrimaryText, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                 }
+                val prefs = config.pushPrefsFor(npub)
+                Surface(shape = RoundedCornerShape(12.dp), color = SecondaryGroupedBg, modifier = Modifier.fillMaxWidth()) {
+                    Column {
+                        NotificationToggle("Mentions", "When someone mentions you in a note", prefs.mentions, enabled) {
+                            viewModel.setPref(npub) { p -> p.copy(mentions = it) }
+                        }
+                        Divider()
+                        NotificationToggle("Replies", "Replies to your notes", prefs.replies, enabled) {
+                            viewModel.setPref(npub) { p -> p.copy(replies = it) }
+                        }
+                        Divider()
+                        NotificationToggle("Direct Messages", "New DMs from contacts", prefs.dms, enabled) {
+                            viewModel.setPref(npub) { p -> p.copy(dms = it) }
+                        }
+                        Divider()
+                        NotificationToggle("Zaps", "When someone zaps your notes", prefs.zaps, enabled) {
+                            viewModel.setPref(npub) { p -> p.copy(zaps = it) }
+                        }
+                        Divider()
+                        NotificationToggle("Reactions", "Likes and reactions to your notes", prefs.reactions, enabled) {
+                            viewModel.setPref(npub) { p -> p.copy(reactions = it) }
+                        }
+                        Divider()
+                        NotificationToggle("Reposts", "When someone reposts your notes", prefs.reposts, enabled) {
+                            viewModel.setPref(npub) { p -> p.copy(reposts = it) }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
             }
-
-            Spacer(Modifier.height(16.dp))
 
             Text(
                 text = "Push notifications require a compatible push server and Firebase Cloud Messaging. " +
@@ -328,9 +208,13 @@ fun NotificationSettingsScreen(
                 color = TertiaryText,
                 fontSize = 12.sp,
             )
+            Spacer(Modifier.height(16.dp))
         }
     }
 }
+
+@Composable
+private fun Divider() = HorizontalDivider(color = TertiaryGroupedBg, thickness = 0.5.dp)
 
 @Composable
 private fun NotificationToggle(
@@ -340,6 +224,7 @@ private fun NotificationToggle(
     enabled: Boolean,
     onToggle: (Boolean) -> Unit,
 ) {
+    val colors = LocalNostrVaultColors.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -347,27 +232,14 @@ private fun NotificationToggle(
             .padding(horizontal = 16.dp, vertical = 10.dp),
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                color = if (enabled) PrimaryText else TertiaryText,
-                fontSize = 15.sp,
-            )
-            Text(
-                text = subtitle,
-                color = if (enabled) SecondaryText else TertiaryText,
-                fontSize = 12.sp,
-            )
+            Text(title, color = PrimaryText, fontSize = 15.sp)
+            Text(subtitle, color = SecondaryText, fontSize = 12.sp)
         }
         Switch(
             checked = checked,
             onCheckedChange = onToggle,
             enabled = enabled,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = PrimaryText,
-                checkedTrackColor = LocalNostrVaultColors.current.primary,
-                uncheckedThumbColor = SecondaryText,
-                uncheckedTrackColor = TertiaryGroupedBg,
-            ),
+            colors = SwitchDefaults.colors(checkedThumbColor = PrimaryText, checkedTrackColor = colors.primary),
         )
     }
 }

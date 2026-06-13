@@ -294,6 +294,36 @@ class BlossomService @Inject constructor(
         }
     }
 
+    /**
+     * Back up a piece of external feed media to the local relay's Blossom store.
+     *
+     * Port of iOS FeedMediaViewer.mirrorToBlossomTapped(): downloads the bytes,
+     * derives their sha256, and uploads to the local relay. Unlike [downloadFromURL]
+     * this reports whether the local save actually succeeded (it returns the blob's
+     * sha256), so the feed viewer can show an accurate "Mirrored / Failed" result.
+     *
+     * @return the blob's sha256 on success, or null if the download or local save failed.
+     */
+    suspend fun mirrorUrlToLocal(url: String): String? = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder().url(url).get().build()
+            val response = remoteClient.newCall(request).execute()
+            if (!response.isSuccessful) {
+                Log.w(TAG, "Mirror $url to local: download HTTP ${response.code}")
+                return@withContext null
+            }
+            // Prefer the source server's Content-Type — it's the authoritative format
+            // metadata; the relay's magic library can't detect MP4/MOV from bytes alone.
+            val contentType = response.header("Content-Type") ?: "application/octet-stream"
+            val data = readBodyCapped(response, MAX_BLOB_BYTES) ?: return@withContext null
+            val sha256 = computeSHA256(data)
+            if (saveToLocalRelay(data, sha256, contentType)) sha256 else null
+        } catch (e: Exception) {
+            Log.w(TAG, "Mirror $url to local failed: ${e.message}")
+            null
+        }
+    }
+
     suspend fun downloadFromMirrors(sha256: String): ByteArray? {
         val mirrors = configStore.config.value.activeBlossomMirrors
         for (mirror in mirrors) {
@@ -471,14 +501,15 @@ class BlossomService @Inject constructor(
     fun deleteFromLocal(sha256: String): Boolean {
         val config = configStore.config.value
         val dir = config.relayDataDir?.let { File(it, config.blossomPath) } ?: return false
+        // Bare-hash file (how the relay stores blobs) is the common case.
         val exact = File(dir, sha256)
         if (exact.exists()) return exact.delete()
 
-        // Try with extensions
-        val extensions = listOf("jpg", "jpeg", "png", "gif", "webp", "mp4", "mov", "webm")
-        for (ext in extensions) {
-            val file = File(dir, "$sha256.$ext")
-            if (file.exists()) return file.delete()
+        // Otherwise delete any `<hash>.<ext>` variant, regardless of extension
+        // (covers audio/documents, not just images/video).
+        val matches = dir.listFiles { f -> f.isFile && f.nameWithoutExtension == sha256 }
+        if (!matches.isNullOrEmpty()) {
+            return matches.all { it.delete() }
         }
         return false
     }

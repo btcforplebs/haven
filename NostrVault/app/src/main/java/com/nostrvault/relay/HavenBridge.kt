@@ -392,6 +392,13 @@ object HavenBridge {
         return payload.toHex()
     }
 
+    /** Encode a hex event ID to a note1 bech32 string. */
+    fun hexToNote1(hexEventId: String): String? {
+        val bytes = hexToByteArray(hexEventId) ?: return null
+        if (bytes.size != 32) return null
+        return bech32Encode("note", bytes)
+    }
+
     /** Decode an nevent1 bech32 string. Returns the hex event ID (type 0 TLV). */
     fun decodeNevent(nevent1: String): String? {
         val (hrp, payload) = bech32Decode(nevent1) ?: return null

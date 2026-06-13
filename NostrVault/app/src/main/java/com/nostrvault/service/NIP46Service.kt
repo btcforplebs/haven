@@ -1,18 +1,29 @@
 package com.nostrvault.service
 
 import android.util.Log
+import com.nostrvault.relay.AccountBunkerConfig
 import com.nostrvault.relay.HavenBridge
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 
 /**
  * Port of NIP46Service / cshared.go NIP-46 bridge -- remote signer protocol.
  * All operations delegate to the Go FFI bridge which manages the bunker
  * client lifecycle, WebSocket subscriptions, and RPC timeouts.
+ *
+ * The Go bridge holds a SINGLE bunker session, so only the active account's
+ * signer is connected at any time; switching accounts disconnects/reconnects.
  */
 object NIP46Service {
 
     private const val TAG = "NIP46Service"
+
+    private val _isConnected = MutableStateFlow(false)
+    /** Whether a bunker session is currently connected (active account's signer). */
+    val isConnected: StateFlow<Boolean> = _isConnected.asStateFlow()
 
     /**
      * Connect to a NIP-46 bunker.
@@ -23,12 +34,19 @@ object NIP46Service {
     suspend fun connect(clientSecretKey: String, bunkerUrl: String): String? =
         withContext(Dispatchers.IO) {
             try {
-                HavenBridge.nip46Connect(clientSecretKey, bunkerUrl)
+                val pubkey = HavenBridge.nip46Connect(clientSecretKey, bunkerUrl)
+                _isConnected.value = pubkey != null
+                pubkey
             } catch (e: Exception) {
                 Log.e(TAG, "NIP-46 connect failed: ${e.message}")
+                _isConnected.value = false
                 null
             }
         }
+
+    /** Connect using a stored per-account bunker config. */
+    suspend fun connectForAccount(cfg: AccountBunkerConfig): String? =
+        connect(cfg.clientSecretKey, cfg.bunkerURI)
 
     /** Disconnect from the NIP-46 bunker. */
     fun disconnect() {
@@ -36,6 +54,8 @@ object NIP46Service {
             HavenBridge.nip46Disconnect()
         } catch (e: Exception) {
             Log.e(TAG, "NIP-46 disconnect failed: ${e.message}")
+        } finally {
+            _isConnected.value = false
         }
     }
 

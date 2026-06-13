@@ -1,68 +1,89 @@
 package com.nostrvault.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.google.zxing.BarcodeFormat
+import com.journeyapps.barcodescanner.BarcodeEncoder
+import com.nostrvault.data.local.ConfigStore
+import com.nostrvault.relay.HavenBridge
+import com.nostrvault.relay.HavenConfig
 import com.nostrvault.service.CashuService
 import com.nostrvault.service.NWCService
+import com.nostrvault.service.NostrService
 import com.nostrvault.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
- * Wallet screen showing NWC balance and Cashu token management.
- * Port of WalletView.swift.
+ * Wallet configuration screen — port of iOS WalletSettingsView.
+ * NWC (Nostr Wallet Connect) + default zap, Cashu ecash, and a Bitcoin
+ * taproot (BIP-341) address derived from the Nostr keypair.
  */
-
 @HiltViewModel
 class WalletViewModel @Inject constructor(
+    private val configStore: ConfigStore,
     private val nwcService: NWCService,
     private val cashuService: CashuService,
+    private val nostrService: NostrService,
 ) : ViewModel() {
+    val config: StateFlow<HavenConfig> = configStore.config
+    val cashuBalance: StateFlow<ULong> = cashuService.balanceSats
 
-    private val _balanceSats = MutableStateFlow(0L)
-    val balanceSats = _balanceSats.asStateFlow()
+    private val _lightningBalance = MutableStateFlow<Long?>(null)
+    val lightningBalance = _lightningBalance.asStateFlow()
 
-    private val _cashuBalance = MutableStateFlow(0L)
-    val cashuBalance = _cashuBalance.asStateFlow()
-
-    private val _isNwcConnected = MutableStateFlow(false)
-    val isNwcConnected = _isNwcConnected.asStateFlow()
-
-    private val _isLoading = MutableStateFlow(true)
-    val isLoading = _isLoading.asStateFlow()
+    private val _taprootAddress = MutableStateFlow<String?>(null)
+    val taprootAddress = _taprootAddress.asStateFlow()
 
     init {
-        loadBalances()
+        refreshBalance()
+        if (config.value.showBitcoinWallet) deriveAddress()
     }
 
-    fun loadBalances() {
+    fun setNwcUri(uri: String) = configStore.update { it.copy(nwcURI = uri.ifBlank { null }) }
+    fun setDefaultZap(sats: Int) = configStore.update { it.copy(defaultZapAmount = sats.coerceAtLeast(1)) }
+    fun setCashuMint(url: String) = configStore.update { it.copy(cashuMintURL = url) }
+
+    fun toggleBitcoin(on: Boolean) {
+        configStore.update { it.copy(showBitcoinWallet = on) }
+        if (on) deriveAddress() else _taprootAddress.value = null
+    }
+
+    fun refreshBalance() {
         viewModelScope.launch {
-            _isLoading.value = true
-            try {
-                _balanceSats.value = nwcService.getBalance()
-                _isNwcConnected.value = true
+            _lightningBalance.value = try {
+                nwcService.getBalance()
             } catch (_: Exception) {
-                _isNwcConnected.value = false
+                null
             }
-            _cashuBalance.value = cashuService.balanceSats.value.toLong()
-            _isLoading.value = false
         }
+    }
+
+    private fun deriveAddress() {
+        val hex = nostrService.ownerHexPubkey
+        if (hex.isNotEmpty()) _taprootAddress.value = HavenBridge.deriveTaprootAddress(hex)
     }
 }
 
@@ -70,13 +91,15 @@ class WalletViewModel @Inject constructor(
 @Composable
 fun WalletScreen(
     onBack: () -> Unit,
+    onSweep: () -> Unit = {},
     viewModel: WalletViewModel = hiltViewModel(),
 ) {
-    val balanceSats by viewModel.balanceSats.collectAsState()
+    val config by viewModel.config.collectAsState()
+    val lightningBalance by viewModel.lightningBalance.collectAsState()
     val cashuBalance by viewModel.cashuBalance.collectAsState()
-    val isNwcConnected by viewModel.isNwcConnected.collectAsState()
-    val isLoading by viewModel.isLoading.collectAsState()
+    val taproot by viewModel.taprootAddress.collectAsState()
     val colors = LocalNostrVaultColors.current
+    val clipboard = LocalClipboardManager.current
 
     Scaffold(
         topBar = {
@@ -97,116 +120,144 @@ fun WalletScreen(
         containerColor = WindowBackground,
     ) { padding ->
         Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
         ) {
-            if (isLoading) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.padding(32.dp),
-                ) {
-                    CircularProgressIndicator(color = colors.primary)
+            // ── Nostr Wallet Connect ──────────────────────────────
+            SectionLabel("Nostr Wallet Connect (NWC)")
+            OutlinedTextField(
+                value = config.nwcURI ?: "",
+                onValueChange = viewModel::setNwcUri,
+                placeholder = { Text("nostr+walletconnect://…") },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2,
+                colors = walletFieldColors(colors.primary),
+            )
+            Caption("Connect a Lightning wallet to send zaps.")
+
+            if (!config.nwcURI.isNullOrBlank()) {
+                Spacer(Modifier.height(12.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Balance: " + (lightningBalance?.let { "$it sats" } ?: "Unknown"),
+                        color = PrimaryText, fontSize = 15.sp, modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = viewModel::refreshBalance) { Text("Refresh", color = colors.primary) }
                 }
-            } else {
-                // NWC Balance
-                Surface(
-                    color = SecondaryGroupedBg,
-                    shape = RoundedCornerShape(16.dp),
+                Spacer(Modifier.height(8.dp))
+                var zapText by remember(config.defaultZapAmount) { mutableStateOf(config.defaultZapAmount.toString()) }
+                OutlinedTextField(
+                    value = zapText,
+                    onValueChange = { t -> zapText = t.filter { it.isDigit() }; zapText.toIntOrNull()?.let(viewModel::setDefaultZap) },
+                    label = { Text("Default Zap Amount (sats)") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(24.dp),
-                    ) {
-                        Text("Lightning Balance", color = SecondaryText, fontSize = 14.sp)
-                        Spacer(Modifier.height(8.dp))
-                        Row(verticalAlignment = Alignment.Bottom) {
-                            Icon(
-                                imageVector = NostrVaultIcons.Zap,
-                                contentDescription = null,
-                                tint = ZapOrange,
-                                modifier = Modifier.size(28.dp),
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                text = formatSats(balanceSats),
-                                color = PrimaryText,
-                                fontSize = 36.sp,
-                                fontWeight = FontWeight.Bold,
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text("sats", color = SecondaryText, fontSize = 16.sp)
-                        }
-                        if (!isNwcConnected) {
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                text = "NWC not connected",
-                                color = WarningYellow,
-                                fontSize = 13.sp,
-                            )
-                        }
-                    }
+                    colors = walletFieldColors(colors.primary),
+                )
+            }
+
+            Spacer(Modifier.height(24.dp))
+
+            // ── Cashu ─────────────────────────────────────────────
+            SectionLabel("Cashu Mint")
+            OutlinedTextField(
+                value = config.cashuMintURL,
+                onValueChange = viewModel::setCashuMint,
+                placeholder = { Text("https://mint.example.com") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                colors = walletFieldColors(colors.primary),
+            )
+            if (config.cashuMintURL.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Text("Ecash Balance: $cashuBalance sats", color = PrimaryText, fontSize = 15.sp)
+            }
+
+            Spacer(Modifier.height(24.dp))
+
+            // ── Bitcoin ───────────────────────────────────────────
+            SectionLabel("Bitcoin")
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Bitcoin Address", color = PrimaryText, fontSize = 15.sp)
+                    Text("Derive a taproot address from your Nostr key (BIP-341)", color = SecondaryText, fontSize = 12.sp)
                 }
+                Switch(
+                    checked = config.showBitcoinWallet,
+                    onCheckedChange = viewModel::toggleBitcoin,
+                    colors = SwitchDefaults.colors(checkedThumbColor = PrimaryText, checkedTrackColor = colors.primary),
+                )
+            }
 
-                Spacer(Modifier.height(16.dp))
-
-                // Cashu Balance
-                Surface(
-                    color = SecondaryGroupedBg,
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(24.dp),
-                    ) {
-                        Text("Cashu Balance", color = SecondaryText, fontSize = 14.sp)
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = "${formatSats(cashuBalance)} sats",
-                            color = PrimaryText,
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
+            if (config.showBitcoinWallet && taproot != null) {
+                Spacer(Modifier.height(12.dp))
+                QrCode(taproot!!)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = taproot!!,
+                    color = PrimaryText,
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace,
+                )
+                Spacer(Modifier.height(8.dp))
+                Row {
+                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(taproot!!)) }) {
+                        Text("Copy Address")
                     }
-                }
-
-                Spacer(Modifier.height(24.dp))
-
-                // Action buttons
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    OutlinedButton(
-                        onClick = { /* TODO: Receive */ },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Text("Receive")
-                    }
+                    Spacer(Modifier.width(8.dp))
                     Button(
-                        onClick = { /* TODO: Send */ },
-                        colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Text("Send")
-                    }
+                        onClick = onSweep,
+                        colors = ButtonDefaults.buttonColors(containerColor = ZapOrange),
+                    ) { Text("Sweep Wallet") }
                 }
             }
+
+            Spacer(Modifier.height(32.dp))
         }
     }
 }
 
-private fun formatSats(sats: Long): String {
-    return when {
-        sats >= 1_000_000 -> "%.1fM".format(sats / 1_000_000.0)
-        sats >= 1_000 -> "%,d".format(sats)
-        else -> sats.toString()
+@Composable
+private fun QrCode(content: String) {
+    val bitmap = remember(content) {
+        runCatching {
+            BarcodeEncoder().encodeBitmap(content, BarcodeFormat.QR_CODE, 480, 480)
+        }.getOrNull()
+    }
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = "Bitcoin address QR",
+            modifier = Modifier.size(200.dp),
+        )
     }
 }
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(
+        text = text.uppercase(),
+        color = SecondaryText,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.SemiBold,
+        letterSpacing = 1.sp,
+        modifier = Modifier.padding(bottom = 8.dp),
+    )
+}
+
+@Composable
+private fun Caption(text: String) {
+    Text(text = text, color = SecondaryText, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
+}
+
+@Composable
+private fun walletFieldColors(primary: androidx.compose.ui.graphics.Color) = OutlinedTextFieldDefaults.colors(
+    focusedTextColor = PrimaryText,
+    unfocusedTextColor = PrimaryText,
+    cursorColor = primary,
+    focusedBorderColor = primary,
+)

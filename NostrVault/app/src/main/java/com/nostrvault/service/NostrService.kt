@@ -820,10 +820,17 @@ class NostrService @Inject constructor(
     }
 
     private fun parseMuteListEvent(tags: List<List<String>>) {
-        val mutedPubkeys = profileRepository.parseMuteListPTags(tags)
-        // Sync to ConfigStore
+        val mutedNpubs = profileRepository.parseMuteListPTags(tags).mapNotNull { hexToNpub(it) }
+        // The owner's kind-10000 mute list. Sync into the owner's per-account blocked
+        // list (and the legacy flat field for backward compatibility).
         configStore.update { config ->
-            config.copy(blockedNpubs = mutedPubkeys.mapNotNull { hexToNpub(it) })
+            val ownerKey = config.ownerNpub
+            config.copy(
+                blockedNpubs = mutedNpubs,
+                blockedNpubsPerAccount = if (ownerKey.isNotEmpty())
+                    config.blockedNpubsPerAccount + (ownerKey to mutedNpubs)
+                else config.blockedNpubsPerAccount,
+            )
         }
     }
 
@@ -1070,8 +1077,10 @@ class NostrService @Inject constructor(
                 }
                 ?: credentialStore.getNsec(ownerHexPubkey.ifEmpty { return null })
         } else {
-            // Whitelisted account key
-            credentialStore.getCredentialHexKey(config.activeAccountNpub!!)
+            // Non-owner account key: stored hex key, or nsec keyed by hex pubkey.
+            val npub = config.activeAccountNpub!!
+            credentialStore.getCredentialHexKey(npub)
+                ?: com.nostrvault.relay.HavenBridge.decodeNpub(npub)?.let { credentialStore.getNsec(it) }
         }
     }
 

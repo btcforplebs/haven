@@ -204,11 +204,26 @@ data class HavenConfig(
     val signingMode: String = "local", // "local", "nip46", "amber"
     val amberSignerPackage: String = "com.greenart7c3.nostrsigner",
 
+    // Multi-account (mirrors iOS HavenConfig per-account dictionaries).
+    // accountNpubs is the roster of non-owner accounts; the owner is synthesized
+    // by allAccountNpubs(). All maps are keyed by account npub. Default-empty for
+    // backward compatibility with single-owner configs.
+    val accountNpubs: List<String> = emptyList(),
+    val accountBunkerConfigs: Map<String, AccountBunkerConfig> = emptyMap(),
+    val accountSigningModes: Map<String, String> = emptyMap(),
+    val publishRelayListPerAccount: Map<String, Boolean> = emptyMap(),
+
     // Whitelisted / Blacklisted
     val whitelistedNpubsFile: String = "",
     val blacklistedNpubsFile: String = "",
     val whitelistedNpubs: List<String>? = null,
     val blockedNpubs: List<String>? = null,
+    // Per-account block/throttle (mirrors iOS blockedNpubsPerAccount /
+    // throttledAccountsPerAccount, keyed by account npub). Throttle is local-only
+    // (never published); blocked accounts are published as a NIP-51 kind-10000
+    // mute list. Default-empty for backward compatibility with old configs.
+    val blockedNpubsPerAccount: Map<String, List<String>> = emptyMap(),
+    val throttledAccountsPerAccount: Map<String, Map<String, Int>> = emptyMap(),
 
     // Private Relay
     val privateRelayName: String = "Nostr Vault Private",
@@ -235,7 +250,7 @@ data class HavenConfig(
     val inboxRelayName: String = "Nostr Vault Inbox",
     val inboxRelayDescription: String = "Inbox relay",
     val inboxRelayIcon: String = "",
-    val inboxPullIntervalSeconds: Int = 300,
+    val inboxPullIntervalSeconds: Int = 60, // match iOS (was 300 = 5x slower catch-up)
 
     // Import
     val importStartDate: String = "2023-01-01",
@@ -264,6 +279,17 @@ data class HavenConfig(
         "wss://nostr.mutinywallet.com",
         "wss://relay.damus.io",
         "wss://nos.lol",
+    ),
+
+    // DM Relays — the Go relay merges these with importSeedRelays for the
+    // inbox tagged-event (#p = owner) subscription. Was hardcoded empty on
+    // Android, so tagged notes on relays not in importSeedRelays (e.g.
+    // nos.lol) never reached the inbox. Mirrors iOS HavenConfig.dmRelays.
+    val dmRelays: List<String> = listOf(
+        "wss://relay.damus.io",
+        "wss://relay.primal.net",
+        "wss://nos.lol",
+        "wss://relay.btcforplebs.com",
     ),
 
     // Relay URLs
@@ -295,9 +321,13 @@ data class HavenConfig(
 
     // NWC (Nostr Wallet Connect)
     val nwcURI: String? = null,
+    val defaultZapAmount: Int = 21, // sats
 
     // Cashu Ecash
     val cashuMintURL: String = "",
+
+    // Bitcoin (BIP-341 taproot address derived from the Nostr keypair)
+    val showBitcoinWallet: Boolean = false,
 
     // Appearance
     val themeColor: String = "orange",
@@ -305,11 +335,18 @@ data class HavenConfig(
     val oledMode: Boolean = false,
     val useFeedCompactMode: Boolean = true,
     val feedCompactModes: Map<String, Boolean> = emptyMap(),
+    val noteDetailCompactView: Boolean = false,
+    val noteDetailExpandedEngagement: Boolean = false,
     val defaultReactionEmoji: String = "+",
     val autoplayVideos: Boolean = true,
 
     // Performance
     val prefetchAvatars: Boolean = true,
+
+    // Advanced / media (client-side; not sent to the Go relay)
+    val disableMediaCache: Boolean = false,
+    val cacheTTLDays: Int = 7, // 0 = never evict
+    val autoStartRelay: Boolean = true,
 
     // Push Notifications
     val pushServerURL: String = "",
@@ -320,6 +357,10 @@ data class HavenConfig(
     val pushNotifyZaps: Boolean = true,
     val pushNotifyReactions: Boolean = false,
     val pushNotifyReposts: Boolean = false,
+    // Per-account push preferences (mirrors iOS). Master enable + server URL
+    // stay global above; each account keeps its own per-type toggles. Falls
+    // back to the global flags for accounts without an entry (back-compat).
+    val pushPrefsPerAccount: Map<String, PushPrefs> = emptyMap(),
 
     // Search
     val recentSearches: List<String> = emptyList(),
@@ -422,9 +463,72 @@ data class HavenConfig(
             return mirrors
         }
 
-    /** Current signing mode for the active account. */
-    fun activeSigningMode(): String = signingMode
+    /** Full account roster: owner first, then any added accounts (deduped). */
+    fun allAccountNpubs(): List<String> =
+        (listOf(ownerNpub) + accountNpubs)
+            .filter { it.isNotEmpty() }
+            .distinct()
+
+    /** Per-account signing mode, defaulting sensibly. */
+    fun signingMode(forNpub: String): String {
+        accountSigningModes[forNpub]?.let { return it }
+        return if (forNpub == ownerNpub) signingMode else "local"
+    }
+
+    /** NIP-46 bunker config for the given account, if configured. */
+    fun bunkerConfig(forNpub: String): AccountBunkerConfig? =
+        accountBunkerConfigs[forNpub]?.takeIf { it.isConfigured }
+
+    /** Current signing mode for the active account (resolves per-account state). */
+    fun activeSigningMode(): String {
+        val npub = activeOrOwnerNpub()
+        when (accountSigningModes[npub]) {
+            "nip46" -> if (bunkerConfig(npub) != null) return "nip46"
+            "amber" -> return "amber"
+            "local" -> return "local"
+        }
+        if (bunkerConfig(npub) != null) return "nip46"
+        // Legacy single-owner fallback.
+        if (npub == ownerNpub) return signingMode
+        return "local"
+    }
+
+    /** The npub of the currently-active account, falling back to the owner. */
+    fun activeOrOwnerNpub(): String {
+        val active = activeAccountNpub?.trim().orEmpty()
+        return active.ifEmpty { ownerNpub }
+    }
+
+    /** Blocked npubs for the active account, falling back to the legacy flat list. */
+    fun blockedForActiveAccount(): List<String> =
+        blockedNpubsPerAccount[activeOrOwnerNpub()] ?: blockedNpubs ?: emptyList()
+
+    /** Throttled npub -> max-visible-posts map for the active account (local-only). */
+    fun throttledForActiveAccount(): Map<String, Int> =
+        throttledAccountsPerAccount[activeOrOwnerNpub()] ?: emptyMap()
+
+    /** Per-account push preferences, falling back to the global flags. */
+    fun pushPrefsFor(npub: String): PushPrefs =
+        pushPrefsPerAccount[npub] ?: PushPrefs(
+            mentions = pushNotifyMentions,
+            replies = pushNotifyReplies,
+            dms = pushNotifyDMs,
+            zaps = pushNotifyZaps,
+            reactions = pushNotifyReactions,
+            reposts = pushNotifyReposts,
+        )
 }
+
+/** Per-account push notification preferences (mirrors iOS). */
+@kotlinx.serialization.Serializable
+data class PushPrefs(
+    val mentions: Boolean = true,
+    val replies: Boolean = true,
+    val dms: Boolean = true,
+    val zaps: Boolean = true,
+    val reactions: Boolean = false,
+    val reposts: Boolean = false,
+)
 
 /** Config-level joined group (no dependency on service layer). */
 @kotlinx.serialization.Serializable
@@ -433,3 +537,22 @@ data class JoinedGroupConfig(
     val groupId: String,
     val displayName: String? = null,
 )
+
+/**
+ * Per-account NIP-46 remote-signer (bunker) configuration.
+ * Mirrors iOS AccountBunkerConfig. Non-secret metadata is persisted in config
+ * JSON; the clientSecretKey is sensitive but kept here for parity with iOS
+ * (the bunker session needs it to reconnect on account switch).
+ */
+@kotlinx.serialization.Serializable
+data class AccountBunkerConfig(
+    val bunkerURI: String = "",
+    val signerPubkey: String = "",
+    val relayURL: String = "",
+    val secret: String = "",
+    val clientSecretKey: String = "",
+    val clientPubkey: String = "",
+) {
+    val isConfigured: Boolean
+        get() = bunkerURI.isNotEmpty() || signerPubkey.isNotEmpty()
+}

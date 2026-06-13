@@ -2,8 +2,15 @@ package com.nostrvault.ui.screens
 
 import android.content.Intent
 import android.util.Log
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -43,6 +50,7 @@ import com.nostrvault.service.StatsService
 import com.nostrvault.ui.components.CustomZapSheet
 import com.nostrvault.ui.components.GlassPill
 import com.nostrvault.ui.components.GlassScaffold
+import com.nostrvault.ui.components.ScrollCondenseEffect
 import com.nostrvault.ui.components.SkeletonFeed
 import com.nostrvault.ui.components.VaultNoteCard
 import com.nostrvault.ui.components.VaultNoteLayoutMode
@@ -219,6 +227,12 @@ class DashboardViewModel @Inject constructor(
     // Persistent local relay connections (outbox + inbox)
     private var outboxClient: WebSocketClient? = null
     private var inboxClient: WebSocketClient? = null
+    // Mac relay connections (outbox + inbox) — the source-of-truth relay shared
+    // with the iOS/macOS apps. iOS queries macRelayURL + macRelayURL/inbox in
+    // VaultNetworking.performRefresh; mirror that here so all devices converge on
+    // the same data instead of each showing its own independently-built inbox.
+    private var macOutboxClient: WebSocketClient? = null
+    private var macInboxClient: WebSocketClient? = null
     private var clientJobs = mutableListOf<Job>()
     private var isFullReload = false
 
@@ -321,10 +335,17 @@ class DashboardViewModel @Inject constructor(
             val ownerHex = nostrService.activeHexPubkey
             outboxClient?.let { sendVaultSubscription(it, "vault-outbox", authors, ownerHex) }
             inboxClient?.let { sendVaultSubscription(it, "vault-inbox", authors, ownerHex) }
+            // Re-pull the Mac relay (source of truth) too so we converge on its data
+            macOutboxClient?.takeIf { it.connectionState.value == WebSocketClient.ConnectionState.CONNECTED }
+                ?.let { sendVaultSubscription(it, "vault-mac-outbox", authors, ownerHex) }
+            macInboxClient?.takeIf { it.connectionState.value == WebSocketClient.ConnectionState.CONNECTED }
+                ?.let { sendVaultSubscription(it, "vault-mac-inbox", authors, ownerHex) }
         } else if (outboxClient != null) {
             // Connection dropped — give auto-reconnect a fresh retry budget
             outboxClient?.resetReconnect()
             inboxClient?.resetReconnect()
+            macOutboxClient?.resetReconnect()
+            macInboxClient?.resetReconnect()
         } else {
             // No clients at all — full connect
             connectToLocalRelay()
@@ -586,9 +607,53 @@ class DashboardViewModel @Inject constructor(
             }
         }
 
-        clientJobs = mutableListOf(outboxMsgJob, outboxStateJob, inboxMsgJob, inboxStateJob)
+        val jobs = mutableListOf(outboxMsgJob, outboxStateJob, inboxMsgJob, inboxStateJob)
+
+        // --- Mac relay connections (source-of-truth, shared with iOS/macOS) ---
+        // Real cert on a public domain → normal system trust (trustLocalhost = false).
+        // The inbox relay requires no AUTH to query, so a plain REQ returns the
+        // tagged replies/reactions/zaps the local embedded relay hasn't imported yet.
+        val macWss = config.macRelayWssURL
+        if (macWss.isNotEmpty()) {
+            val macInboxUrl = "$macWss/inbox"
+            Log.d(TAG, "connectToLocalRelay: mac outbox=$macWss, mac inbox=$macInboxUrl")
+
+            val macOutbox = WebSocketClient(url = macWss, scope = viewModelScope, trustLocalhost = false)
+            macOutboxClient = macOutbox
+            jobs += viewModelScope.launch(Dispatchers.IO) {
+                macOutbox.messages.collect { msg -> processRelayMessage(msg, macWss) }
+            }
+            jobs += viewModelScope.launch {
+                macOutbox.connectionState.collect { state ->
+                    when (state) {
+                        WebSocketClient.ConnectionState.CONNECTED ->
+                            sendVaultSubscription(macOutbox, "vault-mac-outbox", authors, ownerHex)
+                        else -> {}
+                    }
+                }
+            }
+
+            val macInbox = WebSocketClient(url = macInboxUrl, scope = viewModelScope, trustLocalhost = false)
+            macInboxClient = macInbox
+            jobs += viewModelScope.launch(Dispatchers.IO) {
+                macInbox.messages.collect { msg -> processRelayMessage(msg, macInboxUrl) }
+            }
+            jobs += viewModelScope.launch {
+                macInbox.connectionState.collect { state ->
+                    when (state) {
+                        WebSocketClient.ConnectionState.CONNECTED ->
+                            sendVaultSubscription(macInbox, "vault-mac-inbox", authors, ownerHex)
+                        else -> {}
+                    }
+                }
+            }
+        }
+
+        clientJobs = jobs
         outbox.connect()
         inbox.connect()
+        macOutboxClient?.connect()
+        macInboxClient?.connect()
     }
 
     /**
@@ -722,8 +787,12 @@ class DashboardViewModel @Inject constructor(
         clientJobs.clear()
         outboxClient?.disconnect()
         inboxClient?.disconnect()
+        macOutboxClient?.disconnect()
+        macInboxClient?.disconnect()
         outboxClient = null
         inboxClient = null
+        macOutboxClient = null
+        macInboxClient = null
     }
 
     // ── Snapshot persistence ─────────────────────────────────────
@@ -1531,6 +1600,22 @@ fun DashboardScreen(
         else -> SecondaryText
     }
 
+    // Scroll-direction detection → condense the bottom bar + Dashboard FAB.
+    ScrollCondenseEffect(
+        scrollKey = listState,
+        firstVisibleItemIndex = { listState.firstVisibleItemIndex },
+        firstVisibleItemScrollOffset = { listState.firstVisibleItemScrollOffset },
+        setScrollingDown = feedService::setFeedScrollingDown,
+    )
+
+    // Condensed-bar relay antenna opens the dashboard stats sheet (iOS parity).
+    LaunchedEffect(Unit) {
+        feedService.relayDashboardRequest.collect {
+            viewModel.loadStats()
+            showDashboardSheet = true
+        }
+    }
+
     GlassScaffold(
         toolbar = {
             Row(
@@ -1657,33 +1742,41 @@ fun DashboardScreen(
             }
         },
         floatingActionButton = {
-            Surface(
-                onClick = {
-                    viewModel.loadStats()
-                    showDashboardSheet = true
-                },
-                modifier = Modifier.padding(bottom = 88.dp),
-                color = dotColor,
-                shape = CircleShape,
-                shadowElevation = 8.dp,
+            val scrollingDown by feedService.feedScrollingDown.collectAsState()
+            val fabSpring = spring<Float>(dampingRatio = 0.75f, stiffness = Spring.StiffnessMediumLow)
+            AnimatedVisibility(
+                visible = !scrollingDown,
+                enter = scaleIn(animationSpec = fabSpring, initialScale = 0.5f) + fadeIn(fabSpring),
+                exit = scaleOut(animationSpec = fabSpring, targetScale = 0.5f) + fadeOut(fabSpring),
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+                Surface(
+                    onClick = {
+                        viewModel.loadStats()
+                        showDashboardSheet = true
+                    },
+                    modifier = Modifier.padding(bottom = 88.dp),
+                    color = dotColor,
+                    shape = CircleShape,
+                    shadowElevation = 8.dp,
                 ) {
-                    Icon(
-                        imageVector = NostrVaultIcons.Relay,
-                        contentDescription = null,
-                        tint = PrimaryText,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        text = "Dashboard",
-                        color = PrimaryText,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+                    ) {
+                        Icon(
+                            imageVector = NostrVaultIcons.Relay,
+                            contentDescription = null,
+                            tint = PrimaryText,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "Dashboard",
+                            color = PrimaryText,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
                 }
             }
         },

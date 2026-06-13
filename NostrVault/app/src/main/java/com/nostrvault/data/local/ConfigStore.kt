@@ -1,8 +1,10 @@
 package com.nostrvault.data.local
 
 import android.content.Context
+import com.nostrvault.relay.AccountBunkerConfig
 import com.nostrvault.relay.HavenBridge
 import com.nostrvault.relay.HavenConfig
+import com.nostrvault.service.NIP46Service
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -62,6 +64,17 @@ class ConfigStore @Inject constructor(
             appSupportDir = context.filesDir.absolutePath,
         )
 
+        // Multi-account migration: seed the owner's signing mode so
+        // activeSigningMode() is stable for legacy single-owner configs. The
+        // owner is synthesized by allAccountNpubs(), so it is NOT added to
+        // accountNpubs (which is the non-owner roster). whitelistedNpubs is the
+        // relay/follow list and is intentionally never migrated here.
+        if (loaded.ownerNpub.isNotEmpty() && loaded.ownerNpub !in loaded.accountSigningModes) {
+            loaded = loaded.copy(
+                accountSigningModes = loaded.accountSigningModes + (loaded.ownerNpub to loaded.signingMode),
+            )
+        }
+
         _config.value = loaded
 
         // Restore active account hex pubkey from persisted ownerNpub so that
@@ -103,6 +116,127 @@ class ConfigStore @Inject constructor(
     fun setSwitchingAccount(switching: Boolean) {
         _isSwitchingAccount.value = switching
     }
+
+    // ── Blocked / throttle (per active-or-owner account) ──────────────
+    // Mirror of iOS ConfigService.blockProfile/unblockProfile/throttleProfile/
+    // unthrottleProfile. These mutate config only; callers that want the change
+    // reflected on the network should publish the kind-10000 mute list afterwards.
+
+    /** Block an npub for the active account. No-op if already blocked. */
+    fun blockProfile(npub: String) {
+        update { cfg ->
+            val key = cfg.activeOrOwnerNpub()
+            val current = cfg.blockedNpubsPerAccount[key] ?: cfg.blockedNpubs ?: emptyList()
+            if (npub in current) cfg
+            else cfg.copy(
+                blockedNpubsPerAccount = cfg.blockedNpubsPerAccount + (key to (current + npub)),
+            )
+        }
+    }
+
+    /** Unblock an npub for the active account. */
+    fun unblockProfile(npub: String) {
+        update { cfg ->
+            val key = cfg.activeOrOwnerNpub()
+            val current = cfg.blockedNpubsPerAccount[key] ?: cfg.blockedNpubs ?: emptyList()
+            cfg.copy(
+                blockedNpubsPerAccount = cfg.blockedNpubsPerAccount + (key to current.filter { it != npub }),
+            )
+        }
+    }
+
+    /** Throttle an npub to at most [maxPosts] visible posts (1..20). Local-only. */
+    fun throttleProfile(npub: String, maxPosts: Int) {
+        update { cfg ->
+            val key = cfg.activeOrOwnerNpub()
+            val current = cfg.throttledAccountsPerAccount[key] ?: emptyMap()
+            cfg.copy(
+                throttledAccountsPerAccount = cfg.throttledAccountsPerAccount +
+                    (key to (current + (npub to maxPosts.coerceIn(1, 20)))),
+            )
+        }
+    }
+
+    /** Remove a throttle limit for an npub. */
+    fun unthrottleProfile(npub: String) {
+        update { cfg ->
+            val key = cfg.activeOrOwnerNpub()
+            val current = cfg.throttledAccountsPerAccount[key] ?: return@update cfg
+            cfg.copy(
+                throttledAccountsPerAccount = cfg.throttledAccountsPerAccount + (key to (current - npub)),
+            )
+        }
+    }
+
+    // ── Multi-account management ──────────────────────────────────────
+    // Mirrors iOS ConfigService account handling. The owner is account[0]
+    // (synthesized by HavenConfig.allAccountNpubs()); accountNpubs holds the
+    // additional accounts. NIP-46 uses a single Go bunker session, so switching
+    // disconnects the previous account's signer and reconnects the new one.
+
+    /**
+     * Switch the active account. Pass null/empty/owner-npub to return to the
+     * owner. Updates both activeAccountNpub and the active hex pubkey flow
+     * (fixing the prior desync where guests stayed view-only), and reconnects
+     * the NIP-46 bunker if the target account uses remote signing.
+     */
+    suspend fun switchActiveAccount(npub: String?) {
+        val cfg = _config.value
+        val target = (npub ?: "").trim()
+        val newValue = if (target == cfg.ownerNpub) "" else target
+        val currentActive = cfg.activeAccountNpub?.trim().orEmpty()
+        if (newValue == currentActive) return
+
+        val prevNpub = cfg.activeOrOwnerNpub()
+        if (cfg.bunkerConfig(prevNpub) != null && NIP46Service.isConnected.value) {
+            NIP46Service.disconnect()
+        }
+
+        setSwitchingAccount(true)
+        try {
+            updateAsync { it.copy(activeAccountNpub = newValue.ifEmpty { null }) }
+
+            val resolvedNpub = newValue.ifEmpty { cfg.ownerNpub }
+            _activeAccountHexPubkey.value =
+                if (resolvedNpub.startsWith("npub1")) HavenBridge.decodeNpub(resolvedNpub) ?: "" else ""
+
+            val newCfg = _config.value
+            if (newCfg.activeSigningMode() == "nip46") {
+                newCfg.bunkerConfig(newCfg.activeOrOwnerNpub())?.let {
+                    NIP46Service.connectForAccount(it)
+                }
+            }
+        } finally {
+            setSwitchingAccount(false)
+        }
+    }
+
+    fun addAccount(npub: String) = update { cfg ->
+        if (npub.isEmpty() || npub == cfg.ownerNpub || npub in cfg.accountNpubs) cfg
+        else cfg.copy(accountNpubs = cfg.accountNpubs + npub)
+    }
+
+    fun removeAccount(npub: String) = update { cfg ->
+        cfg.copy(
+            accountNpubs = cfg.accountNpubs.filter { it != npub },
+            accountBunkerConfigs = cfg.accountBunkerConfigs - npub,
+            accountSigningModes = cfg.accountSigningModes - npub,
+            publishRelayListPerAccount = cfg.publishRelayListPerAccount - npub,
+            activeAccountNpub = if (cfg.activeAccountNpub == npub) null else cfg.activeAccountNpub,
+        )
+    }
+
+    fun setSigningMode(npub: String, mode: String) =
+        update { it.copy(accountSigningModes = it.accountSigningModes + (npub to mode)) }
+
+    fun setBunkerConfig(npub: String, bunker: AccountBunkerConfig) =
+        update { it.copy(accountBunkerConfigs = it.accountBunkerConfigs + (npub to bunker)) }
+
+    fun removeBunkerConfig(npub: String) =
+        update { it.copy(accountBunkerConfigs = it.accountBunkerConfigs - npub) }
+
+    fun setPublishRelayList(npub: String, enabled: Boolean) =
+        update { it.copy(publishRelayListPerAccount = it.publishRelayListPerAccount + (npub to enabled)) }
 
     /** Factory reset -- delete config and all data. */
     suspend fun resetApp() = withContext(Dispatchers.IO) {

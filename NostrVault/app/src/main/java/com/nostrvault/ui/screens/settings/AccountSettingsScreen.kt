@@ -1,73 +1,156 @@
 package com.nostrvault.ui.screens.settings
 
+import androidx.biometric.BiometricManager
+import androidx.biometric.BiometricPrompt
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
-import androidx.compose.ui.graphics.Color
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nostrvault.data.local.ConfigStore
 import com.nostrvault.data.local.CredentialStore
+import com.nostrvault.data.model.FeedProfile
+import com.nostrvault.relay.AccountBunkerConfig
 import com.nostrvault.relay.HavenBridge
+import com.nostrvault.relay.HavenConfig
+import com.nostrvault.service.NIP46Service
+import com.nostrvault.service.NostrService
+import com.nostrvault.ui.components.AvatarImage
 import com.nostrvault.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
-
-/**
- * Account management: view active account, copy keys, add accounts.
- */
 
 @HiltViewModel
 class AccountSettingsViewModel @Inject constructor(
     private val configStore: ConfigStore,
     private val credentialStore: CredentialStore,
+    private val nostrService: NostrService,
 ) : ViewModel() {
+    val config: StateFlow<HavenConfig> = configStore.config
+    val profiles: StateFlow<Map<String, FeedProfile>> = nostrService.profiles
+    val nip46Connected: StateFlow<Boolean> = NIP46Service.isConnected
 
-    val activeHexPubkey = configStore.activeAccountHexPubkey
+    fun hexFor(npub: String): String = HavenBridge.decodeNpub(npub) ?: ""
+    fun profileFor(npub: String): FeedProfile? = profiles.value[hexFor(npub)]
 
-    private val _npub = MutableStateFlow("")
-    val npub = _npub.asStateFlow()
+    fun ensureProfiles(npubs: List<String>) {
+        val hexes = npubs.mapNotNull { HavenBridge.decodeNpub(it) }
+        if (hexes.isNotEmpty()) nostrService.fetchMissingProfiles(hexes)
+    }
 
-    private val _nsecVisible = MutableStateFlow(false)
-    val nsecVisible = _nsecVisible.asStateFlow()
+    fun hasLocalKey(npub: String, cfg: HavenConfig): Boolean {
+        if (npub == cfg.ownerNpub) {
+            return cfg.ownerHexKey != null || cfg.ownerNcryptsec != null ||
+                (hexFor(npub).isNotEmpty() && credentialStore.getNsec(hexFor(npub)) != null)
+        }
+        return credentialStore.getCredentialHexKey(npub) != null ||
+            (hexFor(npub).isNotEmpty() && credentialStore.getNsec(hexFor(npub)) != null)
+    }
 
-    private val _nsec = MutableStateFlow("")
-    val nsec = _nsec.asStateFlow()
+    fun switchTo(npub: String) = viewModelScope.launch { configStore.switchActiveAccount(npub) }
 
-    private val _signingMode = MutableStateFlow("local")
-    val signingMode = _signingMode.asStateFlow()
+    /** Add a view-only account from an npub (no signing key). */
+    fun addViewOnly(npub: String) {
+        val clean = npub.trim()
+        if (!clean.startsWith("npub1")) return
+        configStore.addAccount(clean)
+        configStore.setSigningMode(clean, "local")
+        ensureProfiles(listOf(clean))
+    }
 
-    init {
+    /** Import a signing account from an nsec. Returns the resulting npub or null. */
+    fun importKey(nsec: String): String? {
+        val hex = HavenBridge.decodeNsec(nsec.trim()) ?: return null
+        val pub = HavenBridge.getPublicKey(hex) ?: return null
+        val npub = HavenBridge.encodeNpub(pub) ?: return null
+        credentialStore.storeCredentialHexKey(hex, npub)
+        credentialStore.saveNsec(hex, pub)
+        configStore.addAccount(npub)
+        configStore.setSigningMode(npub, "local")
+        ensureProfiles(listOf(npub))
+        return npub
+    }
+
+    /** Connect a NIP-46 remote signer. Returns the account npub or null. */
+    fun connectSigner(bunkerUri: String, onResult: (String?) -> Unit) {
         viewModelScope.launch {
-            val hex = activeHexPubkey.value
-            if (hex.isNotBlank()) {
-                _npub.value = HavenBridge.hexToNpub(hex) ?: hex.take(16) + "..."
-                _nsec.value = credentialStore.getNsec(hex) ?: ""
-            }
-            _signingMode.value = configStore.config.value.signingMode
+            val uri = bunkerUri.trim()
+            val keypair = HavenBridge.generateKeyPair()
+            val parts = keypair?.split(":")
+            if (parts == null || parts.size != 2) { onResult(null); return@launch }
+            val clientSec = parts[0]
+            val clientPub = parts[1]
+            val signerPubkey = NIP46Service.connect(clientSec, uri)
+            if (signerPubkey == null) { onResult(null); return@launch }
+            val npub = HavenBridge.encodeNpub(signerPubkey) ?: run { onResult(null); return@launch }
+            configStore.setBunkerConfig(
+                npub,
+                AccountBunkerConfig(
+                    bunkerURI = uri,
+                    signerPubkey = signerPubkey,
+                    clientSecretKey = clientSec,
+                    clientPubkey = clientPub,
+                ),
+            )
+            configStore.addAccount(npub)
+            configStore.setSigningMode(npub, "nip46")
+            ensureProfiles(listOf(npub))
+            onResult(npub)
         }
     }
 
-    fun toggleNsecVisibility() {
-        _nsecVisible.value = !_nsecVisible.value
+    fun disconnectSigner(npub: String) {
+        NIP46Service.disconnect()
+        configStore.removeBunkerConfig(npub)
+        configStore.setSigningMode(npub, "local")
+    }
+
+    fun setSigningMode(npub: String, mode: String) = configStore.setSigningMode(npub, mode)
+
+    fun removeAccount(npub: String) = configStore.removeAccount(npub)
+
+    fun togglePublishRelayList(npub: String, enabled: Boolean) {
+        configStore.setPublishRelayList(npub, enabled)
+        if (enabled) nostrService.publishRelayList(npub)
+    }
+
+    /** Resolve the nsec for an account (call only after biometric auth). */
+    fun revealNsec(npub: String): String? {
+        val cfg = config.value
+        val hexKey = if (npub == cfg.ownerNpub) {
+            cfg.ownerHexKey
+                ?: cfg.ownerNcryptsec?.let { nc ->
+                    val pw = credentialStore.getKeychainPassword(npub) ?: return@let null
+                    com.nostrvault.service.NIP49Service.decrypt(nc, pw)
+                }
+                ?: hexFor(npub).takeIf { it.isNotEmpty() }?.let { credentialStore.getNsec(it) }
+        } else {
+            credentialStore.getCredentialHexKey(npub)
+                ?: hexFor(npub).takeIf { it.isNotEmpty() }?.let { credentialStore.getNsec(it) }
+        } ?: return null
+        return HavenBridge.encodeNsec(hexKey)
     }
 }
 
@@ -77,13 +160,16 @@ fun AccountSettingsScreen(
     onBack: () -> Unit,
     viewModel: AccountSettingsViewModel = hiltViewModel(),
 ) {
-    val npub by viewModel.npub.collectAsState()
-    val nsec by viewModel.nsec.collectAsState()
-    val nsecVisible by viewModel.nsecVisible.collectAsState()
-    val signingMode by viewModel.signingMode.collectAsState()
-    val clipboard = LocalClipboardManager.current
+    val config by viewModel.config.collectAsState()
+    val profiles by viewModel.profiles.collectAsState()
+    val nip46Connected by viewModel.nip46Connected.collectAsState()
     val colors = LocalNostrVaultColors.current
-    val isAmberMode = signingMode == "amber"
+
+    val accounts = config.allAccountNpubs()
+    val activeNpub = config.activeOrOwnerNpub()
+    var selected by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(accounts) { viewModel.ensureProfiles(accounts) }
 
     Scaffold(
         topBar = {
@@ -107,160 +193,322 @@ fun AccountSettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .verticalScroll(rememberScrollState())
                 .padding(16.dp),
         ) {
-            // Signing mode badge
-            Surface(
-                color = SecondaryGroupedBg,
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(12.dp),
-                ) {
-                    Text("Signing Mode", color = SecondaryText, fontSize = 13.sp)
-                    Spacer(Modifier.weight(1f))
-                    Surface(
-                        color = when (signingMode) {
-                            "amber" -> Color(0xFF4CAF50).copy(alpha = 0.15f)
-                            "nip46" -> Color(0xFF2196F3).copy(alpha = 0.15f)
-                            else -> Color(0xFFF59E0B).copy(alpha = 0.15f)
-                        },
-                        shape = RoundedCornerShape(6.dp),
-                    ) {
-                        Text(
-                            text = when (signingMode) {
-                                "amber" -> "Amber (NIP-55)"
-                                "nip46" -> "Remote (NIP-46)"
-                                else -> "Local Key"
-                            },
-                            color = when (signingMode) {
-                                "amber" -> Color(0xFF4CAF50)
-                                "nip46" -> Color(0xFF2196F3)
-                                else -> Color(0xFFF59E0B)
-                            },
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        )
-                    }
+            accounts.forEach { npub ->
+                val isOwner = npub == config.ownerNpub
+                val isActive = npub == activeNpub
+                AccountRow(
+                    npub = npub,
+                    hex = viewModel.hexFor(npub),
+                    displayName = viewModel.profileFor(npub)?.bestName
+                        ?: if (isOwner) "Owner" else npub.take(12) + "...",
+                    pictureURL = viewModel.profileFor(npub)?.pictureURL,
+                    mode = config.signingMode(npub),
+                    hasBunker = config.bunkerConfig(npub) != null,
+                    isOwner = isOwner,
+                    isActive = isActive,
+                    connected = isActive && nip46Connected,
+                    expanded = selected == npub,
+                    onClick = { selected = if (selected == npub) null else npub },
+                )
+                if (selected == npub) {
+                    AccountDetail(
+                        npub = npub,
+                        cfg = config,
+                        isOwner = isOwner,
+                        isActive = isActive,
+                        hasLocalKey = viewModel.hasLocalKey(npub, config),
+                        viewModel = viewModel,
+                    )
                 }
+                HorizontalDivider(color = TertiaryGroupedBg)
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(20.dp))
+            AddAccountSection(viewModel)
 
-            // Active account card
-            Surface(
-                color = SecondaryGroupedBg,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+            Spacer(Modifier.height(32.dp))
+        }
+    }
+}
+
+@Composable
+private fun AccountRow(
+    npub: String,
+    hex: String,
+    displayName: String,
+    pictureURL: String?,
+    mode: String,
+    hasBunker: Boolean,
+    isOwner: Boolean,
+    isActive: Boolean,
+    connected: Boolean,
+    expanded: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+    ) {
+        AvatarImage(url = pictureURL, pubkey = hex, size = 40.dp, displayName = displayName)
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(displayName, color = PrimaryText, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                if (isOwner) {
+                    Spacer(Modifier.width(6.dp))
+                    Badge2("Owner", colorPrimaryFor(mode = "owner"))
+                }
+            }
+            val modeLabel = when {
+                hasBunker || mode == "nip46" -> "Remote Signer"
+                mode == "amber" -> "Amber"
+                else -> "Local Key"
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(modeLabel, color = SecondaryText, fontSize = 12.sp)
+                if ((hasBunker || mode == "nip46") && isActive) {
+                    Spacer(Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(if (connected) Color(0xFF4CAF50) else ErrorRed),
+                    )
+                }
+            }
+        }
+        if (isActive) {
+            Icon(NostrVaultIcons.Check, contentDescription = "Active", tint = LocalNostrVaultColors.current.primary, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+@Composable
+private fun AccountDetail(
+    npub: String,
+    cfg: HavenConfig,
+    isOwner: Boolean,
+    isActive: Boolean,
+    hasLocalKey: Boolean,
+    viewModel: AccountSettingsViewModel,
+) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val colors = LocalNostrVaultColors.current
+    val hasBunker = cfg.bunkerConfig(npub) != null
+    var revealed by remember(npub) { mutableStateOf<String?>(null) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 52.dp, bottom = 8.dp),
+    ) {
+        if (!isActive) {
+            TextButton(onClick = { viewModel.switchTo(npub) }) {
+                Text("Switch to this account", color = colors.primary)
+            }
+        }
+
+        // Signing-method picker when both local key and bunker exist.
+        if (hasLocalKey && hasBunker) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+                Text("Signing", color = SecondaryText, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                FilterChip(
+                    selected = cfg.signingMode(npub) == "local",
+                    onClick = { viewModel.setSigningMode(npub, "local") },
+                    label = { Text("Local") },
+                )
+                Spacer(Modifier.width(6.dp))
+                FilterChip(
+                    selected = cfg.signingMode(npub) == "nip46",
+                    onClick = { viewModel.setSigningMode(npub, "nip46") },
+                    label = { Text("Remote") },
+                )
+            }
+        }
+
+        // Local key
+        if (hasLocalKey) {
+            if (revealed == null) {
+                TextButton(onClick = {
+                    val activity = context as? FragmentActivity
+                    if (activity != null) {
+                        authenticateAndReveal(activity) { revealed = viewModel.revealNsec(npub) }
+                    } else {
+                        revealed = viewModel.revealNsec(npub)
+                    }
+                }) { Text("Reveal Private Key", color = colors.primary) }
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
                     Text(
-                        text = "Active Account",
-                        color = SecondaryText,
+                        revealed!!,
+                        color = PrimaryText,
                         fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
                     )
-                    Spacer(Modifier.height(12.dp))
-
-                    // npub
-                    KeyRow(
-                        label = "Public Key (npub)",
-                        value = npub,
-                        onCopy = { clipboard.setText(AnnotatedString(npub)) },
-                    )
-
-                    // nsec (hidden when using Amber -- no private key on device)
-                    if (!isAmberMode && nsec.isNotBlank()) {
-                        Spacer(Modifier.height(12.dp))
-
-                        KeyRow(
-                            label = "Private Key (nsec)",
-                            value = if (nsecVisible) nsec else "nsec1" + "*".repeat(50),
-                            onCopy = { clipboard.setText(AnnotatedString(nsec)) },
-                            onToggleVisibility = viewModel::toggleNsecVisibility,
-                            isSecret = true,
-                        )
+                    IconButton(onClick = { clipboard.setText(AnnotatedString(revealed!!)) }) {
+                        Icon(NostrVaultIcons.Copy, contentDescription = "Copy", tint = SecondaryText, modifier = Modifier.size(16.dp))
+                    }
+                    IconButton(onClick = { revealed = null }) {
+                        Icon(NostrVaultIcons.Dismiss, contentDescription = "Hide", tint = SecondaryText, modifier = Modifier.size(16.dp))
                     }
                 }
             }
+        }
 
-            Spacer(Modifier.height(24.dp))
+        // Remote signer
+        if (hasBunker) {
+            TextButton(onClick = { viewModel.disconnectSigner(npub) }) {
+                Text("Disconnect Remote Signer", color = ErrorRed)
+            }
+        }
 
-            // Warning
-            Surface(
-                color = WarningYellow.copy(alpha = 0.1f),
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                ) {
-                    Icon(
-                        imageVector = NostrVaultIcons.Alert,
-                        contentDescription = null,
-                        tint = WarningYellow,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = if (isAmberMode)
-                            "Your private key is managed by Amber. Nostr Vault never sees or stores it."
-                        else
-                            "Never share your private key (nsec). Anyone with your nsec has full control of your Nostr identity.",
-                        color = WarningYellow,
-                        fontSize = 13.sp,
-                        lineHeight = 18.sp,
-                    )
-                }
+        // NIP-65 publish toggle
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+            Text("Publish Inbox Relay (NIP-65)", color = PrimaryText, fontSize = 13.sp, modifier = Modifier.weight(1f))
+            Switch(
+                checked = cfg.publishRelayListPerAccount[npub] ?: false,
+                onCheckedChange = { viewModel.togglePublishRelayList(npub, it) },
+                colors = SwitchDefaults.colors(checkedThumbColor = PrimaryText, checkedTrackColor = colors.primary),
+            )
+        }
+
+        if (!isOwner) {
+            TextButton(onClick = { viewModel.removeAccount(npub) }) {
+                Text("Remove Account", color = ErrorRed)
             }
         }
     }
 }
 
 @Composable
-private fun KeyRow(
-    label: String,
-    value: String,
-    onCopy: () -> Unit,
-    onToggleVisibility: (() -> Unit)? = null,
-    isSecret: Boolean = false,
-) {
-    Column {
-        Text(
-            text = label,
-            color = TertiaryText,
-            fontSize = 11.sp,
-        )
-        Spacer(Modifier.height(4.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = value.take(32) + if (value.length > 32) "..." else "",
-                color = PrimaryText,
-                fontSize = 13.sp,
-                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                modifier = Modifier.weight(1f),
-            )
-            if (onToggleVisibility != null) {
-                IconButton(onClick = onToggleVisibility, modifier = Modifier.size(28.dp)) {
-                    Icon(
-                        imageVector = NostrVaultIcons.Accounts,
-                        contentDescription = "Toggle visibility",
-                        tint = SecondaryText,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-            }
-            IconButton(onClick = onCopy, modifier = Modifier.size(28.dp)) {
-                Icon(
-                    imageVector = NostrVaultIcons.Copy,
-                    contentDescription = "Copy",
-                    tint = SecondaryText,
-                    modifier = Modifier.size(16.dp),
-                )
-            }
+private fun AddAccountSection(viewModel: AccountSettingsViewModel) {
+    val colors = LocalNostrVaultColors.current
+    var expanded by remember { mutableStateOf(false) }
+    var keyInput by remember { mutableStateOf("") }
+    var bunkerInput by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    if (!expanded) {
+        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
+            Text("Add Account")
         }
+        return
     }
+
+    Text("Add Account", color = SecondaryText, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.height(8.dp))
+    OutlinedTextField(
+        value = keyInput,
+        onValueChange = { keyInput = it; error = null },
+        placeholder = { Text("npub1… or nsec1…") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedTextColor = PrimaryText, unfocusedTextColor = PrimaryText,
+            cursorColor = colors.primary, focusedBorderColor = colors.primary,
+        ),
+    )
+    Row(modifier = Modifier.padding(top = 8.dp)) {
+        Button(
+            onClick = {
+                val t = keyInput.trim()
+                when {
+                    t.startsWith("nsec1") -> {
+                        if (viewModel.importKey(t) == null) error = "Invalid nsec"
+                        else { keyInput = ""; expanded = false }
+                    }
+                    t.startsWith("npub1") -> { viewModel.addViewOnly(t); keyInput = ""; expanded = false }
+                    else -> error = "Enter an npub or nsec"
+                }
+            },
+            enabled = keyInput.isNotBlank(),
+            colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
+        ) { Text("Add") }
+        Spacer(Modifier.width(8.dp))
+        TextButton(onClick = { expanded = false }) { Text("Cancel") }
+    }
+
+    Spacer(Modifier.height(12.dp))
+    Text("Connect Remote Signer (NIP-46)", color = SecondaryText, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+    Spacer(Modifier.height(8.dp))
+    OutlinedTextField(
+        value = bunkerInput,
+        onValueChange = { bunkerInput = it; error = null },
+        placeholder = { Text("bunker://…") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedTextColor = PrimaryText, unfocusedTextColor = PrimaryText,
+            cursorColor = colors.primary, focusedBorderColor = colors.primary,
+        ),
+    )
+    Button(
+        onClick = {
+            viewModel.connectSigner(bunkerInput.trim()) { result ->
+                if (result == null) error = "Could not connect signer"
+                else { bunkerInput = ""; expanded = false }
+            }
+        },
+        enabled = bunkerInput.startsWith("bunker://"),
+        colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
+        modifier = Modifier.padding(top = 8.dp),
+    ) { Text("Connect") }
+
+    error?.let {
+        Spacer(Modifier.height(8.dp))
+        Text(it, color = ErrorRed, fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun Badge2(text: String, color: Color) {
+    Surface(color = color.copy(alpha = 0.15f), shape = RoundedCornerShape(6.dp)) {
+        Text(
+            text,
+            color = color,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+        )
+    }
+}
+
+private fun colorPrimaryFor(mode: String): Color = when (mode) {
+    "owner" -> Color(0xFF9C27B0)
+    "amber" -> Color(0xFF4CAF50)
+    "nip46" -> Color(0xFF2196F3)
+    else -> Color(0xFFF59E0B)
+}
+
+/** Prompt biometric/device-credential auth, then run [onSuccess] on success. */
+private fun authenticateAndReveal(activity: FragmentActivity, onSuccess: () -> Unit) {
+    val executor = ContextCompat.getMainExecutor(activity)
+    val prompt = BiometricPrompt(
+        activity,
+        executor,
+        object : BiometricPrompt.AuthenticationCallback() {
+            override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                onSuccess()
+            }
+        },
+    )
+    val info = BiometricPrompt.PromptInfo.Builder()
+        .setTitle("Authenticate")
+        .setSubtitle("Reveal your private key")
+        .setAllowedAuthenticators(
+            BiometricManager.Authenticators.BIOMETRIC_STRONG or
+                BiometricManager.Authenticators.DEVICE_CREDENTIAL,
+        )
+        .build()
+    prompt.authenticate(info)
 }

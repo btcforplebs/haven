@@ -14,6 +14,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import com.nostrvault.data.local.ConfigStore
 import com.nostrvault.relay.RelayForegroundService
 import com.nostrvault.service.FeedService
@@ -23,6 +24,11 @@ import com.nostrvault.service.PendingPostManager
 import com.nostrvault.ui.components.PendingPostBanner
 import com.nostrvault.ui.notification.NotificationOverlay
 import com.nostrvault.ui.components.AccountSwitcherSheet
+import com.nostrvault.ui.theme.ErrorRed
+import com.nostrvault.ui.theme.LocalNostrVaultColors
+import com.nostrvault.ui.theme.NostrVaultIcons
+import com.nostrvault.ui.theme.SuccessGreen
+import com.nostrvault.ui.theme.ZapOrange
 import com.nostrvault.relay.LogStore
 import com.nostrvault.ui.screens.*
 import com.nostrvault.ui.screens.dashboard.LogViewerScreen
@@ -37,10 +43,14 @@ import com.nostrvault.ui.screens.groups.GroupListScreen
 import com.nostrvault.ui.screens.profile.ProfileEditScreen
 import com.nostrvault.ui.screens.profile.ProfileScreen
 import com.nostrvault.ui.screens.settings.AccountSettingsScreen
+import com.nostrvault.ui.screens.settings.AdvancedSettingsScreen
 import com.nostrvault.ui.screens.settings.AppearanceSettingsScreen
+import com.nostrvault.ui.screens.settings.BackupSettingsScreen
 import com.nostrvault.ui.screens.settings.BlastrSettingsScreen
+import com.nostrvault.ui.screens.settings.BlockedSettingsScreen
 import com.nostrvault.ui.screens.settings.BlossomSettingsScreen
 import com.nostrvault.ui.screens.settings.FollowingBackupScreen
+import com.nostrvault.ui.screens.settings.ImportSettingsScreen
 import com.nostrvault.ui.screens.settings.NotificationSettingsScreen
 import com.nostrvault.ui.screens.settings.PowSettingsScreen
 import com.nostrvault.ui.screens.settings.HavenRelaySettingsScreen
@@ -67,6 +77,7 @@ fun NostrVaultNavHost(
     pendingPostManager: PendingPostManager,
 ) {
     val navController = rememberNavController()
+    val scope = rememberCoroutineScope()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
 
@@ -158,6 +169,7 @@ fun NostrVaultNavHost(
 
             composable(Screen.MediaGallery.route) {
                 MediaGalleryScreen(
+                    feedService = feedService,
                     onMediaClick = { index ->
                         navController.navigate(Screen.MediaViewer.createRoute(index))
                     },
@@ -393,6 +405,7 @@ fun NostrVaultNavHost(
             composable(Screen.Wallet.route) {
                 WalletScreen(
                     onBack = { navController.popBackStack() },
+                    onSweep = { navController.navigate(Screen.BitcoinSweep.route) },
                 )
             }
 
@@ -418,6 +431,30 @@ fun NostrVaultNavHost(
 
             composable(Screen.AccountSettings.route) {
                 AccountSettingsScreen(
+                    onBack = { navController.popBackStack() },
+                )
+            }
+
+            composable(Screen.BlockedSettings.route) {
+                BlockedSettingsScreen(
+                    onBack = { navController.popBackStack() },
+                )
+            }
+
+            composable(Screen.AdvancedSettings.route) {
+                AdvancedSettingsScreen(
+                    onBack = { navController.popBackStack() },
+                )
+            }
+
+            composable(Screen.ImportSettings.route) {
+                ImportSettingsScreen(
+                    onBack = { navController.popBackStack() },
+                )
+            }
+
+            composable(Screen.BackupSettings.route) {
+                BackupSettingsScreen(
                     onBack = { navController.popBackStack() },
                 )
             }
@@ -516,11 +553,45 @@ fun NostrVaultNavHost(
 
         // Floating bottom nav pill overlay
         if (showBottomBar) {
+            // Reading the flag here scopes recomposition to the overlay — the
+            // tab content (inside the NavHost) never re-renders on a flip. The
+            // bar condenses on the scrollable list tabs (Feed/Media/Relay), so
+            // tabs without scroll wiring stay expanded.
+            val feedScrollingDown by feedService.feedScrollingDown.collectAsState()
+            val condenseTab = currentRoute == Screen.Feed.route ||
+                currentRoute == Screen.MediaGallery.route ||
+                currentRoute == Screen.Dashboard.route
+            val condensed = feedScrollingDown && condenseTab
+
+            // Contextual condensed action (icon + tint + click), matching iOS:
+            // compose on Feed, Blossom upload on Media, relay dashboard on Relay
+            // (antenna tinted by live relay status).
+            val colors = LocalNostrVaultColors.current
+            val relayStatus by RelayForegroundService.relayStatus.collectAsState()
+            val relayColor = when (relayStatus) {
+                RelayForegroundService.RelayStatus.RUNNING -> SuccessGreen
+                RelayForegroundService.RelayStatus.BOOTING,
+                RelayForegroundService.RelayStatus.IMPORTING -> ZapOrange
+                RelayForegroundService.RelayStatus.OFFLINE -> ErrorRed
+            }
+            val condensedActionIcon = when (currentRoute) {
+                Screen.MediaGallery.route -> NostrVaultIcons.Blossom
+                Screen.Dashboard.route -> NostrVaultIcons.Relay
+                else -> NostrVaultIcons.Create
+            }
+            val condensedActionTint = if (currentRoute == Screen.Dashboard.route) relayColor else colors.primary
+            val onCondensedAction: () -> Unit = when (currentRoute) {
+                Screen.MediaGallery.route -> { { navController.navigate(Screen.BlossomDashboard.route) } }
+                Screen.Dashboard.route -> { { feedService.requestRelayDashboard() } }
+                else -> { { navController.navigate(Screen.ComposeNote.createRoute()) } }
+            }
+
             Box(modifier = Modifier.align(Alignment.BottomCenter)) {
                 BottomNavBar(
                     currentRoute = currentRoute,
                     activeAccountPubkey = activeHex,
                     isOwner = isOwner,
+                    condensed = condensed,
                     hasUnreadDMs = unreadDMs > 0,
                     hasNewRelayActivity = relayActivity,
                     onNavigate = { screen ->
@@ -548,6 +619,10 @@ fun NostrVaultNavHost(
                         }
                     },
                     onAccountSwitcher = { showAccountSwitcher = true },
+                    condensedActionIcon = condensedActionIcon,
+                    condensedActionTint = condensedActionTint,
+                    onCondensedAction = onCondensedAction,
+                    onExpand = { feedService.setFeedScrollingDown(false) },
                 )
             }
         }
@@ -600,7 +675,7 @@ fun NostrVaultNavHost(
         AccountSwitcherSheet(
             accounts = accounts,
             onSelectAccount = { npub ->
-                configStore.update { it.copy(activeAccountNpub = npub) }
+                scope.launch { configStore.switchActiveAccount(npub) }
             },
             onDismiss = { showAccountSwitcher = false },
         )

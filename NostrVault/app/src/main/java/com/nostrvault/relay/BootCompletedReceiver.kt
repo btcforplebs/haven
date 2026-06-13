@@ -4,12 +4,23 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import com.nostrvault.data.local.ConfigStore
+import dagger.hilt.EntryPoint
+import dagger.hilt.InstallIn
+import dagger.hilt.android.EntryPointAccessors
+import dagger.hilt.components.SingletonComponent
 
 /**
  * Auto-start the relay service when the device boots.
- * This is user-toggleable via settings.
+ * Honors the user's "Auto-start Relay" advanced setting.
  */
 class BootCompletedReceiver : BroadcastReceiver() {
+
+    @EntryPoint
+    @InstallIn(SingletonComponent::class)
+    interface BootReceiverEntryPoint {
+        fun configStore(): ConfigStore
+    }
 
     companion object {
         private const val TAG = "BootReceiver"
@@ -18,8 +29,12 @@ class BootCompletedReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
 
-        // TODO: Check user preference for auto-start (ConfigStore, Phase 4)
-        val autoStartEnabled = true
+        val configStore = EntryPointAccessors
+            .fromApplication(context.applicationContext, BootReceiverEntryPoint::class.java)
+            .configStore()
+        // Fresh process on boot — load persisted config before reading the flag.
+        configStore.reload()
+        val autoStartEnabled = configStore.config.value.autoStartRelay
 
         if (autoStartEnabled) {
             Log.i(TAG, "Boot completed -- starting relay service")

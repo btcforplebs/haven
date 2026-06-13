@@ -42,6 +42,7 @@ import com.nostrvault.ui.components.CompactNoteCard
 import com.nostrvault.ui.components.GlassPill
 import com.nostrvault.ui.components.GlassScaffold
 import com.nostrvault.ui.components.NoteCard
+import com.nostrvault.ui.components.ScrollCondenseEffect
 import com.nostrvault.ui.components.SkeletonFeed
 import com.nostrvault.service.ScrollPosition
 import com.nostrvault.ui.theme.*
@@ -164,43 +165,12 @@ fun FeedScreen(
     }
 
     // Scroll-direction detection → drives the bottom-bar + FAB condense animation.
-    // Mirrors iOS's ScrollDirectionModifier: we write to the shared
-    // feedScrollingDown flag ONLY on a direction *flip* (never per-frame), with a
-    // small threshold to debounce jitter and a force-expand when scrolled to the
-    // very top. Because the flag is read only by the bottom bar + FAB (never by a
-    // feed row), flips don't recompose the LazyColumn — no scroll-jank.
-    LaunchedEffect(listState) {
-        var lastIndex = listState.firstVisibleItemIndex
-        var lastOffset = listState.firstVisibleItemScrollOffset
-        var scrollingDown = false
-        snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
-            .collect { (index, offset) ->
-                if (index == 0 && offset < 8) {
-                    // At the very top → always expanded.
-                    if (scrollingDown) {
-                        scrollingDown = false
-                        viewModel.setFeedScrollingDown(false)
-                    }
-                } else {
-                    val down = if (index != lastIndex) index > lastIndex else offset - lastOffset > 8
-                    val up = if (index != lastIndex) index < lastIndex else lastOffset - offset > 8
-                    if (down && !scrollingDown) {
-                        scrollingDown = true
-                        viewModel.setFeedScrollingDown(true)
-                    } else if (up && scrollingDown) {
-                        scrollingDown = false
-                        viewModel.setFeedScrollingDown(false)
-                    }
-                }
-                lastIndex = index
-                lastOffset = offset
-            }
-    }
-
-    // Reset to expanded when leaving the feed (iOS resets on tab switch).
-    DisposableEffect(Unit) {
-        onDispose { viewModel.setFeedScrollingDown(false) }
-    }
+    ScrollCondenseEffect(
+        scrollKey = listState,
+        firstVisibleItemIndex = { listState.firstVisibleItemIndex },
+        firstVisibleItemScrollOffset = { listState.firstVisibleItemScrollOffset },
+        setScrollingDown = viewModel::setFeedScrollingDown,
+    )
 
     // Save scroll position for snapshot persistence (debounced on scroll stop)
     LaunchedEffect(listState.isScrollInProgress) {
@@ -414,6 +384,7 @@ fun FeedScreen(
                                 replyToProfile = replyToProfile,
                                 parentNote = parentNote,
                                 parentIsNext = isParentNext,
+                                showReplyContext = true,
                                 onNoteClick = onNoteClick,
                                 onProfileClick = onProfileClick,
                                 onLike = viewModel::likeNote,

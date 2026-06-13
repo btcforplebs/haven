@@ -87,39 +87,43 @@ class PushNotificationService @Inject constructor(
 
         scope.launch {
             try {
-                val pubkey = configStore.activeAccountHexPubkey.value
-                if (pubkey.isEmpty()) {
+                // Register every account with its own per-account preferences.
+                val accounts = config.allAccountNpubs()
+                    .mapNotNull { npub -> com.nostrvault.relay.HavenBridge.decodeNpub(npub)?.let { npub to it } }
+                if (accounts.isEmpty()) {
                     _registrationStatus.value = RegistrationStatus.FAILED
                     return@launch
                 }
 
-                val body = json.encodeToString(
-                    RegistrationPayload(
-                        deviceToken = token,
-                        pubkey = pubkey,
-                        platform = "android",
-                        mentions = config.pushNotifyMentions,
-                        replies = config.pushNotifyReplies,
-                        dms = config.pushNotifyDMs,
-                        zaps = config.pushNotifyZaps,
-                        reactions = config.pushNotifyReactions,
-                        reposts = config.pushNotifyReposts,
+                var anySuccess = false
+                for ((npub, pubkey) in accounts) {
+                    val prefs = config.pushPrefsFor(npub)
+                    val body = json.encodeToString(
+                        RegistrationPayload(
+                            deviceToken = token,
+                            pubkey = pubkey,
+                            platform = "android",
+                            mentions = prefs.mentions,
+                            replies = prefs.replies,
+                            dms = prefs.dms,
+                            zaps = prefs.zaps,
+                            reactions = prefs.reactions,
+                            reposts = prefs.reposts,
+                        )
                     )
-                )
-
-                val request = Request.Builder()
-                    .url("$serverUrl/register")
-                    .post(body.toRequestBody("application/json".toMediaType()))
-                    .build()
-
-                val response = httpClient.newCall(request).execute()
-                if (response.isSuccessful) {
-                    _registrationStatus.value = RegistrationStatus.REGISTERED
-                    Log.i(TAG, "Push registration successful")
-                } else {
-                    _registrationStatus.value = RegistrationStatus.FAILED
-                    Log.w(TAG, "Push registration failed: ${response.code}")
+                    val request = Request.Builder()
+                        .url("$serverUrl/register")
+                        .post(body.toRequestBody("application/json".toMediaType()))
+                        .build()
+                    try {
+                        if (httpClient.newCall(request).execute().isSuccessful) anySuccess = true
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Push registration error for ${pubkey.take(8)}: ${e.message}")
+                    }
                 }
+
+                _registrationStatus.value =
+                    if (anySuccess) RegistrationStatus.REGISTERED else RegistrationStatus.FAILED
             } catch (e: Exception) {
                 _registrationStatus.value = RegistrationStatus.FAILED
                 Log.e(TAG, "Push registration error", e)
