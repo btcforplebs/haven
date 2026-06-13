@@ -29,6 +29,7 @@ import coil.compose.AsyncImage
 import com.nostrvault.ui.components.AvatarImage
 import com.nostrvault.ui.components.GlassPill
 import com.nostrvault.ui.components.GlassScaffold
+import com.nostrvault.ui.components.NostrContentText
 import com.nostrvault.ui.components.NoteCard
 import com.nostrvault.ui.theme.*
 
@@ -192,9 +193,11 @@ fun ProfileScreen(
 
             profile?.about?.takeIf { it.isNotBlank() }?.let { bio ->
                 item {
-                    Text(
-                        text = bio,
-                        color = SecondaryText,
+                    NostrContentText(
+                        content = bio,
+                        profiles = allProfiles,
+                        onProfileClick = onProfileClick,
+                        textColor = SecondaryText,
                         fontSize = 14.sp,
                         lineHeight = 20.sp,
                         modifier = Modifier

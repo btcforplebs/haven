@@ -7,11 +7,12 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import com.nostrvault.data.model.FeedProfile
-import com.nostrvault.relay.HavenBridge
 import com.nostrvault.ui.theme.*
 
 /**
@@ -31,6 +32,9 @@ fun NostrContentText(
     onProfileClick: (String) -> Unit = {},
     onNoteClick: (String) -> Unit = {},
     onPlainTextClick: (() -> Unit)? = null,
+    textColor: Color = PrimaryText,
+    fontSize: TextUnit = 15.sp,
+    lineHeight: TextUnit = 21.sp,
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalNostrVaultColors.current
@@ -80,9 +84,9 @@ fun NostrContentText(
     ClickableText(
         text = annotated,
         style = TextStyle(
-            color = PrimaryText,
-            fontSize = 15.sp,
-            lineHeight = 21.sp,
+            color = textColor,
+            fontSize = fontSize,
+            lineHeight = lineHeight,
         ),
         onClick = { offset ->
             annotated.getStringAnnotations("profile", offset, offset).firstOrNull()?.let {
@@ -111,15 +115,8 @@ private sealed class ContentSegment {
     data class MediaUrl(val url: String) : ContentSegment()
 }
 
-private val NOSTR_MENTION_REGEX = Regex(
-    """nostr:(npub1[a-z0-9]+|nprofile1[a-z0-9]+)""",
-    RegexOption.IGNORE_CASE,
-)
-
-private val NOSTR_QUOTE_REGEX = Regex(
-    """nostr:(note1[a-z0-9]+|nevent1[a-z0-9]+|naddr1[a-z0-9]+)""",
-    RegexOption.IGNORE_CASE,
-)
+private val NOSTR_MENTION_REGEX = NostrMentions.MENTION_REGEX
+private val NOSTR_QUOTE_REGEX = NostrMentions.QUOTE_REGEX
 
 private val URL_REGEX = Regex(
     """https?://[^\s<>")\]]*[^\s<>")\].,;:!?'"]""",
@@ -143,7 +140,7 @@ private fun parseContentSegments(
     // nostr: mentions (npub, nprofile)
     for (m in NOSTR_MENTION_REGEX.findAll(content)) {
         val identifier = m.groupValues[1]
-        val pubkey = resolvePubkey(identifier)
+        val pubkey = NostrMentions.resolvePubkey(identifier)
         if (pubkey != null) {
             val displayName = profiles[pubkey]?.bestName ?: pubkey.take(8) + "..."
             matches.add(Match(m.range, ContentSegment.Mention(pubkey, displayName)))
@@ -199,24 +196,4 @@ private fun parseContentSegments(
     }
 
     return segments
-}
-
-/**
- * Resolve an npub/nprofile bech32 identifier to a hex pubkey.
- */
-private fun resolvePubkey(identifier: String): String? {
-    return when {
-        identifier.startsWith("npub1") -> HavenBridge.decodeNpub(identifier)
-        identifier.startsWith("nprofile1") -> {
-            val json = HavenBridge.decodeNprofile(identifier) ?: return null
-            // Extract pubkey from JSON: {"pubkey":"...","relays":[...]}
-            val pubkeyStart = json.indexOf("\"pubkey\":\"")
-            if (pubkeyStart < 0) return null
-            val start = pubkeyStart + 10
-            val end = json.indexOf("\"", start)
-            if (end < 0) return null
-            json.substring(start, end)
-        }
-        else -> null
-    }
 }

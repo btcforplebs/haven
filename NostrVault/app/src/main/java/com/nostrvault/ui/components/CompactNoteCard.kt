@@ -31,6 +31,7 @@ import com.nostrvault.ui.theme.*
 fun CompactNoteCard(
     note: FeedNote,
     profile: FeedProfile?,
+    profiles: Map<String, FeedProfile> = emptyMap(),
     repostedByProfile: FeedProfile? = null,
     onNoteClick: (String) -> Unit,
     onProfileClick: (String) -> Unit,
@@ -117,7 +118,7 @@ fun CompactNoteCard(
                 if (note.content.isNotBlank()) {
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        text = note.content.replace("\n", " ").trim(),
+                        text = NostrMentions.toPlainText(note.content, profiles).replace("\n", " ").trim(),
                         color = SecondaryText,
                         fontSize = 13.sp,
                         maxLines = 2,

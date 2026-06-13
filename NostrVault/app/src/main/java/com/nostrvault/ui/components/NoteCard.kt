@@ -153,6 +153,7 @@ fun NoteCard(
                         parentProfile = profiles[parentNote.pubkey],
                         connectorColor = connectorColor,
                         onClick = { onNoteClick(parentNote.id) },
+                        profiles = profiles,
                     )
                 } else {
                     ParentNoteSkeleton(connectorColor = connectorColor)
@@ -296,6 +297,7 @@ fun NoteCard(
                         QuotedNoteCard(
                             note = quotedNote,
                             profile = profiles[quotedNote.pubkey],
+                            profiles = profiles,
                             onClick = onNoteClick,
                             modifier = Modifier.padding(start = 50.dp),
                         )
@@ -825,6 +827,7 @@ private fun ParentNotePreview(
     parentProfile: FeedProfile?,
     connectorColor: Color,
     onClick: () -> Unit,
+    profiles: Map<String, FeedProfile> = emptyMap(),
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -894,7 +897,7 @@ private fun ParentNotePreview(
             if (parentNote.content.isNotBlank()) {
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = parentNote.content.replace("\n", " "),
+                    text = NostrMentions.toPlainText(parentNote.content, profiles).replace("\n", " "),
                     color = Color(0xFFB3B3B3), // iOS: rgb(0.7, 0.7, 0.7)
                     fontSize = 14.sp,
                     maxLines = 2,

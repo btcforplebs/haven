@@ -342,6 +342,7 @@ fun FeedScreen(
                             CompactNoteCard(
                                 note = note,
                                 profile = noteProfile,
+                                profiles = allProfiles,
                                 repostedByProfile = repostedByProfile,
                                 onNoteClick = { id ->
                                     // Expand inline first instead of navigating

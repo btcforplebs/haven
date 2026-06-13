@@ -113,12 +113,20 @@ class NostrContentFormatter @Inject constructor(
         }
     }
 
+    /** Extract the hex pubkey from an nprofile (decodeNprofile returns JSON). */
+    private fun nprofileToPubkey(nprofile: String): String? {
+        val json = try { HavenBridge.decodeNprofile(nprofile) } catch (_: Exception) { null } ?: return null
+        val keyStart = json.indexOf("\"pubkey\":\"")
+        if (keyStart < 0) return null
+        val start = keyStart + 10
+        val end = json.indexOf("\"", start)
+        return if (end < 0) null else json.substring(start, end)
+    }
+
     private fun resolveNprofileMentions(text: String): String {
         return NPROFILE_REGEX.replace(text) { matchResult ->
             val nprofile = matchResult.groupValues[1]
-            val hex = try {
-                HavenBridge.decodeNprofile(nprofile)
-            } catch (e: Exception) { null }
+            val hex = nprofileToPubkey(nprofile)
 
             val name = hex?.let { nostrService.profiles.value[it]?.bestName }
             if (name != null) {
@@ -234,7 +242,7 @@ class NostrContentFormatter @Inject constructor(
         }
         text = NPROFILE_REGEX.replace(text) { match ->
             val nprofile = match.groupValues[1]
-            val hex = try { HavenBridge.decodeNprofile(nprofile) } catch (_: Exception) { null }
+            val hex = nprofileToPubkey(nprofile)
             val name = hex?.let { nostrService.profiles.value[it]?.bestName }
             "@${name ?: nprofile.take(12)}"
         }

@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.nostrvault.ui.components.GlassPill
+import com.nostrvault.ui.components.NostrMentions
 import com.nostrvault.ui.components.GlassScaffold
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -596,6 +597,7 @@ fun SearchScreen(
                     items(results.profiles.take(10), key = { it.pubkey }) { profile ->
                         SearchProfileRow(
                             profile = profile,
+                            profiles = profiles,
                             onClick = { onProfileClick(profile.pubkey) },
                         )
                     }
@@ -656,6 +658,7 @@ fun SearchScreen(
 @Composable
 private fun SearchProfileRow(
     profile: FeedProfile,
+    profiles: Map<String, FeedProfile> = emptyMap(),
     onClick: () -> Unit,
 ) {
     Row(
@@ -688,7 +691,7 @@ private fun SearchProfileRow(
             }
             profile.about?.takeIf { it.isNotBlank() }?.let {
                 Text(
-                    text = it,
+                    text = NostrMentions.toPlainText(it, profiles).replace("\n", " "),
                     color = TertiaryText,
                     fontSize = 13.sp,
                     maxLines = 1,

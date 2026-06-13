@@ -25,6 +25,7 @@ import com.nostrvault.data.model.FeedProfile
 import com.nostrvault.service.GroupMessage
 import com.nostrvault.service.GroupService
 import com.nostrvault.service.NostrService
+import com.nostrvault.ui.components.NostrMentions
 import com.nostrvault.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
@@ -101,6 +102,7 @@ fun GroupChatScreen(
     val messageText by viewModel.messageText.collectAsState()
     val isSending by viewModel.isSending.collectAsState()
     val groupName by viewModel.groupName.collectAsState()
+    val profiles by viewModel.profiles.collectAsState()
     val listState = rememberLazyListState()
     val colors = LocalNostrVaultColors.current
 
@@ -176,6 +178,7 @@ fun GroupChatScreen(
                     GroupMessageRow(
                         message = message,
                         profile = viewModel.profileFor(message.senderPubkey),
+                        profiles = profiles,
                         isFromMe = message.senderPubkey == viewModel.myPubkey,
                         onProfileClick = onProfileClick,
                     )
@@ -189,6 +192,7 @@ fun GroupChatScreen(
 private fun GroupMessageRow(
     message: GroupMessage,
     profile: FeedProfile?,
+    profiles: Map<String, FeedProfile>,
     isFromMe: Boolean,
     onProfileClick: (String) -> Unit,
 ) {
@@ -234,7 +238,7 @@ private fun GroupMessageRow(
             ) {
                 Column(modifier = Modifier.padding(10.dp)) {
                     Text(
-                        text = message.content,
+                        text = NostrMentions.toPlainText(message.content, profiles),
                         color = PrimaryText,
                         fontSize = 15.sp,
                     )

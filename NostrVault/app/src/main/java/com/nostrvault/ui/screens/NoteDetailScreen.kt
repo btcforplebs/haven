@@ -699,6 +699,7 @@ fun NoteDetailScreen(
                             CompactParentRow(
                                 note = parent,
                                 profile = viewModel.profileFor(parent.pubkey),
+                                profiles = profiles,
                                 isFocused = parent.id == focusedNoteId,
                                 themeColor = colors.primary,
                                 onClick = { scrollToNote(parent.id) },
@@ -740,6 +741,7 @@ fun NoteDetailScreen(
                     HeroNoteCard(
                         note = focusedNote!!,
                         profile = viewModel.profileFor(focusedNote!!.pubkey),
+                        profiles = profiles,
                         stats = viewModel.statsFor(focusedNote!!.id),
                         isLiked = viewModel.isLiked(focusedNote!!.id),
                         isOwnNote = viewModel.isOwnNote(focusedNote!!.pubkey),
@@ -926,6 +928,7 @@ private fun ThreadConnectorLine(color: androidx.compose.ui.graphics.Color) {
 private fun CompactParentRow(
     note: FeedNote,
     profile: FeedProfile?,
+    profiles: Map<String, FeedProfile> = emptyMap(),
     isFocused: Boolean,
     themeColor: androidx.compose.ui.graphics.Color,
     onClick: () -> Unit,
@@ -1002,7 +1005,7 @@ private fun CompactParentRow(
             if (note.content.isNotBlank()) {
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = note.content,
+                    text = NostrMentions.toPlainText(note.content, profiles),
                     color = PrimaryText.copy(alpha = if (isOled) 0.7f else 0.75f),
                     fontSize = 12.sp,
                     maxLines = 2,
@@ -1063,6 +1066,7 @@ private fun ThreadedReplyNode(
             CompactParentRow(
                 note = reply,
                 profile = viewModel.profileFor(reply.pubkey),
+                profiles = profiles,
                 isFocused = isFocusedReply,
                 themeColor = themeColor,
                 onClick = { onFocus(reply.id) },
@@ -1236,6 +1240,7 @@ private fun ThreadedReplyNode(
 private fun HeroNoteCard(
     note: FeedNote,
     profile: FeedProfile?,
+    profiles: Map<String, FeedProfile> = emptyMap(),
     stats: NoteStats?,
     isLiked: Boolean,
     isOwnNote: Boolean,
@@ -1353,9 +1358,11 @@ private fun HeroNoteCard(
 
             // Content
             if (note.content.isNotBlank()) {
-                Text(
-                    text = note.content,
-                    color = PrimaryText,
+                NostrContentText(
+                    content = note.content,
+                    profiles = profiles,
+                    mediaURLs = note.mediaURLs.toSet(),
+                    onProfileClick = onProfileClick,
                     fontSize = 17.sp,
                     lineHeight = 24.sp,
                 )

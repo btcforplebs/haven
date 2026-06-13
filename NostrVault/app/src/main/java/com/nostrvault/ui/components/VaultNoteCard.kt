@@ -65,6 +65,7 @@ fun VaultNoteCard(
             CompactLayout(
                 note = note,
                 profile = profile,
+                profiles = profiles,
                 noteType = noteType,
                 onProfileClick = onProfileClick,
             )
@@ -73,6 +74,7 @@ fun VaultNoteCard(
                 note = note,
                 profile = profile,
                 profiles = profiles,
+                onNoteClick = onNoteClick,
                 reactors = reactors,
                 latestReactionDate = latestReactionDate,
                 reposterPubkeys = reposterPubkeys,
@@ -95,6 +97,7 @@ fun VaultNoteCard(
 private fun CompactLayout(
     note: FeedNote,
     profile: FeedProfile?,
+    profiles: Map<String, FeedProfile>,
     noteType: VaultNoteType,
     onProfileClick: (String) -> Unit,
 ) {
@@ -175,7 +178,7 @@ private fun CompactLayout(
             if (note.content.isNotBlank()) {
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = note.content.replace("\n", " "),
+                    text = NostrMentions.toPlainText(note.content, profiles).replace("\n", " "),
                     color = PrimaryText,
                     fontSize = 14.sp,
                     lineHeight = 18.sp,
@@ -241,6 +244,7 @@ private fun ExpandedLayout(
     quoterPubkeys: List<String>,
     zappers: List<Pair<String, Long>>,
     noteType: VaultNoteType,
+    onNoteClick: (String) -> Unit,
     onProfileClick: (String) -> Unit,
     onReactorsClick: (() -> Unit)?,
     onRepostersClick: (() -> Unit)?,
@@ -362,10 +366,13 @@ private fun ExpandedLayout(
 
         // Content text (iOS lines 296-311)
         if (note.content.isNotBlank()) {
-            Text(
-                text = note.content,
-                color = Color.White,
-                fontSize = 15.sp,
+            NostrContentText(
+                content = note.content,
+                profiles = profiles,
+                mediaURLs = note.mediaURLs.toSet(),
+                onProfileClick = onProfileClick,
+                onNoteClick = onNoteClick,
+                onPlainTextClick = { onNoteClick(note.id) },
                 lineHeight = 20.sp,
             )
         }

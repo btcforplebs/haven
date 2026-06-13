@@ -36,6 +36,7 @@ import com.nostrvault.ui.theme.*
 fun QuotedNoteCard(
     note: FeedNote,
     profile: FeedProfile?,
+    profiles: Map<String, FeedProfile> = emptyMap(),
     onClick: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -88,7 +89,7 @@ fun QuotedNoteCard(
             if (note.content.isNotBlank()) {
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = note.content,
+                    text = NostrMentions.toPlainText(note.content, profiles),
                     color = SecondaryText,
                     fontSize = 13.sp,
                     lineHeight = 17.sp,

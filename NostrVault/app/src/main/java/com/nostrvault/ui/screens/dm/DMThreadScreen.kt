@@ -28,6 +28,7 @@ import com.nostrvault.data.model.FeedProfile
 import com.nostrvault.service.DMMessage
 import com.nostrvault.service.DMService
 import com.nostrvault.service.NostrService
+import com.nostrvault.ui.components.NostrMentions
 import com.nostrvault.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.*
@@ -56,6 +57,9 @@ class DMThreadViewModel @Inject constructor(
     val counterpartyProfile: StateFlow<FeedProfile?> = nostrService.profiles
         .map { it[counterpartyPubkey] }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    /** Full profile map, for resolving nostr: mentions inside message bodies. */
+    val profiles: StateFlow<Map<String, FeedProfile>> = nostrService.profiles
 
     val myPubkey: String get() = configStore.activeAccountHexPubkey.value
 
@@ -108,6 +112,7 @@ fun DMThreadScreen(
 ) {
     val messages by viewModel.messages.collectAsState()
     val counterpartyProfile by viewModel.counterpartyProfile.collectAsState()
+    val profiles by viewModel.profiles.collectAsState()
     val messageText by viewModel.messageText.collectAsState()
     val isSending by viewModel.isSending.collectAsState()
     val useNIP04 by viewModel.useNIP04.collectAsState()
@@ -209,6 +214,7 @@ fun DMThreadScreen(
                         MessageBubble(
                             message = message,
                             isFromMe = message.senderPubkey == viewModel.myPubkey,
+                            profiles = profiles,
                         )
                     }
                 }
@@ -284,6 +290,7 @@ private fun ProtocolToggleRow(
 private fun MessageBubble(
     message: DMMessage,
     isFromMe: Boolean,
+    profiles: Map<String, FeedProfile> = emptyMap(),
 ) {
     val colors = LocalNostrVaultColors.current
     val timeFormat = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
@@ -304,7 +311,7 @@ private fun MessageBubble(
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
                 Text(
-                    text = message.content,
+                    text = NostrMentions.toPlainText(message.content, profiles),
                     color = PrimaryText,
                     fontSize = 15.sp,
                     lineHeight = 20.sp,
