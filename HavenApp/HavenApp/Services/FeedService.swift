@@ -1641,6 +1641,9 @@ class FeedService: ObservableObject {
             contactListPTags = result.pTags
             followedPubkeys = result.pubkeys
             publishContactList()
+            // Re-filter so already-loaded notes from the newly-followed author
+            // surface immediately in the Following feed.
+            recomputeFilteredNotes()
 
             // Auto-switch back to Following now that the user has follows.
             if didAutoSwitchToPopular {
@@ -1667,6 +1670,9 @@ class FeedService: ObservableObject {
             contactListPTags = result.pTags
             followedPubkeys = result.pubkeys
             publishContactList()
+            // Re-filter so the unfollowed author's notes disappear from the
+            // Following feed immediately (the filter now excludes non-follows).
+            recomputeFilteredNotes()
             return .success(())
         }
     }

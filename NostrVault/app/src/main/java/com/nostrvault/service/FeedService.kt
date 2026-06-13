@@ -1164,6 +1164,9 @@ class FeedService @Inject constructor(
             onSuccess = { followResult ->
                 _followedPubkeys.value = followResult.pubkeys
                 publishContactList(followResult.pubkeys)
+                // Re-filter so already-loaded notes from the newly-followed author
+                // surface immediately in the Following feed.
+                recomputeFilteredNotes()
                 notificationManager.showFollow(displayName, FollowKind.FOLLOWED)
                 Result.success(Unit)
             },
@@ -1195,6 +1198,9 @@ class FeedService @Inject constructor(
                 }
                 _followedPubkeys.value = followResult.pubkeys
                 publishContactList(followResult.pubkeys)
+                // Re-filter so the unfollowed author's notes disappear from the
+                // Following feed immediately (the filter excludes non-follows).
+                recomputeFilteredNotes()
                 notificationManager.showFollow(displayName, FollowKind.UNFOLLOWED)
                 Result.success(Unit)
             },

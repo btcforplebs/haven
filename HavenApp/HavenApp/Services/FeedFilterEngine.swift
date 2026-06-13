@@ -46,6 +46,15 @@ enum FeedFilterEngine {
                 if !wotPubkeys.isEmpty && !wotPubkeys.contains(note.pubkey) { return false }
                 return !note.isReply
             }
+            if mode == .following {
+                // For reposts, membership is judged by the reposter (the follow
+                // who boosted it), not the original author. The owner's own
+                // pubkey is always in followedPubkeys (added by parseContactList),
+                // so own posts remain visible. Excluding non-follows here makes an
+                // unfollowed author's notes vanish the moment the set changes.
+                let author = note.repostedBy ?? note.pubkey
+                if !followedPubkeys.contains(author) { return false }
+            }
             return showReplies || !note.isReply
         }
 
