@@ -58,6 +58,7 @@ struct FeedMediaView: View {
     @ObservedObject private var configService = ConfigService.shared
     @State private var mediaType: FeedMediaType?
     @State private var isDetecting: Bool = false
+    @State private var videoAspectRatio: CGFloat?
 
     var body: some View {
         Group {
@@ -108,15 +109,24 @@ struct FeedMediaView: View {
                 // In condensed/thumbnail contexts, never autoload the full video just
                 // to make a small still — extract the frame from the remote asset
                 // instead of downloading the whole file.
-                FeedVideoThumbnailView(url: url, showPlayOverlay: !isThumbnail, avoidFullDownload: isThumbnail)
-                    .aspectRatio(1, contentMode: .fill)
+                FeedVideoThumbnailView(
+                    url: url,
+                    showPlayOverlay: !isThumbnail,
+                    avoidFullDownload: isThumbnail,
+                    onAspectRatio: { ratio in if ratio > 0 { videoAspectRatio = ratio } }
+                )
+                .aspectRatio(isThumbnail ? 1 : videoAspectRatio, contentMode: isThumbnail ? .fill : .fit)
             } else {
-                InlineFeedVideoPlayer(url: url, onTap: onTap)
-                    .aspectRatio(1, contentMode: .fill)
+                InlineFeedVideoPlayer(
+                    url: url,
+                    onTap: onTap,
+                    onAspectRatio: { ratio in if ratio > 0 { videoAspectRatio = ratio } }
+                )
+                .aspectRatio(isThumbnail ? 1 : videoAspectRatio, contentMode: isThumbnail ? .fill : .fit)
             }
         }
         .frame(maxWidth: .infinity)
-        .frame(maxHeight: isThumbnail ? .infinity : maxHeight)
+        .frame(maxHeight: isThumbnail ? .infinity : videoHeightCap)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
@@ -124,6 +134,14 @@ struct FeedMediaView: View {
         )
         .contentShape(RoundedRectangle(cornerRadius: 8))
         .onTapGestureIfSome(onTap)
+    }
+
+    /// Height cap for inline video, mirroring `FeedPhotoView`: portraits get a
+    /// taller cap so they fill the width; defaults to the landscape cap until
+    /// the video's dimensions are known.
+    private var videoHeightCap: CGFloat {
+        guard let ratio = videoAspectRatio else { return maxHeight }
+        return ratio < 1 ? portraitMaxHeight : maxHeight
     }
 
     private var photoView: some View {
@@ -338,6 +356,9 @@ private struct FeedVideoThumbnailView: View {
     /// byte-range requests instead of downloading the entire video first. Used by
     /// condensed views so scrolling past a video never autoloads it.
     var avoidFullDownload: Bool = false
+    /// Reports the extracted frame's aspect ratio (width / height) once known,
+    /// so the container can size the video to its natural shape.
+    var onAspectRatio: ((CGFloat) -> Void)? = nil
     @State private var thumbnail: PlatformImage? = nil
     @State private var loadFailed = false
 
@@ -374,6 +395,7 @@ private struct FeedVideoThumbnailView: View {
     private func loadThumbnail() {
         if let cached = MediaCacheService.shared.cachedThumbnail(for: url) {
             self.thumbnail = cached
+            reportAspect(cached)
             return
         }
         Task {
@@ -381,11 +403,18 @@ private struct FeedVideoThumbnailView: View {
             await MainActor.run {
                 if let thumb = thumb {
                     self.thumbnail = thumb
+                    reportAspect(thumb)
                 } else {
                     self.loadFailed = true
                 }
             }
         }
+    }
+
+    private func reportAspect(_ image: PlatformImage) {
+        let size = image.size
+        guard size.width > 0, size.height > 0 else { return }
+        onAspectRatio?(size.width / size.height)
     }
 }
 

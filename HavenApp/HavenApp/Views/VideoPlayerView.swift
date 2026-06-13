@@ -448,6 +448,9 @@ struct InlineFeedVideoPlayer: View {
     let url: URL
     /// Called when the user taps the video body (excluding the mute button).
     var onTap: (() -> Void)? = nil
+    /// Reports the video's aspect ratio (width / height) once a frame is known,
+    /// so the container can size it to its natural shape.
+    var onAspectRatio: ((CGFloat) -> Void)? = nil
     @ObservedObject private var cache = VideoPlayerCache.shared
     @State private var player: AVPlayer?
     @State private var isMuted: Bool = true
@@ -612,6 +615,10 @@ struct InlineFeedVideoPlayer: View {
                 await MainActor.run {
                     withAnimation(.easeOut(duration: 0.25)) {
                         self.thumbnail = thumb
+                    }
+                    let size = thumb.size
+                    if size.width > 0, size.height > 0 {
+                        onAspectRatio?(size.width / size.height)
                     }
                 }
             }
