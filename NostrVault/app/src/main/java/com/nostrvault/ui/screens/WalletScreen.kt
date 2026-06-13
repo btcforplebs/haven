@@ -25,11 +25,16 @@ import com.journeyapps.barcodescanner.BarcodeEncoder
 import com.nostrvault.data.local.ConfigStore
 import com.nostrvault.relay.HavenBridge
 import com.nostrvault.relay.HavenConfig
+import com.nostrvault.service.CashuMintInfo
+import com.nostrvault.service.CashuProof
 import com.nostrvault.service.CashuService
 import com.nostrvault.service.NWCService
 import com.nostrvault.service.NostrService
+import com.nostrvault.ui.screens.wallet.WalletCashuTab
+import com.nostrvault.ui.screens.wallet.WalletLightningTab
 import com.nostrvault.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,9 +42,9 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
- * Wallet configuration screen — port of iOS WalletSettingsView.
- * NWC (Nostr Wallet Connect) + default zap, Cashu ecash, and a Bitcoin
- * taproot (BIP-341) address derived from the Nostr keypair.
+ * Wallet screen — Lightning (NWC) send/receive, Cashu ecash operations, and a
+ * Settings tab (NWC URI, default zap, mint URL, Bitcoin taproot address).
+ * Port of iOS WalletView (tabbed Lightning / Cashu).
  */
 @HiltViewModel
 class WalletViewModel @Inject constructor(
@@ -50,6 +55,9 @@ class WalletViewModel @Inject constructor(
 ) : ViewModel() {
     val config: StateFlow<HavenConfig> = configStore.config
     val cashuBalance: StateFlow<ULong> = cashuService.balanceSats
+    val cashuProofs: StateFlow<List<CashuProof>> = cashuService.proofs
+    val cashuMintInfo: StateFlow<CashuMintInfo?> = cashuService.mintInfo
+    val cashuLoading: StateFlow<Boolean> = cashuService.isLoading
 
     private val _lightningBalance = MutableStateFlow<Long?>(null)
     val lightningBalance = _lightningBalance.asStateFlow()
@@ -57,11 +65,40 @@ class WalletViewModel @Inject constructor(
     private val _taprootAddress = MutableStateFlow<String?>(null)
     val taprootAddress = _taprootAddress.asStateFlow()
 
+    // Shared operation state
+    private val _busy = MutableStateFlow(false)
+    val busy = _busy.asStateFlow()
+
+    private val _error = MutableStateFlow<String?>(null)
+    val error = _error.asStateFlow()
+
+    private val _message = MutableStateFlow<String?>(null)
+    val message = _message.asStateFlow()
+
+    // Lightning receive
+    private val _generatedInvoice = MutableStateFlow<String?>(null)
+    val generatedInvoice = _generatedInvoice.asStateFlow()
+
+    // Cashu fund (mint) invoice awaiting payment
+    private val _fundInvoice = MutableStateFlow<String?>(null)
+    val fundInvoice = _fundInvoice.asStateFlow()
+
+    // Cashu send-token string for sharing
+    private val _sendToken = MutableStateFlow<String?>(null)
+    val sendToken = _sendToken.asStateFlow()
+
     init {
         refreshBalance()
         if (config.value.showBitcoinWallet) deriveAddress()
+        ensureMintConfigured()
     }
 
+    /** Point CashuService at the saved mint (loads persisted proofs). Cheap + idempotent. */
+    fun ensureMintConfigured() {
+        config.value.cashuMintURL.takeIf { it.isNotBlank() }?.let { cashuService.configureMint(it) }
+    }
+
+    // ── Config setters (Settings tab) ─────────────────────────────
     fun setNwcUri(uri: String) = configStore.update { it.copy(nwcURI = uri.ifBlank { null }) }
     fun setDefaultZap(sats: Int) = configStore.update { it.copy(defaultZapAmount = sats.coerceAtLeast(1)) }
     fun setCashuMint(url: String) = configStore.update { it.copy(cashuMintURL = url) }
@@ -73,11 +110,8 @@ class WalletViewModel @Inject constructor(
 
     fun refreshBalance() {
         viewModelScope.launch {
-            _lightningBalance.value = try {
-                nwcService.getBalance()
-            } catch (_: Exception) {
-                null
-            }
+            // NWC get_balance returns millisats (NIP-47); display as sats like iOS.
+            _lightningBalance.value = try { nwcService.getBalance() / 1000 } catch (_: Exception) { null }
         }
     }
 
@@ -85,7 +119,151 @@ class WalletViewModel @Inject constructor(
         val hex = nostrService.ownerHexPubkey
         if (hex.isNotEmpty()) _taprootAddress.value = HavenBridge.deriveTaprootAddress(hex)
     }
+
+    fun clearMessages() { _error.value = null; _message.value = null }
+
+    // ── Lightning operations ──────────────────────────────────────
+    fun createInvoice(amountSats: Long, description: String) {
+        if (amountSats <= 0 || _busy.value) return
+        viewModelScope.launch {
+            _busy.value = true; _error.value = null
+            try {
+                _generatedInvoice.value = nwcService.makeInvoice(amountSats * 1000, description.ifBlank { null })
+            } catch (e: Exception) {
+                _error.value = e.message ?: "Could not create invoice"
+            } finally { _busy.value = false }
+        }
+    }
+
+    fun clearInvoice() { _generatedInvoice.value = null }
+
+    fun payInvoice(bolt11: String) {
+        val invoice = bolt11.trim()
+        if (invoice.isEmpty() || _busy.value) return
+        viewModelScope.launch {
+            _busy.value = true; _error.value = null; _message.value = null
+            try {
+                nwcService.payInvoice(invoice)
+                _message.value = "Payment sent"
+                refreshBalance()
+            } catch (e: Exception) {
+                _error.value = e.message ?: "Payment failed"
+            } finally { _busy.value = false }
+        }
+    }
+
+    // ── Cashu operations ──────────────────────────────────────────
+    /** Fund ecash from Lightning: request a mint quote, then poll until paid and mint. */
+    fun fundFromLightning(amountSats: Long) {
+        if (amountSats <= 0 || _busy.value) return
+        viewModelScope.launch {
+            _busy.value = true; _error.value = null; _message.value = null
+            try {
+                val quote = cashuService.requestMintQuote(amountSats.toULong())
+                cashuService.trackPendingQuote(quote, amountSats.toULong())
+                _fundInvoice.value = quote.request
+                // Poll for payment for up to ~2 minutes, then mint exactly once.
+                var minted = false
+                var attempts = 0
+                while (!minted && attempts < 40) {
+                    delay(3_000)
+                    val status = cashuService.checkMintQuote(quote.quote)
+                    if (status.paid == true || status.state == "PAID" || status.state == "ISSUED") {
+                        cashuService.mintTokens(quote.quote, amountSats.toULong())
+                        minted = true
+                    }
+                    attempts++
+                }
+                if (minted) {
+                    _fundInvoice.value = null
+                    _message.value = "Funded $amountSats sats"
+                } else {
+                    _message.value = "Invoice still unpaid — use 'Recover' once paid"
+                }
+            } catch (e: Exception) {
+                _error.value = e.message ?: "Funding failed"
+            } finally { _busy.value = false }
+        }
+    }
+
+    fun clearFundInvoice() { _fundInvoice.value = null }
+
+    /** Cash out ecash to a Lightning invoice (melt). */
+    fun cashOut(bolt11: String) {
+        val invoice = bolt11.trim()
+        if (invoice.isEmpty() || _busy.value) return
+        viewModelScope.launch {
+            _busy.value = true; _error.value = null; _message.value = null
+            try {
+                val quote = cashuService.requestMeltQuote(invoice)
+                val ok = cashuService.meltTokens(
+                    quoteId = quote.quote,
+                    amount = quote.amount.toULong(),
+                    feeReserve = quote.fee_reserve.toULong(),
+                )
+                _message.value = if (ok) "Paid ${quote.amount} sats" else "Cash-out failed"
+            } catch (e: Exception) {
+                _error.value = e.message ?: "Cash-out failed"
+            } finally { _busy.value = false }
+        }
+    }
+
+    fun createCashuToken(amountSats: Long, memo: String) {
+        if (amountSats <= 0 || _busy.value) return
+        viewModelScope.launch {
+            _busy.value = true; _error.value = null
+            try {
+                _sendToken.value = cashuService.createSendToken(amountSats.toULong(), memo.ifBlank { null })
+            } catch (e: Exception) {
+                _error.value = e.message ?: "Could not create token"
+            } finally { _busy.value = false }
+        }
+    }
+
+    fun clearSendToken() { _sendToken.value = null }
+
+    fun receiveCashuToken(token: String) {
+        val t = token.trim()
+        if (t.isEmpty() || _busy.value) return
+        viewModelScope.launch {
+            _busy.value = true; _error.value = null; _message.value = null
+            try {
+                cashuService.receiveToken(t)
+                _message.value = "Token redeemed"
+            } catch (e: Exception) {
+                _error.value = e.message ?: "Invalid token"
+            } finally { _busy.value = false }
+        }
+    }
+
+    fun restoreCashu() {
+        if (_busy.value) return
+        viewModelScope.launch {
+            _busy.value = true; _error.value = null; _message.value = null
+            try {
+                cashuService.restoreFromRelays()
+                _message.value = "Restored from relays"
+            } catch (e: Exception) {
+                _error.value = e.message ?: "Restore failed"
+            } finally { _busy.value = false }
+        }
+    }
+
+    fun recoverPending() {
+        if (_busy.value) return
+        viewModelScope.launch {
+            _busy.value = true; _error.value = null; _message.value = null
+            try {
+                cashuService.recoverPendingQuotes()
+                _message.value = "Checked pending payments"
+            } catch (e: Exception) {
+                _error.value = e.message ?: "Recovery failed"
+            } finally { _busy.value = false }
+        }
+    }
 }
+
+private enum class WalletTab(val label: String) { LIGHTNING("Lightning"), CASHU("Ecash"), SETTINGS("Settings") }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -94,12 +272,17 @@ fun WalletScreen(
     onSweep: () -> Unit = {},
     viewModel: WalletViewModel = hiltViewModel(),
 ) {
-    val config by viewModel.config.collectAsState()
-    val lightningBalance by viewModel.lightningBalance.collectAsState()
-    val cashuBalance by viewModel.cashuBalance.collectAsState()
-    val taproot by viewModel.taprootAddress.collectAsState()
-    val colors = LocalNostrVaultColors.current
-    val clipboard = LocalClipboardManager.current
+    var selectedTab by remember { mutableStateOf(WalletTab.LIGHTNING) }
+    val error by viewModel.error.collectAsState()
+    val message by viewModel.message.collectAsState()
+    val snackbarHost = remember { SnackbarHostState() }
+
+    LaunchedEffect(error, message) {
+        (error ?: message)?.let {
+            snackbarHost.showSnackbar(it)
+            viewModel.clearMessages()
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -117,112 +300,125 @@ fun WalletScreen(
                 ),
             )
         },
+        snackbarHost = { SnackbarHost(snackbarHost) },
         containerColor = WindowBackground,
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-        ) {
-            // ── Nostr Wallet Connect ──────────────────────────────
-            SectionLabel("Nostr Wallet Connect (NWC)")
-            OutlinedTextField(
-                value = config.nwcURI ?: "",
-                onValueChange = viewModel::setNwcUri,
-                placeholder = { Text("nostr+walletconnect://…") },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 2,
-                colors = walletFieldColors(colors.primary),
-            )
-            Caption("Connect a Lightning wallet to send zaps.")
-
-            if (!config.nwcURI.isNullOrBlank()) {
-                Spacer(Modifier.height(12.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "Balance: " + (lightningBalance?.let { "$it sats" } ?: "Unknown"),
-                        color = PrimaryText, fontSize = 15.sp, modifier = Modifier.weight(1f),
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            TabRow(
+                selectedTabIndex = selectedTab.ordinal,
+                containerColor = WindowBackground,
+                contentColor = LocalNostrVaultColors.current.primary,
+            ) {
+                WalletTab.entries.forEach { tab ->
+                    Tab(
+                        selected = selectedTab == tab,
+                        onClick = { selectedTab = tab },
+                        text = { Text(tab.label) },
                     )
-                    TextButton(onClick = viewModel::refreshBalance) { Text("Refresh", color = colors.primary) }
-                }
-                Spacer(Modifier.height(8.dp))
-                var zapText by remember(config.defaultZapAmount) { mutableStateOf(config.defaultZapAmount.toString()) }
-                OutlinedTextField(
-                    value = zapText,
-                    onValueChange = { t -> zapText = t.filter { it.isDigit() }; zapText.toIntOrNull()?.let(viewModel::setDefaultZap) },
-                    label = { Text("Default Zap Amount (sats)") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = walletFieldColors(colors.primary),
-                )
-            }
-
-            Spacer(Modifier.height(24.dp))
-
-            // ── Cashu ─────────────────────────────────────────────
-            SectionLabel("Cashu Mint")
-            OutlinedTextField(
-                value = config.cashuMintURL,
-                onValueChange = viewModel::setCashuMint,
-                placeholder = { Text("https://mint.example.com") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-                colors = walletFieldColors(colors.primary),
-            )
-            if (config.cashuMintURL.isNotBlank()) {
-                Spacer(Modifier.height(8.dp))
-                Text("Ecash Balance: $cashuBalance sats", color = PrimaryText, fontSize = 15.sp)
-            }
-
-            Spacer(Modifier.height(24.dp))
-
-            // ── Bitcoin ───────────────────────────────────────────
-            SectionLabel("Bitcoin")
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("Bitcoin Address", color = PrimaryText, fontSize = 15.sp)
-                    Text("Derive a taproot address from your Nostr key (BIP-341)", color = SecondaryText, fontSize = 12.sp)
-                }
-                Switch(
-                    checked = config.showBitcoinWallet,
-                    onCheckedChange = viewModel::toggleBitcoin,
-                    colors = SwitchDefaults.colors(checkedThumbColor = PrimaryText, checkedTrackColor = colors.primary),
-                )
-            }
-
-            if (config.showBitcoinWallet && taproot != null) {
-                Spacer(Modifier.height(12.dp))
-                QrCode(taproot!!)
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = taproot!!,
-                    color = PrimaryText,
-                    fontSize = 12.sp,
-                    fontFamily = FontFamily.Monospace,
-                )
-                Spacer(Modifier.height(8.dp))
-                Row {
-                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(taproot!!)) }) {
-                        Text("Copy Address")
-                    }
-                    Spacer(Modifier.width(8.dp))
-                    Button(
-                        onClick = onSweep,
-                        colors = ButtonDefaults.buttonColors(containerColor = ZapOrange),
-                    ) { Text("Sweep Wallet") }
                 }
             }
 
-            Spacer(Modifier.height(32.dp))
+            when (selectedTab) {
+                WalletTab.LIGHTNING -> WalletLightningTab(viewModel)
+                WalletTab.CASHU -> WalletCashuTab(viewModel)
+                WalletTab.SETTINGS -> WalletSettingsTab(viewModel, onSweep)
+            }
         }
     }
 }
 
 @Composable
-private fun QrCode(content: String) {
+private fun WalletSettingsTab(viewModel: WalletViewModel, onSweep: () -> Unit) {
+    val config by viewModel.config.collectAsState()
+    val taproot by viewModel.taprootAddress.collectAsState()
+    val colors = LocalNostrVaultColors.current
+    val clipboard = LocalClipboardManager.current
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+    ) {
+        WalletSectionLabel("Nostr Wallet Connect (NWC)")
+        OutlinedTextField(
+            value = config.nwcURI ?: "",
+            onValueChange = viewModel::setNwcUri,
+            placeholder = { Text("nostr+walletconnect://…") },
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 2,
+            colors = walletFieldColors(colors.primary),
+        )
+        WalletCaption("Connect a Lightning wallet to send zaps and use the Lightning tab.")
+
+        if (!config.nwcURI.isNullOrBlank()) {
+            Spacer(Modifier.height(8.dp))
+            var zapText by remember(config.defaultZapAmount) { mutableStateOf(config.defaultZapAmount.toString()) }
+            OutlinedTextField(
+                value = zapText,
+                onValueChange = { t -> zapText = t.filter { it.isDigit() }; zapText.toIntOrNull()?.let(viewModel::setDefaultZap) },
+                label = { Text("Default Zap Amount (sats)") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth(),
+                colors = walletFieldColors(colors.primary),
+            )
+        }
+
+        Spacer(Modifier.height(24.dp))
+
+        WalletSectionLabel("Cashu Mint")
+        OutlinedTextField(
+            value = config.cashuMintURL,
+            onValueChange = viewModel::setCashuMint,
+            placeholder = { Text("https://mint.example.com") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            colors = walletFieldColors(colors.primary),
+        )
+        WalletCaption("Set a mint to use the Ecash tab.")
+
+        Spacer(Modifier.height(24.dp))
+
+        WalletSectionLabel("Bitcoin")
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Bitcoin Address", color = PrimaryText, fontSize = 15.sp)
+                Text("Derive a taproot address from your Nostr key (BIP-341)", color = SecondaryText, fontSize = 12.sp)
+            }
+            Switch(
+                checked = config.showBitcoinWallet,
+                onCheckedChange = viewModel::toggleBitcoin,
+                colors = SwitchDefaults.colors(checkedThumbColor = PrimaryText, checkedTrackColor = colors.primary),
+            )
+        }
+
+        if (config.showBitcoinWallet && taproot != null) {
+            Spacer(Modifier.height(12.dp))
+            WalletQr(taproot!!)
+            Spacer(Modifier.height(8.dp))
+            Text(taproot!!, color = PrimaryText, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+            Spacer(Modifier.height(8.dp))
+            Row {
+                OutlinedButton(onClick = { clipboard.setText(AnnotatedString(taproot!!)) }) {
+                    Text("Copy Address")
+                }
+                Spacer(Modifier.width(8.dp))
+                Button(
+                    onClick = onSweep,
+                    colors = ButtonDefaults.buttonColors(containerColor = ZapOrange),
+                ) { Text("Sweep Wallet") }
+            }
+        }
+
+        Spacer(Modifier.height(32.dp))
+    }
+}
+
+// ── Shared wallet UI helpers (used by the Lightning/Cashu tab files) ──
+
+@Composable
+internal fun WalletQr(content: String) {
     val bitmap = remember(content) {
         runCatching {
             BarcodeEncoder().encodeBitmap(content, BarcodeFormat.QR_CODE, 480, 480)
@@ -231,14 +427,14 @@ private fun QrCode(content: String) {
     if (bitmap != null) {
         Image(
             bitmap = bitmap.asImageBitmap(),
-            contentDescription = "Bitcoin address QR",
-            modifier = Modifier.size(200.dp),
+            contentDescription = "QR code",
+            modifier = Modifier.size(220.dp),
         )
     }
 }
 
 @Composable
-private fun SectionLabel(text: String) {
+internal fun WalletSectionLabel(text: String) {
     Text(
         text = text.uppercase(),
         color = SecondaryText,
@@ -250,12 +446,12 @@ private fun SectionLabel(text: String) {
 }
 
 @Composable
-private fun Caption(text: String) {
+internal fun WalletCaption(text: String) {
     Text(text = text, color = SecondaryText, fontSize = 12.sp, modifier = Modifier.padding(top = 6.dp))
 }
 
 @Composable
-private fun walletFieldColors(primary: androidx.compose.ui.graphics.Color) = OutlinedTextFieldDefaults.colors(
+internal fun walletFieldColors(primary: androidx.compose.ui.graphics.Color) = OutlinedTextFieldDefaults.colors(
     focusedTextColor = PrimaryText,
     unfocusedTextColor = PrimaryText,
     cursorColor = primary,

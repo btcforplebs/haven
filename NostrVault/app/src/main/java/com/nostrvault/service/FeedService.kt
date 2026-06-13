@@ -520,6 +520,67 @@ class FeedService @Inject constructor(
         }
     }
 
+    /**
+     * Scan configured relays for the owner's historical kind-3 (contact list)
+     * events, collecting every distinct version found. Used by Following Backup
+     * recovery to restore an older following list. Port of iOS queryRelaysForKind3.
+     */
+    suspend fun scanRelaysForKind3(): List<Kind3Event> {
+        val config = configStore.config.value
+        val relayUrls = buildList {
+            config.nostrURL?.let { add(it) }
+            config.inboxRelays?.let { addAll(it) }
+            config.activeBlastrRelays.let { addAll(it) }
+        }.distinct().take(6)
+        val ownerHex = nostrService.activeHexPubkey
+        if (relayUrls.isEmpty() || ownerHex.isEmpty()) return emptyList()
+
+        val whitelistedNpubs = config.whitelistedNpubs ?: emptyList()
+        val collected = ConcurrentHashMap<String, Kind3Event>() // keyed by event id
+
+        coroutineScope {
+            relayUrls.map { relayUrl ->
+                launch(Dispatchers.IO) {
+                    val client = WebSocketClient(
+                        url = relayUrl,
+                        scope = scope,
+                        trustLocalhost = relayUrl.contains("localhost") || relayUrl.contains("127.0.0.1"),
+                    )
+                    val subId = "k3scan-${UUID.randomUUID().toString().take(8)}"
+                    val collector = scope.launch {
+                        client.messages.collect { msg ->
+                            try {
+                                val parsed = json.parseToJsonElement(msg).jsonArray
+                                if (parsed.size >= 3 && parsed[0].jsonPrimitive.contentOrNull == "EVENT") {
+                                    val eventObj = parsed[2].jsonObject
+                                    if (eventObj["kind"]?.jsonPrimitive?.intOrNull != 3) return@collect
+                                    val id = eventObj["id"]?.jsonPrimitive?.contentOrNull ?: return@collect
+                                    if (collected.containsKey(id)) return@collect
+                                    val createdAt = eventObj["created_at"]?.jsonPrimitive?.longOrNull ?: 0L
+                                    val tags = eventObj["tags"]?.jsonArray?.map { tagArr ->
+                                        tagArr.jsonArray.map { it.jsonPrimitive.contentOrNull ?: "" }
+                                    } ?: emptyList()
+                                    val content = eventObj["content"]?.jsonPrimitive?.contentOrNull ?: ""
+                                    val pTags = tags.filter { it.firstOrNull() == "p" }
+                                    val pubkeys = contactManager.parseContactList(tags, ownerHex, whitelistedNpubs).pubkeys
+                                    if (pubkeys.isNotEmpty()) {
+                                        collected[id] = Kind3Event(id, createdAt, pubkeys, pTags, content)
+                                    }
+                                }
+                            } catch (_: Exception) {}
+                        }
+                    }
+                    client.connect()
+                    client.send("[\"REQ\",\"$subId\",{\"kinds\":[3],\"authors\":[\"$ownerHex\"]}]")
+                    delay(CONTACT_LOAD_TIMEOUT_MS)
+                    collector.cancel()
+                    client.disconnect()
+                }
+            }.joinAll()
+        }
+        return collected.values.sortedByDescending { it.createdAt }
+    }
+
     // ══════════════════════════════════════════════════════════════════
     // Extended network (discovery mode)
     // ══════════════════════════════════════════════════════════════════

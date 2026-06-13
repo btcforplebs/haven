@@ -24,6 +24,7 @@ private val OtherCacheColor = Color(0xFF64D2FF)
 fun CacheBreakdownSheet(
     statsService: StatsService,
     cacheDir: String?,
+    cacheTTLDays: Int = 7,
     onDismiss: () -> Unit,
 ) {
     val colors = LocalNostrVaultColors.current
@@ -105,6 +106,30 @@ fun CacheBreakdownSheet(
                 }
             }
 
+            Spacer(Modifier.height(12.dp))
+
+            // Cache policy + file-age metadata
+            Surface(
+                color = SecondaryGroupedBg,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    CacheMetaRow(
+                        label = "Expires after",
+                        value = if (cacheTTLDays <= 0) "Never" else "$cacheTTLDays days",
+                    )
+                    breakdown.oldestDate?.let {
+                        HorizontalDivider(color = TertiaryText.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 4.dp))
+                        CacheMetaRow(label = "Oldest file", value = relativeAge(it))
+                    }
+                    breakdown.newestDate?.let {
+                        HorizontalDivider(color = TertiaryText.copy(alpha = 0.2f), modifier = Modifier.padding(vertical = 4.dp))
+                        CacheMetaRow(label = "Newest file", value = relativeAge(it))
+                    }
+                }
+            }
+
             Spacer(Modifier.height(16.dp))
 
             // Clear cache button
@@ -161,5 +186,30 @@ fun CacheBreakdownSheet(
             titleContentColor = PrimaryText,
             textContentColor = SecondaryText,
         )
+    }
+}
+
+@Composable
+private fun CacheMetaRow(label: String, value: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+    ) {
+        Text(label, color = SecondaryText, fontSize = 14.sp, modifier = Modifier.weight(1f))
+        Text(value, color = PrimaryText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+    }
+}
+
+/** Human-readable age of a file timestamp (ms), e.g. "3 days ago". */
+private fun relativeAge(timestampMs: Long): String {
+    val deltaMs = (System.currentTimeMillis() - timestampMs).coerceAtLeast(0L)
+    val mins = deltaMs / 60_000
+    val hours = mins / 60
+    val days = hours / 24
+    return when {
+        days >= 1 -> if (days == 1L) "1 day ago" else "$days days ago"
+        hours >= 1 -> if (hours == 1L) "1 hour ago" else "$hours hours ago"
+        mins >= 1 -> if (mins == 1L) "1 minute ago" else "$mins minutes ago"
+        else -> "Just now"
     }
 }

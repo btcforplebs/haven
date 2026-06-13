@@ -1,5 +1,10 @@
 package com.nostrvault.ui.screens.dm
 
+import android.content.Context
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -25,14 +30,19 @@ import androidx.lifecycle.viewModelScope
 import coil.compose.AsyncImage
 import com.nostrvault.data.local.ConfigStore
 import com.nostrvault.data.model.FeedProfile
+import com.nostrvault.service.BlossomService
 import com.nostrvault.service.DMMessage
 import com.nostrvault.service.DMService
 import com.nostrvault.service.NostrService
 import com.nostrvault.ui.components.NostrMentions
 import com.nostrvault.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 import javax.inject.Inject
@@ -45,9 +55,11 @@ import javax.inject.Inject
 @HiltViewModel
 class DMThreadViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
+    @ApplicationContext private val context: Context,
     private val dmService: DMService,
     private val nostrService: NostrService,
     private val configStore: ConfigStore,
+    private val blossomService: BlossomService,
 ) : ViewModel() {
 
     val counterpartyPubkey: String = savedStateHandle["pubkey"] ?: ""
@@ -78,6 +90,9 @@ class DMThreadViewModel @Inject constructor(
     private val _isSending = MutableStateFlow(false)
     val isSending = _isSending.asStateFlow()
 
+    private val _attachedImage = MutableStateFlow<Uri?>(null)
+    val attachedImage = _attachedImage.asStateFlow()
+
     init {
         viewModelScope.launch {
             nostrService.fetchMissingProfiles(listOf(counterpartyPubkey))
@@ -87,17 +102,47 @@ class DMThreadViewModel @Inject constructor(
 
     fun setMessageText(text: String) { _messageText.value = text }
 
+    fun setAttachedImage(uri: Uri?) { _attachedImage.value = uri }
+    fun clearAttachedImage() { _attachedImage.value = null }
+
     fun toggleProtocol() { _useNIP04.value = !_useNIP04.value }
 
     fun sendMessage() {
         val text = _messageText.value.trim()
-        if (text.isBlank() || _isSending.value) return
+        val image = _attachedImage.value
+        if ((text.isBlank() && image == null) || _isSending.value) return
 
         viewModelScope.launch {
             _isSending.value = true
             _messageText.value = ""
-            dmService.sendMessage(counterpartyPubkey, text, _useNIP04.value)
+            _attachedImage.value = null
+            val imageUrl = image?.let { uploadImage(it) }
+            val content = buildString {
+                append(text)
+                if (imageUrl != null) {
+                    if (text.isNotEmpty()) append("\n")
+                    append(imageUrl)
+                }
+            }
+            if (content.isNotEmpty()) {
+                dmService.sendMessage(counterpartyPubkey, content, _useNIP04.value)
+            }
             _isSending.value = false
+        }
+    }
+
+    private suspend fun uploadImage(uri: Uri): String? = withContext(Dispatchers.IO) {
+        try {
+            val input = context.contentResolver.openInputStream(uri) ?: return@withContext null
+            val tempFile = File.createTempFile("dm_upload_", ".tmp", context.cacheDir)
+            tempFile.outputStream().use { out -> input.use { it.copyTo(out) } }
+            val sha256 = blossomService.computeSHA256(tempFile)
+            val contentType = context.contentResolver.getType(uri) ?: "image/jpeg"
+            val url = blossomService.uploadAndMirror(tempFile, sha256, contentType)
+            tempFile.delete()
+            url
+        } catch (_: Exception) {
+            null
         }
     }
 }
@@ -117,8 +162,13 @@ fun DMThreadScreen(
     val isSending by viewModel.isSending.collectAsState()
     val useNIP04 by viewModel.useNIP04.collectAsState()
     val hasNIP04Messages by viewModel.hasNIP04Messages.collectAsState()
+    val attachedImage by viewModel.attachedImage.collectAsState()
     val listState = rememberLazyListState()
     val colors = LocalNostrVaultColors.current
+
+    val imagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri -> uri?.let { viewModel.setAttachedImage(it) } }
 
     // Scroll to bottom on new messages
     LaunchedEffect(messages.size) {
@@ -173,8 +223,15 @@ fun DMThreadScreen(
                 MessageInputBar(
                     text = messageText,
                     isSending = isSending,
+                    attachedImage = attachedImage,
                     onTextChange = viewModel::setMessageText,
                     onSend = viewModel::sendMessage,
+                    onPickImage = {
+                        imagePicker.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                        )
+                    },
+                    onClearImage = viewModel::clearAttachedImage,
                 )
             }
         },
@@ -351,54 +408,94 @@ private fun MessageBubble(
 private fun MessageInputBar(
     text: String,
     isSending: Boolean,
+    attachedImage: Uri?,
     onTextChange: (String) -> Unit,
     onSend: () -> Unit,
+    onPickImage: () -> Unit,
+    onClearImage: () -> Unit,
 ) {
     val colors = LocalNostrVaultColors.current
+    val canSend = (text.isNotBlank() || attachedImage != null) && !isSending
 
     Surface(
         color = SecondaryGroupedBg,
         tonalElevation = 2.dp,
     ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-        ) {
-            OutlinedTextField(
-                value = text,
-                onValueChange = onTextChange,
-                placeholder = { Text("Message", color = PlaceholderText) },
-                maxLines = 4,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = colors.primary,
-                    unfocusedBorderColor = SeparatorColor,
-                    cursorColor = colors.primary,
-                ),
-                shape = RoundedCornerShape(20.dp),
-                modifier = Modifier.weight(1f),
-            )
+        Column(modifier = Modifier.navigationBarsPadding()) {
+            // Attached image preview
+            attachedImage?.let { uri ->
+                Box(modifier = Modifier.padding(start = 12.dp, top = 8.dp)) {
+                    AsyncImage(
+                        model = uri,
+                        contentDescription = "Attached image",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(RoundedCornerShape(10.dp)),
+                    )
+                    IconButton(
+                        onClick = onClearImage,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .size(22.dp),
+                    ) {
+                        Icon(
+                            imageVector = NostrVaultIcons.Dismiss,
+                            contentDescription = "Remove image",
+                            tint = PrimaryText,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+            }
 
-            Spacer(Modifier.width(8.dp))
-
-            IconButton(
-                onClick = onSend,
-                enabled = text.isNotBlank() && !isSending,
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
             ) {
-                if (isSending) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        strokeWidth = 2.dp,
-                        color = colors.primary,
-                    )
-                } else {
+                IconButton(onClick = onPickImage, enabled = !isSending) {
                     Icon(
-                        imageVector = NostrVaultIcons.Send,
-                        contentDescription = "Send",
-                        tint = if (text.isNotBlank()) colors.primary else TertiaryText,
+                        imageVector = NostrVaultIcons.Media,
+                        contentDescription = "Attach image",
+                        tint = colors.primary,
                     )
+                }
+
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = onTextChange,
+                    placeholder = { Text("Message", color = PlaceholderText) },
+                    maxLines = 4,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = colors.primary,
+                        unfocusedBorderColor = SeparatorColor,
+                        cursorColor = colors.primary,
+                    ),
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier.weight(1f),
+                )
+
+                Spacer(Modifier.width(8.dp))
+
+                IconButton(
+                    onClick = onSend,
+                    enabled = canSend,
+                ) {
+                    if (isSending) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = colors.primary,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = NostrVaultIcons.Send,
+                            contentDescription = "Send",
+                            tint = if (canSend) colors.primary else TertiaryText,
+                        )
+                    }
                 }
             }
         }

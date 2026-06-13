@@ -43,19 +43,19 @@ class PowPreferences @Inject constructor(
     private val prefs: SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
-    private val _noteEnabled = MutableStateFlow(prefs.getBoolean(KEY_NOTE_ENABLED, false))
+    private val _noteEnabled = MutableStateFlow(prefs.getBoolean(KEY_NOTE_ENABLED, true))
     val noteEnabled: StateFlow<Boolean> = _noteEnabled.asStateFlow()
 
     private val _noteDifficulty = MutableStateFlow(prefs.getInt(KEY_NOTE_DIFFICULTY, 16))
     val noteDifficulty: StateFlow<Int> = _noteDifficulty.asStateFlow()
 
-    private val _reactionEnabled = MutableStateFlow(prefs.getBoolean(KEY_REACTION_ENABLED, false))
+    private val _reactionEnabled = MutableStateFlow(prefs.getBoolean(KEY_REACTION_ENABLED, true))
     val reactionEnabled: StateFlow<Boolean> = _reactionEnabled.asStateFlow()
 
     private val _reactionDifficulty = MutableStateFlow(prefs.getInt(KEY_REACTION_DIFFICULTY, 12))
     val reactionDifficulty: StateFlow<Int> = _reactionDifficulty.asStateFlow()
 
-    private val _dmEnabled = MutableStateFlow(prefs.getBoolean(KEY_DM_ENABLED, false))
+    private val _dmEnabled = MutableStateFlow(prefs.getBoolean(KEY_DM_ENABLED, true))
     val dmEnabled: StateFlow<Boolean> = _dmEnabled.asStateFlow()
 
     private val _dmDifficulty = MutableStateFlow(prefs.getInt(KEY_DM_DIFFICULTY, 12))
@@ -63,11 +63,11 @@ class PowPreferences @Inject constructor(
 
     /** Thread-safe snapshot for background signing. */
     fun snapshot(): Snapshot = Snapshot(
-        noteEnabled = prefs.getBoolean(KEY_NOTE_ENABLED, false),
+        noteEnabled = prefs.getBoolean(KEY_NOTE_ENABLED, true),
         noteDifficulty = prefs.getInt(KEY_NOTE_DIFFICULTY, 16),
-        reactionEnabled = prefs.getBoolean(KEY_REACTION_ENABLED, false),
+        reactionEnabled = prefs.getBoolean(KEY_REACTION_ENABLED, true),
         reactionDifficulty = prefs.getInt(KEY_REACTION_DIFFICULTY, 12),
-        dmEnabled = prefs.getBoolean(KEY_DM_ENABLED, false),
+        dmEnabled = prefs.getBoolean(KEY_DM_ENABLED, true),
         dmDifficulty = prefs.getInt(KEY_DM_DIFFICULTY, 12),
     )
 

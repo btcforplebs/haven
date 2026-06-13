@@ -1967,6 +1967,7 @@ fun DashboardScreen(
                 statsService = viewModel.statsService,
                 ownerPubkey = viewModel.nostrService.ownerHexPubkey,
                 cacheDir = viewModel.configStore.config.value.appSupportDir?.let { "$it/media_cache" },
+                cacheTTLDays = viewModel.configStore.config.value.cacheTTLDays,
                 isImporting = viewModel.isImporting.collectAsState().value,
                 importProgress = viewModel.importProgress.collectAsState().value,
                 importStatusMessage = viewModel.importStatusMessage.collectAsState().value,
@@ -2475,6 +2476,7 @@ private fun DashboardSheetContent(
     statsService: StatsService,
     ownerPubkey: String,
     cacheDir: String?,
+    cacheTTLDays: Int,
     isImporting: Boolean,
     importProgress: Float,
     importStatusMessage: String,
@@ -2688,6 +2690,7 @@ private fun DashboardSheetContent(
                 com.nostrvault.ui.screens.dashboard.CacheBreakdownSheet(
                     statsService = statsService,
                     cacheDir = cacheDir,
+                    cacheTTLDays = cacheTTLDays,
                     onDismiss = { showCacheBreakdown = false },
                 )
             }

@@ -508,6 +508,99 @@ class CashuService @Inject constructor(
         }
     }
 
+    /**
+     * Restore ecash proofs from relays — subscribe to the owner's kind-7375
+     * token events, NIP-44 decrypt them, and merge any unseen proofs into the
+     * wallet. Port of iOS loadWalletFromRelays(). Verifies spent state after.
+     */
+    suspend fun restoreFromRelays() {
+        val ownerPubkey = nostrService.ownerHexPubkey
+        val ownerPrivkey = nostrService.resolveOwnerSecretKey() ?: return
+        if (ownerPubkey.isEmpty()) return
+
+        val config = configStore.config.value
+        val relayUrls = buildList {
+            config.nostrURL?.let { add(it) }
+            config.inboxRelays?.let { addAll(it) }
+            config.activeBlastrRelays.let { addAll(it) }
+        }.distinct().take(6)
+        if (relayUrls.isEmpty()) return
+
+        _isLoading.value = true
+        try {
+            val restored = java.util.concurrent.ConcurrentHashMap<String, CashuProof>() // by secret
+            coroutineScope {
+                relayUrls.map { relayUrl ->
+                    launch(Dispatchers.IO) {
+                        val client = WebSocketClient(
+                            url = relayUrl,
+                            scope = scope,
+                            trustLocalhost = relayUrl.contains("localhost") || relayUrl.contains("127.0.0.1"),
+                        )
+                        val subId = "cashu-restore-${java.util.UUID.randomUUID().toString().take(8)}"
+                        val collector = scope.launch {
+                            client.messages.collect { msg ->
+                                try {
+                                    val parsed = json.parseToJsonElement(msg).jsonArray
+                                    if (parsed.size >= 3 && parsed[0].jsonPrimitive.contentOrNull == "EVENT") {
+                                        val eventObj = parsed[2].jsonObject
+                                        if (eventObj["kind"]?.jsonPrimitive?.intOrNull != TOKEN_EVENT_KIND) return@collect
+                                        val content = eventObj["content"]?.jsonPrimitive?.contentOrNull ?: return@collect
+                                        val decrypted = NIP44Service.decrypt(content, ownerPubkey, ownerPrivkey) ?: return@collect
+                                        val proofs = json.decodeFromString(
+                                            kotlinx.serialization.builtins.ListSerializer(CashuProof.serializer()),
+                                            decrypted,
+                                        )
+                                        proofs.forEach { if (it.secret.isNotEmpty()) restored[it.secret] = it }
+                                    }
+                                } catch (_: Exception) {}
+                            }
+                        }
+                        client.connect()
+                        client.send("[\"REQ\",\"$subId\",{\"kinds\":[$TOKEN_EVENT_KIND],\"authors\":[\"$ownerPubkey\"]}]")
+                        delay(8_000)
+                        collector.cancel()
+                        client.disconnect()
+                    }
+                }.joinAll()
+            }
+
+            val existingSecrets = _proofs.value.map { it.secret }.toSet()
+            val newOnes = restored.values.filter { it.secret !in existingSecrets }
+            if (newOnes.isNotEmpty()) {
+                _proofs.value = _proofs.value + newOnes
+                recalculateBalance()
+                saveLocalState()
+                // Drop any restored proofs the mint reports as already spent.
+                checkProofStates()
+            }
+        } finally {
+            _isLoading.value = false
+        }
+    }
+
+    /** Track a mint quote awaiting payment so it can be recovered after a crash. */
+    fun trackPendingQuote(quote: CashuMintQuote, amountSats: ULong) {
+        pendingMintQuotes.removeAll { it.quote.quote == quote.quote }
+        pendingMintQuotes.add(PendingMintQuote(quote = quote, amountSats = amountSats))
+    }
+
+    /**
+     * Re-check pending mint quotes; for any that the mint now reports paid,
+     * mint the tokens and clear them. Port of iOS recoverPendingQuotes().
+     */
+    suspend fun recoverPendingQuotes() {
+        for (pq in pendingMintQuotes.toList()) {
+            try {
+                val quote = checkMintQuote(pq.quote.quote)
+                if (quote.paid == true || quote.state == "PAID" || quote.state == "ISSUED") {
+                    mintTokens(pq.quote.quote, pq.amountSats)
+                    pendingMintQuotes.removeAll { it.quote.quote == pq.quote.quote }
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
     // ══════════════════════════════════════════════════════════════════
     // Proof selection & balance
     // ══════════════════════════════════════════════════════════════════

@@ -494,6 +494,8 @@ class GroupService @Inject constructor(
                     relayURL = conv.identifier.relayURL,
                     groupId = conv.identifier.groupId,
                     displayName = conv.info?.name,
+                    unreadCount = conv.unreadCount,
+                    isPrivate = conv.info?.isPrivate ?: false,
                 )
             }
         }.stateIn(scope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -570,6 +572,18 @@ class GroupService @Inject constructor(
         val defaultRelay = config.blastrRelays.firstOrNull() ?: return emptyList()
         browseGroups(defaultRelay)
         return _availableGroups.value
+    }
+
+    /**
+     * Distinct relay URLs the user already has group activity on (joined groups
+     * + browsed groups), plus their configured relays. Used to populate the
+     * relay pickers in group create/browse. Mirrors iOS config.groupRelayURLs.
+     */
+    fun knownGroupRelays(): List<String> {
+        val fromGroups = _conversations.value.map { it.identifier.relayURL } +
+            _availableGroups.value.map { it.identifier.relayURL }
+        val fromConfig = configStore.config.value.blastrRelays
+        return (fromGroups + fromConfig).distinct().filter { it.startsWith("wss://") }
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -699,4 +713,6 @@ data class JoinedGroup(
     val relayURL: String,
     val groupId: String,
     val displayName: String? = null,
+    val unreadCount: Int = 0,
+    val isPrivate: Boolean = false,
 )

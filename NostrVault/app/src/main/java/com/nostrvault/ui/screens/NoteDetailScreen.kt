@@ -357,8 +357,12 @@ class NoteDetailViewModel @Inject constructor(
         }
     }
 
-    fun reportNote(noteId: String, pubkey: String, reason: String) {
-        viewModelScope.launch { nostrService.reportEvent(noteId, pubkey, reason) }
+    fun reportNote(noteId: String, pubkey: String, reason: String, description: String = "") {
+        viewModelScope.launch {
+            nostrService.reportEvent(noteId, pubkey, reason, description.ifBlank { null })
+            // iOS UGCReportingDialog also blocks the reported user.
+            feedService.blockUser(pubkey)
+        }
     }
 
     // Thread-wide stats
@@ -482,6 +486,7 @@ fun NoteDetailScreen(
     // Delete confirmation
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showBlockDialog by remember { mutableStateOf(false) }
+    var showReportDialog by remember { mutableStateOf(false) }
 
     // Zap result feedback
     LaunchedEffect(Unit) {
@@ -594,6 +599,18 @@ fun NoteDetailScreen(
                 TextButton(onClick = { showBlockDialog = false }) { Text("Cancel", color = SecondaryText) }
             },
             containerColor = SecondaryGroupedBg,
+        )
+    }
+
+    // Report content dialog (NIP-56 reason picker + auto-block)
+    if (showReportDialog && focusedNote != null) {
+        UGCReportDialog(
+            onReport = { reason, description ->
+                viewModel.reportNote(focusedNote!!.effectiveEventId, focusedNote!!.pubkey, reason, description)
+                showReportDialog = false
+                onBack()
+            },
+            onDismiss = { showReportDialog = false },
         )
     }
 
@@ -757,7 +774,7 @@ fun NoteDetailScreen(
                         onUnfollow = { viewModel.unfollowUser(focusedNote!!.pubkey) },
                         onBlock = { showBlockDialog = true },
                         onDelete = { showDeleteDialog = true },
-                        onReport = { viewModel.reportNote(focusedNote!!.effectiveEventId, focusedNote!!.pubkey, "spam") },
+                        onReport = { showReportDialog = true },
                         onReactionsClick = { showReactorsSheet = true },
                         onRepostsClick = { showRepostersSheet = true },
                         onZapsClick = { showZappersSheet = true },

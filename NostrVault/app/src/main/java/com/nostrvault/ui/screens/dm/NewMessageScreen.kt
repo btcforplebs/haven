@@ -19,6 +19,11 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.content.Context
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -26,12 +31,17 @@ import androidx.lifecycle.viewModelScope
 import coil.compose.AsyncImage
 import com.nostrvault.data.model.FeedProfile
 import com.nostrvault.relay.HavenBridge
+import com.nostrvault.service.BlossomService
 import com.nostrvault.service.DMService
 import com.nostrvault.service.NostrService
 import com.nostrvault.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import javax.inject.Inject
 
 /**
@@ -42,8 +52,10 @@ import javax.inject.Inject
 @HiltViewModel
 class NewMessageViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
+    @ApplicationContext private val context: Context,
     private val dmService: DMService,
     private val nostrService: NostrService,
+    private val blossomService: BlossomService,
 ) : ViewModel() {
 
     /** Optional pre-locked recipient (e.g. opened from a profile). null = free picker. */
@@ -63,6 +75,9 @@ class NewMessageViewModel @Inject constructor(
     private val _isSending = MutableStateFlow(false)
     val isSending: StateFlow<Boolean> = _isSending.asStateFlow()
 
+    private val _attachedImage = MutableStateFlow<Uri?>(null)
+    val attachedImage: StateFlow<Uri?> = _attachedImage.asStateFlow()
+
     /** Search results: npub decode (single hit) or name/pubkey substring filter (cap 10). */
     val searchResults: StateFlow<List<String>> =
         combine(_searchText, nostrService.profiles) { query, profs ->
@@ -81,8 +96,8 @@ class NewMessageViewModel @Inject constructor(
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val canSend: StateFlow<Boolean> =
-        combine(_messageText, _selectedRecipient) { msg, recipient ->
-            msg.trim().isNotEmpty() && recipient != null
+        combine(_messageText, _selectedRecipient, _attachedImage) { msg, recipient, image ->
+            recipient != null && (msg.trim().isNotEmpty() || image != null)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     init {
@@ -108,16 +123,46 @@ class NewMessageViewModel @Inject constructor(
 
     fun setMessageText(text: String) { _messageText.value = text }
 
+    fun setAttachedImage(uri: Uri?) { _attachedImage.value = uri }
+    fun clearAttachedImage() { _attachedImage.value = null }
+
     fun send(onSent: (String) -> Unit) {
         val recipient = _selectedRecipient.value ?: return
-        val content = _messageText.value.trim()
-        if (content.isEmpty() || _isSending.value) return
+        val text = _messageText.value.trim()
+        val image = _attachedImage.value
+        if ((text.isEmpty() && image == null) || _isSending.value) return
 
         viewModelScope.launch {
             _isSending.value = true
-            dmService.sendDM(content, recipient)
+            val imageUrl = image?.let { uploadImage(it) }
+            val content = buildString {
+                append(text)
+                if (imageUrl != null) {
+                    if (text.isNotEmpty()) append("\n")
+                    append(imageUrl)
+                }
+            }
+            // If an image was attached but upload failed, abort rather than send a blank DM.
+            if (content.isNotEmpty()) {
+                dmService.sendDM(content, recipient)
+            }
             _isSending.value = false
             onSent(recipient)
+        }
+    }
+
+    private suspend fun uploadImage(uri: Uri): String? = withContext(Dispatchers.IO) {
+        try {
+            val input = context.contentResolver.openInputStream(uri) ?: return@withContext null
+            val tempFile = File.createTempFile("dm_upload_", ".tmp", context.cacheDir)
+            tempFile.outputStream().use { out -> input.use { it.copyTo(out) } }
+            val sha256 = blossomService.computeSHA256(tempFile)
+            val contentType = context.contentResolver.getType(uri) ?: "image/jpeg"
+            val url = blossomService.uploadAndMirror(tempFile, sha256, contentType)
+            tempFile.delete()
+            url
+        } catch (_: Exception) {
+            null
         }
     }
 }
@@ -135,7 +180,12 @@ fun NewMessageScreen(
     val messageText by viewModel.messageText.collectAsState()
     val isSending by viewModel.isSending.collectAsState()
     val canSend by viewModel.canSend.collectAsState()
+    val attachedImage by viewModel.attachedImage.collectAsState()
     val colors = LocalNostrVaultColors.current
+
+    val imagePicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.PickVisualMedia(),
+    ) { uri -> uri?.let { viewModel.setAttachedImage(it) } }
 
     Scaffold(
         topBar = {
@@ -207,21 +257,64 @@ fun NewMessageScreen(
 
             HorizontalDivider(color = SeparatorColor, thickness = 0.5.dp)
 
-            OutlinedTextField(
-                value = messageText,
-                onValueChange = viewModel::setMessageText,
-                placeholder = { Text("Write a message...", color = PlaceholderText) },
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = colors.primary,
-                    unfocusedBorderColor = SeparatorColor,
-                    cursorColor = colors.primary,
-                ),
-                shape = RoundedCornerShape(16.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 120.dp)
-                    .padding(16.dp),
-            )
+            // Attached image preview
+            attachedImage?.let { uri ->
+                Box(modifier = Modifier.padding(start = 16.dp, top = 12.dp)) {
+                    AsyncImage(
+                        model = uri,
+                        contentDescription = "Attached image",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(96.dp)
+                            .clip(RoundedCornerShape(12.dp)),
+                    )
+                    IconButton(
+                        onClick = { viewModel.clearAttachedImage() },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .size(24.dp),
+                    ) {
+                        Icon(
+                            imageVector = NostrVaultIcons.Dismiss,
+                            contentDescription = "Remove image",
+                            tint = PrimaryText,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
+            }
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                    onClick = {
+                        imagePicker.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                        )
+                    },
+                    modifier = Modifier.padding(start = 8.dp),
+                ) {
+                    Icon(
+                        imageVector = NostrVaultIcons.Media,
+                        contentDescription = "Attach image",
+                        tint = colors.primary,
+                    )
+                }
+                OutlinedTextField(
+                    value = messageText,
+                    onValueChange = viewModel::setMessageText,
+                    placeholder = { Text("Write a message...", color = PlaceholderText) },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = colors.primary,
+                        unfocusedBorderColor = SeparatorColor,
+                        cursorColor = colors.primary,
+                    ),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 120.dp)
+                        .padding(8.dp),
+                )
+            }
         }
     }
 }

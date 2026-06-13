@@ -33,6 +33,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import com.nostrvault.data.local.ConfigStore
 import com.nostrvault.service.BlossomService
 import com.nostrvault.service.MediaSaveService
+import com.nostrvault.ui.components.AudioPlayer
 import com.nostrvault.ui.components.VideoPlayer
 import com.nostrvault.ui.components.ZoomableImage
 import com.nostrvault.ui.notification.NotificationManager
@@ -238,15 +239,23 @@ fun MediaViewerScreen(
 
             if (item.isVideo || item.isAudio) {
                 // Only create ExoPlayer for the currently visible page
-                // to keep memory usage at one instance (~10-15MB). ExoPlayer
-                // plays audio-only blobs too (the surface just stays black).
+                // to keep memory usage at one instance (~10-15MB).
                 if (page == pagerState.currentPage) {
-                    val videoUri = item.localFile?.toUri()?.toString() ?: item.displayUrl
-                    VideoPlayer(
-                        uri = videoUri,
-                        modifier = Modifier.fillMaxSize(),
-                        autoplay = autoplayVideos,
-                    )
+                    val mediaUri = item.localFile?.toUri()?.toString() ?: item.displayUrl
+                    if (item.isAudio) {
+                        AudioPlayer(
+                            uri = mediaUri,
+                            fileName = audioFileName(item.displayUrl, item.sha256),
+                            modifier = Modifier.fillMaxSize(),
+                            autoplay = autoplayVideos,
+                        )
+                    } else {
+                        VideoPlayer(
+                            uri = mediaUri,
+                            modifier = Modifier.fillMaxSize(),
+                            autoplay = autoplayVideos,
+                        )
+                    }
                 } else {
                     // Static thumbnail placeholder for off-screen video pages
                     Box(
@@ -566,4 +575,11 @@ private fun MirrorStatusSheet(
             }
         }
     }
+}
+
+/** Derive a display filename for an audio blob from its URL or sha256. */
+private fun audioFileName(displayUrl: String, sha256: String): String {
+    val fromUrl = displayUrl.substringAfterLast('/').substringBefore('?')
+        .takeIf { it.isNotBlank() && it.contains('.') }
+    return fromUrl ?: ("Audio " + sha256.take(8))
 }

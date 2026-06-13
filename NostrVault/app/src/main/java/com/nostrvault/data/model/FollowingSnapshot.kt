@@ -25,3 +25,17 @@ data class FollowingSnapshotStore(
         const val MAX_SNAPSHOTS = 25
     }
 }
+
+/**
+ * A historical kind-3 contact list event discovered by scanning relays.
+ * Used by Following Backup recovery to restore an older following list.
+ */
+data class Kind3Event(
+    val id: String,
+    val createdAt: Long, // unix seconds
+    val pubkeys: List<String>,
+    val pTags: List<List<String>>,
+    val content: String,
+) {
+    val followCount: Int get() = pubkeys.size
+}
