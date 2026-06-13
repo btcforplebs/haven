@@ -212,8 +212,14 @@ extension View {
 
     @ViewBuilder
     func mediaTabViewStyleCompat() -> some View {
-        // Removed PageTabViewStyle - TabView now fades instead of swiping
+        #if os(iOS)
+        // Page style = horizontal swiping. Without it, iOS renders the TabView
+        // as a (glass, on iOS 26) bottom tab bar with a "More" overflow list.
+        // Dots hidden so the viewer stays clean.
+        self.tabViewStyle(.page(indexDisplayMode: .never))
+        #else
         self
+        #endif
     }
 }
 

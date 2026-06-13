@@ -368,7 +368,7 @@ struct SearchView: View {
             }
         }
         .sheet(item: $showingMediaUrl) { media in
-            FeedMediaViewer(url: media.url, onDismiss: { showingMediaUrl = nil })
+            FeedMediaPager(urls: media.allURLs, selected: media.url, onDismiss: { showingMediaUrl = nil })
         }
         .onAppear {
             refreshDiscovery(force: true)
@@ -641,8 +641,8 @@ struct SearchView: View {
                                    onProfile: { pubkey in
                                        showingProfile = pubkey
                                    },
-                                   onMedia: { url in
-                                       showingMediaUrl = IdentifiableURL(url: url)
+                                   onMedia: { url, urls in
+                                       showingMediaUrl = IdentifiableURL(url: url, allURLs: urls)
                                    },
                                    showParent: false
                                )

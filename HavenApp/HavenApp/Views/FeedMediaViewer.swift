@@ -5,7 +5,56 @@ import os.log
 
 struct IdentifiableURL: Identifiable {
     let id = UUID()
+    /// The tapped URL — the page the viewer opens on.
     let url: URL
+    /// The full set of media in the note this URL came from, in display order.
+    /// Defaults to just `[url]` so single-media call sites are unchanged.
+    let allURLs: [URL]
+
+    init(url: URL, allURLs: [URL]? = nil) {
+        self.url = url
+        self.allURLs = (allURLs?.isEmpty == false ? allURLs! : [url])
+    }
+}
+
+/// Full-screen, swipeable viewer for a note's media. Opens on `selected` and pages
+/// horizontally across `urls`, hosting one `FeedMediaViewer` per page (which already
+/// yields horizontal drags to a parent `TabView` when not zoomed). On macOS — where
+/// `PageTabViewStyle` is unavailable — it falls back to the single tapped item.
+struct FeedMediaPager: View {
+    let urls: [URL]
+    let selected: URL
+    var onDismiss: (() -> Void)? = nil
+
+    @State private var selection: URL
+
+    init(urls: [URL], selected: URL, onDismiss: (() -> Void)? = nil) {
+        self.urls = urls.isEmpty ? [selected] : urls
+        self.selected = selected
+        self.onDismiss = onDismiss
+        _selection = State(initialValue: selected)
+    }
+
+    var body: some View {
+        #if os(iOS)
+        if urls.count <= 1 {
+            FeedMediaViewer(url: selected, onDismiss: onDismiss)
+        } else {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                TabView(selection: $selection) {
+                    ForEach(urls, id: \.absoluteString) { url in
+                        FeedMediaViewer(url: url, enableDragDismiss: true, onDismiss: onDismiss)
+                            .tag(url)
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .automatic))
+            }
+        }
+        #else
+        FeedMediaViewer(url: selected, onDismiss: onDismiss)
+        #endif
+    }
 }
 
 struct FeedMediaViewer: View {

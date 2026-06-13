@@ -276,7 +276,7 @@ struct NoteDetailView: View {
                 .environmentObject(configService)
         }
         .sheet(item: $showingMediaUrl) { media in
-            FeedMediaViewer(url: media.url, onDismiss: { showingMediaUrl = nil })
+            FeedMediaPager(urls: media.allURLs, selected: media.url, onDismiss: { showingMediaUrl = nil })
         }
         .sheet(isPresented: $showingBroadcastSheet) {
             EventBroadcastSheet(note: note)
@@ -364,8 +364,8 @@ struct NoteDetailView: View {
                 onProfile: { pubkey in
                     showingProfilePubkey = pubkey
                 },
-                onMedia: { url in
-                    showingMediaUrl = IdentifiableURL(url: url)
+                onMedia: { url, urls in
+                    showingMediaUrl = IdentifiableURL(url: url, allURLs: urls)
                 },
                 showParent: false,
                 layoutMode: .wide,
@@ -506,7 +506,7 @@ struct NoteDetailView: View {
                         .aspectRatio(1, contentMode: .fill)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                         .onTapGesture {
-                            showingMediaUrl = IdentifiableURL(url: firstMedia)
+                            showingMediaUrl = IdentifiableURL(url: firstMedia, allURLs: focusedNote.mediaURLs)
                         }
 
                         // Multi-media badge
@@ -580,8 +580,8 @@ struct NoteDetailView: View {
                             onProfile: { pubkey in
                                 showingProfilePubkey = pubkey
                             },
-                            onMedia: { url in
-                                showingMediaUrl = IdentifiableURL(url: url)
+                            onMedia: { url, urls in
+                                showingMediaUrl = IdentifiableURL(url: url, allURLs: urls)
                             },
                             showParent: false,
                             layoutMode: .wide,
@@ -736,8 +736,8 @@ struct NoteDetailView: View {
                         onProfile: { pubkey in
                             showingProfilePubkey = pubkey
                         },
-                        onMedia: { url in
-                            showingMediaUrl = IdentifiableURL(url: url)
+                        onMedia: { url, urls in
+                            showingMediaUrl = IdentifiableURL(url: url, allURLs: urls)
                         },
                         focusedNoteId: $focusedNoteId,
                         proxy: proxy,
@@ -760,7 +760,7 @@ struct NoteDetailView: View {
         } else if urls.count == 1 {
             FeedMediaView(
                 url: urls[0],
-                onTap: { showingMediaUrl = IdentifiableURL(url: urls[0]) },
+                onTap: { showingMediaUrl = IdentifiableURL(url: urls[0], allURLs: urls) },
                 maxHeight: 400,
                 isThumbnail: false
             )
@@ -771,7 +771,7 @@ struct NoteDetailView: View {
                 ForEach(urls, id: \.absoluteString) { url in
                     FeedMediaView(
                         url: url,
-                        onTap: { showingMediaUrl = IdentifiableURL(url: url) },
+                        onTap: { showingMediaUrl = IdentifiableURL(url: url, allURLs: urls) },
                         maxHeight: 400,
                         isThumbnail: false
                     )
@@ -1783,7 +1783,7 @@ struct ThreadedReplyNode: View {
     var onReply: ((FeedNote) -> Void)? = nil
     var onQuote: ((FeedNote) -> Void)? = nil
     var onProfile: ((String) -> Void)? = nil
-    var onMedia: ((URL) -> Void)? = nil
+    var onMedia: ((URL, [URL]) -> Void)? = nil
     @Binding var focusedNoteId: String
     let proxy: ScrollViewProxy
 

@@ -51,6 +51,14 @@ struct ComposeView: View {
     @State private var mentionQuery: String? = nil          // nil = popup hidden
     @State private var mentionResults: [FeedProfile] = []
     @State private var taggedPubkeys: [String] = []         // hex pubkeys of tagged users
+    @State private var mentionStartOffset: Int? = nil       // char offset of the active `@`
+    @State private var mentionEndOffset: Int? = nil         // char offset of the caret (query end)
+    // Maps an inserted display token (e.g. "@Alice") → hex pubkey. The editor shows
+    // `@name` for readability; tokens are converted back to `nostr:npub…` at publish
+    // and draft-save time so published notes stay interoperable.
+    @State private var mentionMap: [String: String] = [:]
+    // Debounced NIP-50 relay search for mentioning people who aren't followed / cached.
+    @State private var mentionSearchTask: Task<Void, Never>? = nil
 
     // Draft auto-save state
     @State private var draftId: String? = nil
@@ -163,8 +171,8 @@ struct ComposeView: View {
                                     .frame(minHeight: 200)
                                     .scrollContentBackground(.hidden)
                                     .accessibilityLabel("Post content")
-                                    .onChange(of: content) { _, newValue in
-                                        updateMentionQuery(in: newValue)
+                                    .onChange(of: content) { oldValue, newValue in
+                                        updateMentionQuery(old: oldValue, new: newValue)
                                         scheduleAutoSave(newValue)
                                     }
                             }
@@ -248,8 +256,7 @@ struct ComposeView: View {
             }
             .onAppear {
                 if !initialContent.isEmpty {
-                    content = initialContent
-                    extractMentionsFromContent(initialContent)
+                    content = convertNostrToMentions(initialContent)
                 }
                 if let restored = restoredDraftId {
                     draftId = restored
@@ -340,141 +347,249 @@ struct ComposeView: View {
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: mentionResults.count)
     }
 
-    /// Called every time `content` changes — finds the @query at the cursor tail.
-    private func updateMentionQuery(in text: String) {
-        // Look for the last `@` that hasn't been terminated by whitespace or newline
-        guard let atRange = text.range(of: "@", options: .backwards) else {
-            mentionQuery = nil
-            mentionResults = []
+    /// Called every time `content` changes — finds the @query at the caret, which
+    /// may be anywhere in the text (not just at the end). The caret is located via
+    /// the diff between the previous and new text, then we scan backwards from it to
+    /// find the `@` that begins the token currently being edited.
+    private func updateMentionQuery(old: String, new text: String) {
+        let caret = caretIndex(old: old, new: text)
+
+        // Scan backwards from the caret for the start of the current token.
+        var atIndex: String.Index? = nil
+        var idx = caret
+        while idx > text.startIndex {
+            let prev = text.index(before: idx)
+            let ch = text[prev]
+            if ch == "@" {
+                atIndex = prev
+                break
+            }
+            // A mention token can't contain whitespace/newline.
+            if ch == " " || ch == "\n" || ch == "\t" { break }
+            idx = prev
+        }
+
+        guard let atIndex else {
+            clearMention()
             return
         }
 
-        let queryStart = text.index(after: atRange.lowerBound)
-        let tail = String(text[queryStart...])
-
-        // If there is whitespace or newline after the @, the mention is done
-        if tail.contains(" ") || tail.contains("\n") {
-            mentionQuery = nil
-            mentionResults = []
-            return
+        // The `@` must start a word (preceded by start-of-text or whitespace) so
+        // that email addresses like foo@bar.com don't trigger the picker.
+        if atIndex > text.startIndex {
+            let before = text[text.index(before: atIndex)]
+            if before != " " && before != "\n" && before != "\t" {
+                clearMention()
+                return
+            }
         }
 
-        mentionQuery = tail
-        filterMentionResults(query: tail)
+        let queryStart = text.index(after: atIndex)
+        let query = String(text[queryStart..<caret])
+
+        mentionStartOffset = text.distance(from: text.startIndex, to: atIndex)
+        mentionEndOffset = text.distance(from: text.startIndex, to: caret)
+        mentionQuery = query
+        filterMentionResults(query: query)
+        scheduleMentionSearch(query)
+    }
+
+    /// Returns the index in `new` just past the region that differs from `old` —
+    /// i.e. where the caret sits after the edit that produced `new`.
+    private func caretIndex(old: String, new: String) -> String.Index {
+        let oldChars = Array(old)
+        let newChars = Array(new)
+        let maxLen = min(oldChars.count, newChars.count)
+
+        var prefix = 0
+        while prefix < maxLen && oldChars[prefix] == newChars[prefix] { prefix += 1 }
+
+        var suffix = 0
+        let maxSuffix = maxLen - prefix
+        while suffix < maxSuffix &&
+              oldChars[oldChars.count - 1 - suffix] == newChars[newChars.count - 1 - suffix] {
+            suffix += 1
+        }
+
+        let caretOffset = newChars.count - suffix
+        return new.index(new.startIndex, offsetBy: caretOffset)
+    }
+
+    private func clearMention() {
+        mentionQuery = nil
+        mentionResults = []
+        mentionStartOffset = nil
+        mentionEndOffset = nil
+        mentionSearchTask?.cancel()
+        mentionSearchTask = nil
     }
 
     private func filterMentionResults(query: String) {
         let followed = FeedService.shared.followedPubkeys
-        var candidatePubkeys = Set(followed)
+        let followedSet = Set(followed)
+        let selfPubkey = nostrService.activeHexPubkey
 
-        // Include thread participants when replying so mentions work for
-        // people in the conversation even if you don't follow them.
+        // Thread participants when replying — valid mention targets even if unfollowed.
+        var threadPubkeys: [String] = []
         if let parent = effectiveReplyTo {
-            candidatePubkeys.insert(parent.pubkey)
+            threadPubkeys.append(parent.pubkey)
             for tag in parent.tags where tag.count >= 2 && tag[0] == "p" {
-                candidatePubkeys.insert(tag[1])
+                if !threadPubkeys.contains(tag[1]) { threadPubkeys.append(tag[1]) }
             }
+            threadPubkeys.removeAll { $0 == selfPubkey }
         }
-
-        // Exclude self
-        candidatePubkeys.remove(nostrService.activeHexPubkey)
-
-        let allProfiles = candidatePubkeys.compactMap { nostrService.profiles[$0] }
+        let threadSet = Set(threadPubkeys)
 
         if query.isEmpty {
-            // Show first 5 profiles when query is empty (just typed @)
-            // Prioritize thread participants for replies
-            if let parent = effectiveReplyTo {
-                var threadPubkeys: [String] = [parent.pubkey]
-                for tag in parent.tags where tag.count >= 2 && tag[0] == "p" {
-                    if !threadPubkeys.contains(tag[1]) {
-                        threadPubkeys.append(tag[1])
-                    }
-                }
-                threadPubkeys.removeAll { $0 == nostrService.activeHexPubkey }
-                let threadProfiles = threadPubkeys.compactMap { nostrService.profiles[$0] }
-                let followedProfiles = followed.compactMap { nostrService.profiles[$0] }
-                // Thread participants first, then followed
-                var combined: [FeedProfile] = threadProfiles
-                for p in followedProfiles where !combined.contains(where: { $0.pubkey == p.pubkey }) {
-                    combined.append(p)
-                }
-                mentionResults = Array(combined.prefix(5))
-            } else {
-                mentionResults = Array(allProfiles.prefix(5))
+            // Just typed @: thread participants first, then followed.
+            let threadProfiles = threadPubkeys.compactMap { nostrService.profiles[$0] }
+            let followedProfiles = followed.compactMap { nostrService.profiles[$0] }
+            var combined: [FeedProfile] = threadProfiles
+            for p in followedProfiles where !combined.contains(where: { $0.pubkey == p.pubkey }) {
+                combined.append(p)
             }
-        } else {
-            let lower = query.lowercased()
-            mentionResults = allProfiles.filter { profile in
-                (profile.bestName.lowercased().contains(lower)) ||
+            mentionResults = Array(combined.prefix(8))
+            return
+        }
+
+        // Search the entire profile cache (feed authors, search results, etc.),
+        // not just follows, ranking thread participants and follows first.
+        let lower = query.lowercased()
+        let matches = nostrService.profiles.values.filter { profile in
+            profile.pubkey != selfPubkey && (
+                profile.bestName.lowercased().contains(lower) ||
                 (profile.name?.lowercased().contains(lower) ?? false) ||
                 (profile.nip05?.lowercased().contains(lower) ?? false)
+            )
+        }
+        let ranked = matches.sorted { a, b in
+            func rank(_ p: FeedProfile) -> (Int, Int, Int) {
+                (threadSet.contains(p.pubkey) ? 0 : 1,
+                 followedSet.contains(p.pubkey) ? 0 : 1,
+                 p.bestName.lowercased().hasPrefix(lower) ? 0 : 1)
+            }
+            let ra = rank(a), rb = rank(b)
+            if ra != rb { return ra < rb }
+            return a.bestName.count < b.bestName.count
+        }
+        mentionResults = Array(ranked.prefix(8))
+    }
+
+    /// Debounced NIP-50 relay search so you can @-mention people who aren't followed
+    /// and whose profile isn't cached yet. `globalSearch` merges discovered profiles
+    /// into `nostrService.profiles`; we re-filter when results arrive.
+    private func scheduleMentionSearch(_ query: String) {
+        mentionSearchTask?.cancel()
+        guard query.count >= 2 else { return }
+        mentionSearchTask = Task {
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+            nostrService.globalSearch(query: query) { _ in
+                // Completion runs on the main queue; re-filter if still editing this query.
+                if mentionQuery == query {
+                    filterMentionResults(query: query)
+                }
             }
         }
     }
 
-    /// Extracts hex pubkeys from nostr:npub1... and nostr:nprofile1... URIs in the
-    /// given text and populates `taggedPubkeys` so p-tags are generated when posting.
-    private func extractMentionsFromContent(_ text: String) {
-        let npubPattern = try! NSRegularExpression(pattern: "nostr:(npub1[a-z0-9]+)")
-        let nprofilePattern = try! NSRegularExpression(pattern: "nostr:(nprofile1[a-z0-9]+)")
-        let nsString = text as NSString
-        let range = NSRange(location: 0, length: nsString.length)
-
-        for match in npubPattern.matches(in: text, range: range) {
-            let bech32 = nsString.substring(with: match.range(at: 1))
-            if let decoded = Bech32.decode(bech32), !taggedPubkeys.contains(decoded.hexString) {
-                taggedPubkeys.append(decoded.hexString)
-            }
+    /// Resolves a bare `npub1…`/`nprofile1…` bech32 identifier to a hex pubkey.
+    private func resolvePubkey(fromBech32 bech32: String) -> String? {
+        if bech32.lowercased().hasPrefix("npub1") {
+            return Bech32.decode(bech32)?.hexString
         }
-
-        for match in nprofilePattern.matches(in: text, range: range) {
-            let bech32 = nsString.substring(with: match.range(at: 1))
-            if let decoded = Bech32.decode(bech32) {
-                // TLV: type 0 = pubkey (32 bytes)
-                var data = decoded.data
-                while data.count >= 2 {
-                    let type = data.removeFirst()
-                    let length = Int(data.removeFirst())
-                    if data.count >= length {
-                        let value = data.prefix(length)
-                        if type == 0 && length == 32 {
-                            let hex = value.map { String(format: "%02x", $0) }.joined()
-                            if !taggedPubkeys.contains(hex) {
-                                taggedPubkeys.append(hex)
-                            }
-                            break
-                        }
-                        data.removeFirst(length)
-                    } else {
-                        break
-                    }
+        if bech32.lowercased().hasPrefix("nprofile1"), let decoded = Bech32.decode(bech32) {
+            // TLV: type 0 = pubkey (32 bytes)
+            var data = decoded.data
+            while data.count >= 2 {
+                let type = data.removeFirst()
+                let length = Int(data.removeFirst())
+                guard data.count >= length else { break }
+                let value = data.prefix(length)
+                if type == 0 && length == 32 {
+                    return value.map { String(format: "%02x", $0) }.joined()
                 }
+                data.removeFirst(length)
             }
         }
+        return nil
+    }
+
+    /// Display token shown in the editor for a mention (e.g. "@Alice").
+    private func mentionToken(name: String, pubkey: String) -> String {
+        let clean = name
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespaces)
+        return "@\(clean.isEmpty ? String(pubkey.prefix(8)) : clean)"
+    }
+
+    /// Converts `nostr:npub1…`/`nostr:nprofile1…` references in `text` to readable
+    /// `@name` tokens for editing, rebuilding `mentionMap` and `taggedPubkeys`.
+    /// Used when loading drafts or editing a pending post.
+    private func convertNostrToMentions(_ text: String) -> String {
+        let pattern = "nostr:(npub1[a-z0-9]+|nprofile1[a-z0-9]+)"
+        guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else { return text }
+        let ns = text as NSString
+        var result = text
+        // Replace last → first so earlier match ranges remain valid against `result`.
+        for match in re.matches(in: text, range: NSRange(location: 0, length: ns.length)).reversed() {
+            let bech32 = ns.substring(with: match.range(at: 1))
+            guard let pubkey = resolvePubkey(fromBech32: bech32) else { continue }
+            let token = mentionToken(name: nostrService.profiles[pubkey]?.bestName ?? "", pubkey: pubkey)
+            mentionMap[token] = pubkey
+            if !taggedPubkeys.contains(pubkey) { taggedPubkeys.append(pubkey) }
+            result = (result as NSString).replacingCharacters(in: match.range, with: token)
+        }
+        return result
+    }
+
+    /// Converts `@name` display tokens back to canonical `nostr:npub…` references for
+    /// publishing and draft persistence. Longest tokens first so a shorter name that is
+    /// a prefix of another doesn't clobber it; a trailing word-boundary guards against
+    /// partial matches inside other words.
+    private func convertMentionsToNostr(_ text: String) -> String {
+        guard !mentionMap.isEmpty else { return text }
+        var result = text
+        for (token, pubkey) in mentionMap.sorted(by: { $0.key.count > $1.key.count }) {
+            guard let data = Bech32.hexToData(pubkey),
+                  let npub = Bech32.encode(hrp: "npub", data: data) else { continue }
+            let pattern = NSRegularExpression.escapedPattern(for: token) + "(?![\\p{L}\\p{N}_])"
+            guard let re = try? NSRegularExpression(pattern: pattern) else { continue }
+            let ns = result as NSString
+            result = re.stringByReplacingMatches(
+                in: result,
+                range: NSRange(location: 0, length: ns.length),
+                withTemplate: NSRegularExpression.escapedTemplate(for: "nostr:\(npub)")
+            )
+        }
+        return result
     }
 
     private func insertMention(_ profile: FeedProfile) {
-        // Encode pubkey as npub
-        guard let data = Bech32.hexToData(profile.pubkey),
-              let npub = Bech32.encode(hrp: "npub", data: data) else { return }
+        let token = mentionToken(name: profile.bestName, pubkey: profile.pubkey)
+        let replacement = "\(token) "
 
-        // Replace the trailing `@query` with `nostr:npub1...`
-        if let atRange = content.range(of: "@", options: .backwards) {
-            content = String(content[content.startIndex..<atRange.lowerBound])
-                + "nostr:\(npub) "
+        // Replace the active `@query` token (which may be mid-text) with the display token.
+        if let startOff = mentionStartOffset, let endOff = mentionEndOffset,
+           startOff <= endOff, endOff <= content.count {
+            let start = content.index(content.startIndex, offsetBy: startOff)
+            let end = content.index(content.startIndex, offsetBy: endOff)
+            content.replaceSubrange(start..<end, with: replacement)
+        } else if let atRange = content.range(of: "@", options: .backwards) {
+            // Fallback: replace the trailing `@query`.
+            content = String(content[content.startIndex..<atRange.lowerBound]) + replacement
         } else {
-            content += "nostr:\(npub) "
+            content += replacement
         }
 
-        // Track the mention so we can add the `p` tag
+        // Remember the token → pubkey mapping and track for the `p` tag.
+        mentionMap[token] = profile.pubkey
         if !taggedPubkeys.contains(profile.pubkey) {
             taggedPubkeys.append(profile.pubkey)
         }
 
         withAnimation {
-            mentionQuery = nil
-            mentionResults = []
+            clearMention()
         }
     }
 
@@ -946,7 +1061,8 @@ struct ComposeView: View {
 
         Task {
             // 1. Upload media to Blossom mirrors
-            var finalContent = content
+            // Convert `@name` display tokens back to canonical `nostr:npub…` references.
+            var finalContent = convertMentionsToNostr(content)
             isUploading = true
 
             // Upload all attachments and fail if any fail
@@ -1208,7 +1324,7 @@ struct ComposeView: View {
             Task {
                 await DraftService.shared.saveDraft(
                     draftId: id,
-                    content: content,
+                    content: convertMentionsToNostr(content),
                     replyTo: effectiveReplyTo,
                     quoteTo: effectiveQuoteTo,
                     taggedPubkeys: taggedPubkeys
@@ -1248,9 +1364,10 @@ struct ComposeView: View {
                 await MainActor.run { draftId = id }
             }
 
+            let canonicalContent = await MainActor.run { convertMentionsToNostr(content) }
             await DraftService.shared.saveDraft(
                 draftId: id,
-                content: content,
+                content: canonicalContent,
                 replyTo: effectiveReplyTo,
                 quoteTo: effectiveQuoteTo,
                 taggedPubkeys: taggedPubkeys
@@ -1261,8 +1378,8 @@ struct ComposeView: View {
 
     private func loadDraft(_ draft: Draft) {
         draftId = draft.id
-        content = draft.content
-        lastSavedContent = draft.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        content = convertNostrToMentions(draft.content)
+        lastSavedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Restore reply context from saved draft
         if let replyId = draft.replyToId {

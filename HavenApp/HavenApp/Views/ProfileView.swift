@@ -267,7 +267,7 @@ struct ProfileView: View {
                 .environmentObject(configService)
         }
         .sheet(item: $showingMediaUrl) { media in
-            FeedMediaViewer(url: media.url, onDismiss: { showingMediaUrl = nil })
+            FeedMediaPager(urls: media.allURLs, selected: media.url, onDismiss: { showingMediaUrl = nil })
         }
         .sheet(isPresented: $showSweep) {
             BitcoinSweepDisclaimerView(onDismiss: { showSweep = false })
@@ -1089,8 +1089,8 @@ struct ProfileView: View {
                         onProfile: { pubkey in
                             showingProfileKey = IdentifiableString(id: pubkey)
                         },
-                        onMedia: { url in
-                            showingMediaUrl = IdentifiableURL(url: url)
+                        onMedia: { url, urls in
+                            showingMediaUrl = IdentifiableURL(url: url, allURLs: urls)
                         },
                         showParent: false
                     )

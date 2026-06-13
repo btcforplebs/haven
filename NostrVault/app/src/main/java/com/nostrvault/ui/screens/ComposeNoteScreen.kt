@@ -33,6 +33,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -52,6 +55,8 @@ import com.nostrvault.service.MediaType
 import com.nostrvault.service.NostrService
 import com.nostrvault.relay.HavenBridge
 import com.nostrvault.service.PendingPostManager
+import com.nostrvault.ui.components.AvatarImage
+import com.nostrvault.ui.components.NostrMentions
 import com.nostrvault.ui.components.QuotedNoteCard
 import com.nostrvault.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -134,6 +139,25 @@ class ComposeNoteViewModel @Inject constructor(
     private val _showBlossomPicker = MutableStateFlow(false)
     val showBlossomPicker = _showBlossomPicker.asStateFlow()
 
+    // @mention autocomplete state
+    private val _mentionResults = MutableStateFlow<List<FeedProfile>>(emptyList())
+    val mentionResults = _mentionResults.asStateFlow()
+
+    /** Char offsets of the active `@query` token in `content` (start = the `@`). */
+    private var mentionStartOffset: Int? = null
+    private var mentionEndOffset: Int? = null
+
+    /** The query of the mention currently being edited, and its debounced relay search. */
+    private var currentMentionQuery: String? = null
+    private var mentionSearchJob: Job? = null
+
+    /**
+     * Maps an inserted display token (e.g. "@Alice") → hex pubkey. The editor shows
+     * `@name` for readability; tokens are converted back to `nostr:npub…` at publish
+     * and draft-save time so published notes stay interoperable.
+     */
+    private val mentionMap = mutableMapOf<String, String>()
+
     val isReply: Boolean get() = replyToNoteId != null
     val isQuote: Boolean get() = quoteToNoteId != null
 
@@ -142,7 +166,7 @@ class ComposeNoteViewModel @Inject constructor(
         if (resumeDraftId != null) {
             val draft = draftService.findDraft(resumeDraftId)
             if (draft != null) {
-                _content.value = draft.content
+                _content.value = convertNostrToMentions(draft.content)
             }
         }
 
@@ -166,6 +190,198 @@ class ComposeNoteViewModel @Inject constructor(
     fun setContent(text: String) {
         _content.value = text
         scheduleDraftSave()
+    }
+
+    /**
+     * Called on every text edit with the new text and the caret offset. Updates
+     * the draft and recomputes the @mention query at the caret (which may be
+     * anywhere in the text, not just at the end).
+     */
+    fun onContentChanged(text: String, caret: Int) {
+        _content.value = text
+        scheduleDraftSave()
+        updateMentionQuery(text, caret)
+    }
+
+    /**
+     * Finds the @query at the caret and populates [mentionResults]. Scans backwards
+     * from the caret to the `@` that begins the token currently being edited, so
+     * mentions work mid-message and not only at the end.
+     */
+    private fun updateMentionQuery(text: String, caret: Int) {
+        val safeCaret = caret.coerceIn(0, text.length)
+
+        var atIndex = -1
+        var i = safeCaret
+        while (i > 0) {
+            val ch = text[i - 1]
+            if (ch == '@') { atIndex = i - 1; break }
+            // A mention token can't contain whitespace/newline.
+            if (ch == ' ' || ch == '\n' || ch == '\t') break
+            i--
+        }
+
+        if (atIndex < 0) { clearMention(); return }
+
+        // The `@` must start a word (preceded by start-of-text or whitespace) so
+        // email addresses like foo@bar.com don't trigger the picker.
+        if (atIndex > 0) {
+            val before = text[atIndex - 1]
+            if (before != ' ' && before != '\n' && before != '\t') { clearMention(); return }
+        }
+
+        val query = text.substring(atIndex + 1, safeCaret)
+        mentionStartOffset = atIndex
+        mentionEndOffset = safeCaret
+        currentMentionQuery = query
+        filterMentionResults(query)
+        searchMentionProfiles(query)
+    }
+
+    private fun filterMentionResults(query: String) {
+        val profilesMap = nostrService.profiles.value
+        val followed = feedService.followedPubkeys.value
+        val self = nostrService.activeHexPubkey
+
+        // Thread participants are valid mention targets when replying, even if
+        // you don't follow them.
+        val parent = replyToNoteId?.let { feedService.findNote(it) }
+        val threadPubkeys = LinkedHashSet<String>()
+        if (parent != null) {
+            threadPubkeys.add(parent.pubkey)
+            parent.tags.filter { it.size >= 2 && it[0] == "p" }.forEach { threadPubkeys.add(it[1]) }
+        }
+        threadPubkeys.remove(self)
+
+        val results: List<FeedProfile> = if (query.isEmpty()) {
+            // Just typed `@`: thread participants first, then followed.
+            val threadProfiles = threadPubkeys.mapNotNull { profilesMap[it] }
+            val followedProfiles = followed.asSequence()
+                .filter { it != self }
+                .mapNotNull { profilesMap[it] }
+                .filter { p -> threadProfiles.none { it.pubkey == p.pubkey } }
+            (threadProfiles + followedProfiles).take(8)
+        } else {
+            // Search the entire profile cache (feed authors, search results, etc.),
+            // not just follows, ranking thread participants and follows first.
+            val lower = query.lowercase()
+            val followedSet = followed.toHashSet()
+            profilesMap.values.asSequence()
+                .filter { it.pubkey != self }
+                .filter { p ->
+                    p.bestName.lowercase().contains(lower) ||
+                        (p.name?.lowercase()?.contains(lower) == true) ||
+                        (p.displayName?.lowercase()?.contains(lower) == true) ||
+                        (p.nip05?.lowercase()?.contains(lower) == true)
+                }
+                .sortedWith(
+                    compareByDescending<FeedProfile> { threadPubkeys.contains(it.pubkey) }
+                        .thenByDescending { followedSet.contains(it.pubkey) }
+                        .thenByDescending { it.bestName.lowercase().startsWith(lower) }
+                        .thenBy { it.bestName.length }
+                )
+                .take(8)
+                .toList()
+        }
+
+        _mentionResults.value = results
+    }
+
+    /**
+     * Debounced NIP-50 relay search so you can @-mention people who aren't followed
+     * and whose profile isn't cached yet. Discovered profiles are merged into the
+     * cache by [NostrService.globalSearch]; we re-filter when results arrive.
+     */
+    private fun searchMentionProfiles(query: String) {
+        mentionSearchJob?.cancel()
+        if (query.length < 2) return
+        mentionSearchJob = viewModelScope.launch {
+            delay(350)
+            nostrService.globalSearch(query) {
+                if (currentMentionQuery == query) {
+                    filterMentionResults(query)
+                }
+            }
+        }
+    }
+
+    /**
+     * Replaces the active `@query` token (which may be mid-text) with a readable
+     * `@name` display token and returns the new (text, caret) for the UI to apply.
+     * The token is converted back to `nostr:npub…` at publish/draft-save time.
+     */
+    fun insertMention(profile: FeedProfile): Pair<String, Int>? {
+        val token = mentionToken(profile.bestName, profile.pubkey)
+        val replacement = "$token "
+        val text = _content.value
+        val start = mentionStartOffset
+        val end = mentionEndOffset
+
+        val newText: String
+        val newCaret: Int
+        if (start != null && end != null && start <= end && end <= text.length) {
+            newText = text.substring(0, start) + replacement + text.substring(end)
+            newCaret = start + replacement.length
+        } else {
+            // Fallback: append at the end.
+            newText = if (text.isEmpty() || text.endsWith(" ") || text.endsWith("\n")) {
+                text + replacement
+            } else {
+                "$text $replacement"
+            }
+            newCaret = newText.length
+        }
+
+        mentionMap[token] = profile.pubkey
+        _content.value = newText
+        scheduleDraftSave()
+        clearMention()
+        return newText to newCaret
+    }
+
+    private fun clearMention() {
+        mentionStartOffset = null
+        mentionEndOffset = null
+        currentMentionQuery = null
+        mentionSearchJob?.cancel()
+        _mentionResults.value = emptyList()
+    }
+
+    /** Display token shown in the editor for a mention (e.g. "@Alice"). */
+    private fun mentionToken(name: String, pubkey: String): String {
+        val clean = name.replace('\n', ' ').trim()
+        return "@" + clean.ifEmpty { pubkey.take(8) }
+    }
+
+    /**
+     * Converts `nostr:npub1…`/`nostr:nprofile1…` references to readable `@name`
+     * tokens for editing, rebuilding [mentionMap]. Used when restoring a draft.
+     */
+    private fun convertNostrToMentions(text: String): String {
+        val profilesMap = nostrService.profiles.value
+        return NostrMentions.MENTION_REGEX.replace(text) { match ->
+            val pubkey = NostrMentions.resolvePubkey(match.groupValues[1]) ?: return@replace match.value
+            val token = mentionToken(profilesMap[pubkey]?.bestName ?: "", pubkey)
+            mentionMap[token] = pubkey
+            token
+        }
+    }
+
+    /**
+     * Converts `@name` display tokens back to canonical `nostr:npub…` references for
+     * publishing and draft persistence. Longest tokens first so a shorter name that is
+     * a prefix of another doesn't clobber it; a trailing word-boundary guards against
+     * partial matches inside other words.
+     */
+    private fun convertMentionsToNostr(text: String): String {
+        if (mentionMap.isEmpty()) return text
+        var result = text
+        for ((token, pubkey) in mentionMap.entries.sortedByDescending { it.key.length }) {
+            val npub = nostrService.hexToNpub(pubkey) ?: continue
+            val pattern = Regex(Regex.escape(token) + """(?![\p{L}\p{N}_])""")
+            result = pattern.replace(result) { "nostr:$npub" }
+        }
+        return result
     }
 
     fun addAttachments(uris: List<Uri>) {
@@ -322,7 +538,7 @@ class ComposeNoteViewModel @Inject constructor(
                 draftService.saveDraft(
                     Draft(
                         id = draftId,
-                        content = text,
+                        content = convertMentionsToNostr(text),
                         replyToId = replyToNoteId,
                         quoteId = quoteToNoteId,
                     )
@@ -340,7 +556,8 @@ class ComposeNoteViewModel @Inject constructor(
             _error.value = null
             try {
                 // 1. Upload attachments first
-                var finalContent = text
+                // Convert `@name` display tokens back to canonical `nostr:npub…` references.
+                var finalContent = convertMentionsToNostr(text)
                 if (_attachments.value.isNotEmpty()) {
                     _isUploading.value = true
                     val uploadedUrls = uploadAttachments()
@@ -370,6 +587,9 @@ class ComposeNoteViewModel @Inject constructor(
                     val note1 = HavenBridge.hexToNote1(quoteToNoteId)
                     if (note1 != null) finalContent += "\nnostr:$note1"
                 }
+
+                // 2b. Add p-tags for inline @mentions (nostr:npub/nprofile refs).
+                tags.addAll(extractMentionPTags(finalContent, tags))
 
                 // 3. Sign and publish
                 val event = nostrService.signEventAsync(kind = 1, content = finalContent, tags = tags)
@@ -501,6 +721,23 @@ class ComposeNoteViewModel @Inject constructor(
 
         return tags
     }
+
+    /**
+     * Extracts hex pubkeys from `nostr:npub1.../nostr:nprofile1...` references in
+     * [text] and returns new `["p", hex]` tags, skipping pubkeys already present in
+     * [existing].
+     */
+    private fun extractMentionPTags(text: String, existing: List<List<String>>): List<List<String>> {
+        val seen = existing.filter { it.size >= 2 && it[0] == "p" }
+            .map { it[1] }
+            .toMutableSet()
+        val result = mutableListOf<List<String>>()
+        for (match in NostrMentions.MENTION_REGEX.findAll(text)) {
+            val pubkey = NostrMentions.resolvePubkey(match.groupValues[1]) ?: continue
+            if (seen.add(pubkey)) result.add(listOf("p", pubkey))
+        }
+        return result
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -521,8 +758,18 @@ fun ComposeNoteScreen(
     val quotedProfile by viewModel.quotedProfile.collectAsState()
     val attachments by viewModel.attachments.collectAsState()
     val showBlossomPicker by viewModel.showBlossomPicker.collectAsState()
+    val mentionResults by viewModel.mentionResults.collectAsState()
     val colors = LocalNostrVaultColors.current
     val context = LocalContext.current
+
+    // Local editing state with cursor tracking (drives @mention detection). Kept in
+    // sync when the ViewModel changes `content` externally (draft restore, media insert).
+    var textFieldValue by remember { mutableStateOf(TextFieldValue(content)) }
+    LaunchedEffect(content) {
+        if (content != textFieldValue.text) {
+            textFieldValue = TextFieldValue(content, TextRange(content.length))
+        }
+    }
 
     // Image picker launcher
     val imagePickerLauncher = rememberLauncherForActivityResult(
@@ -671,8 +918,11 @@ fun ComposeNoteScreen(
 
             // Text input
             OutlinedTextField(
-                value = content,
-                onValueChange = viewModel::setContent,
+                value = textFieldValue,
+                onValueChange = { newValue ->
+                    textFieldValue = newValue
+                    viewModel.onContentChanged(newValue.text, newValue.selection.start)
+                },
                 placeholder = {
                     Text(
                         when {
@@ -692,6 +942,18 @@ fun ComposeNoteScreen(
                 ),
                 modifier = Modifier.fillMaxWidth(),
             )
+
+            // @mention suggestions
+            if (mentionResults.isNotEmpty()) {
+                MentionSuggestions(
+                    results = mentionResults,
+                    onSelect = { profile ->
+                        viewModel.insertMention(profile)?.let { (newText, caret) ->
+                            textFieldValue = TextFieldValue(newText, TextRange(caret))
+                        }
+                    },
+                )
+            }
 
             Spacer(Modifier.height(16.dp))
 
@@ -793,6 +1055,61 @@ fun ComposeNoteScreen(
             onDismiss = { viewModel.setShowBlossomPicker(false) },
             onSelect = { url -> viewModel.addBlossomMedia(url) }
         )
+    }
+}
+
+/** Dropdown list of profiles matching the active `@query`, shown under the editor. */
+@Composable
+private fun MentionSuggestions(
+    results: List<FeedProfile>,
+    onSelect: (FeedProfile) -> Unit,
+) {
+    Surface(
+        color = Color(0xFF22222A),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp)
+            .heightIn(max = 264.dp),
+    ) {
+        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+            results.forEach { profile ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelect(profile) }
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                ) {
+                    AvatarImage(
+                        url = profile.pictureURL,
+                        pubkey = profile.pubkey,
+                        size = 36.dp,
+                        displayName = profile.bestName,
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = profile.bestName,
+                            color = PrimaryText,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        profile.nip05?.takeIf { it.isNotBlank() }?.let { nip05 ->
+                            Text(
+                                text = nip05.removePrefix("_@"),
+                                color = TertiaryText,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

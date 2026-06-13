@@ -320,8 +320,8 @@ struct FeedView: View {
             onProfile: { pubkey in
                 showingProfileKey = IdentifiableString(id: pubkey)
             },
-            onMedia: { url in
-                showingMediaUrl = IdentifiableURL(url: url)
+            onMedia: { url, urls in
+                showingMediaUrl = IdentifiableURL(url: url, allURLs: urls)
             },
             showParent: !parentIsNext,
             isReplyToNext: parentIsNext,
@@ -645,7 +645,7 @@ struct FeedView: View {
                 .environmentObject(configService)
         }
         .sheet(item: $showingMediaUrl) { media in
-            FeedMediaViewer(url: media.url, onDismiss: { showingMediaUrl = nil })
+            FeedMediaPager(urls: media.allURLs, selected: media.url, onDismiss: { showingMediaUrl = nil })
         }
         .sheet(isPresented: $isShowingGridMediaViewer) {
             ZStack {
@@ -1661,7 +1661,7 @@ struct FeedNoteRow: View {
     var onReply: (() -> Void)? = nil
     var onQuote: (() -> Void)? = nil
     var onProfile: ((String) -> Void)? = nil
-    var onMedia: ((URL) -> Void)? = nil
+    var onMedia: ((URL, [URL]) -> Void)? = nil
     var showParent: Bool = true
     var isReplyToNext: Bool = false
     var layoutMode: NoteLayoutMode = .sideBySide
@@ -2548,7 +2548,7 @@ struct FeedNoteRow: View {
             // Single media — full width, proper aspect ratio
             FeedMediaView(
                 url: urls[0],
-                onTap: { onMedia?(urls[0]) },
+                onTap: { onMedia?(urls[0], urls) },
                 maxHeight: 400,
                 isThumbnail: false
             )
@@ -2559,7 +2559,7 @@ struct FeedNoteRow: View {
                 ForEach(urls, id: \.absoluteString) { url in
                     FeedMediaView(
                         url: url,
-                        onTap: { onMedia?(url) },
+                        onTap: { onMedia?(url, urls) },
                         maxHeight: 400,
                         isThumbnail: false
                     )

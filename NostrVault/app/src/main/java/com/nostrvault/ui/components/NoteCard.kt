@@ -1,10 +1,12 @@
 package com.nostrvault.ui.components
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -22,8 +24,10 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -34,6 +38,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import coil.compose.AsyncImage
+import coil.compose.AsyncImagePainter
+import coil.compose.rememberAsyncImagePainter
 import coil.request.ImageRequest
 import com.nostrvault.data.model.FeedNote
 import com.nostrvault.data.model.FeedProfile
@@ -48,6 +54,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import javax.inject.Inject
+import kotlin.math.abs
+import kotlin.math.max
 
 /**
  * Reusable note card used across Feed, Profile, Search, and NoteDetail screens.
@@ -513,41 +521,74 @@ fun MediaPreviewRow(
     urls: List<String>,
     modifier: Modifier = Modifier,
 ) {
-    var viewingUrl by remember { mutableStateOf<String?>(null) }
+    var viewingIndex by remember { mutableStateOf<Int?>(null) }
 
     if (urls.size == 1) {
         SingleMediaPreview(
             url = urls.first(),
-            onMediaClick = { viewingUrl = it },
+            onMediaClick = { viewingIndex = 0 },
             modifier = modifier,
         )
     } else {
         MediaCarousel(
             urls = urls,
-            onMediaClick = { viewingUrl = it },
+            onMediaClick = { index -> viewingIndex = index },
             modifier = modifier,
         )
     }
 
-    viewingUrl?.let { url ->
-        FullScreenMediaDialog(
-            url = url,
-            onDismiss = { viewingUrl = null },
+    viewingIndex?.let { index ->
+        FullScreenMediaPager(
+            urls = urls,
+            initialIndex = index,
+            onDismiss = { viewingIndex = null },
         )
     }
 }
 
+/**
+ * Full-screen, swipeable viewer for a note's media. Opens at the tapped item and
+ * pages horizontally across the note's images/videos, with pinch-to-zoom and
+ * vertical drag-to-dismiss (matching the dedicated gallery viewer / iOS). Keeps
+ * the lightweight mirror pill + close affordances of the old single-item dialog;
+ * the mirror pill tracks whichever page is currently visible.
+ */
 @Composable
-private fun FullScreenMediaDialog(
-    url: String,
+private fun FullScreenMediaPager(
+    urls: List<String>,
+    initialIndex: Int,
     onDismiss: () -> Unit,
     viewModel: FeedMediaMirrorViewModel = hiltViewModel(),
 ) {
     val mirrorState by viewModel.state.collectAsState()
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
 
-    // Re-evaluate the starting state each time a new URL is opened in the viewer
-    // (the ViewModel is shared across the feed, so only one viewer is ever active).
-    LaunchedEffect(url) { viewModel.onOpen(url) }
+    val pagerState = rememberPagerState(
+        initialPage = initialIndex.coerceIn(0, urls.lastIndex),
+        pageCount = { urls.size },
+    )
+    val currentUrl = urls[pagerState.currentPage]
+
+    // Re-evaluate mirror status whenever the visible page changes (the ViewModel is
+    // shared across the feed, so only one viewer is ever active).
+    LaunchedEffect(currentUrl) { viewModel.onOpen(currentUrl) }
+
+    // Drag-to-dismiss state, using the same visual formulas as MediaViewerScreen / iOS.
+    val dragOffsetY = remember { Animatable(0f) }
+    var currentScale by remember { mutableFloatStateOf(1f) }
+    var accumulatedDragY by remember { mutableFloatStateOf(0f) }
+    val dismissThresholdPx = with(density) { 120.dp.toPx() }
+
+    val backgroundAlpha by remember {
+        derivedStateOf { (1f - abs(dragOffsetY.value) / 300f).coerceIn(0f, 1f) }
+    }
+    val contentScale by remember {
+        derivedStateOf { max(0.8f, 1f - abs(dragOffsetY.value) / 1000f) }
+    }
+    val overlayAlpha by remember {
+        derivedStateOf { (1f - abs(dragOffsetY.value) / 100f).coerceIn(0f, 1f) }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -556,16 +597,55 @@ private fun FullScreenMediaDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black),
+                .background(Color.Black.copy(alpha = backgroundAlpha)),
         ) {
-            if (isVideoUrl(url)) {
-                VideoPlayer(uri = url)
-            } else {
-                ZoomableImage(
-                    model = url,
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                )
+            HorizontalPager(
+                state = pagerState,
+                // Lock paging while a page is zoomed so pan doesn't flip pages.
+                userScrollEnabled = currentScale <= 1.05f,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        translationY = dragOffsetY.value
+                        scaleX = contentScale
+                        scaleY = contentScale
+                    },
+            ) { page ->
+                val url = urls[page]
+                if (isVideoUrl(url)) {
+                    // Only the visible page gets a player, to keep memory at one instance.
+                    if (page == pagerState.currentPage) {
+                        VideoPlayer(uri = url, modifier = Modifier.fillMaxSize())
+                    } else {
+                        Box(Modifier.fillMaxSize().background(Color.Black))
+                    }
+                } else {
+                    ZoomableImage(
+                        model = url,
+                        contentDescription = null,
+                        onScaleChanged = { currentScale = it },
+                        onVerticalDrag = { deltaY ->
+                            if (currentScale <= 1.05f) {
+                                accumulatedDragY += deltaY
+                                scope.launch { dragOffsetY.snapTo(accumulatedDragY) }
+                            }
+                        },
+                        onVerticalDragEnd = {
+                            if (abs(accumulatedDragY) > dismissThresholdPx) {
+                                onDismiss()
+                            } else {
+                                scope.launch {
+                                    dragOffsetY.animateTo(
+                                        0f,
+                                        spring(dampingRatio = 0.6f, stiffness = 400f),
+                                    )
+                                }
+                            }
+                            accumulatedDragY = 0f
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
 
             IconButton(
@@ -575,6 +655,7 @@ private fun FullScreenMediaDialog(
                     .statusBarsPadding()
                     .padding(8.dp)
                     .size(40.dp)
+                    .graphicsLayer { alpha = overlayAlpha }
                     .background(Color.Black.copy(alpha = 0.4f), CircleShape),
             ) {
                 Icon(
@@ -587,12 +668,40 @@ private fun FullScreenMediaDialog(
             if (viewModel.canMirror) {
                 MirrorToBlossomPill(
                     state = mirrorState,
-                    onMirror = { viewModel.mirror(url) },
+                    onMirror = { viewModel.mirror(currentUrl) },
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .statusBarsPadding()
-                        .padding(8.dp),
+                        .padding(8.dp)
+                        .graphicsLayer { alpha = overlayAlpha },
                 )
+            }
+
+            // Page-position dots, only when the note carries more than one item.
+            if (urls.size > 1) {
+                Row(
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(bottom = 24.dp)
+                        .graphicsLayer { alpha = overlayAlpha },
+                ) {
+                    repeat(urls.size) { i ->
+                        val selected = i == pagerState.currentPage
+                        Box(
+                            modifier = Modifier
+                                .padding(horizontal = 3.dp)
+                                .size(if (selected) 8.dp else 6.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (selected) Color.White
+                                    else Color.White.copy(alpha = 0.4f),
+                                ),
+                        )
+                    }
+                }
             }
         }
     }
@@ -712,32 +821,50 @@ private fun SingleMediaPreview(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    Box(
-        contentAlignment = Alignment.Center,
-        modifier = modifier
-            .fillMaxWidth()
-            .aspectRatio(16f / 9f)
-            .clip(RoundedCornerShape(8.dp))
-            .background(TertiaryGroupedBg)
-            .clickable { onMediaClick(url) },
-    ) {
-        AsyncImage(
-            model = ImageRequest.Builder(context)
-                .data(url)
-                .size(800)
-                .crossfade(100)
-                .build(),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize(),
-        )
-        if (isVideoUrl(url)) {
-            Icon(
-                imageVector = NostrVaultIcons.PlayCircle,
-                contentDescription = "Video",
-                tint = Color.White.copy(alpha = 0.85f),
-                modifier = Modifier.size(32.dp),
+    val isVideo = isVideoUrl(url)
+
+    // Size to the media's natural aspect ratio — the decoded image, or a
+    // video's first frame via Coil VideoFrameDecoder — capped at 400dp
+    // landscape / 600dp portrait. Matches iOS FeedMediaView (Fit, no crop).
+    // Before load, reserve a 200dp placeholder.
+    val painter = rememberAsyncImagePainter(
+        model = ImageRequest.Builder(context)
+            .data(url)
+            .size(800)
+            .crossfade(100)
+            .build(),
+    )
+    val ratio = (painter.state as? AsyncImagePainter.State.Success)?.let {
+        val size = painter.intrinsicSize
+        if (size.width > 0f && size.height > 0f) size.width / size.height else null
+    }
+
+    BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
+        val cap = if (ratio != null && ratio < 1f) 600.dp else 400.dp
+        val displayHeight = if (ratio != null) minOf(maxWidth / ratio, cap) else 200.dp
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(displayHeight)
+                .clip(RoundedCornerShape(8.dp))
+                .background(TertiaryGroupedBg)
+                .clickable { onMediaClick(url) },
+        ) {
+            Image(
+                painter = painter,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize(),
             )
+            if (isVideo) {
+                Icon(
+                    imageVector = NostrVaultIcons.PlayCircle,
+                    contentDescription = "Video",
+                    tint = Color.White.copy(alpha = 0.85f),
+                    modifier = Modifier.size(32.dp),
+                )
+            }
         }
     }
 }
@@ -745,7 +872,7 @@ private fun SingleMediaPreview(
 @Composable
 private fun MediaCarousel(
     urls: List<String>,
-    onMediaClick: (String) -> Unit,
+    onMediaClick: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -765,7 +892,7 @@ private fun MediaCarousel(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(TertiaryGroupedBg)
-                    .clickable { onMediaClick(url) },
+                    .clickable { onMediaClick(page) },
             ) {
                 AsyncImage(
                     model = ImageRequest.Builder(context)
