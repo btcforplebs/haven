@@ -7,6 +7,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -62,6 +63,26 @@ import kotlinx.coroutines.flow.StateFlow
 import java.net.URLDecoder
 import java.net.URLEncoder
 
+/** Duration of page transitions — snappy but readable. */
+private const val NAV_MOTION_MS = 220
+
+/** The five bottom-nav destinations. Navigating between any two of these is a
+ *  lateral "tab switch" (fade-through) rather than a hierarchical push. */
+private val TOP_LEVEL_ROUTES = setOf(
+    Screen.Feed.route,
+    Screen.Search.route,
+    Screen.Profile.route,
+    Screen.MediaGallery.route,
+    Screen.Dashboard.route,
+)
+
+/** True when both ends of the transition are top-level tabs. */
+private fun AnimatedContentTransitionScope<NavBackStackEntry>.isTabSwitch(): Boolean {
+    val from = initialState.destination.route
+    val to = targetState.destination.route
+    return from in TOP_LEVEL_ROUTES && to in TOP_LEVEL_ROUTES
+}
+
 /**
  * Root composable that manages navigation state and the floating bottom nav pill.
  * Uses a Box overlay so the pill floats over content.
@@ -110,17 +131,24 @@ fun NostrVaultNavHost(
             navController = navController,
             startDestination = startDestination,
             modifier = Modifier.fillMaxSize(),
+            // Motion matched to the navigation type: lateral tab switches use a
+            // Material "fade-through" (fade + subtle scale), hierarchical pushes use
+            // "shared-axis Z" (zoom into/out of depth). See navMotion() below.
             enterTransition = {
-                slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300))
+                if (isTabSwitch()) fadeIn(tween(NAV_MOTION_MS)) + scaleIn(initialScale = 0.92f, animationSpec = tween(NAV_MOTION_MS))
+                else fadeIn(tween(NAV_MOTION_MS)) + scaleIn(initialScale = 0.80f, animationSpec = tween(NAV_MOTION_MS))
             },
             exitTransition = {
-                slideOutHorizontally(targetOffsetX = { -it / 3 }, animationSpec = tween(300))
+                if (isTabSwitch()) fadeOut(tween(NAV_MOTION_MS))
+                else fadeOut(tween(NAV_MOTION_MS)) + scaleOut(targetScale = 1.10f, animationSpec = tween(NAV_MOTION_MS))
             },
             popEnterTransition = {
-                slideInHorizontally(initialOffsetX = { -it / 3 }, animationSpec = tween(300))
+                if (isTabSwitch()) fadeIn(tween(NAV_MOTION_MS)) + scaleIn(initialScale = 0.92f, animationSpec = tween(NAV_MOTION_MS))
+                else fadeIn(tween(NAV_MOTION_MS)) + scaleIn(initialScale = 1.10f, animationSpec = tween(NAV_MOTION_MS))
             },
             popExitTransition = {
-                slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(300))
+                if (isTabSwitch()) fadeOut(tween(NAV_MOTION_MS))
+                else fadeOut(tween(NAV_MOTION_MS)) + scaleOut(targetScale = 0.80f, animationSpec = tween(NAV_MOTION_MS))
             },
         ) {
             // ── Setup ─────────────────────────────────────────────
@@ -301,6 +329,19 @@ fun NostrVaultNavHost(
                 ComposeNoteScreen(
                     onPublished = { navController.popBackStack() },
                     onBack = { navController.popBackStack() },
+                    onResumeDraft = { draftId, replyToId, quoteToId ->
+                        // Replace the current composer with one bound to the chosen draft
+                        // (matches iOS, which loads the draft into the open composer).
+                        navController.navigate(
+                            Screen.ComposeNote.createRoute(
+                                replyToNoteId = replyToId,
+                                quoteToNoteId = quoteToId,
+                                draftId = draftId,
+                            )
+                        ) {
+                            popUpTo(Screen.ComposeNote.route) { inclusive = true }
+                        }
+                    },
                 )
             }
 
@@ -656,7 +697,24 @@ fun NostrVaultNavHost(
         AccountSwitcherSheet(
             accounts = accounts,
             onSelectAccount = { npub ->
-                scope.launch { configStore.switchActiveAccount(npub) }
+                // The open Profile screen is pinned to a pubkey nav arg, so unlike the
+                // other tabs (which observe the active account reactively) it won't
+                // follow an account switch on its own. If we're viewing our OWN profile,
+                // re-navigate it to the newly active account. Leave it untouched when
+                // viewing someone else's profile.
+                val previousHex = activeHex
+                val viewingOwnProfile = currentRoute == Screen.Profile.route &&
+                    backStackEntry?.arguments?.getString("pubkey") == previousHex
+                val newHex = accounts.firstOrNull { it.npub == npub }?.hexPubkey
+                scope.launch {
+                    configStore.switchActiveAccount(npub)
+                    if (viewingOwnProfile && newHex != null) {
+                        navController.navigate(Screen.Profile.createRoute(newHex)) {
+                            popUpTo(Screen.Profile.route) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    }
+                }
             },
             onDismiss = { showAccountSwitcher = false },
         )
