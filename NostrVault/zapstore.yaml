@@ -1,7 +1,24 @@
 name: NostrVault
 summary: A Nostr client with a built-in Haven relay and Blossom server
-description: NostrVault is an Android Nostr client with a built-in Haven relay and Blossom media server running directly on your device, plus NIP-46 remote signing support.
+description: |
+  NostrVault is a self-custodial Android Nostr client with your own relay and media server running directly on your device.
+
+  Built on top of the Haven relay, NostrVault runs a full personal relay and Blossom media server locally, so your notes and media are stored on your own phone first and mirrored out to the network on your terms.
+
+  Features:
+  - Built-in personal Haven relay running on-device (inbox, outbox, chat and private relays)
+  - Built-in Blossom media server with mirroring to external Blossom servers
+  - Full Nostr client: feeds, threads, profiles, media gallery and search
+  - Encrypted direct messages (NIP-04 / NIP-17)
+  - Remote signing with NIP-46 and Amber (NIP-55) — your keys never have to leave your signer
+  - Multi-account support with biometric protection
+  - Lightning zaps and an integrated wallet (NWC)
+  - Web of Trust filtering to keep spam out of your relay
+
+  Your data, your relay, your media — all under your control.
 website: https://nostrvault.app
+repository: https://github.com/btcforplebs/nostr-vault
+source_url: https://github.com/btcforplebs/nostr-vault
 tags: [nostr, bitcoin, relay, blossom, lightning]
 
 release_source:
