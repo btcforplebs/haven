@@ -94,9 +94,14 @@ object FeedFilterEngine {
     ): List<FeedNote> {
         var filtered = notes.filter { note ->
             if (note.pubkey in blocked) return@filter false
+            // Web-of-trust scoping applies only to Global media (matches iOS
+            // FeedFilterEngine.filterMediaNotes). Following media is already scoped
+            // to followed authors by the subscription, so it shows all media here —
+            // gating it on wotPubkeys (often empty in Following mode) hid everything.
+            if (isGlobalMedia && wotPubkeys.isNotEmpty() && note.pubkey !in wotPubkeys) return@filter false
             if (note.mediaURLs.isEmpty()) return@filter false
             if (FeedNote.isNoiseOrSpam(note.content, note.tags)) return@filter false
-            if (isGlobalMedia) true else note.pubkey in wotPubkeys
+            true
         }.sortedByDescending { it.createdAt }
 
         if (throttledPubkeys.isNotEmpty()) {
