@@ -135,6 +135,53 @@ class RelayImportService @Inject constructor(
     }
 
     /**
+     * Run an exclusive-DB Go operation (backup/restore) with the relay stopped,
+     * then restart it — mirrors iOS RelayProcessManager.runBackupExport and the
+     * importNotes() lifecycle above.
+     *
+     * The embedded relay holds the Badger/LMDB databases open in-process, so any
+     * op that calls initDBs() (HavenBridge.backupDatabase / restoreDatabase) MUST
+     * run while the relay is down, otherwise initDBs() can't acquire the DB and
+     * the op returns a non-zero code. The relay status flips to OFFLINE before
+     * StopRelayC -> CloseDBs() actually finishes, so we can't poll it; we wait a
+     * conservative interval (shutdown is bounded to SHUTDOWN_TIMEOUT_MS = 5s) and
+     * retry once if the DB is still locked.
+     *
+     * @param onStatus progress callback ("Stopping relay…", "Restarting relay…").
+     * @param op the Go bridge call; returns 0 on success.
+     * @return the op's return code (0 = success).
+     */
+    suspend fun withRelayStopped(onStatus: (String) -> Unit = {}, op: () -> Int): Int {
+        onStatus("Stopping relay…")
+        RelayForegroundService.stop(context)
+
+        // Re-apply env so the Go op's loadConfig()/initDBs() see the right DB paths.
+        val config = configStore.config.value
+        val relayDataDir = File(context.filesDir, "relay_data")
+        RelayConfiguration.ensureDirectories(relayDataDir)
+        RelayConfiguration.generateEnvDictionary(config, relayDataDir).forEach { (key, value) ->
+            HavenBridge.setEnv(key, value)
+        }
+
+        return try {
+            withContext(Dispatchers.IO) {
+                delay(2500) // let onDestroy -> StopRelayC -> CloseDBs() finish
+                var code = op()
+                if (code != 0) {
+                    // DB may still be closing on a slow shutdown; wait and retry once.
+                    delay(2500)
+                    code = op()
+                }
+                code
+            }
+        } finally {
+            onStatus("Restarting relay…")
+            delay(500)
+            RelayForegroundService.start(context)
+        }
+    }
+
+    /**
      * Export relay database as a compressed JSONL zip backup.
      * @param outputPath absolute path for the output zip file
      */
@@ -196,73 +243,6 @@ class RelayImportService @Inject constructor(
             } catch (e: Exception) {
                 Log.e(TAG, "Blossom export error: ${e.message}", e)
                 _exportStatusMessage.value = "Export error: ${e.message}"
-            } finally {
-                _isExporting.value = false
-            }
-        }
-    }
-
-    /**
-     * Restore the relay database from a Nostr Vault JSONL backup zip.
-     * @param inputPath absolute path to the backup file
-     */
-    fun importDatabase(inputPath: String) {
-        if (_isImporting.value || _isExporting.value) return
-
-        scope.launch {
-            _isExporting.value = true
-            _exportStatusMessage.value = "Restoring database..."
-
-            try {
-                val result = withContext(Dispatchers.IO) {
-                    HavenBridge.restoreDatabase(inputPath)
-                }
-
-                if (result == 0) {
-                    _exportStatusMessage.value = "Database restored successfully"
-                    Log.i(TAG, "Database restore completed: $inputPath")
-                } else {
-                    _exportStatusMessage.value = "Database restore failed"
-                    Log.e(TAG, "Database restore failed with code: $result")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Database restore error: ${e.message}", e)
-                _exportStatusMessage.value = "Restore error: ${e.message}"
-            } finally {
-                _isExporting.value = false
-            }
-        }
-    }
-
-    /**
-     * Restore Blossom media files from a zip backup into the blossom directory.
-     * @param inputPath absolute path to the backup zip
-     */
-    fun importBlossom(inputPath: String) {
-        if (_isImporting.value || _isExporting.value) return
-
-        scope.launch {
-            _isExporting.value = true
-            _exportStatusMessage.value = "Restoring media files..."
-
-            try {
-                val relayDataDir = File(context.filesDir, "relay_data")
-                val blossomDir = File(relayDataDir, "blossom").absolutePath
-
-                val result = withContext(Dispatchers.IO) {
-                    HavenBridge.unzipDirectory(inputPath, blossomDir)
-                }
-
-                if (result == 0) {
-                    _exportStatusMessage.value = "Media restored successfully"
-                    Log.i(TAG, "Blossom restore completed: $inputPath")
-                } else {
-                    _exportStatusMessage.value = "Media restore failed"
-                    Log.e(TAG, "Blossom restore failed with code: $result")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Blossom restore error: ${e.message}", e)
-                _exportStatusMessage.value = "Restore error: ${e.message}"
             } finally {
                 _isExporting.value = false
             }

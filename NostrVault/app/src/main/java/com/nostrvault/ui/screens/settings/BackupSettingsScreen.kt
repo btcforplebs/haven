@@ -18,6 +18,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nostrvault.data.local.ConfigStore
 import com.nostrvault.relay.HavenBridge
+import com.nostrvault.service.RelayImportService
 import com.nostrvault.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -33,6 +34,7 @@ import javax.inject.Inject
 class BackupSettingsViewModel @Inject constructor(
     @ApplicationContext private val context: Context,
     private val configStore: ConfigStore,
+    private val relayImportService: RelayImportService,
 ) : ViewModel() {
     private val _busy = MutableStateFlow(false)
     val busy = _busy.asStateFlow()
@@ -43,11 +45,15 @@ class BackupSettingsViewModel @Inject constructor(
     private val blossomDir: String
         get() = File(File(context.filesDir, "relay_data"), "blossom").absolutePath
 
-    fun exportNotes(dest: Uri) = run("Exporting notes…", "Notes exported", dest = dest) { tmp ->
+    // Notes export/import touch the databases, which the running relay holds open
+    // in-process. They must run with the relay stopped (withRelayStopped), then it
+    // restarts. Media export/import only zip the blossom directory — no relay stop.
+
+    fun exportNotes(dest: Uri) = run("Exporting notes…", "Notes exported", dest = dest, stopRelay = true) { tmp ->
         HavenBridge.backupDatabase(tmp.absolutePath)
     }
 
-    fun importNotes(src: Uri) = run("Restoring notes…", "Notes restored", src = src) { tmp ->
+    fun importNotes(src: Uri) = run("Restoring notes…", "Notes restored", src = src, stopRelay = true) { tmp ->
         HavenBridge.restoreDatabase(tmp.absolutePath)
     }
 
@@ -63,12 +69,14 @@ class BackupSettingsViewModel @Inject constructor(
      * Bridges SAF (content Uris) to the Go bridge (filesystem paths) via a temp file.
      * For export: [op] writes the temp file, then it's copied to [dest].
      * For import: [src] is copied to the temp file, then [op] consumes it.
+     * When [stopRelay] is true, [op] runs with the relay stopped (DB exclusivity).
      */
     private fun run(
         working: String,
         done: String,
         dest: Uri? = null,
         src: Uri? = null,
+        stopRelay: Boolean = false,
         op: (File) -> Int,
     ) {
         if (_busy.value) return
@@ -76,24 +84,33 @@ class BackupSettingsViewModel @Inject constructor(
             _busy.value = true
             _status.value = working
             try {
-                withContext(Dispatchers.IO) {
-                    val tmp = File.createTempFile("backup", ".zip", context.cacheDir)
-                    try {
-                        if (src != null) {
+                val tmp = withContext(Dispatchers.IO) {
+                    File.createTempFile("backup", ".zip", context.cacheDir)
+                }
+                try {
+                    if (src != null) {
+                        withContext(Dispatchers.IO) {
                             context.contentResolver.openInputStream(src)?.use { input ->
                                 tmp.outputStream().use { input.copyTo(it) }
                             } ?: error("Could not open backup file")
                         }
-                        val code = op(tmp)
-                        if (code != 0) error("Operation failed (code $code)")
-                        if (dest != null) {
+                    }
+                    // DB ops need the relay stopped for exclusive access; media ops don't.
+                    val code = if (stopRelay) {
+                        relayImportService.withRelayStopped(onStatus = { _status.value = it }) { op(tmp) }
+                    } else {
+                        withContext(Dispatchers.IO) { op(tmp) }
+                    }
+                    if (code != 0) error("Operation failed (code $code)")
+                    if (dest != null) {
+                        withContext(Dispatchers.IO) {
                             context.contentResolver.openOutputStream(dest)?.use { out ->
                                 tmp.inputStream().use { it.copyTo(out) }
                             } ?: error("Could not write to destination")
                         }
-                    } finally {
-                        tmp.delete()
                     }
+                } finally {
+                    withContext(Dispatchers.IO) { tmp.delete() }
                 }
                 _status.value = done
             } catch (e: Exception) {
