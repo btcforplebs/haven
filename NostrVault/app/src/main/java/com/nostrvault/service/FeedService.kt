@@ -48,7 +48,9 @@ class FeedService @Inject constructor(
 ) {
     companion object {
         private const val TAG = "FeedService"
-        private const val MAX_FEED_NOTES = 800
+        // High bound so the user can scroll back through effectively their whole
+        // history (lazy list virtualizes rendering; only a ceiling vs runaway memory).
+        private const val MAX_FEED_NOTES = 10_000
         private const val MAX_PENDING_NOTES = 200
         private const val MAX_RAW_EVENT_CACHE = 1000
         private const val MAX_INJECTED_IDS = 10_000

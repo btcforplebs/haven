@@ -2359,8 +2359,10 @@ class FeedService: ObservableObject {
 
     // MARK: - Batched Note Flushing
 
-    /// Maximum notes kept in memory. Older notes are dropped on flush.
-    private static let maxNotes = 800
+    /// Maximum notes kept in memory. Older notes are dropped on flush. High bound so the
+    /// user can scroll back through effectively their whole history (the List virtualizes
+    /// rendering; this is only a ceiling against runaway memory).
+    private static let maxNotes = 10_000
     /// Maximum pending notes kept in memory. Older pending notes are dropped to
     /// prevent unbounded growth when the feed runs in the background.
     private static let maxPendingNotes = 200

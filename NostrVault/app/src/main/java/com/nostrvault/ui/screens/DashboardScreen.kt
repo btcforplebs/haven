@@ -91,7 +91,8 @@ class DashboardViewModel @Inject constructor(
         private const val MAX_LOCAL_NOTES = 500
         private const val LOAD_TIMEOUT_MS = 15_000L
         private const val LOAD_MORE_TIMEOUT_MS = 8_000L
-        private const val MAX_ALL_EVENTS = 2000
+        // High bound so the relay tab scrolls back through (effectively) full history.
+        private const val MAX_ALL_EVENTS = 10_000
         private const val ALL_EVENTS_TRIM_SLACK = 200
         private const val MAX_SEEN_IDS = 10_000
         private const val MAX_ZAP_RECEIPT_CACHE = 500
