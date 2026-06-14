@@ -149,7 +149,9 @@ class SetupWizardViewModel @Inject constructor(
             "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
+            "wss://nostr.mom",
             "wss://relay.btcforplebs.com",
+            "wss://nostr-pub.wellorder.net",
         )
     )
     val wizardRelays = _wizardRelays.asStateFlow()

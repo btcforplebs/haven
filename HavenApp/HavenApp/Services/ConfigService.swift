@@ -306,7 +306,9 @@ class ConfigService: ObservableObject {
             "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
-            "wss://nostr.wine"
+            "wss://nostr.mom",
+            "wss://relay.btcforplebs.com",
+            "wss://nostr-pub.wellorder.net"
         ]
         """
         let importURL = relayDataDir.appendingPathComponent("relays_import.json")
@@ -318,7 +320,9 @@ class ConfigService: ObservableObject {
             "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
-            "wss://nostr.wine"
+            "wss://nostr.mom",
+            "wss://relay.btcforplebs.com",
+            "wss://nostr-pub.wellorder.net"
         ]
         """
         let blastrURL = relayDataDir.appendingPathComponent("relays_blastr.json")

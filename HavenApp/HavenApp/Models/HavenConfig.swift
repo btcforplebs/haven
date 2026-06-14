@@ -105,10 +105,10 @@ struct HavenConfig: Codable, Equatable {
     var importSeedRelays: [String] = [
         "wss://relay.damus.io",
         "wss://relay.primal.net",
-        "wss://relay.snort.social",
-        "wss://relay.nos.social",
+        "wss://nos.lol",
+        "wss://nostr.mom",
         "wss://relay.btcforplebs.com",
-        "wss://nostr.land"
+        "wss://nostr-pub.wellorder.net"
     ]
     var importOwnerNotesFetchTimeoutSeconds: Int = 60
     var importTaggedNotesFetchTimeoutSeconds: Int = 120
@@ -128,8 +128,9 @@ struct HavenConfig: Codable, Equatable {
         "wss://relay.damus.io",
         "wss://relay.primal.net",
         "wss://nos.lol",
-        "wss://nostr.wine",
-        "wss://relay.btcforplebs.com"
+        "wss://nostr.mom",
+        "wss://relay.btcforplebs.com",
+        "wss://nostr-pub.wellorder.net"
     ]
     
     // Feed Reading
@@ -137,7 +138,9 @@ struct HavenConfig: Codable, Equatable {
         "wss://relay.damus.io",
         "wss://relay.primal.net",
         "wss://nos.lol",
-        "wss://relay.btcforplebs.com"
+        "wss://nostr.mom",
+        "wss://relay.btcforplebs.com",
+        "wss://nostr-pub.wellorder.net"
     ]
 
     // NIP-17: DM Relays (kind 10050)
