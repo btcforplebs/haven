@@ -36,6 +36,8 @@ DM_PLAN.md
 
 # Environment secrets
 push-server/.env
+.env
+NostrVault/.env
 HavenApp/Monolithic split.md
 HavenApp/Roadmap V1.md
 HavenApp/Roadmap V2.md
