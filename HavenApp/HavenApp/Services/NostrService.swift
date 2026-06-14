@@ -10,11 +10,16 @@ class NostrService: ObservableObject {
     private(set) var events: [NostrEvent] = []
     private(set) var noteMedia: [MediaItem] = []
 
-    /// Max events held in memory for the Viewer/Relay tab. Kept well below the old
-    /// 10k ceiling: the scrolling list never needs that many, and retaining 10k full
-    /// events (incl. kind-30023 long-form bodies) was a major contributor to the
-    /// ~310 MB resident set that made the app the #1 jetsam target.
-    private static let maxEvents = 1500
+    /// Max events held in memory for the Viewer/Relay tab. Raised so the user can
+    /// scroll back through (effectively) their whole history. The 10k ceiling was
+    /// historically a jetsam risk because of full kind-30023 long-form bodies, so
+    /// those are bounded separately by `maxLongFormEvents` below — the lightweight
+    /// bulk (notes/reactions/zaps) can use the full ceiling without the memory blowup.
+    private static let maxEvents = 10_000
+    /// Cap on retained full long-form (kind 30023) bodies — these are large, and were
+    /// the main contributor to the ~310 MB resident set that made the app the #1 jetsam
+    /// target. The newest this many are kept in full; older ones drop off the list.
+    private static let maxLongFormEvents = 500
 
     // Aggregated status
     @Published var connectionStatus: String = "Disconnected"
@@ -1807,6 +1812,18 @@ class NostrService: ObservableObject {
 
         if events.count > Self.maxEvents {
             events = Array(events.prefix(Self.maxEvents))
+        }
+        // Bound the heavy long-form bodies independently of the overall ceiling. `events`
+        // is sorted newest→oldest, so this keeps the newest `maxLongFormEvents` articles
+        // in full and drops older ones, without touching the lightweight bulk.
+        let longFormCount = events.reduce(0) { $0 + ($1.kind == 30023 ? 1 : 0) }
+        if longFormCount > Self.maxLongFormEvents {
+            var kept = 0
+            events = events.filter { event in
+                guard event.kind == 30023 else { return true }
+                kept += 1
+                return kept <= Self.maxLongFormEvents
+            }
         }
         eventUpdateSubject.send()
     }
