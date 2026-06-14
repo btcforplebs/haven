@@ -32,7 +32,6 @@ extension MediaGalleryView {
         let isOwnerBrowsing = (owner == nostrService.ownerHexPubkey)
         let whitelist = configService.whitelistedHexPubkeys
         let blacklist = configService.activeAccountBlockedHexPubkeys
-        let wotPubkeys = feedService.wotPubkeys
         let currentFilter = contentFilter
         let currentLocationFilter = mediaLocationFilter
         let currentTypeFilter = mediaTypeFilter
@@ -57,12 +56,12 @@ extension MediaGalleryView {
 
                 switch currentFilter {
                 case .all:
-                    if isOwnerBrowsing {
-                        if !wotPubkeys.isEmpty, let pk = item.pubkey, pk != owner {
-                            return wotPubkeys.contains(pk)
-                        }
-                        return true
-                    }
+                    // The Blossom media tab shows YOUR OWN media only. noteMedia is built
+                    // from all processed events — including inbox/tagged events authored by
+                    // others — so anything broader than `pubkey == owner` leaks media from
+                    // people who merely tag you into your gallery. (The old WoT branch +
+                    // `return true` empty-WoT fallback did exactly that.) Discover/WoT media
+                    // belongs in the media feed, not this tab.
                     return item.pubkey == owner
                 case .mine: return item.pubkey == owner
                 case .tagged:
@@ -103,9 +102,11 @@ extension MediaGalleryView {
                         let isMine = item.pubkey == owner
                         if !isMine { continue }
                     }
-                    // WoT filter for owner browsing blossom items
-                    if isOwnerBrowsing && currentFilter == .all && !wotPubkeys.isEmpty {
-                        if let pk = item.pubkey, pk != owner, !wotPubkeys.contains(pk) { continue }
+                    // Owner sees only their OWN blossom items: drop media authored by
+                    // others that was mirrored onto this Blossom server. Items with no
+                    // known author (direct uploads) are kept.
+                    if isOwnerBrowsing && currentFilter == .all {
+                        if let pk = item.pubkey, pk != owner { continue }
                     }
                     let key = self.normalizedKeyStatic(for: item.url)
                     recordURL(key, item.url)
