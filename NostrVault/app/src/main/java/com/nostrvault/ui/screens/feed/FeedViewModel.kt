@@ -6,6 +6,7 @@ import com.nostrvault.data.local.ConfigStore
 import com.nostrvault.data.model.FeedMode
 import com.nostrvault.data.model.FeedNote
 import com.nostrvault.data.model.FeedProfile
+import com.nostrvault.data.model.MediaFeedMode
 import com.nostrvault.data.model.NoteStats
 import com.nostrvault.data.model.PopularFilter
 import com.nostrvault.service.FeedService
@@ -93,6 +94,10 @@ class FeedViewModel @Inject constructor(
 
     val filteredNotes: StateFlow<List<FeedNote>> = feedService.filteredNotes
 
+    // Media-only notes for the grid (FeedMode.MEDIA). Already filtered by
+    // FeedFilterEngine.filterMediaNotes (media-bearing, blocked/WoT/throttle rules).
+    val mediaNotes: StateFlow<List<FeedNote>> = feedService.filteredMediaNotes
+
     // ── Compact mode ──────────────────────────────────────────────
 
     private val _compactModeToggle = MutableStateFlow(0) // bump to trigger recomputation
@@ -131,8 +136,11 @@ class FeedViewModel @Inject constructor(
 
     val showReplies: StateFlow<Boolean> = feedService.showReplies
 
-    private val _mediaFollowingOnly = MutableStateFlow(true)
-    val mediaFollowingOnly: StateFlow<Boolean> = _mediaFollowingOnly.asStateFlow()
+    // Derived from FeedService's media sub-mode so the toggle reflects (and drives)
+    // the actual subscription/filter scope rather than a disconnected local flag.
+    val mediaFollowingOnly: StateFlow<Boolean> = feedService.mediaFeedMode
+        .map { it == MediaFeedMode.FOLLOWING }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), true)
 
     val popularFilter: StateFlow<PopularFilter> = feedService.popularFilter
 
@@ -142,7 +150,11 @@ class FeedViewModel @Inject constructor(
     fun toggleAutoLoad() { _autoLoadEnabled.value = !_autoLoadEnabled.value }
     fun toggleShowReposts() { feedService.setShowReposts(!showReposts.value) }
     fun toggleShowReplies() { feedService.setShowReplies(!showReplies.value) }
-    fun toggleMediaFollowing() { _mediaFollowingOnly.value = !_mediaFollowingOnly.value }
+    fun toggleMediaFollowing() {
+        feedService.setMediaFeedMode(
+            if (mediaFollowingOnly.value) MediaFeedMode.GLOBAL else MediaFeedMode.FOLLOWING
+        )
+    }
     fun toggleShowEngagementStats() { _showEngagementStats.value = !_showEngagementStats.value }
     fun setPopularFilter(filter: PopularFilter) { feedService.setPopularFilter(filter) }
 

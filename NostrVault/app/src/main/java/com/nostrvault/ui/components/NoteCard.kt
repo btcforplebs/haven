@@ -511,7 +511,7 @@ internal fun EngagementButton(
 
 private val VIDEO_EXTENSIONS = setOf("mp4", "mov", "webm", "avi", "mkv", "m4v")
 
-private fun isVideoUrl(url: String): Boolean {
+internal fun isVideoUrl(url: String): Boolean {
     val ext = url.substringAfterLast('.').substringBefore('?').lowercase()
     return ext in VIDEO_EXTENSIONS
 }
@@ -554,7 +554,7 @@ fun MediaPreviewRow(
  * the mirror pill tracks whichever page is currently visible.
  */
 @Composable
-private fun FullScreenMediaPager(
+internal fun FullScreenMediaPager(
     urls: List<String>,
     initialIndex: Int,
     onDismiss: () -> Unit,

@@ -24,7 +24,7 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
     private let imageCache: NSCache<NSURL, PlatformImage> = {
         let cache = NSCache<NSURL, PlatformImage>()
         cache.countLimit = 100
-        cache.totalCostLimit = 60 * 1024 * 1024 // 60 MB
+        cache.totalCostLimit = 40 * 1024 * 1024 // 40 MB (full-res decoded images)
         return cache
     }()
 
@@ -112,6 +112,14 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
         NotificationCenter.default.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { [weak self] _ in
             self?.handleMemoryPressure()
         }
+        // A suspended app never receives memory warnings — it just sits at its full
+        // resident size and is the first thing iOS jetsams under pressure. Drop the
+        // heavy full-res image cache (and video buffers) when backgrounding so the
+        // suspended footprint is much smaller; both reload from the disk cache on
+        // return. Thumbnails are kept so the feed still scrolls instantly on resume.
+        NotificationCenter.default.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.handleBackgrounding()
+        }
         #else
         // macOS: observe process info memory pressure via a background source
         let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
@@ -150,6 +158,17 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
         VideoPlayerCache.shared.evictAll()
         #if DEBUG
         print("MediaCacheService: Purged in-memory caches due to memory pressure")
+        #endif
+    }
+
+    /// Shrink the suspended-app footprint: drop the large full-res image cache and
+    /// video buffers, but keep the small thumbnail cache so the feed scrolls
+    /// instantly when the user returns. Everything dropped reloads from disk.
+    private func handleBackgrounding() {
+        imageCache.removeAllObjects()
+        VideoPlayerCache.shared.evictAll()
+        #if DEBUG
+        print("MediaCacheService: Dropped full-res image/video caches on backgrounding")
         #endif
     }
 

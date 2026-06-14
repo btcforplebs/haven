@@ -332,8 +332,31 @@ class FeedService @Inject constructor(
                     subscribeToAllRelays()
                 }
             }
+            FeedMode.MEDIA -> {
+                // Global media is scoped to the web-of-trust set; make sure it's
+                // populated before subscribing so the author filter isn't empty.
+                if (_mediaFeedMode.value == MediaFeedMode.GLOBAL) loadWotPubkeys()
+                subscribeToAllRelays()
+            }
             else -> subscribeToAllRelays()
         }
+        recomputeFilteredNotes()
+    }
+
+    /**
+     * Switch the media sub-feed between Following and Global (iOS parity).
+     * Re-subscribes with the new author scope and recomputes the media grid.
+     */
+    fun setMediaFeedMode(mode: MediaFeedMode) {
+        if (mode == _mediaFeedMode.value) return
+        _mediaFeedMode.value = mode
+
+        // Pending notes were scoped to the previous media filter; drop them so the
+        // "New Posts" count doesn't carry stale entries into the new scope.
+        _pendingNotes.value = emptyList()
+
+        if (mode == MediaFeedMode.GLOBAL) loadWotPubkeys()
+        subscribeToAllRelays()
         recomputeFilteredNotes()
     }
 

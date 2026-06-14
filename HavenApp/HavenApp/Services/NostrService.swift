@@ -10,6 +10,12 @@ class NostrService: ObservableObject {
     private(set) var events: [NostrEvent] = []
     private(set) var noteMedia: [MediaItem] = []
 
+    /// Max events held in memory for the Viewer/Relay tab. Kept well below the old
+    /// 10k ceiling: the scrolling list never needs that many, and retaining 10k full
+    /// events (incl. kind-30023 long-form bodies) was a major contributor to the
+    /// ~310 MB resident set that made the app the #1 jetsam target.
+    private static let maxEvents = 1500
+
     // Aggregated status
     @Published var connectionStatus: String = "Disconnected"
     @Published var connectionColor: String = "gray"
@@ -1799,8 +1805,8 @@ class NostrService: ObservableObject {
             events.sort(by: { $0.created_at > $1.created_at })
         }
 
-        if events.count > 10000 {
-            events = Array(events.prefix(10000))
+        if events.count > Self.maxEvents {
+            events = Array(events.prefix(Self.maxEvents))
         }
         eventUpdateSubject.send()
     }
