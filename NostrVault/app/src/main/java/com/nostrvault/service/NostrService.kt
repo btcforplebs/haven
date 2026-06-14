@@ -285,7 +285,11 @@ class NostrService @Inject constructor(
             // 8. Notify UI
             _eventUpdates.tryEmit(Unit)
 
-            // 9. Prefetch whitelisted profiles for new account
+            // 9. Force-fetch the newly-active account's profile (name/avatar) and
+            //    prefetch the rest of the roster. Profile fetches use temporary
+            //    relay clients, so this survives the teardown above.
+            val activeHex = activeHexPubkey
+            if (activeHex.isNotEmpty()) fetchMissingProfiles(listOf(activeHex), force = true)
             prefetchWhitelistedProfiles()
 
             // 10. Reconnect for new account
@@ -875,9 +879,13 @@ class NostrService @Inject constructor(
     }
 
     private fun prefetchWhitelistedProfiles() {
-        val whitelisted = configStore.config.value.whitelistedNpubs
-            ?.mapNotNull { npubToHex(it) } ?: return
-        fetchMissingProfiles(whitelisted)
+        // Cover the whole roster: multi-account (owner + accountNpubs) plus any
+        // relay-follow whitelisted accounts, so every switchable account's
+        // kind-0 (name/avatar) is fetched.
+        val cfg = configStore.config.value
+        val npubs = (cfg.allAccountNpubs() + (cfg.whitelistedNpubs ?: emptyList())).distinct()
+        val hexes = npubs.mapNotNull { npubToHex(it) }
+        if (hexes.isNotEmpty()) fetchMissingProfiles(hexes)
     }
 
     // ══════════════════════════════════════════════════════════════════

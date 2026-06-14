@@ -19,6 +19,7 @@ import com.nostrvault.service.AmberResultBridge
 import com.nostrvault.service.DMService
 import com.nostrvault.service.FeedService
 import com.nostrvault.service.MediaUploadManager
+import com.nostrvault.service.NostrService
 import com.nostrvault.service.PendingPostManager
 import com.nostrvault.ui.navigation.NostrVaultNavHost
 import com.nostrvault.ui.notification.NotificationManager
@@ -34,6 +35,7 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var configStore: ConfigStore
     @Inject lateinit var dmService: DMService
     @Inject lateinit var feedService: FeedService
+    @Inject lateinit var nostrService: NostrService
     @Inject lateinit var logStore: LogStore
     @Inject lateinit var notificationManager: NotificationManager
     @Inject lateinit var pendingPostManager: PendingPostManager
@@ -74,6 +76,7 @@ class MainActivity : FragmentActivity() {
                         isSetupComplete = config.hasCompletedSetup,
                         configStore = configStore,
                         feedService = feedService,
+                        nostrService = nostrService,
                         logStore = logStore,
                         dmUnreadCount = dmService.totalUnreadCountFlow,
                         hasNewRelayActivity = RelayForegroundService.hasNewRelayActivity,

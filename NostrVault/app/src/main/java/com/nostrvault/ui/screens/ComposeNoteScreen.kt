@@ -55,6 +55,9 @@ import com.nostrvault.service.MediaType
 import com.nostrvault.service.NostrService
 import com.nostrvault.relay.HavenBridge
 import com.nostrvault.service.PendingPostManager
+import com.nostrvault.ui.components.AccountInfo
+import com.nostrvault.ui.components.AccountSwitcherSheet
+import com.nostrvault.ui.components.buildAccountInfos
 import com.nostrvault.ui.components.AvatarImage
 import com.nostrvault.ui.components.NostrMentions
 import com.nostrvault.ui.components.QuotedNoteCard
@@ -65,7 +68,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -135,6 +143,21 @@ class ComposeNoteViewModel @Inject constructor(
 
     private val _uploadMessage = MutableStateFlow<String?>(null)
     val uploadMessage = _uploadMessage.asStateFlow()
+
+    /** All accounts (owner + added) with resolved name/avatar, for the in-composer switcher. */
+    val accounts: StateFlow<List<AccountInfo>> =
+        combine(configStore.config, nostrService.profiles) { config, profiles ->
+            buildAccountInfos(config, profiles, includeWhitelisted = false)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    /** The currently active account (for the composer avatar). */
+    val activeAccount: StateFlow<AccountInfo?> =
+        accounts.map { list -> list.firstOrNull { it.isActive } }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    fun switchAccount(npub: String) {
+        viewModelScope.launch { configStore.switchActiveAccount(npub) }
+    }
 
     private val _showBlossomPicker = MutableStateFlow(false)
     val showBlossomPicker = _showBlossomPicker.asStateFlow()
@@ -740,7 +763,7 @@ class ComposeNoteViewModel @Inject constructor(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ComposeNoteScreen(
     replyToNoteId: String? = null,
@@ -759,6 +782,9 @@ fun ComposeNoteScreen(
     val attachments by viewModel.attachments.collectAsState()
     val showBlossomPicker by viewModel.showBlossomPicker.collectAsState()
     val mentionResults by viewModel.mentionResults.collectAsState()
+    val accounts by viewModel.accounts.collectAsState()
+    val activeAccount by viewModel.activeAccount.collectAsState()
+    var showAccountSwitcher by remember { mutableStateOf(false) }
     val colors = LocalNostrVaultColors.current
     val context = LocalContext.current
 
@@ -845,6 +871,44 @@ fun ComposeNoteScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
         ) {
+            // Posting-as account avatar + quick switch (mirrors iOS ComposeView:
+            // long-press the avatar to switch the posting account)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .combinedClickable(
+                        onClick = {},
+                        onLongClick = { showAccountSwitcher = true },
+                    )
+                    .padding(bottom = 12.dp),
+            ) {
+                AvatarImage(
+                    url = activeAccount?.avatarUrl,
+                    pubkey = activeAccount?.hexPubkey ?: "",
+                    size = 32.dp,
+                    displayName = activeAccount?.displayName,
+                )
+                Spacer(Modifier.width(8.dp))
+                Column {
+                    Text("Posting as", color = SecondaryText, fontSize = 11.sp)
+                    Text(
+                        text = activeAccount?.displayName ?: "Owner",
+                        color = PrimaryText,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                if (accounts.size > 1) {
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Filled.UnfoldMore,
+                        contentDescription = "Switch account",
+                        tint = SecondaryText,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+
             // Reply context indicator
             replyingToName?.let { name ->
                 Text(
@@ -1054,6 +1118,18 @@ fun ComposeNoteScreen(
         BlossomMediaPickerSheet(
             onDismiss = { viewModel.setShowBlossomPicker(false) },
             onSelect = { url -> viewModel.addBlossomMedia(url) }
+        )
+    }
+
+    // In-composer account quick-switch
+    if (showAccountSwitcher) {
+        AccountSwitcherSheet(
+            accounts = accounts,
+            onSelectAccount = { npub ->
+                viewModel.switchAccount(npub)
+                showAccountSwitcher = false
+            },
+            onDismiss = { showAccountSwitcher = false },
         )
     }
 }

@@ -43,6 +43,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.nostrvault.ui.components.AvatarImage
 import com.nostrvault.ui.components.glassPillBackground
 import com.nostrvault.ui.theme.ErrorRed
 import com.nostrvault.ui.theme.LocalNostrVaultColors
@@ -77,6 +78,8 @@ val bottomNavItems = listOf(
 fun BottomNavBar(
     currentRoute: String?,
     activeAccountPubkey: String,
+    activeAvatarUrl: String? = null,
+    activeDisplayName: String? = null,
     isOwner: Boolean,
     condensed: Boolean = false,
     hasUnreadDMs: Boolean = false,
@@ -118,6 +121,9 @@ fun BottomNavBar(
             if (isCondensed) {
                 CondensedNavCluster(
                     isOwner = isOwner,
+                    activeAccountPubkey = activeAccountPubkey,
+                    activeAvatarUrl = activeAvatarUrl,
+                    activeDisplayName = activeDisplayName,
                     showBadge = hasUnreadDMs || hasNewRelayActivity,
                     primaryColor = colors.primary,
                     isOled = isOled,
@@ -133,6 +139,9 @@ fun BottomNavBar(
                     primaryColor = colors.primary,
                     isOled = isOled,
                     isOwner = isOwner,
+                    activeAccountPubkey = activeAccountPubkey,
+                    activeAvatarUrl = activeAvatarUrl,
+                    activeDisplayName = activeDisplayName,
                     hasUnreadDMs = hasUnreadDMs,
                     hasNewRelayActivity = hasNewRelayActivity,
                     onNavigate = onNavigate,
@@ -150,6 +159,9 @@ private fun ExpandedNavRow(
     primaryColor: Color,
     isOled: Boolean,
     isOwner: Boolean,
+    activeAccountPubkey: String,
+    activeAvatarUrl: String?,
+    activeDisplayName: String?,
     hasUnreadDMs: Boolean,
     hasNewRelayActivity: Boolean,
     onNavigate: (Screen) -> Unit,
@@ -177,6 +189,9 @@ private fun ExpandedNavRow(
                     selected = selected,
                     selectedColor = primaryColor,
                     isOwner = isOwner,
+                    activeAccountPubkey = activeAccountPubkey,
+                    activeAvatarUrl = activeAvatarUrl,
+                    activeDisplayName = activeDisplayName,
                     showBadge = hasUnreadDMs,
                     onClick = {
                         if (selected) {
@@ -219,6 +234,9 @@ private fun ExpandedNavRow(
 @Composable
 private fun CondensedNavCluster(
     isOwner: Boolean,
+    activeAccountPubkey: String,
+    activeAvatarUrl: String?,
+    activeDisplayName: String?,
     showBadge: Boolean,
     primaryColor: Color,
     isOled: Boolean,
@@ -259,11 +277,11 @@ private fun CondensedNavCluster(
                     .background(SecondaryGroupedBg),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    imageVector = NostrVaultIcons.AccountCircle,
-                    contentDescription = "Profile",
-                    tint = primaryColor,
-                    modifier = Modifier.size(28.dp),
+                AvatarImage(
+                    url = activeAvatarUrl,
+                    pubkey = activeAccountPubkey,
+                    size = 28.dp,
+                    displayName = activeDisplayName,
                 )
             }
             if (showBadge) {
@@ -356,6 +374,9 @@ private fun ProfileTab(
     selected: Boolean,
     selectedColor: Color,
     isOwner: Boolean,
+    activeAccountPubkey: String,
+    activeAvatarUrl: String?,
+    activeDisplayName: String?,
     showBadge: Boolean = false,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
@@ -400,11 +421,11 @@ private fun ProfileTab(
                     .background(SecondaryGroupedBg),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    imageVector = NostrVaultIcons.AccountCircle,
-                    contentDescription = "Profile",
-                    tint = if (selected) selectedColor else SecondaryText,
-                    modifier = Modifier.size(25.dp),
+                AvatarImage(
+                    url = activeAvatarUrl,
+                    pubkey = activeAccountPubkey,
+                    size = 25.dp,
+                    displayName = activeDisplayName,
                 )
             }
             if (showBadge) {

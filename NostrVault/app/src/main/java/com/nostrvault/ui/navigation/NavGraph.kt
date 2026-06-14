@@ -18,7 +18,9 @@ import kotlinx.coroutines.launch
 import com.nostrvault.data.local.ConfigStore
 import com.nostrvault.relay.RelayForegroundService
 import com.nostrvault.service.FeedService
+import com.nostrvault.service.NostrService
 import com.nostrvault.ui.components.AccountInfo
+import com.nostrvault.ui.components.buildAccountInfos
 import com.nostrvault.ui.notification.NotificationManager
 import com.nostrvault.service.PendingPostManager
 import com.nostrvault.ui.components.PendingPostBanner
@@ -70,6 +72,7 @@ fun NostrVaultNavHost(
     modifier: Modifier = Modifier,
     configStore: ConfigStore,
     feedService: FeedService,
+    nostrService: NostrService,
     logStore: LogStore,
     dmUnreadCount: StateFlow<Int>,
     hasNewRelayActivity: StateFlow<Boolean>,
@@ -96,6 +99,8 @@ fun NostrVaultNavHost(
     var showAccountSwitcher by remember { mutableStateOf(false) }
     val config by configStore.config.collectAsState()
     val activeHex by configStore.activeAccountHexPubkey.collectAsState()
+    val profiles by nostrService.profiles.collectAsState()
+    val activeProfile = profiles[activeHex]
     val isOwner = config.activeAccountNpub.isNullOrBlank()
     val unreadDMs by dmUnreadCount.collectAsState()
     val relayActivity by hasNewRelayActivity.collectAsState()
@@ -590,6 +595,8 @@ fun NostrVaultNavHost(
                 BottomNavBar(
                     currentRoute = currentRoute,
                     activeAccountPubkey = activeHex,
+                    activeAvatarUrl = activeProfile?.pictureURL,
+                    activeDisplayName = activeProfile?.bestName,
                     isOwner = isOwner,
                     condensed = condensed,
                     hasUnreadDMs = unreadDMs > 0,
@@ -644,33 +651,7 @@ fun NostrVaultNavHost(
 
     // Account switcher bottom sheet
     if (showAccountSwitcher) {
-        val ownerNpub = config.ownerNpub
-        val accounts = buildList {
-            add(
-                AccountInfo(
-                    npub = ownerNpub,
-                    hexPubkey = activeHex,
-                    displayName = "Owner",
-                    isOwner = true,
-                    isActive = isOwner,
-                    hasKey = true,
-                )
-            )
-            config.whitelistedNpubs?.forEach { npub ->
-                if (npub != ownerNpub) {
-                    add(
-                        AccountInfo(
-                            npub = npub,
-                            hexPubkey = "",
-                            displayName = npub.take(16) + "...",
-                            isOwner = false,
-                            isActive = config.activeAccountNpub == npub,
-                            hasKey = false,
-                        )
-                    )
-                }
-            }
-        }
+        val accounts = buildAccountInfos(config, profiles, includeWhitelisted = true)
 
         AccountSwitcherSheet(
             accounts = accounts,

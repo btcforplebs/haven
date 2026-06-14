@@ -29,6 +29,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.nostrvault.data.model.FeedProfile
+import com.nostrvault.relay.HavenBridge
+import com.nostrvault.relay.HavenConfig
 import com.nostrvault.ui.theme.LocalNostrVaultColors
 import com.nostrvault.ui.theme.NostrVaultIcons
 import com.nostrvault.ui.theme.PrimaryText
@@ -50,6 +53,38 @@ data class AccountInfo(
     val hasKey: Boolean,
     val avatarUrl: String? = null,
 )
+
+/**
+ * Build the account roster with resolved names/avatars from the profile map.
+ * Shared by the global switcher (NavGraph) and the in-composer switcher.
+ * [includeWhitelisted] adds relay-follow accounts (whitelistedNpubs) on top of
+ * the multi-account roster (owner + accountNpubs).
+ */
+fun buildAccountInfos(
+    config: HavenConfig,
+    profiles: Map<String, FeedProfile>,
+    includeWhitelisted: Boolean = true,
+): List<AccountInfo> {
+    val active = config.activeOrOwnerNpub()
+    val roster = buildList {
+        addAll(config.allAccountNpubs())
+        if (includeWhitelisted) config.whitelistedNpubs?.let { addAll(it) }
+    }.distinct().filter { it.isNotEmpty() }
+    return roster.map { npub ->
+        val isOwner = npub == config.ownerNpub
+        val hex = HavenBridge.decodeNpub(npub) ?: ""
+        val profile = profiles[hex]
+        AccountInfo(
+            npub = npub,
+            hexPubkey = hex,
+            displayName = profile?.bestName ?: if (isOwner) "Owner" else npub.take(12) + "…",
+            isOwner = isOwner,
+            isActive = npub == active,
+            hasKey = isOwner || npub in config.accountNpubs,
+            avatarUrl = profile?.pictureURL,
+        )
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -133,11 +168,11 @@ private fun AccountRow(
                     ),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    imageVector = NostrVaultIcons.AccountCircle,
-                    contentDescription = null,
-                    tint = SecondaryText,
-                    modifier = Modifier.size(22.dp),
+                AvatarImage(
+                    url = account.avatarUrl,
+                    pubkey = account.hexPubkey,
+                    size = 30.dp,
+                    displayName = account.displayName,
                 )
             }
         }
