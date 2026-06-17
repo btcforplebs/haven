@@ -224,6 +224,13 @@ object HavenBridge {
      */
     external fun getImportLog(): String?
 
+    /**
+     * Poll the next "🔔NOTIFY|..." marker line from the dedicated, non-lossy
+     * notification queue. Returns one line per call (consumed on read), or null
+     * when the queue is empty. Drained by [LogStore] to raise local notifications.
+     */
+    external fun getNotifyLog(): String?
+
     // -----------------------------------------------------------------------
     // Bech32 encoding/decoding (pure Kotlin — no JNI needed)
     // -----------------------------------------------------------------------

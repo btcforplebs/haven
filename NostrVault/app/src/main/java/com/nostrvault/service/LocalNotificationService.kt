@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -40,6 +41,7 @@ class LocalNotificationService @Inject constructor(
     private val nostrService: Lazy<NostrService>,
 ) {
     companion object {
+        private const val TAG = "LocalNotif"
         private const val CHANNEL_ID = "nostrvault_events"
         private const val MARKER = "🔔NOTIFY|"
         private const val PREVIEW_MARKER = "|preview="
@@ -100,11 +102,18 @@ class LocalNotificationService @Inject constructor(
         val author = fields["author"].orEmpty()
         val id = fields["id"] ?: return
         if (id.isEmpty()) return
+        Log.i(TAG, "marker received: type=$type id=${id.take(8)}")
 
-        if (!markSeen(id)) return
+        if (!markSeen(id)) {
+            Log.d(TAG, "skip: duplicate ${id.take(8)}")
+            return
+        }
 
         val config = configStore.config.value
-        if (!config.enablePushNotifications) return
+        if (!config.enablePushNotifications) {
+            Log.i(TAG, "skip: enablePushNotifications is OFF (turn it on in Settings → Notifications)")
+            return
+        }
         val prefs = config.pushPrefsFor(config.activeOrOwnerNpub())
 
         val allowed = when (type) {
@@ -116,10 +125,16 @@ class LocalNotificationService @Inject constructor(
             "repost" -> prefs.reposts
             else -> false
         }
-        if (!allowed) return
+        if (!allowed) {
+            Log.i(TAG, "skip: '$type' disabled in per-account prefs")
+            return
+        }
 
         // The in-app dot already signals activity while the app is open.
-        if (appInForeground) return
+        if (appInForeground) {
+            Log.i(TAG, "skip: app in foreground (in-app dot covers it)")
+            return
+        }
 
         val name = resolveName(author)
         val (title, text) = buildContent(type, name, preview)
@@ -169,6 +184,7 @@ class LocalNotificationService @Inject constructor(
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         ) {
+            Log.w(TAG, "skip: POST_NOTIFICATIONS permission not granted")
             return
         }
 
@@ -198,5 +214,6 @@ class LocalNotificationService @Inject constructor(
 
         // Stable per-event notification id so the same event never double-posts.
         NotificationManagerCompat.from(context).notify(id.hashCode(), notification)
+        Log.i(TAG, "posted notification: \"$title\"")
     }
 }

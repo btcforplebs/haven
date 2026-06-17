@@ -75,12 +75,24 @@ class LogStore @Inject constructor() {
                         if (message.contains("in your inbox") || message.contains("in your chat relay")) {
                             RelayForegroundService.markInboxActivity()
                         }
-                        // Forward notification markers to the local notifier (if wired).
-                        if (message.contains("🔔NOTIFY|")) {
-                            notifySink?.invoke(message)
-                        }
                         val entry = RelayLogParser.LogEntry.parse(message)
                         addEntry(entry)
+                    }
+
+                    // Drain the dedicated, non-lossy notification queue and forward
+                    // every marker to the local notifier. Unlike the import log above
+                    // (latest-message-only), this delivers every inbound event.
+                    val sink = notifySink
+                    if (sink != null && HavenBridge.isLoaded) {
+                        while (isActive) {
+                            val notifyLine = withContext(Dispatchers.IO) { HavenBridge.getNotifyLog() }
+                            if (notifyLine.isNullOrBlank()) break
+                            try {
+                                sink.invoke(notifyLine)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Notify dispatch error: ${e.message}")
+                            }
+                        }
                     }
                 } catch (e: Exception) {
                     // Don't crash the polling loop on transient errors
