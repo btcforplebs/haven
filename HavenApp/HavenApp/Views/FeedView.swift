@@ -598,21 +598,13 @@ struct FeedView: View {
                 return
             }
             // Wait for relay to be ready before loading feed to avoid OOM
-            // from relay + feed + media all starting simultaneously.
+            // from relay + feed + media all starting simultaneously. This covers
+            // the case where the relay was ALREADY ready before the view appeared
+            // (so FeedService's readiness observer's transition was missed/deduped).
+            // Once-ready and follow-set/relay changes after this are driven by
+            // FeedService.reconcileFeedSubscriptions via its relay-readiness observer.
             if relayManager.isReadyForConnections && feedService.notes.isEmpty && !feedService.isLoadingContacts {
                 feedService.startInitialLoad()
-            }
-        }
-        .onChange(of: relayManager.isReadyForConnections) { _, ready in
-            if ready && !feedService.isPaused && feedService.notes.isEmpty && !feedService.isLoadingContacts && !feedService.isLoadingFeed {
-                feedService.startInitialLoad()
-            }
-        }
-        .onChange(of: relayManager.isBooting) { _, booting in
-            // Once booting finishes, add the local relay to the existing feed
-            // connections instead of tearing everything down and rebuilding.
-            if !booting && relayManager.isRunning && !feedService.isPaused {
-                feedService.addLocalRelayIfReady()
             }
         }
         .sheet(item: $composeContext) { ctx in

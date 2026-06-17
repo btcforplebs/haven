@@ -747,9 +747,10 @@ class NostrService: ObservableObject {
 
     // MARK: - Proof of Work Mining + Signing
 
-    /// Signs an event with NIP-13 Proof of Work mining via the Go backend.
-    /// When difficulty > 0, mines a nonce tag before signing. Falls back to plain signing on failure.
-    func mineAndSignEvent(kind: Int, content: String, tags: [[String]] = [], difficulty: Int = 0, maxAttempts: Int = 10_000_000, password: String? = nil, forceOwner: Bool = false) -> NostrEvent? {
+    /// Resolves the secret key and builds the unsigned-event JSON for local signing.
+    /// Runs on the main actor (touches config/Keychain); returns Sendable primitives so
+    /// the heavy mine+sign can be handed to a background executor without crossing actors.
+    private func prepareLocalSigning(kind: Int, content: String, tags: [[String]], password: String?, forceOwner: Bool) -> (jsonStr: String, secretKey: String)? {
         var sk: String?
         let config = ConfigService.shared.config
 
@@ -802,12 +803,26 @@ class NostrService: ObservableObject {
             return nil
         }
 
-        return EventPublisher.mineAndSignWithGoBackend(eventJSON: jsonStr, secretKey: sk, difficulty: difficulty, maxAttempts: maxAttempts)
+        return (jsonStr, sk)
+    }
+
+    /// Signs an event with NIP-13 Proof of Work mining via the Go backend.
+    /// When difficulty > 0, mines a nonce tag before signing. Falls back to plain signing on failure.
+    ///
+    /// NOTE: PoW mining is a tight CPU loop (up to `maxAttempts` SHA256 hashes). This synchronous
+    /// entry point runs it on the calling thread — for the main actor, prefer `mineAndSignEventAsync`,
+    /// which offloads the mine to a background executor so the UI/run loop stays responsive.
+    func mineAndSignEvent(kind: Int, content: String, tags: [[String]] = [], difficulty: Int = 0, maxAttempts: Int = 10_000_000, password: String? = nil, forceOwner: Bool = false) -> NostrEvent? {
+        guard let prep = prepareLocalSigning(kind: kind, content: content, tags: tags, password: password, forceOwner: forceOwner) else {
+            return nil
+        }
+        return EventPublisher.mineAndSignWithGoBackend(eventJSON: prep.jsonStr, secretKey: prep.secretKey, difficulty: difficulty, maxAttempts: maxAttempts)
     }
 
     /// Async variant of mineAndSignEvent that supports NIP-46 remote signing.
     /// For NIP-46 mode: skips PoW (no secret key available) and delegates to signEventAsync.
-    /// For local mode: mines PoW and signs via the Go backend.
+    /// For local mode: mines PoW and signs via the Go backend on a background executor so the
+    /// main thread is never blocked by the mining loop (which would otherwise trip the iOS watchdog).
     func mineAndSignEventAsync(kind: Int, content: String, tags: [[String]] = [], difficulty: Int = 0, maxAttempts: Int = 10_000_000, password: String? = nil) async -> NostrEvent? {
         let config = ConfigService.shared.config
         let mode = config.activeSigningMode()
@@ -815,9 +830,19 @@ class NostrService: ObservableObject {
         if mode == "nip46" {
             // NIP-46: we don't have the secret key, so skip PoW
             return await signEventAsync(kind: kind, content: content, tags: tags, password: password)
-        } else {
-            return mineAndSignEvent(kind: kind, content: content, tags: tags, difficulty: difficulty, maxAttempts: maxAttempts, password: password)
         }
+
+        // Resolve key + build JSON on the main actor (Keychain/config access)…
+        guard let prep = prepareLocalSigning(kind: kind, content: content, tags: tags, password: password, forceOwner: false) else {
+            return nil
+        }
+        // …then mine + sign off the main thread. `mineAndSignWithGoBackend` is a non-isolated
+        // static func operating only on the Sendable Strings we pass in.
+        let jsonStr = prep.jsonStr
+        let secretKey = prep.secretKey
+        return await Task.detached(priority: .userInitiated) {
+            EventPublisher.mineAndSignWithGoBackend(eventJSON: jsonStr, secretKey: secretKey, difficulty: difficulty, maxAttempts: maxAttempts)
+        }.value
     }
 
     /// Publishes a signed Kind 10000 (Mute List) event to configured relays for the active account

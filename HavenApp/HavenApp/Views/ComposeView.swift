@@ -1059,6 +1059,23 @@ struct ComposeView: View {
         autoSaveTask = nil
         uploadInfoProvider.startUpload(totalCount: attachments.count)
 
+        // Durably persist the current text to disk BEFORE the (potentially long) post
+        // begins, so an unexpected crash during upload/mining/broadcast can't lose it.
+        // The draft is cleared only once the post actually broadcasts (PendingPostManager),
+        // so a cancel or crash in the pending window leaves it recoverable.
+        let trimmedForDraft = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedForDraft.isEmpty || !attachments.isEmpty {
+            let id = draftId ?? UUID().uuidString
+            draftId = id
+            DraftService.shared.saveDraftLocally(
+                draftId: id,
+                content: convertMentionsToNostr(content),
+                replyTo: effectiveReplyTo,
+                quoteTo: effectiveQuoteTo,
+                taggedPubkeys: taggedPubkeys
+            )
+        }
+
         Task {
             // 1. Upload media to Blossom mirrors
             // Convert `@name` display tokens back to canonical `nostr:npub…` references.
@@ -1236,19 +1253,17 @@ struct ComposeView: View {
                 )
                 FeedService.shared.addNote(feedNote)
 
-                // Hand to PendingPostManager — it will broadcast after countdown
+                // Hand to PendingPostManager — it will broadcast after countdown and then
+                // delete the backing draft. We keep the draft alive until broadcast so a
+                // crash/cancel during the pending window stays recoverable.
                 PendingPostManager.shared.startPost(
                     event: event,
                     content: finalContent,
                     replyTo: self.effectiveReplyTo,
                     quoteTo: self.effectiveQuoteTo,
-                    nostrService: self.nostrService
+                    nostrService: self.nostrService,
+                    draftId: self.draftId
                 )
-
-                // Clean up the draft now that the post is going out
-                if let draftId = self.draftId {
-                    Task { await DraftService.shared.deleteDraft(id: draftId) }
-                }
 
                 // Mark content as "saved" so performDismiss won't re-save the draft
                 self.lastSavedContent = self.content.trimmingCharacters(in: .whitespacesAndNewlines)

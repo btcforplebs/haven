@@ -435,6 +435,10 @@ class FeedService @Inject constructor(
                         _hasAttemptedContactLoad.value = true
                         _isLoadingContacts.value = false
                         recomputeFilteredNotes()
+                        // Re-issue the live primary REQ so a freshly-loaded (or
+                        // refreshed-from-stale-snapshot) follow set streams new
+                        // notes onto already-connected relays without a manual refresh.
+                        resubscribePrimaryToConnected()
 
                         // Auto-snapshot for following backup
                         val accountKey = configStore.config.value.activeAccountNpub
@@ -788,6 +792,29 @@ class FeedService @Inject constructor(
         feedClientJobs[relayUrl] = mutableListOf(messagesJob, stateJob)
 
         client.connect()
+    }
+
+    /**
+     * Re-issue the primary REQ to every connected feed client so a changed follow
+     * set takes effect on the LIVE stream without a full refresh. Reuses the same
+     * subId so the relay replaces the prior subscription (no duplicate stream).
+     * Called when contacts finish loading (incl. after a stale-snapshot top-up) and
+     * on follow/unfollow — mirrors the iOS resubscribePrimaryIfNeeded reconcile.
+     */
+    private fun resubscribePrimaryToConnected() {
+        if (_feedMode.value == FeedMode.POPULAR) return
+        val label = when (_feedMode.value) {
+            FeedMode.FOLLOWING -> "following"
+            FeedMode.DISCOVERY -> "discovery"
+            FeedMode.GLOBAL -> "global"
+            FeedMode.MEDIA -> "media"
+            FeedMode.POPULAR -> return
+        }
+        for ((relayUrl, client) in feedClients) {
+            if (client.connectionState.value == WebSocketClient.ConnectionState.CONNECTED) {
+                sendPrimaryFeedSubscription(relayUrl, "feed-$label")
+            }
+        }
     }
 
     private fun sendPrimaryFeedSubscription(relayUrl: String, subId: String) {
@@ -1253,6 +1280,9 @@ class FeedService @Inject constructor(
                 // Re-filter so already-loaded notes from the newly-followed author
                 // surface immediately in the Following feed.
                 recomputeFilteredNotes()
+                // Re-issue the live primary REQ so the new follow's FUTURE notes
+                // stream in without waiting for a full refresh.
+                resubscribePrimaryToConnected()
                 notificationManager.showFollow(displayName, FollowKind.FOLLOWED)
                 Result.success(Unit)
             },
@@ -1287,6 +1317,9 @@ class FeedService @Inject constructor(
                 // Re-filter so the unfollowed author's notes disappear from the
                 // Following feed immediately (the filter excludes non-follows).
                 recomputeFilteredNotes()
+                // Re-issue the live primary REQ so the relay stops streaming the
+                // unfollowed author's future notes.
+                resubscribePrimaryToConnected()
                 notificationManager.showFollow(displayName, FollowKind.UNFOLLOWED)
                 Result.success(Unit)
             },

@@ -72,13 +72,20 @@ class DraftService: ObservableObject {
         #endif
     }
 
-    private func saveToDisk() {
+    /// Persists the in-memory drafts to disk. Pass `synchronous: true` to block until the
+    /// write completes — used right before posting so an in-flight note survives a crash.
+    private func saveToDisk(synchronous: Bool = false) {
         let snapshot = drafts
         let url = Self.cacheURL
-        DispatchQueue.global(qos: .utility).async {
+        let write: @Sendable () -> Void = {
             if let data = try? JSONEncoder().encode(snapshot) {
                 try? data.write(to: url, options: .atomic)
             }
+        }
+        if synchronous {
+            write()
+        } else {
+            DispatchQueue.global(qos: .utility).async(execute: write)
         }
     }
 
@@ -125,6 +132,37 @@ class DraftService: ObservableObject {
         quoteTo: FeedNote?,
         taggedPubkeys: [String]
     ) async {
+        // 1. Always update local state + disk first (guaranteed persistence)
+        let draft = saveDraftLocally(
+            draftId: draftId,
+            content: content,
+            replyTo: replyTo,
+            quoteTo: quoteTo,
+            taggedPubkeys: taggedPubkeys
+        )
+
+        // 2. Attempt relay sync
+        let relayReady = await RelayProcessManager.shared.ensureRelayReady(timeout: 5.0)
+        if relayReady {
+            await saveToRelay(draft: draft)
+        } else {
+            pendingSaves.removeAll { $0.id == draftId }
+            pendingSaves.append(draft)
+        }
+    }
+
+    /// Synchronously builds the draft, updates in-memory state, and writes it to disk
+    /// (blocking until the write completes). Returns the persisted `Draft`. Use this when
+    /// the draft MUST be durable before the next step — e.g. right before posting, so a
+    /// crash during mining/broadcast can't lose the user's text. No relay sync.
+    @discardableResult
+    func saveDraftLocally(
+        draftId: String,
+        content: String,
+        replyTo: FeedNote?,
+        quoteTo: FeedNote?,
+        taggedPubkeys: [String]
+    ) -> Draft {
         // Build tags — mirror the NIP-10 tag logic from ComposeView.postNote()
         var tags: [[String]] = [
             ["d", draftId],
@@ -181,22 +219,15 @@ class DraftService: ObservableObject {
             updatedAt: Date()
         )
 
-        // 1. Always update local state + disk (guaranteed persistence)
+        // Update local state + disk synchronously (guaranteed persistence)
         if let idx = drafts.firstIndex(where: { $0.id == draftId }) {
             drafts[idx] = draft
         } else {
             drafts.insert(draft, at: 0)
         }
-        saveToDisk()
+        saveToDisk(synchronous: true)
 
-        // 2. Attempt relay sync
-        let relayReady = await RelayProcessManager.shared.ensureRelayReady(timeout: 5.0)
-        if relayReady {
-            await saveToRelay(draft: draft)
-        } else {
-            pendingSaves.removeAll { $0.id == draftId }
-            pendingSaves.append(draft)
-        }
+        return draft
     }
 
     /// Sign and send a draft event to the relay.

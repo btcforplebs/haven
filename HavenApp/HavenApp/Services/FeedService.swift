@@ -198,6 +198,19 @@ class FeedService: ObservableObject {
     /// Maps primary feed subscription IDs to relay keys for EOSE → auxiliary dispatch.
     private var subIdToRelayKey: [String: String] = [:]
 
+    /// The author set the live primary REQ was last sent with, per relay key.
+    /// `nil`/absent for a relay key means no live primary subscription exists
+    /// there (e.g. we skipped sending because the follow set was empty). This is
+    /// the bookkeeping that makes `reconcileFeedSubscriptions()` a true reconcile:
+    /// when the authoritative follow set changes we compare against this and only
+    /// re-issue the REQ where it has actually drifted.
+    private var subscribedAuthorsByRelay: [String: [String]] = [:]
+    /// Re-entrancy guard — `reconcileFeedSubscriptions()` can be reached from a
+    /// Combine sink, a Task continuation, and a view `onAppear` in the same runloop turn.
+    private var isReconciling = false
+    /// Prevents the cold-start empty-contacts background retry from looping.
+    private var contactRetryScheduled = false
+
     // Background queue for JSON parsing — keeps the main thread free for UI
     private let processingQueue = DispatchQueue(label: "com.haven.feed-processing", qos: .userInitiated)
 
@@ -336,6 +349,27 @@ class FeedService: ObservableObject {
             .removeDuplicates(by: ==)
             .dropFirst()
             .sink { [weak self] _ in self?.recomputeFilteredNotes() }
+            .store(in: &configCancellables)
+
+        // Drive cold-start convergence from relay readiness instead of relying on
+        // FeedView's one-shot lifecycle observers (which silently no-op if their
+        // guards miss the transition). When the local relay becomes ready, reconcile
+        // the live subscriptions against the authoritative follow set. Stored in
+        // `configCancellables` so it survives account switches (which wipe `cancellables`).
+        RelayProcessManager.shared.$isReadyForConnections
+            .receive(on: DispatchQueue.main)
+            .removeDuplicates()
+            .sink { [weak self] ready in
+                guard let self = self, ready, !self.isPaused else { return }
+                if self.notes.isEmpty && !self.isLoadingContacts && !self.isLoadingFeed {
+                    // Cold start: restore snapshot (instant) then top-up / cold-load.
+                    self.startInitialLoad()
+                } else {
+                    // Already showing content: just reconcile the live subscriptions
+                    // (add the local relay now that it's ready, repair drifted authors).
+                    self.reconcileFeedSubscriptions()
+                }
+            }
             .store(in: &configCancellables)
     }
 
@@ -578,6 +612,12 @@ class FeedService: ObservableObject {
         feedLoadingTimeout?.invalidate()
         extendedNetworkTimeout?.invalidate()
         cancellables.removeAll()
+        // A warm account switch keeps feed clients connected (no disconnect), so
+        // clear the previous account's author-set bookkeeping explicitly here —
+        // otherwise a reconcile could see a "matching" stale set and skip the
+        // resubscribe the new account needs.
+        subscribedAuthorsByRelay.removeAll()
+        contactRetryScheduled = false
 
         // 4. Either restore an in-memory snapshot OR cold-load.
         //    Wrapped in withAnimation so SwiftUI cross-fades the content
@@ -700,9 +740,13 @@ class FeedService: ObservableObject {
         loadContactList { [weak self] in
             guard let self = self else { return }
 
-            // Auto-switch new users with no follows to Popular so they
-            // don't land on an empty Following feed.
-            if self.followedPubkeys.isEmpty && self.feedMode == .following {
+            // Auto-switch to Popular ONLY for a genuinely new Nostr user — no
+            // follows AND no local following backup to seed from. Returning users
+            // whose contact fetch was merely slow/empty were already seeded from
+            // backup by handleContactLoadResolved() (seed-and-stay), so their
+            // followedPubkeys is non-empty here and they stay on Following.
+            let hasBackup = !(FollowingBackupService.shared.snapshots.last?.pubkeys.isEmpty ?? true)
+            if self.followedPubkeys.isEmpty && self.feedMode == .following && !hasBackup {
                 self.didAutoSwitchToPopular = true
                 self.feedMode = .popular
                 self.recomputeFilteredNotes()
@@ -876,6 +920,10 @@ class FeedService: ObservableObject {
     private func disconnectFeedClients() {
         feedClients.values.forEach { $0.disconnect() }
         feedClients.removeAll()
+        // No live subscriptions remain — drop the author-set bookkeeping so a
+        // later reconcile doesn't think a relay is still subscribed.
+        subscribedAuthorsByRelay.removeAll()
+        contactRetryScheduled = false
     }
 
     /// Whether the feed is currently paused (no active relay connections).
@@ -914,34 +962,116 @@ class FeedService: ObservableObject {
         if feedMode == .popular {
             // Popular feed doesn't use relay subscriptions — re-fetch if stale
             if notes.isEmpty { loadPopularFeed() }
-        } else if !followedPubkeys.isEmpty || feedMode == .global || (feedMode == .media && mediaFeedMode == .global) {
-            subscribeToAllRelays()
+        } else {
+            // Route through the idempotent reconciler so resume reconnects the
+            // right relay set and (re)subscribes with the current follow set —
+            // and self-heals contacts if the follow set is somehow empty.
+            reconcileFeedSubscriptions()
         }
     }
 
-    /// Adds the local relay and inbox relay to the existing feed subscription
-    /// WITHOUT disconnecting external relays. Called when relay boot completes
-    /// so the feed gains local relay data on top of already-streaming external data.
-    func addLocalRelayIfReady() {
-        // Relay just finished booting — WOT cache should now be available
+    // MARK: - Subscription Reconciliation
+
+    /// True for feed modes whose primary subscription filters by an author set
+    /// (Following / Media-Following / Discovery). Global, Popular and the inbox
+    /// sub do not, so their subscriptions never drift on the follow set.
+    private var isAuthorFilteredMode: Bool {
+        switch feedMode {
+        case .following, .discovery: return true
+        case .media: return mediaFeedMode == .following
+        case .global, .popular: return false
+        }
+    }
+
+    /// The authoritative author set the current mode's primary subscription should
+    /// carry. Empty means "no valid primary sub" for author-filtered modes.
+    private func desiredPrimaryAuthorsForMode() -> [String] {
+        switch feedMode {
+        case .following: return followedPubkeys
+        case .media: return mediaFeedMode == .following ? followedPubkeys : []
+        case .discovery: return extendedNetworkPubkeys
+        case .global, .popular: return []
+        }
+    }
+
+    /// Desired authors for a specific relay key. Returns `nil` for relays that
+    /// carry no author filter (the local inbox queries by `#p`; global/popular
+    /// have no authors), so the drift check skips them.
+    private func desiredPrimaryAuthors(forRelayKey key: String) -> [String]? {
+        if key == localInboxURL?.absoluteString { return nil }
+        return isAuthorFilteredMode ? desiredPrimaryAuthorsForMode() : nil
+    }
+
+    /// Make the live relay subscriptions match the current authoritative inputs
+    /// (relayReady, feedMode, follow set, isPaused). Idempotent and safe to call
+    /// from anywhere any number of times — never tears down the rendered feed,
+    /// only connects missing relays and re-sends REQs whose author set has drifted.
+    func reconcileFeedSubscriptions() {
+        guard !isReconciling else { return }
+        isReconciling = true
+        defer { isReconciling = false }
+
+        guard !isPaused else { return }
+        guard feedMode != .popular else { return }   // popular has no relay subs
+
+        // Author-filtered mode with no follows yet → no valid primary sub. Don't
+        // send a dead authors:[] REQ; instead self-heal by (re)fetching contacts
+        // if the relay is ready and we're not already loading. When follows land,
+        // the contact-load completion calls back into reconcile.
+        if isAuthorFilteredMode && desiredPrimaryAuthorsForMode().isEmpty {
+            if RelayProcessManager.shared.isRunning,
+               !RelayProcessManager.shared.isBooting,
+               !isLoadingContacts, !isSyncing {
+                loadContactList { [weak self] in self?.reconcileFeedSubscriptions() }
+            }
+            return
+        }
+        if feedMode == .discovery && extendedNetworkPubkeys.isEmpty { return }
+
+        ensureRelaySetConnected()
+        resubscribePrimaryIfNeeded()
+    }
+
+    /// Connect the relays that should be part of the current subscription but
+    /// aren't yet (notably the local relay/inbox once boot completes). Existing
+    /// connections are left untouched. Absorbs the old `addLocalRelayIfReady`.
+    private func ensureRelaySetConnected() {
         if feedMode == .global || (feedMode == .media && mediaFeedMode == .global) {
             loadWotPubkeys()
         }
-        guard let local = localRelayURL else { return }
-        let localKey = local.absoluteString
-        guard feedClients[localKey] == nil else { return }
 
-        var newURLs: [URL] = [local]
-        if let inbox = localInboxURL, feedClients[inbox.absoluteString] == nil {
-            newURLs.append(inbox)
-        }
+        var desiredURLs: [URL] = []
+        if let local = localRelayURL { desiredURLs.append(local) }
+        if let inbox = localInboxURL { desiredURLs.append(inbox) }
+        desiredURLs.append(contentsOf: externalRelayURLs)
 
-        let totalRelays = feedClients.count + newURLs.count
+        let missing = desiredURLs.filter { feedClients[$0.absoluteString] == nil }
+        guard !missing.isEmpty else { return }
+
+        let totalRelays = feedClients.count + missing.count
         #if DEBUG
-        print("FeedService: Adding \(newURLs.count) local relay(s) to existing feed (total \(totalRelays))")
+        print("FeedService: reconcile connecting \(missing.count) missing relay(s) (total \(totalRelays))")
         #endif
-        for url in newURLs {
+        for url in missing {
             connectFeedRelay(url: url, totalRelays: totalRelays)
+        }
+    }
+
+    /// Re-issue the primary REQ to any connected feed client whose live author set
+    /// differs from the desired one. Reuses the same `subId` so the relay replaces
+    /// the prior subscription rather than opening a duplicate stream. `.connecting`
+    /// clients are handled by their own connect sink (which reads the live follow
+    /// set). Does NOT touch `isLoadingFeed`/`eoseCount` — a background resubscribe
+    /// must not re-show the full-screen spinner.
+    private func resubscribePrimaryIfNeeded() {
+        for (key, client) in feedClients {
+            guard client.connectionState == .connected else { continue }
+            // nil-author relays (inbox/global/popular) never drift on follows.
+            guard let desired = desiredPrimaryAuthors(forRelayKey: key) else { continue }
+            if let current = subscribedAuthorsByRelay[key], Set(current) == Set(desired) {
+                continue   // already in sync
+            }
+            sendPrimaryFeedSubscription(client: client, label: key)
         }
     }
 
@@ -1347,9 +1477,25 @@ class FeedService: ObservableObject {
             completion(); return
         }
 
+        // Mark in-flight synchronously so a reconcile firing during the readiness
+        // await doesn't kick off a duplicate fetch.
         isLoadingContacts = true
         connectionStatus = "Fetching contact list…"
 
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            // Give the local relay a chance to come up so it can serve the
+            // authoritative kind-3 contact list. Bounded; warm starts return
+            // immediately, and external relays are queried regardless of the result.
+            _ = await RelayProcessManager.shared.ensureRelayReady(timeout: 8.0)
+            // Bail if a newer load or an account switch superseded this one.
+            guard self.isLoadingContacts,
+                  ownerHex == ConfigService.shared.activeAccountHexPubkey else { return }
+            self.beginContactFetch(ownerHex: ownerHex, completion: completion)
+        }
+    }
+
+    private func beginContactFetch(ownerHex: String, completion: @escaping () -> Void) {
         // Safety timeout: if contact loading hasn't finished in 15 seconds, force completion
         contactLoadingTimeout?.invalidate()
         contactLoadingTimeout = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: false) { [weak self] _ in
@@ -1361,6 +1507,7 @@ class FeedService: ObservableObject {
                 self.isLoadingContacts = false
                 self.hasAttemptedContactLoad = true
                 self.connectionStatus = self.followedPubkeys.isEmpty ? "Contact fetch timed out" : "Loaded \(self.followedPubkeys.count) contacts"
+                self.handleContactLoadResolved()
                 completion()
             }
         }
@@ -1368,6 +1515,44 @@ class FeedService: ObservableObject {
         // Connect to all relays in parallel — use the first one that returns a non-empty contact list.
         let candidates: [URL] = ([localRelayURL] + externalRelayURLs).compactMap { $0 }
         fetchContactListInParallel(from: candidates, ownerHex: ownerHex, completion: completion)
+    }
+
+    /// Called after a contact-load attempt resolves (success / empty / timeout).
+    /// Seeds from the local following backup when the relay returned nothing
+    /// (seed-and-stay, so the user sees their follows instead of an empty feed),
+    /// then re-issues the primary REQ to already-connected relays whose author set
+    /// has drifted. Fresh connects are handled by the caller's completion
+    /// (e.g. refresh → subscribeToAllRelays); here we only repair live subs.
+    private func handleContactLoadResolved() {
+        if followedPubkeys.isEmpty {
+            let backup = FollowingBackupService.shared
+            backup.loadSnapshots(forAccountKey: currentSnapshotKey())
+            if let latest = backup.snapshots.last, !latest.pubkeys.isEmpty {
+                #if DEBUG
+                print("FeedService: contact fetch empty — seeding \(latest.pubkeys.count) follows from backup, retry scheduled")
+                #endif
+                contactListPTags = latest.pTags
+                followedPubkeys = latest.pubkeys
+                contactListContent = latest.contactListContent
+                lastFetchedContactCount = latest.pubkeys.count
+                scheduleContactRetry()
+            }
+        }
+        resubscribePrimaryIfNeeded()
+    }
+
+    /// Schedule a single background contact re-fetch ~5s out (e.g. after seeding
+    /// from backup) so a slow/cold relay that wasn't ready yet gets another chance
+    /// to deliver the authoritative kind-3. Guarded against looping.
+    private func scheduleContactRetry() {
+        guard !contactRetryScheduled else { return }
+        contactRetryScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+            guard let self = self else { return }
+            self.contactRetryScheduled = false
+            guard !self.isLoadingContacts, !self.isPaused else { return }
+            self.loadContactList { [weak self] in self?.resubscribePrimaryIfNeeded() }
+        }
     }
 
     /// Opens a connection to every candidate relay simultaneously and fires `completion`
@@ -1417,6 +1602,7 @@ class FeedService: ObservableObject {
                 forAccountKey: self.currentSnapshotKey()
             )
 
+            self.handleContactLoadResolved()
             completion()
 
         }
@@ -1457,6 +1643,7 @@ class FeedService: ObservableObject {
                             self.isLoadingContacts = false
                             self.hasAttemptedContactLoad = true
                             self.connectionStatus = self.followedPubkeys.isEmpty ? "No contacts found" : "Loaded \(self.followedPubkeys.count) contacts"
+                            self.handleContactLoadResolved()
                             completion()
                         }
                     }
@@ -1644,6 +1831,9 @@ class FeedService: ObservableObject {
             // Re-filter so already-loaded notes from the newly-followed author
             // surface immediately in the Following feed.
             recomputeFilteredNotes()
+            // Re-issue the live primary REQ so the new follow's FUTURE notes stream
+            // in without waiting for a full refresh.
+            resubscribePrimaryIfNeeded()
 
             // Auto-switch back to Following now that the user has follows.
             if didAutoSwitchToPopular {
@@ -1673,6 +1863,9 @@ class FeedService: ObservableObject {
             // Re-filter so the unfollowed author's notes disappear from the
             // Following feed immediately (the filter now excludes non-follows).
             recomputeFilteredNotes()
+            // Re-issue the live primary REQ so the relay stops streaming the
+            // unfollowed author's future notes.
+            resubscribePrimaryIfNeeded()
             return .success(())
         }
     }
@@ -1920,6 +2113,20 @@ class FeedService: ObservableObject {
     private func sendPrimaryFeedSubscription(client: WebSocketClient, label: String) {
         let (since, limitVal) = feedSinceAndLimit()
         let isInbox = label == localInboxURL?.absoluteString
+        let isFollowingLike = feedMode == .following || (feedMode == .media && mediaFeedMode == .following)
+
+        // GUARD: never send a dead `authors:[]` REQ for an author-filtered mode with
+        // no authors yet — it matches zero notes and would silently stick. Record
+        // that no live primary sub exists so `resubscribePrimaryIfNeeded()` re-sends
+        // the moment the follow set / extended network arrives.
+        if !isInbox && isFollowingLike && followedPubkeys.isEmpty {
+            subscribedAuthorsByRelay[label] = nil
+            return
+        }
+        if !isInbox && feedMode == .discovery && extendedNetworkPubkeys.isEmpty {
+            subscribedAuthorsByRelay[label] = nil
+            return
+        }
 
         var filter: [String: Any] = [
             "kinds": [1, 6, 30023],
@@ -1934,7 +2141,7 @@ class FeedService: ObservableObject {
             if !ownerHex.isEmpty {
                 filter["#p"] = [ownerHex]
             }
-        } else if feedMode == .following || (feedMode == .media && mediaFeedMode == .following) {
+        } else if isFollowingLike {
             filter["authors"] = followedPubkeys
         } else if feedMode == .discovery {
             filter["authors"] = extendedNetworkPubkeys
@@ -1947,6 +2154,17 @@ class FeedService: ObservableObject {
         if let data = try? JSONSerialization.data(withJSONObject: req),
            let str = String(data: data, encoding: .utf8) {
             client.send(text: str)
+            // Record the author set we just subscribed with so reconcile can detect
+            // drift. Inbox/global/popular carry no author filter → record [].
+            if isInbox {
+                subscribedAuthorsByRelay[label] = []
+            } else if isFollowingLike {
+                subscribedAuthorsByRelay[label] = followedPubkeys
+            } else if feedMode == .discovery {
+                subscribedAuthorsByRelay[label] = extendedNetworkPubkeys
+            } else {
+                subscribedAuthorsByRelay[label] = []
+            }
         }
     }
 

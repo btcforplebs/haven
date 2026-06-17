@@ -89,7 +89,10 @@ class PendingPostManager: ObservableObject {
             .store(in: &cancellables)
     }
 
-    func startPost(event: NostrEvent, content: String, replyTo: FeedNote?, quoteTo: FeedNote?, nostrService: NostrService) {
+    /// `draftId`, when provided, is the saved draft backing this post. It is deleted only
+    /// once the post actually broadcasts (after the countdown) — not at hand-off — so a crash
+    /// or cancel during the pending window leaves the user's text recoverable.
+    func startPost(event: NostrEvent, content: String, replyTo: FeedNote?, quoteTo: FeedNote?, nostrService: NostrService, draftId: String? = nil) {
         clearPrevious()
         let type: ActionType = replyTo != nil ? .reply : quoteTo != nil ? .quote : .newPost
         pendingEvent = event
@@ -100,7 +103,13 @@ class PendingPostManager: ObservableObject {
         actionType = type
         timeRemaining = ActionType.countdownDuration
         withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { isShowing = true }
-        beginCountdown { nostrService.postEvent(event) }
+        beginCountdown {
+            nostrService.postEvent(event)
+            // The note is now broadcasting — safe to drop its draft.
+            if let draftId {
+                Task { await DraftService.shared.deleteDraft(id: draftId) }
+            }
+        }
     }
 
     func startRepost(sourceNote: FeedNote, nostrService: NostrService) {
