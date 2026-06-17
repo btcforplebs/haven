@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1 (10) macOS / 1.1.1 (10) iOS] - 2026-06-17
+
+> **Zaps Only Mode, @-mention Autocomplete & Feed Reliability**: New Appearance setting that strips likes/reactions from the app so zaps are the only engagement; inline @-mention autocomplete in the composer; tap-to-swipe full-screen note media; aspect-ratio-aware feed photos and videos; a feed cold-start reconciler that fixes "relay connected but feed empty" and reduces the need to pull-to-refresh; crash-safe drafts; and fixes for mention accuracy, draft re-sync, and follow-list freshness.
+
+### Added
+- **Zaps Only Mode**: New Settings > Appearance toggle (default off) that removes likes and reactions throughout the app — feed action bars, engagement counts, the Relay "Likes" tab, and reaction push notifications are all hidden/disabled, making zaps the only way to engage and the primary notification signal. Backed by `HavenConfig.zapsOnlyMode`; toggling it re-registers push preferences so the reaction-push override is applied/lifted immediately, and the Likes view auto-routes to Notes when enabled.
+- **@-mention Autocomplete (iOS)**: Typing `@` in the composer opens an inline picker that searches people you follow, participants in the current thread, and — via NIP-50 relay search — anyone else. Selections display as readable `@name` tokens, convert to `nostr:` references on publish, and `p`-tag correctly.
+- **Swipeable Full-Screen Note Media**: Tapping a photo in a note opens a full-screen pager that swipes across all of that note's images.
+- **Media Tab Following/Global Toggle**: The media feed can be filtered between people you follow and global content.
+- **Split Notes vs Engagement Filters**: The Relay/Viewer separates note-kind filters from engagement (reactions/zaps/reposts) filters.
+
+### Changed
+- **Feed Cold-Start Reliability**: Feed subscriptions are reconciled against relay-readiness and the follow set, fixing "relay connected but Following empty" and greatly reducing the need to pull-to-refresh for the latest posts.
+- **Natural Aspect-Ratio Media**: Feed photos and videos size to their natural aspect ratio (with sensible height caps) instead of fixed frames.
+- **Crash-Safe Drafts**: In-progress posts are persisted before sending and restored after an interruption; a draft is deleted only once its post actually broadcasts.
+- **Relay Tab Sync**: Tagged replies and the owner's own notes are reliably surfaced; pull-to-refresh triggers an immediate network catch-up.
+- **Notification Dot**: The relay-activity indicator now lights up only for others' inbound activity, never your own posts/blasts.
+- **Immediate Unfollow**: Unfollowing an author immediately removes their notes from the feed.
+- **Media Tab Scope**: Shows only your own content.
+- **Performance**: Higher in-memory note/event caps for smoother long scroll-back; long-form bodies bounded separately; refreshed default relay list (dead relays dropped).
+- **Settings**: Removed the editable Push Server URL field.
+
+### Fixed
+- **Mention Accuracy**: Two people sharing a display name no longer collide — each mention resolves to the correct pubkey (previously the inline `nostr:` reference could point at the wrong person). Disambiguated with a per-pubkey token suffix.
+- **Draft Re-Sync**: Reopening the composer no longer re-saves and re-syncs an unchanged draft — the saved-content baseline now matches the editor's display form.
+- **Orphaned Drafts**: Editing a pending post reuses its backing draft instead of leaving an orphan; `draftId` is now threaded through the edit flow.
+- **Follow-List Freshness**: The contact list picks the newest kind-3 by `created_at` rather than the first relay to respond.
+
 ## [2.5.1 (7) macOS / 1.1.1 (7) iOS] - 2026-06-08
 
 > **NIP-29 Group Chat, Async DM Sending, WoT Media Filtering & Outbox Relay Model**: NIP-29 relay-based group chat with browse/join/create/admin UI; DM sending is now fully async with optimistic UI; outbox relay model (NIP-65 write relays) improves relay list discovery; media tab filters by Web of Trust; FIPS overlay network Blossom publishing; event publishing reuses the existing feed socket; StatsService simplified to pure delta tracking; and broad thread-safety fixes.
