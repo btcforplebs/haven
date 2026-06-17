@@ -7,15 +7,26 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.media.AudioAttributes
+import android.net.Uri
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.drawable.toBitmap
+import coil.ImageLoader
+import coil.request.ImageRequest
 import com.nostrvault.MainActivity
+import com.nostrvault.R
 import com.nostrvault.data.local.ConfigStore
 import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import java.util.Collections
 import java.util.LinkedHashSet
 import javax.inject.Inject
@@ -39,10 +50,15 @@ class LocalNotificationService @Inject constructor(
     @ApplicationContext private val context: Context,
     private val configStore: ConfigStore,
     private val nostrService: Lazy<NostrService>,
+    private val imageLoader: Lazy<ImageLoader>,
 ) {
     companion object {
         private const val TAG = "LocalNotif"
-        private const val CHANNEL_ID = "nostrvault_events"
+        // Bump this id whenever the channel's sound/importance must change — a
+        // channel's settings are frozen by Android after first creation, so a new
+        // id is the only way an updated custom sound actually takes effect.
+        private const val CHANNEL_ID = "nostrvault_events_v2"
+        private const val OLD_CHANNEL_ID = "nostrvault_events"
         private const val MARKER = "🔔NOTIFY|"
         private const val PREVIEW_MARKER = "|preview="
         private const val MAX_SEEN = 500
@@ -60,10 +76,16 @@ class LocalNotificationService @Inject constructor(
     // this keeps the most recent event ids to be safe.
     private val seen: MutableSet<String> = Collections.synchronizedSet(LinkedHashSet())
 
+    // Off the poll loop: avatar fetches + posting run here so the relay log
+    // poller is never blocked on network I/O.
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
     /** Create the notification channel (idempotent). Safe to call repeatedly. */
     fun ensureChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val mgr = context.getSystemService(SystemNotificationManager::class.java) ?: return
+        // Retire the pre-custom-sound channel so users don't see a stale duplicate.
+        mgr.deleteNotificationChannel(OLD_CHANNEL_ID)
         if (mgr.getNotificationChannel(CHANNEL_ID) != null) return
         val channel = NotificationChannel(
             CHANNEL_ID,
@@ -72,6 +94,18 @@ class LocalNotificationService @Inject constructor(
         ).apply {
             description = "Mentions, replies, DMs, zaps, reactions, and reposts"
             enableVibration(true)
+            // Use a bundled custom sound if one exists at res/raw/notification.*
+            // (mp3/wav/ogg). Resolved by name so the code compiles whether or not
+            // the file is present; falls back to the system default otherwise.
+            val soundId = context.resources.getIdentifier("notification", "raw", context.packageName)
+            if (soundId != 0) {
+                val soundUri = Uri.parse("android.resource://${context.packageName}/$soundId")
+                val attrs = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+                setSound(soundUri, attrs)
+            }
         }
         mgr.createNotificationChannel(channel)
     }
@@ -136,9 +170,9 @@ class LocalNotificationService @Inject constructor(
             return
         }
 
-        val name = resolveName(author)
-        val (title, text) = buildContent(type, name, preview)
-        post(id, title, text, type, author)
+        val profile = if (author.length == 64) nostrService.get().profiles.value[author] else null
+        val (title, text) = buildContent(type, profile?.bestName, preview)
+        post(id, title, text, type, author, profile?.pictureURL)
     }
 
     /** Returns true if this id is newly seen (and records it); false if a duplicate. */
@@ -153,11 +187,6 @@ class LocalNotificationService @Inject constructor(
             }
         }
         true
-    }
-
-    private fun resolveName(authorHex: String): String? {
-        if (authorHex.length != 64) return null
-        return nostrService.get().profiles.value[authorHex]?.bestName
     }
 
     private fun buildContent(type: String, name: String?, preview: String): Pair<String, String> {
@@ -177,7 +206,7 @@ class LocalNotificationService @Inject constructor(
     }
 
     @SuppressLint("MissingPermission") // guarded by the runtime check below
-    private fun post(id: String, title: String, text: String, type: String, author: String) {
+    private fun post(id: String, title: String, text: String, type: String, author: String, pictureUrl: String?) {
         ensureChannel()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -201,19 +230,42 @@ class LocalNotificationService @Inject constructor(
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_email)
-            .setContentTitle(title)
-            .setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-            .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_SOCIAL)
-            .setContentIntent(pending)
-            .build()
+        // Fetch the sender's avatar off the poll loop, then post. The small icon is
+        // the app logo (Android masks it to a silhouette on the lockscreen); the
+        // large icon is the sender's profile picture when we have one.
+        scope.launch {
+            val largeIcon = loadAvatar(pictureUrl)
+            val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setCategory(NotificationCompat.CATEGORY_SOCIAL)
+                .setContentIntent(pending)
+                .apply { if (largeIcon != null) setLargeIcon(largeIcon) }
+                .build()
 
-        // Stable per-event notification id so the same event never double-posts.
-        NotificationManagerCompat.from(context).notify(id.hashCode(), notification)
-        Log.i(TAG, "posted notification: \"$title\"")
+            // Stable per-event notification id so the same event never double-posts.
+            NotificationManagerCompat.from(context).notify(id.hashCode(), notification)
+            Log.i(TAG, "posted notification: \"$title\"")
+        }
+    }
+
+    /** Load the sender's avatar into a software bitmap via Coil; null on any failure. */
+    private suspend fun loadAvatar(url: String?): Bitmap? {
+        if (url.isNullOrBlank()) return null
+        return try {
+            val request = ImageRequest.Builder(context)
+                .data(url)
+                .allowHardware(false) // notifications need a software bitmap
+                .size(128)
+                .build()
+            imageLoader.get().execute(request).drawable?.toBitmap()
+        } catch (e: Exception) {
+            Log.w(TAG, "avatar load failed: ${e.message}")
+            null
+        }
     }
 }
