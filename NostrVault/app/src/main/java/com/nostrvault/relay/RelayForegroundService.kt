@@ -170,11 +170,12 @@ class RelayForegroundService : Service() {
 
     enum class RelayStatus { BOOTING, IMPORTING, RUNNING, OFFLINE }
 
-    /** Hilt accessor so this (non-injected) Service can reach the LogStore singleton. */
+    /** Hilt accessor so this (non-injected) Service can reach singletons. */
     @EntryPoint
     @InstallIn(SingletonComponent::class)
     interface LogStoreEntryPoint {
         fun logStore(): LogStore
+        fun localNotifier(): com.nostrvault.service.LocalNotificationService
     }
 
     // ── Lifecycle state machine (replaces bare `relayStarted` boolean) ──
@@ -195,6 +196,10 @@ class RelayForegroundService : Service() {
         EntryPointAccessors.fromApplication(applicationContext, LogStoreEntryPoint::class.java).logStore()
     }
 
+    private val localNotifier: com.nostrvault.service.LocalNotificationService by lazy {
+        EntryPointAccessors.fromApplication(applicationContext, LogStoreEntryPoint::class.java).localNotifier()
+    }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -202,6 +207,10 @@ class RelayForegroundService : Service() {
         // Own the live log poller for the whole service lifetime so the relay-activity
         // red dot is detected continuously (not only while the Dashboard is on-screen).
         // The poll loop idles harmlessly until the Go relay is loaded.
+        // Route the relay's NOTIFY marker lines to the local notifier so inbound
+        // mentions/DMs/zaps raise system notifications without a push server.
+        localNotifier.ensureChannel()
+        logStore.notifySink = { line -> localNotifier.onLogLine(line) }
         logStore.startPolling(serviceScope)
     }
 

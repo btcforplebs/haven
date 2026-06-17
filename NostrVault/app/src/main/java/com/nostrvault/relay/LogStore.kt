@@ -32,6 +32,15 @@ class LogStore @Inject constructor() {
 
     private var pollingJob: Job? = null
 
+    /**
+     * Optional sink for raw `🔔NOTIFY|...` marker lines, set by the relay
+     * foreground service so [com.nostrvault.service.LocalNotificationService] can
+     * raise local system notifications. Kept as a plain callback so this store
+     * stays dependency-free.
+     */
+    @Volatile
+    var notifySink: ((String) -> Unit)? = null
+
     fun addEntry(entry: RelayLogParser.LogEntry) {
         val current = _logs.value.toMutableList()
         current.add(entry)
@@ -65,6 +74,10 @@ class LogStore @Inject constructor() {
                         // handler; your own posts/blasts never produce them.
                         if (message.contains("in your inbox") || message.contains("in your chat relay")) {
                             RelayForegroundService.markInboxActivity()
+                        }
+                        // Forward notification markers to the local notifier (if wired).
+                        if (message.contains("🔔NOTIFY|")) {
+                            notifySink?.invoke(message)
                         }
                         val entry = RelayLogParser.LogEntry.parse(message)
                         addEntry(entry)
