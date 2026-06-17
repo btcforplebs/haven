@@ -2870,26 +2870,64 @@ struct AppearanceSettingsView: View {
                 Text("Use pure black backgrounds to save power on OLED screens.")
             }
 
+            #if os(iOS)
             Section {
-                Button(action: {
-                    showEmojiPicker = true
-                }) {
-                    HStack {
-                        Label("Default Reaction", systemImage: "heart.fill")
-                            .foregroundColor(.primary)
-                        Spacer()
-                        Text(configService.config.defaultReactionEmoji)
-                            .font(.appSystem(size: 24))
-                        Image(systemName: "chevron.right")
-                            .font(.appSystem(size: 12))
-                            .foregroundColor(.secondary)
+                Toggle(isOn: $configService.config.disableTabBarAnimation) {
+                    Label("Disable Tab Bar Animation", systemImage: "rectangle.bottombar.fill")
+                }
+                .onChange(of: configService.config.disableTabBarAnimation) { _, _ in
+                    configService.save()
+                }
+            } header: {
+                Text("Tab Bar")
+            } footer: {
+                Text("Keep the bottom tab bar fully expanded at all times. When off, the bar shrinks and hides as you scroll.")
+            }
+            #endif
+
+            Section {
+                Toggle(isOn: $configService.config.zapsOnlyMode) {
+                    Label("Zaps Only Mode", systemImage: "bolt.fill")
+                }
+                .onChange(of: configService.config.zapsOnlyMode) { _, _ in
+                    configService.save()
+                    // Re-push notification preferences so the server applies/lifts the
+                    // reaction-push override immediately (see PushNotificationService).
+                    if configService.config.enablePushNotifications,
+                       let token = PushNotificationService.shared.deviceToken {
+                        Task {
+                            await PushNotificationService.shared.registerAllAccountsWithRemoteServer(deviceToken: token)
+                        }
                     }
                 }
-                .buttonStyle(.plain)
             } header: {
-                Text("Reactions")
+                Text("Engagement")
             } footer: {
-                Text("Choose your default reaction emoji. This emoji will be used when you tap the heart button on a note.")
+                Text("Remove likes and reactions from the app entirely. Zaps become the only way to engage with notes and the primary source of relay notifications.")
+            }
+
+            if !configService.config.zapsOnlyMode {
+                Section {
+                    Button(action: {
+                        showEmojiPicker = true
+                    }) {
+                        HStack {
+                            Label("Default Reaction", systemImage: "heart.fill")
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Text(configService.config.defaultReactionEmoji)
+                                .font(.appSystem(size: 24))
+                            Image(systemName: "chevron.right")
+                                .font(.appSystem(size: 12))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                } header: {
+                    Text("Reactions")
+                } footer: {
+                    Text("Choose your default reaction emoji. This emoji will be used when you tap the heart button on a note.")
+                }
             }
 
             #if os(iOS)

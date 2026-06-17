@@ -260,7 +260,10 @@ struct ComposeView: View {
                 }
                 if let restored = restoredDraftId {
                     draftId = restored
-                    lastSavedContent = initialContent.trimmingCharacters(in: .whitespacesAndNewlines)
+                    // Baseline must match the editor's display form (with @name mentions),
+                    // not the canonical nostr: form, or the dirty check always fires and
+                    // re-saves/re-syncs the draft on every open with no real edit.
+                    lastSavedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
                 }
                 Task { await draftService.fetchDrafts() }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
@@ -523,6 +526,29 @@ struct ComposeView: View {
         return "@\(clean.isEmpty ? String(pubkey.prefix(8)) : clean)"
     }
 
+    /// Returns a token guaranteed unique within `mentionMap`. Two distinct users can
+    /// share a display name (e.g. both "satoshi"); without disambiguation the second
+    /// insertion would overwrite the first in `mentionMap`, and `convertMentionsToNostr`
+    /// would rewrite *every* `@satoshi` to the last-stored pubkey — silently mentioning
+    /// the wrong person. On a same-name collision we append a short pubkey suffix.
+    private func uniqueMentionToken(name: String, pubkey: String) -> String {
+        let base = mentionToken(name: name, pubkey: pubkey)
+        // Unmapped, or already mapped to this same pubkey → the base token is correct.
+        if let existing = mentionMap[base] {
+            if existing == pubkey { return base }
+        } else {
+            return base
+        }
+        // Collision with a different pubkey → disambiguate with a stable suffix.
+        var candidate = "\(base)·\(String(pubkey.prefix(8)))"
+        var n = 2
+        while let existing = mentionMap[candidate], existing != pubkey {
+            candidate = "\(base)·\(String(pubkey.prefix(8)))-\(n)"
+            n += 1
+        }
+        return candidate
+    }
+
     /// Converts `nostr:npub1…`/`nostr:nprofile1…` references in `text` to readable
     /// `@name` tokens for editing, rebuilding `mentionMap` and `taggedPubkeys`.
     /// Used when loading drafts or editing a pending post.
@@ -535,7 +561,7 @@ struct ComposeView: View {
         for match in re.matches(in: text, range: NSRange(location: 0, length: ns.length)).reversed() {
             let bech32 = ns.substring(with: match.range(at: 1))
             guard let pubkey = resolvePubkey(fromBech32: bech32) else { continue }
-            let token = mentionToken(name: nostrService.profiles[pubkey]?.bestName ?? "", pubkey: pubkey)
+            let token = uniqueMentionToken(name: nostrService.profiles[pubkey]?.bestName ?? "", pubkey: pubkey)
             mentionMap[token] = pubkey
             if !taggedPubkeys.contains(pubkey) { taggedPubkeys.append(pubkey) }
             result = (result as NSString).replacingCharacters(in: match.range, with: token)
@@ -566,7 +592,7 @@ struct ComposeView: View {
     }
 
     private func insertMention(_ profile: FeedProfile) {
-        let token = mentionToken(name: profile.bestName, pubkey: profile.pubkey)
+        let token = uniqueMentionToken(name: profile.bestName, pubkey: profile.pubkey)
         let replacement = "\(token) "
 
         // Replace the active `@query` token (which may be mid-text) with the display token.

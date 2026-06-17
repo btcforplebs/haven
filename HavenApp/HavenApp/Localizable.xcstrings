@@ -663,6 +663,9 @@
     "Encrypt with Password" : {
 
     },
+    "Engagement" : {
+
+    },
     "Engine" : {
 
     },
@@ -1654,9 +1657,6 @@
     "Pull from Notes" : {
 
     },
-    "Push Server" : {
-
-    },
     "Queries your local relay and external relays for all historical contact list events. Select one to view or restore." : {
 
     },
@@ -1727,6 +1727,9 @@
 
     },
     "Remote signer configured" : {
+
+    },
+    "Remove likes and reactions from the app entirely. Zaps become the only way to engage with notes and the primary source of relay notifications." : {
 
     },
     "Replies" : {
@@ -3213,9 +3216,6 @@
 
     },
     "Upload media to your Blossom server or pull from notes to get started" : {
-
-    },
-    "URL of the push notification server. Only change this if you self-host your own push server." : {
 
     },
     "Use pure black backgrounds to save power on OLED screens." : {

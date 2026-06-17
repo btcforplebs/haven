@@ -896,7 +896,7 @@ class FeedService @Inject constructor(
         }
         val total = feedClients.size
         when {
-            connected == 0 && total == 0 -> {
+            total == 0 -> {
                 _connectionStatus.value = "Disconnected"
                 _connectionColor.value = "gray"
             }
@@ -904,12 +904,13 @@ class FeedService @Inject constructor(
                 _connectionStatus.value = "Connecting..."
                 _connectionColor.value = "yellow"
             }
-            connected < total -> {
-                _connectionStatus.value = "Live ($connected/$total)"
-                _connectionColor.value = "yellow"
-            }
             else -> {
-                _connectionStatus.value = "Live"
+                // Green once the feed is live, i.e. at least one relay (almost always the
+                // embedded local relay) is connected. Requiring every public feed/blastr
+                // relay to be CONNECTED simultaneously kept the dot stuck off, since at any
+                // moment one of them is usually mid-reconnect. The connected/total count is
+                // still surfaced in the status text. Matches iOS, where "Live" == green.
+                _connectionStatus.value = if (connected < total) "Live ($connected/$total)" else "Live"
                 _connectionColor.value = "green"
             }
         }
@@ -1472,6 +1473,9 @@ class FeedService @Inject constructor(
     }
 
     fun setFeedScrollingDown(value: Boolean) {
+        // When the user disables the tab bar animation, the bar (and compose FAB)
+        // must stay fully expanded, so never publish a "scrolling down" flip.
+        if (value && configStore.config.value.disableTabBarAnimation) return
         _feedScrollingDown.value = value
     }
 

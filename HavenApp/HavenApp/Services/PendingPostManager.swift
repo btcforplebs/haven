@@ -59,6 +59,9 @@ class PendingPostManager: ObservableObject {
         let content: String
         let replyTo: FeedNote?
         let quoteTo: FeedNote?
+        /// The saved draft backing the post being edited, so the reopened composer
+        /// reuses it instead of leaking an orphan and generating a fresh draft.
+        let draftId: String?
     }
 
     @Published var isShowing = false
@@ -71,6 +74,7 @@ class PendingPostManager: ObservableObject {
     private var pendingContent: String = ""
     private var pendingReplyTo: FeedNote?
     private var pendingQuoteTo: FeedNote?
+    private var pendingDraftId: String?
     private var countdown: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
 
@@ -99,6 +103,7 @@ class PendingPostManager: ObservableObject {
         pendingContent = content
         pendingReplyTo = replyTo
         pendingQuoteTo = quoteTo
+        pendingDraftId = draftId
         bannerNoteId = event.id
         actionType = type
         timeRemaining = ActionType.countdownDuration
@@ -174,6 +179,7 @@ class PendingPostManager: ObservableObject {
             FeedService.shared.removeNote(id: event.id)
         }
         pendingEvent = nil
+        pendingDraftId = nil
         withAnimation(.easeOut(duration: 0.4)) {
             isShowing = false
             actionType = nil
@@ -196,7 +202,9 @@ class PendingPostManager: ObservableObject {
             actionType = nil
         }
         bannerNoteId = nil
-        editRequest = EditRequest(content: content, replyTo: replyTo, quoteTo: quoteTo)
+        let draftId = pendingDraftId
+        pendingDraftId = nil
+        editRequest = EditRequest(content: content, replyTo: replyTo, quoteTo: quoteTo, draftId: draftId)
     }
 
     private func clearPrevious() {
@@ -206,6 +214,7 @@ class PendingPostManager: ObservableObject {
             FeedService.shared.removeNote(id: event.id)
         }
         pendingEvent = nil
+        pendingDraftId = nil
         isShowing = false
         bannerNoteId = nil
         actionType = nil

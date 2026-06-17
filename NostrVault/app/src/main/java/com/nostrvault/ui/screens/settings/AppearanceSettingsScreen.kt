@@ -20,6 +20,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nostrvault.data.local.ConfigStore
+import com.nostrvault.service.FeedService
+import com.nostrvault.service.PushNotificationService
 import com.nostrvault.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +36,8 @@ import javax.inject.Inject
 @HiltViewModel
 class AppearanceViewModel @Inject constructor(
     private val configStore: ConfigStore,
+    private val pushService: PushNotificationService,
+    private val feedService: FeedService,
 ) : ViewModel() {
 
     private val _selectedTheme = MutableStateFlow(AppTheme.DEFAULT)
@@ -48,12 +52,20 @@ class AppearanceViewModel @Inject constructor(
     private val _defaultEmoji = MutableStateFlow("+")
     val defaultEmoji = _defaultEmoji.asStateFlow()
 
+    private val _zapsOnly = MutableStateFlow(false)
+    val zapsOnly = _zapsOnly.asStateFlow()
+
+    private val _disableTabBarAnimation = MutableStateFlow(false)
+    val disableTabBarAnimation = _disableTabBarAnimation.asStateFlow()
+
     init {
         val config = configStore.config.value
         _selectedTheme.value = AppTheme.fromKey(config.themeColor)
         _textScale.value = config.textSizeScale
         _oledMode.value = config.oledMode
         _defaultEmoji.value = config.defaultReactionEmoji
+        _zapsOnly.value = config.zapsOnlyMode
+        _disableTabBarAnimation.value = config.disableTabBarAnimation
     }
 
     fun selectTheme(theme: AppTheme) {
@@ -83,6 +95,26 @@ class AppearanceViewModel @Inject constructor(
             configStore.update { it.copy(defaultReactionEmoji = emoji) }
         }
     }
+
+    fun toggleZapsOnly(enabled: Boolean) {
+        _zapsOnly.value = enabled
+        viewModelScope.launch {
+            configStore.update { it.copy(zapsOnlyMode = enabled) }
+            // Re-push notification preferences so the server applies/lifts the
+            // reaction-push override immediately (see PushNotificationService).
+            pushService.registerIfReady()
+        }
+    }
+
+    fun toggleTabBarAnimation(disabled: Boolean) {
+        _disableTabBarAnimation.value = disabled
+        viewModelScope.launch {
+            configStore.update { it.copy(disableTabBarAnimation = disabled) }
+            // If the bar is currently condensed, restore it immediately so the
+            // setting takes effect without waiting for the next scroll-up.
+            if (disabled) feedService.setFeedScrollingDown(false)
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -95,6 +127,8 @@ fun AppearanceSettingsScreen(
     val textScale by viewModel.textScale.collectAsState()
     val oledMode by viewModel.oledMode.collectAsState()
     val defaultEmoji by viewModel.defaultEmoji.collectAsState()
+    val zapsOnly by viewModel.zapsOnly.collectAsState()
+    val disableTabBarAnimation by viewModel.disableTabBarAnimation.collectAsState()
 
     Scaffold(
         topBar = {
@@ -214,21 +248,82 @@ fun AppearanceSettingsScreen(
 
             Spacer(Modifier.height(32.dp))
 
-            // Default reaction emoji
-            Text(
-                text = "Default Reaction",
-                color = PrimaryText,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Text(
-                text = "Used for quick-react on notes",
-                color = SecondaryText,
-                fontSize = 13.sp,
-            )
-            Spacer(Modifier.height(12.dp))
+            // Disable tab bar animation
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Disable Tab Bar Animation",
+                        color = PrimaryText,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "Keep the bottom tab bar fully expanded at all times. When off, it shrinks and hides as you scroll.",
+                        color = SecondaryText,
+                        fontSize = 13.sp,
+                    )
+                }
+                Switch(
+                    checked = disableTabBarAnimation,
+                    onCheckedChange = viewModel::toggleTabBarAnimation,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = PrimaryText,
+                        checkedTrackColor = LocalNostrVaultColors.current.primary,
+                    ),
+                )
+            }
 
-            val emojiOptions = listOf(
+            Spacer(Modifier.height(32.dp))
+
+            // Zaps Only mode
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Zaps Only Mode",
+                        color = PrimaryText,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = "Remove likes and reactions entirely. Zaps become the only way to engage and the primary source of relay notifications.",
+                        color = SecondaryText,
+                        fontSize = 13.sp,
+                    )
+                }
+                Switch(
+                    checked = zapsOnly,
+                    onCheckedChange = viewModel::toggleZapsOnly,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = PrimaryText,
+                        checkedTrackColor = LocalNostrVaultColors.current.primary,
+                    ),
+                )
+            }
+
+            if (!zapsOnly) {
+                Spacer(Modifier.height(32.dp))
+
+                // Default reaction emoji
+                Text(
+                    text = "Default Reaction",
+                    color = PrimaryText,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = "Used for quick-react on notes",
+                    color = SecondaryText,
+                    fontSize = 13.sp,
+                )
+                Spacer(Modifier.height(12.dp))
+
+                val emojiOptions = listOf(
                 "+" to "+",
                 "\u2764\uFE0F" to "\u2764\uFE0F",
                 "\uD83D\uDC4D" to "\uD83D\uDC4D",
@@ -270,6 +365,7 @@ fun AppearanceSettingsScreen(
                         )
                     }
                 }
+            }
             }
         }
     }

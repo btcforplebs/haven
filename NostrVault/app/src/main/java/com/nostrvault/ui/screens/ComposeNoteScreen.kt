@@ -49,6 +49,7 @@ import com.nostrvault.data.model.Draft
 import com.nostrvault.data.model.FeedNote
 import com.nostrvault.data.model.FeedProfile
 import com.nostrvault.data.local.ConfigStore
+import com.nostrvault.service.BlobDescriptor
 import com.nostrvault.service.BlossomService
 import com.nostrvault.service.DraftService
 import com.nostrvault.service.FeedService
@@ -57,6 +58,7 @@ import com.nostrvault.service.MediaType
 import com.nostrvault.service.NostrService
 import com.nostrvault.relay.HavenBridge
 import com.nostrvault.service.PendingPostManager
+import com.nostrvault.service.StatsService
 import com.nostrvault.ui.components.AccountInfo
 import com.nostrvault.ui.components.AccountSwitcherSheet
 import com.nostrvault.ui.components.buildAccountInfos
@@ -68,6 +70,9 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -107,6 +112,7 @@ class ComposeNoteViewModel @Inject constructor(
     private val pendingPostManager: PendingPostManager,
     private val draftService: DraftService,
     private val blossomService: BlossomService,
+    private val statsService: StatsService,
     private val configStore: ConfigStore,
     @ApplicationContext private val context: Context,
     savedStateHandle: SavedStateHandle,
@@ -521,48 +527,88 @@ class ComposeNoteViewModel @Inject constructor(
     suspend fun loadBlossomMediaItems(): List<MediaItem> = withContext(Dispatchers.IO) {
         try {
             val config = configStore.config.value
-            val blossomDir = config.relayDataDir?.let { File(it, config.blossomPath) } ?: return@withContext emptyList()
-            if (!blossomDir.exists()) return@withContext emptyList()
-
-            val localBase = blossomService.localBlossomURL() ?: return@withContext emptyList()
+            val pubkey = nostrService.ownerHexPubkey
+            val localBase = blossomService.localBlossomURL()
             // Prefer an external mirror so the inserted URL is publicly accessible in published notes
             val externalBase = config.activeBlossomMirrors
                 .firstOrNull { url -> !url.contains("localhost") && !url.contains("127.0.0.1") }
-            val items = mutableListOf<MediaItem>()
 
-            blossomDir.listFiles()?.forEach { file ->
-                if (!file.isFile) return@forEach
-                val filename = file.name
-                if (filename.startsWith(".") || filename == "LOCK") return@forEach
+            // Dedupe across local files, the local relay, and external mirrors by sha256.
+            val items = linkedMapOf<String, MediaItem>()
 
-                val sha256 = file.nameWithoutExtension
-                if (sha256.length != 64 || !sha256.all { it in "0123456789abcdef" }) return@forEach
-
-                val extension = file.extension.lowercase()
-                val mediaType = when (extension) {
+            fun mediaTypeFor(mime: String?, url: String?): MediaType {
+                val m = mime?.lowercase()
+                when {
+                    m != null && m.startsWith("image/") -> return MediaType.IMAGE
+                    m != null && m.startsWith("video/") -> return MediaType.VIDEO
+                    m != null && m.startsWith("audio/") -> return MediaType.AUDIO
+                }
+                return when (url?.substringAfterLast('.', "")?.lowercase()) {
                     "jpg", "jpeg", "png", "gif", "webp" -> MediaType.IMAGE
                     "mp4", "mov", "webm", "avi" -> MediaType.VIDEO
                     "mp3", "m4a", "wav", "ogg" -> MediaType.AUDIO
                     else -> MediaType.UNKNOWN
                 }
+            }
 
-                if (mediaType != MediaType.UNKNOWN) {
-                    // Use external mirror URL (BUD-01: {server}/{sha256}) so links work in published notes;
-                    // fall back to local URL only when no mirrors are configured.
-                    val insertUrl = if (externalBase != null) "$externalBase/$sha256" else "$localBase/$filename"
-                    items.add(
-                        MediaItem(
-                            url = insertUrl,
-                            type = mediaType,
-                            pubkey = nostrService.ownerHexPubkey,
-                            tags = null,
-                            mimeType = null
-                        )
-                    )
+            fun addItem(sha256: String, type: MediaType, fallbackUrl: String?) {
+                if (sha256.length != 64 || !sha256.all { it in "0123456789abcdef" }) return
+                if (type == MediaType.UNKNOWN) return
+                if (items.containsKey(sha256)) return
+                // Use external mirror URL (BUD-01: {server}/{sha256}) so links work in published notes;
+                // fall back to the blob's own URL, then the local relay.
+                val insertUrl = when {
+                    externalBase != null -> "$externalBase/$sha256"
+                    fallbackUrl != null -> fallbackUrl
+                    localBase != null -> "$localBase/$sha256"
+                    else -> return
+                }
+                items[sha256] = MediaItem(
+                    url = insertUrl,
+                    type = type,
+                    pubkey = pubkey,
+                    tags = null,
+                    mimeType = null
+                )
+            }
+
+            // 1. Files cached in the local relay's blossom directory.
+            val blossomDir = config.relayDataDir?.let { File(it, config.blossomPath) }
+            if (blossomDir != null && blossomDir.exists()) {
+                blossomDir.listFiles()?.forEach { file ->
+                    if (!file.isFile) return@forEach
+                    val filename = file.name
+                    if (filename.startsWith(".") || filename == "LOCK") return@forEach
+                    addItem(file.nameWithoutExtension, mediaTypeFor(null, filename), localBase?.let { "$it/$filename" })
                 }
             }
 
-            items.sortedByDescending { it.url }
+            // 2. The local relay + external mirrors via the Blossom /list/<pubkey> endpoint,
+            //    so media that lives only on a mirror still appears in the picker.
+            if (pubkey.isNotEmpty()) {
+                val sources = buildList {
+                    add(null) // local relay (default nostrURL base)
+                    addAll(config.activeBlossomMirrors)
+                }
+                val blobLists = coroutineScope {
+                    sources.map { base ->
+                        async {
+                            try {
+                                if (base == null) statsService.fetchBlobList(pubkey)
+                                else statsService.fetchBlobList(pubkey, base)
+                            } catch (e: Exception) {
+                                emptyList<BlobDescriptor>()
+                            }
+                        }
+                    }.awaitAll()
+                }
+                blobLists.flatten().forEach { blob ->
+                    val sha = blob.sha256 ?: return@forEach
+                    addItem(sha, mediaTypeFor(blob.type, blob.url), blob.url)
+                }
+            }
+
+            items.values.sortedByDescending { it.url }
         } catch (e: Exception) {
             Log.e("ComposeNote", "Failed to load blossom media items", e)
             emptyList()
@@ -1141,7 +1187,7 @@ fun ComposeNoteScreen(
                         .background(colors.primary.copy(alpha = 0.1f), CircleShape)
                 ) {
                     Icon(
-                        imageVector = Icons.Default.PhotoLibrary,
+                        imageVector = NostrVaultIcons.Blossom,
                         contentDescription = "Pick from Blossom",
                         tint = colors.primary,
                         modifier = Modifier.size(20.dp)
