@@ -114,6 +114,11 @@ class FeedService: ObservableObject {
         // Uses lazy zip to avoid allocating temporary [String] arrays.
         if newFiltered.count != filteredNotes.count ||
             !zip(newFiltered, filteredNotes).allSatisfy({ $0.id == $1.id }) {
+            #if DEBUG
+            if newFiltered.isEmpty && !notes.isEmpty {
+                print("FeedService: [recompute] ⚠️ filtered→0 with notes=\(notes.count) mode=\(feedMode.rawValue) followedPubkeys=\(followedPubkeys.count)")
+            }
+            #endif
             filteredNotes = newFiltered
             parentIsNextNote = FeedFilterEngine.computeParentIsNext(filteredNotes: newFiltered)
         }
@@ -730,6 +735,10 @@ class FeedService: ObservableObject {
             loadPopularFeed()
             return
         }
+
+        #if DEBUG
+        print("FeedService: [refresh] start — followedPubkeys=\(followedPubkeys.count) notes=\(notes.count) filtered=\(filteredNotes.count)")
+        #endif
 
         disconnectFeedClients()
         shouldScrollToTopOnLoad = true
@@ -1555,8 +1564,10 @@ class FeedService: ObservableObject {
         }
     }
 
-    /// Opens a connection to every candidate relay simultaneously and fires `completion`
-    /// as soon as any relay returns a kind-3 event with at least one follow.
+    /// Opens a connection to every candidate relay simultaneously, collects the
+    /// owner's kind-3 contact list from each, and commits the NEWEST one (by
+    /// created_at) — kind-3 is a replaceable event, so the freshest version is
+    /// authoritative, not whichever relay happens to answer first.
     private func fetchContactListInParallel(from relays: [URL], ownerHex: String, completion: @escaping () -> Void) {
         guard !relays.isEmpty else {
             contactLoadingTimeout?.invalidate()
@@ -1569,42 +1580,61 @@ class FeedService: ObservableObject {
         var completed = false
         var eoseCount = 0
         var clients: [WebSocketClient] = []
+        // kind-3 is a REPLACEABLE event: keep the NEWEST version across relays, not
+        // the first to arrive. Taking first-to-arrive let a stale relay copy
+        // overwrite a fresh local edit — e.g. unfollow then refresh resurrected the
+        // unfollowed user, and a fast relay serving an old/smaller list shrank the
+        // feed. We collect candidates and commit the one with the max created_at.
+        var best: (pTags: [[String]], content: String, createdAt: Int)?
+        var graceWork: DispatchWorkItem?
 
-        let finish: ([[String]], String, WebSocketClient) -> Void = { [weak self] pTags, content, winner in
-            guard let self = self, !completed else { return }
+        let finalize: () -> Void = { [weak self] in
+            guard let self = self, !completed, self.isLoadingContacts else { return }
             // Discard responses that raced past an account switch.
             guard ownerHex == ConfigService.shared.activeAccountHexPubkey else {
                 clients.forEach { $0.disconnect() }
                 return
             }
             completed = true
+            graceWork?.cancel()
             self.contactLoadingTimeout?.invalidate()
             clients.forEach { $0.disconnect() }
 
-            let parsed = ContactManager.parseContactList(
-                pTags: pTags,
-                ownerHex: ownerHex,
-                whitelistedNpubs: ConfigService.shared.config.whitelistedNpubs
-            )
+            if let best = best {
+                let parsed = ContactManager.parseContactList(
+                    pTags: best.pTags,
+                    ownerHex: ownerHex,
+                    whitelistedNpubs: ConfigService.shared.config.whitelistedNpubs
+                )
+                #if DEBUG
+                print("FeedService: [contact] commit newest created_at=\(best.createdAt) parsed=\(parsed.pubkeys.count) (was followedPubkeys=\(self.followedPubkeys.count))")
+                #endif
+                self.contactListPTags = parsed.pTags
+                self.followedPubkeys = parsed.pubkeys
+                self.contactListContent = best.content
+                self.lastFetchedContactCount = parsed.relayPTagCount
+                self.connectionStatus = parsed.relayPTagCount == 0 ? "No contacts found" : "Loaded \(parsed.relayPTagCount) contacts"
+                // Re-filter already-loaded notes against the committed follow set so the
+                // visible feed reflects it immediately (don't wait for new notes to stream).
+                self.recomputeFilteredNotes()
+                FollowingBackupService.shared.maybeCreateSnapshot(
+                    pubkeys: self.followedPubkeys,
+                    pTags: parsed.pTags,
+                    contactListContent: best.content,
+                    forAccountKey: self.currentSnapshotKey()
+                )
+            } else {
+                // No kind-3 found anywhere — leave the existing follow set intact.
+                #if DEBUG
+                print("FeedService: [contact] no kind-3 found — followedPubkeys unchanged=\(self.followedPubkeys.count)")
+                #endif
+                self.connectionStatus = self.followedPubkeys.isEmpty ? "No contacts found" : "Loaded \(self.followedPubkeys.count) contacts"
+            }
 
-            self.contactListPTags = parsed.pTags
-            self.followedPubkeys = parsed.pubkeys
-            self.contactListContent = content
-            self.lastFetchedContactCount = parsed.relayPTagCount
             self.isLoadingContacts = false
             self.hasAttemptedContactLoad = true
-            self.connectionStatus = parsed.relayPTagCount == 0 ? "No contacts found" : "Loaded \(parsed.relayPTagCount) contacts"
-
-            FollowingBackupService.shared.maybeCreateSnapshot(
-                pubkeys: self.followedPubkeys,
-                pTags: parsed.pTags,
-                contactListContent: content,
-                forAccountKey: self.currentSnapshotKey()
-            )
-
             self.handleContactLoadResolved()
             completion()
-
         }
 
         for url in relays {
@@ -1625,26 +1655,29 @@ class FeedService: ObservableObject {
                        let kind = eventDict["kind"] as? Int, kind == 3,
                        let tags = eventDict["tags"] as? [[String]] {
                         let pTags = tags.filter { $0.count >= 2 && $0[0] == "p" }
+                        let createdAt = (eventDict["created_at"] as? Int) ?? 0
+                        #if DEBUG
+                        print("FeedService: [contact] kind-3 from \(url.absoluteString) pTags=\(pTags.count) created_at=\(createdAt)")
+                        #endif
                         guard !pTags.isEmpty else { return }
                         let content = eventDict["content"] as? String ?? ""
-                        finish(pTags, content, c)
+                        // Keep the newest version seen so far.
+                        if best == nil || createdAt > best!.createdAt {
+                            best = (pTags, content, createdAt)
+                        }
+                        // On the first usable kind-3, start a short grace window so a
+                        // newer version from another relay can still win, then commit.
+                        if graceWork == nil && !completed {
+                            let work = DispatchWorkItem { finalize() }
+                            graceWork = work
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2, execute: work)
+                        }
                     } else if type == "EOSE" {
                         eoseCount += 1
-                        // All relays returned EOSE with no usable contact list
+                        // Every relay has delivered its stored kind-3 (if any) before
+                        // its EOSE — so once all have EOSE'd, `best` is the true newest.
                         if eoseCount >= relays.count && !completed {
-                            guard ownerHex == ConfigService.shared.activeAccountHexPubkey else {
-                                completed = true
-                                clients.forEach { $0.disconnect() }
-                                return
-                            }
-                            completed = true
-                            self.contactLoadingTimeout?.invalidate()
-                            clients.forEach { $0.disconnect() }
-                            self.isLoadingContacts = false
-                            self.hasAttemptedContactLoad = true
-                            self.connectionStatus = self.followedPubkeys.isEmpty ? "No contacts found" : "Loaded \(self.followedPubkeys.count) contacts"
-                            self.handleContactLoadResolved()
-                            completion()
+                            finalize()
                         }
                     }
                 }

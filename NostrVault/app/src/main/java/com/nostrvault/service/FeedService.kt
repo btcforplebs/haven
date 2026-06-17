@@ -55,6 +55,9 @@ class FeedService @Inject constructor(
         private const val MAX_RAW_EVENT_CACHE = 1000
         private const val MAX_INJECTED_IDS = 10_000
         private const val CONTACT_LOAD_TIMEOUT_MS = 15_000L
+        // After the first kind-3 arrives, wait briefly for a newer version from
+        // another relay before committing (kind-3 is replaceable → newest wins).
+        private const val CONTACT_NEWEST_GRACE_MS = 1_200L
         private const val FEED_LOAD_TIMEOUT_MS = 20_000L
         private const val EXTENDED_NETWORK_TIMEOUT_MS = 15_000L
         private const val NOTE_FETCH_TIMEOUT_MS = 8_000L
@@ -484,8 +487,24 @@ class FeedService @Inject constructor(
         }
 
         return suspendCancellableCoroutine { cont ->
-            var completed = false
-            val completeLock = ReentrantLock()
+            var resumed = false
+            val lock = ReentrantLock()
+            // kind-3 is a REPLACEABLE event: the authoritative version is the one
+            // with the newest created_at, NOT whichever relay answers first. Taking
+            // first-to-arrive let a stale relay copy overwrite a fresh local edit —
+            // e.g. unfollow someone, refresh, and they came back because an older
+            // kind-3 won the race. Collect across relays and keep the newest.
+            var best: Triple<List<String>, String, Long>? = null   // pubkeys, content, createdAt
+            var graceJob: Job? = null
+
+            fun resumeWithBest() {
+                lock.withLock {
+                    if (resumed) return
+                    resumed = true
+                    graceJob?.cancel()
+                    cont.resume(best?.let { it.first to it.second }) {}
+                }
+            }
 
             for (relayUrl in relayUrls) {
                 scope.launch(Dispatchers.IO) {
@@ -502,23 +521,29 @@ class FeedService @Inject constructor(
                                     val eventObj = parsed[2].jsonObject
                                     val kind = eventObj["kind"]?.jsonPrimitive?.intOrNull
                                     if (kind == 3) {
+                                        val createdAt = eventObj["created_at"]?.jsonPrimitive?.longOrNull ?: 0L
                                         val tags = eventObj["tags"]?.jsonArray?.map { tagArr ->
                                             tagArr.jsonArray.map { it.jsonPrimitive.contentOrNull ?: "" }
                                         } ?: emptyList()
                                         val content = eventObj["content"]?.jsonPrimitive?.contentOrNull ?: ""
 
-                                        Log.d(TAG, "fetchContactList: got kind:3 from $relayUrl with ${tags.size} tags")
-
                                         val ownerHex = nostrService.activeHexPubkey
                                         val whitelistedNpubs = configStore.config.value.whitelistedNpubs ?: emptyList()
                                         val contactResult = contactManager.parseContactList(tags, ownerHex, whitelistedNpubs)
                                         val pubkeys = contactResult.pubkeys
-                                        Log.d(TAG, "fetchContactList: parsed ${pubkeys.size} pubkeys from ${tags.size} tags")
+                                        Log.d(TAG, "fetchContactList: kind:3 from $relayUrl tags=${tags.size} parsed=${pubkeys.size} created_at=$createdAt")
                                         if (pubkeys.isNotEmpty()) {
-                                            completeLock.withLock {
-                                                if (!completed) {
-                                                    completed = true
-                                                    cont.resume(pubkeys to content) {}
+                                            lock.withLock {
+                                                if (best == null || createdAt > best!!.third) {
+                                                    best = Triple(pubkeys, content, createdAt)
+                                                }
+                                                // On the first result, start a short grace window so a
+                                                // newer kind-3 from another relay can still win, then resume.
+                                                if (graceJob == null && !resumed) {
+                                                    graceJob = scope.launch {
+                                                        delay(CONTACT_NEWEST_GRACE_MS)
+                                                        resumeWithBest()
+                                                    }
                                                 }
                                             }
                                         }
@@ -537,13 +562,10 @@ class FeedService @Inject constructor(
                     delay(CONTACT_LOAD_TIMEOUT_MS)
                     collector.cancel()
                     client.disconnect()
-                    completeLock.withLock {
-                        if (!completed) {
-                            completed = true
-                            Log.w(TAG, "fetchContactList: timed out on $relayUrl, no contacts found")
-                            cont.resume(null) {}
-                        }
-                    }
+                    // This relay is done. Resume with whatever is best so far (null if
+                    // nothing was ever found) — the grace window already covers the
+                    // common case; this backstops the all-timeout path.
+                    resumeWithBest()
                 }
             }
         }
