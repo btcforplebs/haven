@@ -190,6 +190,14 @@ class DashboardViewModel @Inject constructor(
     private val _latestReactionDates = MutableStateFlow<Map<String, Long>>(emptyMap())
     val latestReactionDates: StateFlow<Map<String, Long>> = _latestReactionDates.asStateFlow()
 
+    /** noteId -> list of reposter pubkeys (kind 6 e-tagging the note) */
+    private val _repostMap = MutableStateFlow<Map<String, List<String>>>(emptyMap())
+    val repostMap: StateFlow<Map<String, List<String>>> = _repostMap.asStateFlow()
+
+    /** noteId -> list of quoter pubkeys (kind 1 q-tagging the note) */
+    private val _quoteMap = MutableStateFlow<Map<String, List<String>>>(emptyMap())
+    val quoteMap: StateFlow<Map<String, List<String>>> = _quoteMap.asStateFlow()
+
     // ── Connection / loading ─────────────────────────────────────
 
     private val _isRefreshing = MutableStateFlow(false)
@@ -1137,12 +1145,32 @@ class DashboardViewModel @Inject constructor(
                     zMap.getOrPut(targetId) { mutableListOf() }.add(Pair(parsed.senderPubkey, parsed.amountSats))
                 }
 
+                // Build repost map (kind 6 e-tagging a displayed note) and quote map
+                // (kind 1 q-tagging a displayed note). Mirrors iOS VaultDataProcessing
+                // so reposts/quotes of your note appear in the engagement bar.
+                val rpMap = mutableMapOf<String, MutableList<String>>()
+                val qtMap = mutableMapOf<String, MutableList<String>>()
+                for (event in noteEvents) {
+                    when (event.kind) {
+                        6 -> {
+                            val targetId = event.tags.firstOrNull { it.size >= 2 && it[0] == "e" && displayedIds.contains(it[1]) }?.get(1) ?: continue
+                            rpMap.getOrPut(targetId) { mutableListOf() }.add(event.pubkey)
+                        }
+                        1 -> {
+                            val targetId = event.tags.firstOrNull { it.size >= 2 && it[0] == "q" && displayedIds.contains(it[1]) }?.get(1) ?: continue
+                            qtMap.getOrPut(targetId) { mutableListOf() }.add(event.pubkey)
+                        }
+                    }
+                }
+
                 if (gen != updateGeneration) return@withContext
                 withContext(Dispatchers.Main.immediate) {
                     _displayNotes.value = displaySlice
                     _reactionMap.value = rxMap
                     _zapMap.value = zMap
                     _latestReactionDates.value = latestReaction
+                    _repostMap.value = rpMap
+                    _quoteMap.value = qtMap
                     _notesHasLoadedOnce.value = true
                     _connectionStatus.value = "Local (${displaySlice.size})"
                 }
@@ -1612,6 +1640,8 @@ fun DashboardScreen(
     val displayZappedNotes by viewModel.displayZappedNotes.collectAsState()
     val reactionMap by viewModel.reactionMap.collectAsState()
     val zapMap by viewModel.zapMap.collectAsState()
+    val repostMap by viewModel.repostMap.collectAsState()
+    val quoteMap by viewModel.quoteMap.collectAsState()
     val notesHasLoadedOnce by viewModel.notesHasLoadedOnce.collectAsState()
     val likesHasLoadedOnce by viewModel.likesHasLoadedOnce.collectAsState()
     val zapsHasLoadedOnce by viewModel.zapsHasLoadedOnce.collectAsState()
@@ -1863,6 +1893,8 @@ fun DashboardScreen(
                     notes = displayNotes,
                     reactionMap = reactionMap,
                     zapMap = zapMap,
+                    repostMap = repostMap,
+                    quoteMap = quoteMap,
                     isRefreshing = isRefreshing,
                     hasLoadedOnce = notesHasLoadedOnce,
                     isCompact = isCompact,
@@ -2013,6 +2045,8 @@ private fun NotesContent(
     notes: List<FeedNote>,
     reactionMap: Map<String, List<Pair<String, String>>>,
     zapMap: Map<String, List<Pair<String, Long>>>,
+    repostMap: Map<String, List<String>>,
+    quoteMap: Map<String, List<String>>,
     isRefreshing: Boolean,
     hasLoadedOnce: Boolean,
     isCompact: Boolean,
@@ -2078,6 +2112,8 @@ private fun NotesContent(
                     profiles = allProfiles,
                     reactors = reactionMap[note.id] ?: emptyList(),
                     latestReactionDate = latestReactionDates[note.id]?.let { java.util.Date(it * 1000) },
+                    reposterPubkeys = repostMap[note.id] ?: emptyList(),
+                    quoterPubkeys = quoteMap[note.id] ?: emptyList(),
                     zappers = zapMap[note.id] ?: emptyList(),
                     noteType = noteType,
                     layoutMode = if (isCompact) VaultNoteLayoutMode.COMPACT else VaultNoteLayoutMode.EXPANDED,

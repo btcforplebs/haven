@@ -1508,27 +1508,44 @@ class NostrService: ObservableObject {
             activeSubscriptions[urlString] = subscriptionId
         }
 
-        var filter: [String: Any] = [
-            "limit": isHistorical ? 100 : 200,
-            "kinds": [0, 1, 3, 4, 6, 7, 1063, 30023, 9735, 10000, 10063]
-        ]
-        if let until = until {
-            filter["until"] = until
+        // Split note kinds from engagement/metadata kinds. The relay returns the
+        // newest N events PER FILTER regardless of kind, so a single all-kinds
+        // filter lets a high volume of reactions/zaps crowd actual notes out of
+        // the window on cold start (notes are cached but never loaded into memory).
+        // Giving notes their own filter guarantees they load independent of how
+        // many reactions/zaps share the window — same rationale as bounding
+        // long-form bodies separately.
+        let noteKinds = [1, 6, 30023]
+        let metaKinds = [0, 3, 4, 7, 1063, 9735, 10000, 10063]
+        let noteLimit = isHistorical ? 100 : 400
+        let metaLimit = isHistorical ? 100 : 200
+
+        func makeFilter(kinds: [Int], limit: Int, mentionsOwner: String?) -> [String: Any] {
+            var f: [String: Any] = ["limit": limit, "kinds": kinds]
+            if let until = until { f["until"] = until }
+            // Author scoping applies to the owner/whitelist feed, not the mentions feed.
+            if mentionsOwner == nil, let authors = authors, !authors.isEmpty {
+                f["authors"] = authors
+            }
+            if let owner = mentionsOwner {
+                f["#p"] = [owner]
+            }
+            return f
         }
 
-        // If we have followed authors, we fetch their notes
-        var filters: [[String: Any]] = [filter]
-        if let authors = authors, !authors.isEmpty {
-            filters[0]["authors"] = authors
-        }
+        // Owner/whitelist feed: notes get a generous limit, engagement/metadata its own.
+        var filters: [[String: Any]] = [
+            makeFilter(kinds: noteKinds, limit: noteLimit, mentionsOwner: nil),
+            makeFilter(kinds: metaKinds, limit: metaLimit, mentionsOwner: nil),
+        ]
 
         // CRITICAL: Always subscribe to mentions (#p) of the owner so "tagged notes"
-        // from people we don't follow still show up in the viewer.
+        // from people we don't follow still show up in the viewer. Split the same way
+        // so replies aren't starved by reactions/zaps tagging the owner.
         let ownerHex = self.activeHexPubkey
         if !ownerHex.isEmpty {
-            var mentionsFilter = filter
-            mentionsFilter["#p"] = [ownerHex]
-            filters.append(mentionsFilter)
+            filters.append(makeFilter(kinds: noteKinds, limit: noteLimit, mentionsOwner: ownerHex))
+            filters.append(makeFilter(kinds: metaKinds, limit: metaLimit, mentionsOwner: ownerHex))
         }
 
         let req = ["REQ", subscriptionId] + filters

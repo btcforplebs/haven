@@ -57,7 +57,7 @@ struct VaultView: View {
 
     @State var showingNoteId: String?
     @State var showingProfilePubkey: String?
-    @State var maxDisplayedItems: Int = 50
+    @State var maxDisplayedItems: Int = 100
     #if os(iOS)
     @State var saveToPhotosMessage: String?
     #endif
