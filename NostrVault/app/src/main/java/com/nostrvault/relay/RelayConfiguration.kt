@@ -52,7 +52,11 @@ object RelayConfiguration {
 
         return mapOf(
             "OWNER_NPUB" to cleanNpub,
-            "RELAY_URL" to config.relayURL,
+            // Bare host[:port] — the Go relay builds its ServiceURL as
+            // "https://" + RELAY_URL + "/chat", so a scheme here produces a
+            // malformed "https://ws://127.0.0.1:3355/chat" that never matches the
+            // NIP-42 AUTH relay tag → "failed to authenticate" → no NIP-17 DMs.
+            "RELAY_URL" to config.relayURL.substringAfter("://").trimEnd('/'),
             "RELAY_PORT" to config.relayPort.toString(),
             "RELAY_BIND_ADDRESS" to relayBindAddress,
             "DB_ENGINE" to config.dbEngine,

@@ -301,6 +301,12 @@ data class BlossomMediaItem(
     val isVideo: Boolean get() = mimeType?.startsWith("video") == true
     val isImage: Boolean get() = mimeType?.startsWith("image") == true || mimeType == "image"
     val isAudio: Boolean get() = mimeType?.startsWith("audio") == true
+
+    /** GIF detection by extension or mime type, matching iOS MediaGallery isGif. */
+    val isGif: Boolean get() =
+        mimeType?.contains("gif", ignoreCase = true) == true ||
+            displayUrl.substringBefore('?').substringBefore('#')
+                .substringAfterLast('.', "").equals("gif", ignoreCase = true)
 }
 
 data class MediaItem(val url: String, val noteId: String)
@@ -361,9 +367,9 @@ fun MediaGalleryScreen(
             .filter { item ->
                 when (activeFilter) {
                     MediaTypeFilter.ALL -> true
-                    MediaTypeFilter.PHOTO -> item.isImage
+                    MediaTypeFilter.PHOTO -> item.isImage && !item.isGif
                     MediaTypeFilter.VIDEO -> item.isVideo
-                    MediaTypeFilter.GIF -> item.mimeType?.contains("gif", ignoreCase = true) == true
+                    MediaTypeFilter.GIF -> item.isGif
                     MediaTypeFilter.OTHER -> !item.isImage && !item.isVideo
                 }
             }
@@ -404,6 +410,13 @@ fun MediaGalleryScreen(
                             selected = activeFilter == MediaTypeFilter.VIDEO,
                             accentColor = colors.primary,
                             onClick = { activeFilter = MediaTypeFilter.VIDEO },
+                        )
+                        MediaFilterIcon(
+                            icon = NostrVaultIcons.Gif,
+                            label = "GIFs",
+                            selected = activeFilter == MediaTypeFilter.GIF,
+                            accentColor = colors.primary,
+                            onClick = { activeFilter = MediaTypeFilter.GIF },
                         )
                         MediaFilterIcon(
                             icon = NostrVaultIcons.Document,

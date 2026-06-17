@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.filled.LocalFlorist
 import androidx.compose.material.icons.filled.FormatQuote
 import androidx.compose.material.icons.filled.Forum
+import androidx.compose.material.icons.filled.Gif
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.History
@@ -182,6 +183,7 @@ object NostrVaultIcons {
     val Blossom: ImageVector = Icons.Filled.LocalFlorist          // camera.macro (flower)
     val Cloud: ImageVector = Icons.Filled.Cloud                   // cloud.fill
     val Video: ImageVector = Icons.Filled.Videocam               // video.fill
+    val Gif: ImageVector = Icons.Filled.Gif                       // GIF badge
 
     // Media actions
     val UploadIcon: ImageVector = Icons.Filled.Upload            // arrow.up.doc

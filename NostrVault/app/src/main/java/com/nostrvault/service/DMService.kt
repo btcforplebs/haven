@@ -112,9 +112,15 @@ class DMService @Inject constructor(
     }
 
     fun refresh() {
-        _conversations.value = emptyList()
-        seenGiftWrapIds.clear()
-        startListening()
+        // Do NOT tear down + reconnect the local /chat socket here: that re-runs
+        // NIP-42 AUTH (an Amber prompt) on every pull, and wiping conversations/
+        // seen-set forces re-decryption (more prompts). The local sockets are live
+        // subscriptions; a refresh just needs a network catch-up.
+        if (!hasStarted) {
+            startListening()
+        } else if (liveExternalClients.isEmpty()) {
+            connectToExternalDMRelays(switchGeneration)
+        }
         fetchFromExternalRelays()
     }
 
@@ -214,7 +220,8 @@ class DMService @Inject constructor(
                     // Re-sending on every successful OK is idempotent (same subId
                     // replaces the subscription) and re-arms it after a reconnect.
                     val success = parsed.getOrNull(2)?.jsonPrimitive?.booleanOrNull ?: false
-                    Log.w(TAG, "DBG: /chat OK success=$success → sending REQ dm-nip17")
+                    val reason = parsed.getOrNull(3)?.jsonPrimitive?.contentOrNull
+                    Log.w(TAG, "DBG: /chat OK success=$success reason=$reason")
                     if (success) {
                         val ownerHex = nostrService.activeHexPubkey
                         val filter = """{"kinds":[1059],"#p":["$ownerHex"]}"""
@@ -804,21 +811,37 @@ class DMService @Inject constructor(
         if (parsed.size < 2) return
         val challenge = parsed[1].jsonPrimitive.contentOrNull ?: return
         val config = configStore.config.value
-        val relayUrl = config.nostrURL?.let { "$it/chat" } ?: return
+        // The NIP-42 relay tag must match the chat relay's ServiceURL, which the
+        // Go relay sets to "https://" + RELAY_URL + "/chat" → khatru NormalizeURL
+        // turns https→wss. We connect over ws:// (local, no TLS), but the AUTH
+        // tag must use the wss scheme + bare host or the relay rejects it.
+        val host = (config.nostrURL ?: return).substringAfter("://").trimEnd('/')
+        val relayUrl = "wss://$host/chat"
 
         scope.launch(Dispatchers.IO) {
             val tags = listOf(
                 listOf("relay", relayUrl),
                 listOf("challenge", challenge),
             )
-            val authEvent = nostrService.signEvent(
-                kind = 22242,
-                content = "",
-                tags = tags,
-                forceOwner = true,
-            ) ?: return@launch
+            // Use signEventAsync, NOT the sync signEvent: the sync variant resolves
+            // a LOCAL secret key (null under Amber/NIP-46), so /chat AUTH silently
+            // failed and no kind-1059 subscription was ever sent — locking all
+            // NIP-17 (gift-wrapped) DMs out of the local relay. signEventAsync
+            // routes kind-22242 through Amber/NIP-46.
+            val authEvent = try {
+                nostrService.signEventAsync(
+                    kind = 22242,
+                    content = "",
+                    tags = tags,
+                    forceOwner = true,
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "DBG: /chat AUTH sign failed: ${e.message}")
+                null
+            } ?: return@launch
 
             val eventJson = serializeEvent(authEvent)
+            Log.w(TAG, "DBG: /chat AUTH event=$eventJson")
             client?.send("[\"AUTH\",$eventJson]")
         }
     }
