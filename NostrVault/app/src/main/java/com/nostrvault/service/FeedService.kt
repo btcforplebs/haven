@@ -940,7 +940,7 @@ class FeedService @Inject constructor(
                     }
 
                     // Feed notes → accumulator
-                    accumulateEvent(eventObj, relayUrl)
+                    accumulateEvent(eventObj, message, relayUrl)
 
                     // Inject mention events into local relay inbox so they persist
                     if (subId == "feed-mentions") {
@@ -963,7 +963,7 @@ class FeedService @Inject constructor(
         }
     }
 
-    private fun accumulateEvent(eventObj: JsonObject, relayUrl: String) {
+    private fun accumulateEvent(eventObj: JsonObject, rawMessage: String, relayUrl: String) {
         val id = eventObj["id"]?.jsonPrimitive?.contentOrNull ?: return
         val pubkey = eventObj["pubkey"]?.jsonPrimitive?.contentOrNull ?: return
         val kind = eventObj["kind"]?.jsonPrimitive?.intOrNull ?: return
@@ -1013,16 +1013,26 @@ class FeedService @Inject constructor(
 
                 accumulator.addNote(note)
 
-                // Cache raw event JSON
-                val rawJson = eventObj.toString()
+                // Cache raw event JSON. Slice it out of the already-parsed relay
+                // message instead of re-serializing eventObj (toString walks the
+                // whole JSON tree + escapes strings — a real per-note cost under a
+                // streaming flood). message is ["EVENT",sub,{event}] so the event
+                // object is from the first '{' to the last '}'.
+                val firstBrace = rawMessage.indexOf('{')
+                val lastBrace = rawMessage.lastIndexOf('}')
+                val rawJson = if (firstBrace in 0 until lastBrace) {
+                    rawMessage.substring(firstBrace, lastBrace + 1)
+                } else {
+                    eventObj.toString()
+                }
                 rawEventCache[id] = rawJson
                 if (rawEventCache.size > MAX_RAW_EVENT_CACHE) {
                     val keysToRemove = rawEventCache.keys.take(rawEventCache.size - MAX_RAW_EVENT_CACHE)
                     keysToRemove.forEach { rawEventCache.remove(it) }
                 }
-
-                // Queue profile fetch for unknown authors
-                nostrService.fetchMissingProfiles(listOf(pubkey))
+                // Profile fetch is issued once per flush for all new authors in
+                // deliverBackgroundBatch() — no need for a per-event call here
+                // (each one takes a lock + runs the shouldFetch checks).
             }
         }
 
