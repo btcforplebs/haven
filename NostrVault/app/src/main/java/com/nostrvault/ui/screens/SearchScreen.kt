@@ -17,6 +17,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.nostrvault.ui.components.AvatarImage
 import com.nostrvault.ui.components.GlassPill
 import com.nostrvault.ui.components.NostrMentions
 import com.nostrvault.ui.components.GlassScaffold
@@ -668,13 +669,11 @@ private fun SearchProfileRow(
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
-        AsyncImage(
-            model = profile.pictureURL,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(44.dp)
-                .clip(CircleShape),
+        AvatarImage(
+            url = profile.pictureURL,
+            pubkey = profile.pubkey,
+            size = 44.dp,
+            displayName = profile.bestName,
         )
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -689,9 +688,11 @@ private fun SearchProfileRow(
             profile.nip05?.let {
                 Text(text = it, color = SecondaryText, fontSize = 13.sp)
             }
-            profile.about?.takeIf { it.isNotBlank() }?.let {
+            profile.about?.takeIf { it.isNotBlank() }?.let { about ->
                 Text(
-                    text = NostrMentions.toPlainText(it, profiles).replace("\n", " "),
+                    text = remember(about, profiles) {
+                        NostrMentions.toPlainText(about, profiles).replace("\n", " ")
+                    },
                     color = TertiaryText,
                     fontSize = 13.sp,
                     maxLines = 1,
@@ -763,13 +764,11 @@ private fun SuggestedProfileRow(
             .clickable(onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 6.dp),
     ) {
-        AsyncImage(
-            model = profile.pictureURL,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(34.dp)
-                .clip(CircleShape),
+        AvatarImage(
+            url = profile.pictureURL,
+            pubkey = profile.pubkey,
+            size = 34.dp,
+            displayName = profile.bestName,
         )
         Spacer(Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {

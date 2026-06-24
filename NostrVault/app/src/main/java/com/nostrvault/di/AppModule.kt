@@ -86,6 +86,15 @@ object AppModule {
                     .maxSizeBytes(256L * 1024 * 1024) // 256 MB
                     .build()
             }
+            // Bounded timeouts so a slow/dead avatar host fails fast (and can retry)
+            // instead of hanging forever as a perpetually-blank profile picture.
+            .okHttpClient {
+                okhttp3.OkHttpClient.Builder()
+                    .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                    .callTimeout(25, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
+            }
             .components {
                 add(GifDecoder.Factory())
                 add(VideoFrameDecoder.Factory())

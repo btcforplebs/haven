@@ -2,6 +2,7 @@ package com.nostrvault.ui.components
 
 import com.nostrvault.data.model.FeedProfile
 import com.nostrvault.relay.HavenBridge
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Shared NIP-19 mention resolution used by both the clickable [NostrContentText]
@@ -22,8 +23,21 @@ object NostrMentions {
         RegexOption.IGNORE_CASE,
     )
 
+    // npub/nprofile → hex is an immutable mapping, so cache decodes for the whole
+    // process. The same npub is mentioned across many notes/frames; a full bech32
+    // decode (~63 charset scans + allocations) per occurrence was a real hot-path
+    // cost. "" is the sentinel for "undecodable" so negatives are cached too.
+    private val decodeCache = ConcurrentHashMap<String, String>()
+
     /** Resolve an npub/nprofile bech32 identifier to a hex pubkey. */
     fun resolvePubkey(identifier: String): String? {
+        decodeCache[identifier]?.let { return it.ifEmpty { null } }
+        val resolved = decodeBech32(identifier)
+        decodeCache[identifier] = resolved ?: ""
+        return resolved
+    }
+
+    private fun decodeBech32(identifier: String): String? {
         return when {
             identifier.startsWith("npub1", ignoreCase = true) -> HavenBridge.decodeNpub(identifier)
             identifier.startsWith("nprofile1", ignoreCase = true) -> {

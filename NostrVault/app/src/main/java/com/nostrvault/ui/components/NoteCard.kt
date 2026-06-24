@@ -1029,7 +1029,9 @@ private fun ParentNotePreview(
             if (parentNote.content.isNotBlank()) {
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = NostrMentions.toPlainText(parentNote.content, profiles).replace("\n", " "),
+                    text = remember(parentNote.content, profiles) {
+                        NostrMentions.toPlainText(parentNote.content, profiles).replace("\n", " ")
+                    },
                     color = Color(0xFFB3B3B3), // iOS: rgb(0.7, 0.7, 0.7)
                     fontSize = 14.sp,
                     maxLines = 2,

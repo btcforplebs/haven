@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -78,13 +79,11 @@ fun ReactorsSheet(
                                 .clickable { onProfileClick(reaction.pubkey) }
                                 .padding(horizontal = 20.dp, vertical = 8.dp),
                         ) {
-                            AsyncImage(
-                                model = profile?.pictureURL,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape),
+                            AvatarImage(
+                                url = profile?.pictureURL,
+                                pubkey = reaction.pubkey,
+                                size = 40.dp,
+                                displayName = profile?.bestName,
                             )
                             Spacer(Modifier.width(12.dp))
                             Text(
@@ -159,13 +158,11 @@ fun ZappersSheet(
                                 .clickable { onProfileClick(zap.zapperPubkey) }
                                 .padding(horizontal = 20.dp, vertical = 8.dp),
                         ) {
-                            AsyncImage(
-                                model = profile?.pictureURL,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape),
+                            AvatarImage(
+                                url = profile?.pictureURL,
+                                pubkey = zap.zapperPubkey,
+                                size = 40.dp,
+                                displayName = profile?.bestName,
                             )
                             Spacer(Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
@@ -179,7 +176,9 @@ fun ZappersSheet(
                                 )
                                 if (zap.comment.isNotBlank()) {
                                     Text(
-                                        text = NostrMentions.toPlainText(zap.comment, profiles),
+                                        text = remember(zap.comment, profiles) {
+                                            NostrMentions.toPlainText(zap.comment, profiles)
+                                        },
                                         color = SecondaryText,
                                         fontSize = 13.sp,
                                         maxLines = 2,
@@ -252,13 +251,11 @@ fun RepostersSheet(
                                 .clickable { onProfileClick(repost.pubkey) }
                                 .padding(horizontal = 20.dp, vertical = 8.dp),
                         ) {
-                            AsyncImage(
-                                model = profile?.pictureURL,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape),
+                            AvatarImage(
+                                url = profile?.pictureURL,
+                                pubkey = repost.pubkey,
+                                size = 40.dp,
+                                displayName = profile?.bestName,
                             )
                             Spacer(Modifier.width(12.dp))
                             Text(

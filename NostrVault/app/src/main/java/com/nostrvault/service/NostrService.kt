@@ -54,6 +54,7 @@ class NostrService @Inject constructor(
         private const val BUFFER_FLUSH_DELAY_MS = 300L
         private const val PROFILE_SAVE_THROTTLE_MS = 5_000L
         private const val PROFILE_FLUSH_DELAY_MS = 100L
+        private const val PROFILE_EMIT_DEBOUNCE_MS = 200L
         private const val PROFILE_UPDATE_DEBOUNCE_MS = 100L
         // A cached profile is "fresh" for this long before we'll re-fetch its metadata.
         private const val PROFILE_TTL_MS = 7L * 24 * 60 * 60 * 1000 // 7 days
@@ -72,6 +73,9 @@ class NostrService @Inject constructor(
         private const val MAX_RECONNECT_DELAY_MS = 30_000L
         private const val SEARCH_TIMEOUT_MS = 4_000L
         private const val TEMP_CLIENT_DISCONNECT_MS = 3_000L
+        private const val METADATA_POOL_SIZE = 3
+        private const val METADATA_IDLE_TIMEOUT_MS = 60_000L
+        private const val METADATA_SUB_ID = "meta-pool"
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -147,6 +151,15 @@ class NostrService @Inject constructor(
     /** Limits concurrent temporary WebSocket connections to prevent OOM. */
     private val tempClientSemaphore = Semaphore(8)
 
+    // ── Warm metadata (kind-0) connection pool ────────────────────────
+    // A few reused, long-lived connections to Blastr relays for profile fetches.
+    // Replaces opening 3 fresh sockets per flush (the handshake churn rate-limited
+    // us — 429 — so profiles/names/pics stopped loading). Guarded by metadataPoolLock.
+    private val metadataClients = HashMap<String, WebSocketClient>()
+    private val metadataPoolLock = ReentrantLock()
+    private var metadataIdleJob: Job? = null
+    @Volatile private var lastMetadataFilterJson: String = ""
+
     // ── Reconnection backoff ──────────────────────────────────────────
 
     private val reconnectAttempts = ConcurrentHashMap<String, Int>()
@@ -174,6 +187,17 @@ class NostrService @Inject constructor(
     private var profileFlushJob: Job? = null
     private var profileSaveJob: Job? = null
     private var lastProfileSaveTime = 0L
+
+    // ── Profile-map emission batching ─────────────────────────────────
+    // Incoming kind-0 profiles are staged here and merged into _profiles in ONE
+    // map rebuild + ONE emission per debounce window, off the main thread. Doing
+    // it per-profile copied the entire (≤5,000-entry) map and recomposed every
+    // collector on each arrival — a main-thread allocation/recomposition storm
+    // while profiles stream in during feed load. All guarded by profileEmitLock.
+    private val pendingProfiles = HashMap<String, FeedProfile>()
+    private val pendingProfileNotify = HashSet<String>()
+    private var profileEmitJob: Job? = null
+    private val profileEmitLock = ReentrantLock()
 
     // ── Profile update coalescing ─────────────────────────────────────
 
@@ -260,6 +284,7 @@ class NostrService @Inject constructor(
                 temporaryClients.forEach { it.disconnect() }
                 temporaryClients.clear()
             }
+            closeMetadataPool()
 
             // 4. Clear event state
             events = emptyList()
@@ -363,6 +388,7 @@ class NostrService @Inject constructor(
             temporaryClients.forEach { it.disconnect() }
             temporaryClients.clear()
         }
+        closeMetadataPool()
     }
 
     /**
@@ -713,38 +739,69 @@ class NostrService @Inject constructor(
             }
         }
 
-        val subId = "meta-${UUID.randomUUID().toString().take(8)}"
         val filter = buildMap<String, Any> {
             put("kinds", listOf(0))
             put("authors", pubkeys)
         }
+        val filterJson = buildFilterJson(filter)
+        lastMetadataFilterJson = filterJson
 
-        // Connect to a few Blastr relays in parallel for metadata (kind 0 is widely replicated)
-        for (relayUrl in blastrRelays.shuffled().take(3)) {
-            if (!isValidRelayUrl(relayUrl)) continue
-            scope.launch(Dispatchers.IO) {
-                tempClientSemaphore.withPermit {
-                    val client = WebSocketClient(url = relayUrl, scope = scope)
-                    tempClientsLock.withLock { temporaryClients.add(client) }
+        // Reuse a small pool of WARM connections to the Blastr relays (kind 0 is
+        // widely replicated) instead of opening fresh sockets per flush. A stable
+        // sub id means each flush just replaces the filter on the open sockets.
+        val relays = blastrRelays.filter { isValidRelayUrl(it) }.take(METADATA_POOL_SIZE)
+        if (relays.isEmpty()) return
+        metadataPoolLock.withLock {
+            // Drop pooled relays no longer in the configured set.
+            val keep = relays.toSet()
+            metadataClients.keys.filter { it !in keep }.toList().forEach { url ->
+                metadataClients.remove(url)?.disconnect()
+            }
+            for (relayUrl in relays) {
+                val client = metadataClients.getOrPut(relayUrl) { createMetadataClient(relayUrl) }
+                client.send("[\"REQ\",\"$METADATA_SUB_ID\",$filterJson]")
+            }
+        }
+        armMetadataIdleTimeout()
+    }
 
-                    scope.launch {
-                        client.messages.collect { msg ->
-                            launch(Dispatchers.Default) {
-                                processRelayMessage(msg, relayUrl)
-                            }
-                        }
-                    }
-
-                    client.connect()
-                    val filterJson = buildFilterJson(filter)
-                    client.send("[\"REQ\",\"$subId\",$filterJson]")
-
-                    // Auto-disconnect after timeout
-                    delay(TEMP_CLIENT_DISCONNECT_MS)
-                    client.disconnect()
-                    tempClientsLock.withLock { temporaryClients.remove(client) }
+    /** Open a long-lived metadata-pool connection that survives across flushes. */
+    private fun createMetadataClient(relayUrl: String): WebSocketClient {
+        val client = WebSocketClient(url = relayUrl, scope = scope)
+        scope.launch {
+            client.messages.collect { msg ->
+                launch(Dispatchers.Default) { processRelayMessage(msg, relayUrl) }
+            }
+        }
+        // Re-issue the latest filter on every (re)connect so a dropped subscription
+        // recovers without waiting for the next flush.
+        scope.launch {
+            client.connectionState.collect { state ->
+                if (state == WebSocketClient.ConnectionState.CONNECTED &&
+                    lastMetadataFilterJson.isNotEmpty()
+                ) {
+                    client.send("[\"REQ\",\"$METADATA_SUB_ID\",$lastMetadataFilterJson]")
                 }
             }
+        }
+        client.connect()
+        return client
+    }
+
+    /** Close the metadata pool after a quiet period to free idle connections. */
+    private fun armMetadataIdleTimeout() {
+        metadataIdleJob?.cancel()
+        metadataIdleJob = scope.launch {
+            delay(METADATA_IDLE_TIMEOUT_MS)
+            closeMetadataPool()
+        }
+    }
+
+    private fun closeMetadataPool() {
+        metadataIdleJob?.cancel()
+        metadataPoolLock.withLock {
+            metadataClients.values.forEach { it.disconnect() }
+            metadataClients.clear()
         }
     }
 
@@ -760,18 +817,44 @@ class NostrService @Inject constructor(
             // to avoid redundant StateFlow emissions.
             val lastStamp = existingProfile.fetchedAt
             if (lastStamp != null && now - lastStamp < PROFILE_RETRY_TTL_MS) return
-            scope.launch(Dispatchers.Main.immediate) {
-                _profiles.value = _profiles.value + (pubkey to existingProfile.copy(fetchedAt = now))
-            }
+            // Freshness-only refresh: stage it, but no UI-change signal needed.
+            stageProfile(pubkey, existingProfile.copy(fetchedAt = now), notify = false)
             return
         }
 
-        val profile = parsed.copy(fetchedAt = now)
-        scope.launch(Dispatchers.Main.immediate) {
-            _profiles.value = trimProfiles(_profiles.value + (pubkey to profile))
-            noteProfileUpdated(pubkey)
-            saveProfilesThrottled()
+        stageProfile(pubkey, parsed.copy(fetchedAt = now), notify = true)
+    }
+
+    /** Stage a parsed profile for the next batched emission window (see [pendingProfiles]). */
+    private fun stageProfile(pubkey: String, profile: FeedProfile, notify: Boolean) {
+        profileEmitLock.withLock {
+            pendingProfiles[pubkey] = profile
+            if (notify) pendingProfileNotify.add(pubkey)
+            if (profileEmitJob?.isActive == true) return
+            profileEmitJob = scope.launch(Dispatchers.Default) {
+                delay(PROFILE_EMIT_DEBOUNCE_MS)
+                flushProfileEmissions()
+            }
         }
+    }
+
+    /** Merge all staged profiles into [_profiles] in ONE rebuild + ONE emission, off-main. */
+    private fun flushProfileEmissions() {
+        val snapshot: Map<String, FeedProfile>
+        val notify: Set<String>
+        profileEmitLock.withLock {
+            profileEmitJob = null
+            if (pendingProfiles.isEmpty()) return
+            snapshot = HashMap(pendingProfiles)
+            pendingProfiles.clear()
+            notify = HashSet(pendingProfileNotify)
+            pendingProfileNotify.clear()
+        }
+        // MutableStateFlow.value writes are thread-safe → do the heavy merge/trim
+        // here on Default (this runs from a Dispatchers.Default coroutine).
+        _profiles.value = trimProfiles(_profiles.value + snapshot)
+        notify.forEach { noteProfileUpdated(it) }
+        if (notify.isNotEmpty()) saveProfilesThrottled()
     }
 
     /**

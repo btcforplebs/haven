@@ -369,11 +369,13 @@ data class FeedProfile(
     /** Epoch millis of the last successful metadata fetch; null for legacy/unstamped entries. */
     var fetchedAt: Long? = null,
 ) {
-    /** Best display name: display_name > name > truncated pubkey. */
-    val bestName: String
-        get() = displayName?.takeIf { it.isNotBlank() }
-            ?: name?.takeIf { it.isNotBlank() }
-            ?: "${pubkey.take(8)}..."
+    /** Best display name: display_name > name > truncated pubkey. Computed once at
+     *  construction (profiles are replaced via copy(), never mutated in place), so
+     *  hot-path reads (~30/frame across feed rows) don't re-run the fallback chain.
+     *  A body property is not serialized, so this stays out of profiles.json. */
+    val bestName: String = displayName?.takeIf { it.isNotBlank() }
+        ?: name?.takeIf { it.isNotBlank() }
+        ?: "${pubkey.take(8)}..."
 }
 
 // ---------------------------------------------------------------------------

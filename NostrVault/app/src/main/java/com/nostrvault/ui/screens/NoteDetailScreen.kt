@@ -1026,7 +1026,9 @@ private fun CompactParentRow(
             if (note.content.isNotBlank()) {
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = NostrMentions.toPlainText(note.content, profiles),
+                    text = remember(note.content, profiles) {
+                        NostrMentions.toPlainText(note.content, profiles)
+                    },
                     color = PrimaryText.copy(alpha = if (isOled) 0.7f else 0.75f),
                     fontSize = 12.sp,
                     maxLines = 2,
@@ -1311,13 +1313,11 @@ private fun HeroNoteCard(
                         .weight(1f)
                         .clickable { onProfileClick(note.pubkey) },
                 ) {
-                    AsyncImage(
-                        model = profile?.pictureURL,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(CircleShape),
+                    AvatarImage(
+                        url = profile?.pictureURL,
+                        pubkey = note.pubkey,
+                        size = 48.dp,
+                        displayName = profile?.bestName,
                     )
                     Spacer(Modifier.width(12.dp))
                     Column {
