@@ -1,5 +1,6 @@
 package com.nostrvault.ui.components
 
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
@@ -18,9 +19,37 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.ImageLoader
 import coil.compose.AsyncImage
+import coil.imageLoader
 import coil.request.CachePolicy
 import coil.request.ImageRequest
+
+// A dedicated image loader for avatars that does NOT register the animated
+// (GIF/WebP) decoder, so animated profile pictures render as a static first
+// frame. An animated avatar plays at the display refresh rate; with the owner's
+// avatar pinned in the bottom nav (every screen) plus feed avatars, that kept
+// the GPU/compositor redrawing at ~60fps continuously and pinned CPU at ~80%
+// even while idle. Shares the app loader's memory/disk caches so nothing is
+// re-downloaded or double-stored.
+private val avatarLoaderLock = Any()
+@Volatile private var avatarImageLoaderInstance: ImageLoader? = null
+
+private fun avatarImageLoader(context: Context): ImageLoader {
+    avatarImageLoaderInstance?.let { return it }
+    return synchronized(avatarLoaderLock) {
+        avatarImageLoaderInstance ?: run {
+            val appLoader = context.applicationContext.imageLoader
+            ImageLoader.Builder(context.applicationContext)
+                .memoryCache(appLoader.memoryCache)
+                .diskCache(appLoader.diskCache)
+                .crossfade(false)
+                .respectCacheHeaders(false)
+                .build() // no GifDecoder/VideoFrameDecoder → static first frame
+                .also { avatarImageLoaderInstance = it }
+        }
+    }
+}
 
 /**
  * Deterministic avatar with gradient placeholder, Coil downsampling, and error fallback.
@@ -70,6 +99,7 @@ fun AvatarImage(
         // Actual image overlays the gradient+letter when loaded
         if (url != null) {
             AsyncImage(
+                imageLoader = avatarImageLoader(context),
                 model = ImageRequest.Builder(context)
                     .data(url)
                     .size(128)
