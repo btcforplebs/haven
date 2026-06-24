@@ -2,6 +2,7 @@ package com.nostrvault.ui.components
 
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.SpanStyle
@@ -40,40 +41,49 @@ fun NostrContentText(
     val colors = LocalNostrVaultColors.current
     val uriHandler = LocalUriHandler.current
 
-    // Build annotated string with styled spans
-    val annotated = buildAnnotatedString {
-        val segments = parseContentSegments(content, profiles, mediaURLs)
+    // Parse structure ONCE per content. The regex passes + bech32 decode
+    // (resolvePubkey) are the expensive part and depend only on the text, so
+    // memoize them — otherwise they re-run on every recomposition (e.g. each
+    // time the global profile map updates while scrolling), which is the main
+    // feed-scroll jank source.
+    val segments = remember(content, mediaURLs) { parseContentSegments(content, mediaURLs) }
 
-        for (segment in segments) {
-            when (segment) {
-                is ContentSegment.PlainText -> {
-                    append(segment.text)
-                }
+    // Resolve mention display-names + build the styled string. This is cheap
+    // (map lookups + string appends, no regex), so it can re-run when profiles
+    // or theme change without hurting scroll.
+    val annotated = remember(segments, profiles, colors.primary) {
+        buildAnnotatedString {
+            for (segment in segments) {
+                when (segment) {
+                    is ContentSegment.PlainText -> append(segment.text)
 
-                is ContentSegment.Mention -> {
-                    pushStringAnnotation("profile", segment.pubkey)
-                    withStyle(SpanStyle(color = colors.primary, fontWeight = FontWeight.Medium)) {
-                        append("@${segment.displayName}")
+                    is ContentSegment.Mention -> {
+                        val displayName = profiles[segment.pubkey]?.bestName
+                            ?: (segment.pubkey.take(8) + "...")
+                        pushStringAnnotation("profile", segment.pubkey)
+                        withStyle(SpanStyle(color = colors.primary, fontWeight = FontWeight.Medium)) {
+                            append("@$displayName")
+                        }
+                        pop()
                     }
-                    pop()
-                }
 
-                is ContentSegment.Url -> {
-                    pushStringAnnotation("url", segment.url)
-                    withStyle(SpanStyle(color = colors.primary)) {
-                        append(segment.displayUrl)
+                    is ContentSegment.Url -> {
+                        pushStringAnnotation("url", segment.url)
+                        withStyle(SpanStyle(color = colors.primary)) {
+                            append(segment.displayUrl)
+                        }
+                        pop()
                     }
-                    pop()
-                }
 
-                is ContentSegment.Hashtag -> {
-                    withStyle(SpanStyle(color = colors.primary)) {
-                        append(segment.text)
+                    is ContentSegment.Hashtag -> {
+                        withStyle(SpanStyle(color = colors.primary)) {
+                            append(segment.text)
+                        }
                     }
-                }
 
-                // Quoted note references and media URLs are stripped from text
-                is ContentSegment.QuoteRef, is ContentSegment.MediaUrl -> {}
+                    // Quoted note references and media URLs are stripped from text
+                    is ContentSegment.QuoteRef, is ContentSegment.MediaUrl -> {}
+                }
             }
         }
     }
@@ -108,7 +118,7 @@ fun NostrContentText(
 
 private sealed class ContentSegment {
     data class PlainText(val text: String) : ContentSegment()
-    data class Mention(val pubkey: String, val displayName: String) : ContentSegment()
+    data class Mention(val pubkey: String) : ContentSegment()
     data class Url(val url: String, val displayUrl: String) : ContentSegment()
     data class Hashtag(val text: String) : ContentSegment()
     data class QuoteRef(val identifier: String) : ContentSegment()
@@ -129,7 +139,6 @@ private val HASHTAG_REGEX = Regex(
 
 private fun parseContentSegments(
     content: String,
-    profiles: Map<String, FeedProfile>,
     mediaURLs: Set<String>,
 ): List<ContentSegment> {
     // Collect all matches with their ranges
@@ -137,13 +146,13 @@ private fun parseContentSegments(
 
     val matches = mutableListOf<Match>()
 
-    // nostr: mentions (npub, nprofile)
+    // nostr: mentions (npub, nprofile). Display-name resolution is deferred to
+    // render time so this parse stays content-only (and memoizable).
     for (m in NOSTR_MENTION_REGEX.findAll(content)) {
         val identifier = m.groupValues[1]
         val pubkey = NostrMentions.resolvePubkey(identifier)
         if (pubkey != null) {
-            val displayName = profiles[pubkey]?.bestName ?: pubkey.take(8) + "..."
-            matches.add(Match(m.range, ContentSegment.Mention(pubkey, displayName)))
+            matches.add(Match(m.range, ContentSegment.Mention(pubkey)))
         }
     }
 

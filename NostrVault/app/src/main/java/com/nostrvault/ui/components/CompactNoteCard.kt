@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -114,11 +115,16 @@ fun CompactNoteCard(
                     )
                 }
 
-                // Body text (plain, 2 lines max)
+                // Body text (plain, 2 lines max). Memoize the regex-based mention
+                // stripping so it doesn't re-run on every recomposition (e.g. each
+                // throttled profile-map update) while scrolling the compact feed.
                 if (note.content.isNotBlank()) {
                     Spacer(Modifier.height(2.dp))
+                    val plainText = remember(note.id, note.content, profiles) {
+                        NostrMentions.toPlainText(note.content, profiles).replace("\n", " ").trim()
+                    }
                     Text(
-                        text = NostrMentions.toPlainText(note.content, profiles).replace("\n", " ").trim(),
+                        text = plainText,
                         color = SecondaryText,
                         fontSize = 13.sp,
                         maxLines = 2,

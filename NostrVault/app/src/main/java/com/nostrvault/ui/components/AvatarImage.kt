@@ -73,10 +73,14 @@ fun AvatarImage(
                 model = ImageRequest.Builder(context)
                     .data(url)
                     .size(128)
+                    .memoryCacheKey(url)
                     .memoryCachePolicy(CachePolicy.ENABLED)
                     .diskCachePolicy(CachePolicy.ENABLED)
                     .allowHardware(true)
-                    .crossfade(150)
+                    // No crossfade: the 150ms fade fired on every avatar as it
+                    // scrolled into view, adding per-frame animation work + flicker.
+                    // A stable memoryCacheKey lets cached avatars paint instantly.
+                    .crossfade(false)
                     .build(),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,

@@ -41,7 +41,13 @@ class FeedViewModel @Inject constructor(
     // ── Feed state ───────────────────────────────────────────────
 
     val notes: StateFlow<List<FeedNote>> = feedService.notes
+    // Profiles stream in continuously as notes are fetched. Emitting on every
+    // single insertion recomposed the whole visible feed per-profile while
+    // scrolling. Sample so bursts coalesce to ~3/sec; mentions/avatars still
+    // resolve within a frame or two. profileFor() below still reads the live map.
     val profiles: StateFlow<Map<String, FeedProfile>> = nostrService.profiles
+        .sample(300L) // coalesce profile bursts to ~3/sec while scrolling
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), nostrService.profiles.value)
     val noteStats: StateFlow<Map<String, NoteStats>> = feedService.noteStats
     val likedEventIds: StateFlow<Set<String>> = feedService.likedEventIds
     val zappedEventIds: StateFlow<Map<String, Int>> = feedService.zappedEventIds
@@ -277,7 +283,8 @@ class FeedViewModel @Inject constructor(
 
     // ── Helpers ──────────────────────────────────────────────────
 
-    fun profileFor(pubkey: String): FeedProfile? = profiles.value[pubkey]
+    // Read the live (un-sampled) map so per-note keyed lookups are never stale.
+    fun profileFor(pubkey: String): FeedProfile? = nostrService.profiles.value[pubkey]
     fun statsFor(noteId: String): NoteStats? = noteStats.value[noteId]
     fun isLiked(noteId: String): Boolean = likedEventIds.value.contains(noteId)
     fun isZapped(noteId: String): Boolean = zappedEventIds.value.contains(noteId)
