@@ -1205,7 +1205,12 @@ class FeedService @Inject constructor(
      */
     fun recomputeFilteredNotes() {
         recomputeJob?.cancel()
-        recomputeJob = scope.launch(Dispatchers.Main.immediate) {
+        // Run the filter/sort on Default, NOT Main. doRecomputeFilteredNotes()
+        // filters + sorts the entire notes list (allocating new lists) and, under
+        // a relay-event flood, fires every debounce window — doing that on
+        // Main.immediate saturated the UI thread and was the main feed-slowness
+        // source. The reads (.value) and StateFlow writes here are thread-safe.
+        recomputeJob = scope.launch(Dispatchers.Default) {
             delay(RECOMPUTE_DEBOUNCE_MS)
             doRecomputeFilteredNotes()
         }
