@@ -51,6 +51,7 @@ class FeedViewModel @Inject constructor(
     val noteStats: StateFlow<Map<String, NoteStats>> = feedService.noteStats
     val likedEventIds: StateFlow<Set<String>> = feedService.likedEventIds
     val zappedEventIds: StateFlow<Map<String, Int>> = feedService.zappedEventIds
+    val repostedEventIds: StateFlow<Set<String>> = feedService.repostedEventIds
     val connectionStatus: StateFlow<String> = feedService.connectionStatus
     val connectionColor: StateFlow<String> = feedService.connectionColor
 
@@ -288,4 +289,5 @@ class FeedViewModel @Inject constructor(
     fun statsFor(noteId: String): NoteStats? = noteStats.value[noteId]
     fun isLiked(noteId: String): Boolean = likedEventIds.value.contains(noteId)
     fun isZapped(noteId: String): Boolean = zappedEventIds.value.contains(noteId)
+    fun isReposted(noteId: String): Boolean = repostedEventIds.value.contains(noteId)
 }

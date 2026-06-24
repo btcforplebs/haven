@@ -26,6 +26,7 @@ import javax.inject.Inject
 enum class ProfileSection(val displayName: String) {
     NOTES("Notes"),
     MEDIA("Media"),
+    REPOSTS("Reposts"),
     REPLIES("Replies"),
     TAGGED("Tagged"),
 }
@@ -34,6 +35,7 @@ enum class ProfileSection(val displayName: String) {
 data class ProfileCounts(
     val notes: Int = 0,
     val media: Int = 0,
+    val reposts: Int = 0,
     val replies: Int = 0,
     val tagged: Int = 0,
 )
@@ -68,6 +70,7 @@ class ProfileViewModel @Inject constructor(
 
     val noteStats: StateFlow<Map<String, NoteStats>> = feedService.noteStats
     val likedEventIds: StateFlow<Set<String>> = feedService.likedEventIds
+    val repostedEventIds: StateFlow<Set<String>> = feedService.repostedEventIds
     val profiles: StateFlow<Map<String, FeedProfile>> = nostrService.profiles
 
     private val _selectedSection = MutableStateFlow(ProfileSection.NOTES)
@@ -116,9 +119,12 @@ class ProfileViewModel @Inject constructor(
         _selectedSection,
     ) { notes, tagged, section ->
         when (section) {
-            ProfileSection.NOTES -> notes.filter { !it.isReply }
-            ProfileSection.MEDIA -> notes.filter { it.mediaURLs.isNotEmpty() && !it.isReply }
-            ProfileSection.REPLIES -> notes.filter { it.isReply }
+            // Reposts (repostedBy != null) get their own tab — exclude them from
+            // Notes/Media/Replies so each note appears in exactly one section.
+            ProfileSection.NOTES -> notes.filter { !it.isReply && it.repostedBy == null }
+            ProfileSection.MEDIA -> notes.filter { it.mediaURLs.isNotEmpty() && !it.isReply && it.repostedBy == null }
+            ProfileSection.REPOSTS -> notes.filter { it.repostedBy != null }
+            ProfileSection.REPLIES -> notes.filter { it.isReply && it.repostedBy == null }
             ProfileSection.TAGGED -> tagged.filter { it.pubkey != _pubkey.value }
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -128,9 +134,10 @@ class ProfileViewModel @Inject constructor(
         _taggedNotes,
     ) { notes, tagged ->
         ProfileCounts(
-            notes = notes.count { !it.isReply },
-            media = notes.count { it.mediaURLs.isNotEmpty() && !it.isReply },
-            replies = notes.count { it.isReply },
+            notes = notes.count { !it.isReply && it.repostedBy == null },
+            media = notes.count { it.mediaURLs.isNotEmpty() && !it.isReply && it.repostedBy == null },
+            reposts = notes.count { it.repostedBy != null },
+            replies = notes.count { it.isReply && it.repostedBy == null },
             tagged = tagged.count { it.pubkey != _pubkey.value },
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ProfileCounts())
@@ -227,8 +234,15 @@ class ProfileViewModel @Inject constructor(
 
     @Synchronized
     private fun addNote(note: FeedNote) {
-        if (note.pubkey != _pubkey.value) return
+        // Authored by this user OR reposted by this user (a kind-6 repost resolves
+        // to pubkey = original author, repostedBy = this profile).
+        val isOwnRepost = note.repostedBy == _pubkey.value
+        if (note.pubkey != _pubkey.value && !isOwnRepost) return
         if (!seenNoteIds.add(note.id)) return
+        // Reposts show the ORIGINAL author — fetch their metadata if missing.
+        if (isOwnRepost && nostrService.profiles.value[note.pubkey] == null) {
+            nostrService.fetchMissingProfiles(listOf(note.pubkey))
+        }
         _profileNotes.value = (_profileNotes.value + note).sortedByDescending { it.createdAt }
         feedService.cacheNote(note)
     }
@@ -345,6 +359,7 @@ class ProfileViewModel @Inject constructor(
     fun profileFor(pubkey: String): FeedProfile? = profiles.value[pubkey]
     fun statsFor(noteId: String): NoteStats? = noteStats.value[noteId]
     fun isLiked(noteId: String): Boolean = likedEventIds.value.contains(noteId)
+    fun isReposted(noteId: String): Boolean = repostedEventIds.value.contains(noteId)
 
     // ── Quoted note resolution (embedded nostr:note1/nevent1 previews) ──
 

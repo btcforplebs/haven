@@ -76,6 +76,7 @@ fun ProfileScreen(
     val followingCount by viewModel.followingCount.collectAsState()
     val allProfiles by viewModel.profiles.collectAsState()
     val quotedNotes by viewModel.quotedNotesCache.collectAsState()
+    val repostedIds by viewModel.repostedEventIds.collectAsState()
     val toast by viewModel.toast.collectAsState()
     val colors = LocalNostrVaultColors.current
     val context = LocalContext.current
@@ -292,6 +293,8 @@ fun ProfileScreen(
                         profiles = allProfiles,
                         quotedNotes = quotedNotes,
                         isLiked = viewModel.isLiked(note.id),
+                        isReposted = note.effectiveEventId in repostedIds,
+                        repostedByProfile = note.repostedBy?.let { allProfiles[it] },
                         onNoteClick = onNoteClick,
                         onProfileClick = onProfileClick,
                         onLike = viewModel::likeNote,
@@ -609,6 +612,7 @@ private fun ProfileSectionTabs(
     fun countFor(s: ProfileSection): Int = when (s) {
         ProfileSection.NOTES -> counts.notes
         ProfileSection.MEDIA -> counts.media
+        ProfileSection.REPOSTS -> counts.reposts
         ProfileSection.REPLIES -> counts.replies
         ProfileSection.TAGGED -> counts.tagged
     }

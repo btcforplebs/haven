@@ -92,6 +92,8 @@ fun FeedScreen(
     val showEngagementStats by viewModel.showEngagementStats.collectAsState()
     val pendingCount by viewModel.pendingNoteCount.collectAsState()
     val parentNotes by viewModel.parentNotesCache.collectAsState()
+    // Collected so the repost button re-highlights instantly after you repost.
+    val repostedIds by viewModel.repostedEventIds.collectAsState()
     val parentIsNext by viewModel.parentIsNextNote.collectAsState()
     val listState = rememberLazyListState()
     val context = LocalContext.current
@@ -403,6 +405,7 @@ fun FeedScreen(
                                 quotedNotes = quotedNotesMap,
                                 isLiked = viewModel.isLiked(note.id),
                                 isZapped = viewModel.isZapped(note.id),
+                                isReposted = note.effectiveEventId in repostedIds,
                                 repostedByProfile = repostedByProfile,
                                 replyToProfile = replyToProfile,
                                 parentNote = parentNote,

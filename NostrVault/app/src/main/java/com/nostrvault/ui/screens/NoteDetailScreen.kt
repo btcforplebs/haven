@@ -85,6 +85,7 @@ class NoteDetailViewModel @Inject constructor(
     val profiles: StateFlow<Map<String, FeedProfile>> = nostrService.profiles
     val noteStats: StateFlow<Map<String, NoteStats>> = feedService.noteStats
     val likedEventIds: StateFlow<Set<String>> = feedService.likedEventIds
+    val repostedEventIds: StateFlow<Set<String>> = feedService.repostedEventIds
 
     // Staged loading (iOS parity): the hero renders immediately; parents and
     // replies show inline loading states while their fetches are in flight.
@@ -389,6 +390,7 @@ class NoteDetailViewModel @Inject constructor(
     fun profileFor(pubkey: String): FeedProfile? = profiles.value[pubkey]
     fun statsFor(noteId: String): NoteStats? = noteStats.value[noteId]
     fun isLiked(noteId: String): Boolean = likedEventIds.value.contains(noteId)
+    fun isReposted(noteId: String): Boolean = repostedEventIds.value.contains(noteId)
 
     /** Get direct child replies for a given note ID. */
     fun childRepliesFor(parentId: String): List<FeedNote> =
@@ -734,6 +736,7 @@ fun NoteDetailScreen(
                                 profiles = profiles,
                                 quotedNotes = quotedNotesMap,
                                 isLiked = viewModel.isLiked(parent.id),
+                                isReposted = viewModel.isReposted(parent.effectiveEventId),
                                 isFocused = parent.id == focusedNoteId,
                                 parentIsNext = true,
                                 onNoteClick = { scrollToNote(parent.id) },
@@ -761,6 +764,7 @@ fun NoteDetailScreen(
                         profiles = profiles,
                         stats = viewModel.statsFor(focusedNote!!.id),
                         isLiked = viewModel.isLiked(focusedNote!!.id),
+                        isReposted = viewModel.isReposted(focusedNote!!.effectiveEventId),
                         isOwnNote = viewModel.isOwnNote(focusedNote!!.pubkey),
                         isFollowing = viewModel.isFollowing(focusedNote!!.pubkey),
                         themeColor = colors.primary,
@@ -1126,6 +1130,7 @@ private fun ThreadedReplyNode(
                 profiles = profiles,
                 quotedNotes = quotedNotesMap,
                 isLiked = viewModel.isLiked(reply.id),
+                isReposted = viewModel.isReposted(reply.effectiveEventId),
                 isFocused = isFocusedReply,
                 onNoteClick = { onFocus(reply.id) },
                 onProfileClick = onProfileClick,
@@ -1260,6 +1265,7 @@ private fun HeroNoteCard(
     profiles: Map<String, FeedProfile> = emptyMap(),
     stats: NoteStats?,
     isLiked: Boolean,
+    isReposted: Boolean = false,
     isOwnNote: Boolean,
     isFollowing: Boolean,
     themeColor: androidx.compose.ui.graphics.Color,
@@ -1439,9 +1445,9 @@ private fun HeroNoteCard(
                 )
                 EngagementButton(
                     icon = NostrVaultIcons.Repost,
-                    isActive = false,
+                    isActive = isReposted,
                     activeColor = RepostGreen,
-                    contentDescription = "Repost",
+                    contentDescription = if (isReposted) "Reposted" else "Repost",
                     onClick = onRepost,
                 )
                 EngagementButton(

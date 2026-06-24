@@ -70,6 +70,7 @@ fun NoteCard(
     quotedNotes: Map<String, FeedNote> = emptyMap(),
     isLiked: Boolean = false,
     isZapped: Boolean = false,
+    isReposted: Boolean = false,
     isFocused: Boolean = false,
     showReplyContext: Boolean = false,
     parentIsNext: Boolean = false,
@@ -347,6 +348,7 @@ fun NoteCard(
                 noteId = note.effectiveEventId,
                 isLiked = isLiked,
                 isZapped = isZapped,
+                isReposted = isReposted,
                 onReply = onReply,
                 onRepost = onRepost,
                 onQuote = onQuote,
@@ -373,6 +375,7 @@ private fun EngagementBar(
     noteId: String,
     isLiked: Boolean,
     isZapped: Boolean,
+    isReposted: Boolean = false,
     onReply: ((String) -> Unit)?,
     onRepost: ((String) -> Unit)?,
     onQuote: ((String) -> Unit)?,
@@ -400,9 +403,9 @@ private fun EngagementBar(
         // Repost
         EngagementButton(
             icon = NostrVaultIcons.Repost,
-            isActive = false,
+            isActive = isReposted,
             activeColor = RepostGreen,
-            contentDescription = "Repost",
+            contentDescription = if (isReposted) "Reposted" else "Repost",
             onClick = { onRepost?.invoke(noteId) },
         )
 

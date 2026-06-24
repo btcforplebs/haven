@@ -1552,6 +1552,9 @@ class NostrService @Inject constructor(
                     }
                     kind == 3 && evPubkey != pubkey -> onFollower?.invoke(evPubkey)
                     kind == 1 || kind == 6 || kind == 30023 -> {
+                        // fromEvent() resolves NIP-18 reposts (kind 6 → original
+                        // author as pubkey, repostedBy = the reposter), which powers
+                        // the profile Reposts tab + repost attribution.
                         if (evPubkey == pubkey) {
                             onNote?.invoke(FeedNote.fromEvent(id, evPubkey, content, tags, createdAt, kind))
                         } else if (tags.any { it.size >= 2 && it[0] == "p" && it[1] == pubkey }) {
