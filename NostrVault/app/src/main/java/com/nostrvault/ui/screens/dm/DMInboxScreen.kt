@@ -48,6 +48,13 @@ class DMInboxViewModel @Inject constructor(
     val conversations: StateFlow<List<DMConversation>> = dmService.conversations
     val profiles: StateFlow<Map<String, FeedProfile>> = nostrService.profiles
 
+    /** Number of inbound DMs still awaiting (Amber) decryption. */
+    val pendingDecryptCount: StateFlow<Int> = dmService.pendingDecryptCount
+
+    /** True when the signer can't silently decrypt — user must enable Amber's
+     *  background/auto signing for this app. */
+    val decryptBlocked: StateFlow<Boolean> = dmService.decryptBlocked
+
     private val _isLoading = MutableStateFlow(true)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
@@ -62,6 +69,13 @@ class DMInboxViewModel @Inject constructor(
             // Fetch profiles for all conversation participants
             val pubkeys = conversations.value.map { it.id }.distinct()
             nostrService.fetchMissingProfiles(pubkeys)
+        }
+        // While the inbox is open, drain queued (Amber) decrypts as they arrive —
+        // this is the only place background DMs get decrypted in Amber mode, so it
+        // never hammers the signer when you're elsewhere in the app.
+        viewModelScope.launch {
+            dmService.decryptPending()
+            dmService.pendingDecryptCount.collect { if (it > 0) dmService.decryptPending() }
         }
     }
 
@@ -91,6 +105,8 @@ fun DMInboxScreen(
     val conversations by viewModel.conversations.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
+    val pendingDecrypt by viewModel.pendingDecryptCount.collectAsState()
+    val decryptBlocked by viewModel.decryptBlocked.collectAsState()
     val colors = LocalNostrVaultColors.current
 
     GlassScaffold(
@@ -111,6 +127,36 @@ fun DMInboxScreen(
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(horizontal = 4.dp),
                     )
+                }
+
+                if (pendingDecrypt > 0) {
+                    Spacer(Modifier.width(8.dp))
+                    GlassPill {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 6.dp),
+                        ) {
+                            if (decryptBlocked) {
+                                Text(
+                                    text = "$pendingDecrypt locked — enable Amber auto-sign",
+                                    color = colors.primary,
+                                    fontSize = 12.sp,
+                                )
+                            } else {
+                                CircularProgressIndicator(
+                                    color = colors.primary,
+                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    text = "Decrypting $pendingDecrypt…",
+                                    color = PrimaryText,
+                                    fontSize = 12.sp,
+                                )
+                            }
+                        }
+                    }
                 }
 
                 Spacer(Modifier.weight(1f))

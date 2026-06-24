@@ -182,6 +182,73 @@ object NIP17Service {
     }
 
     /**
+     * Unwrap a received NIP-17 gift-wrapped DM using Amber for decryption.
+     *
+     * The gift-wrap chain is TWO encrypted layers and therefore needs TWO
+     * NIP-44 decrypts (this was the Android Amber bug: only one was performed,
+     * so the still-encrypted seal was parsed as the rumor → garbled DMs).
+     * Mirrors iOS NIP17Service.unwrapGiftWrapAsync (NIP-46 branch):
+     *   1. decrypt gift wrap (ephemeral pubkey) → seal event (kind 13)
+     *   2. decrypt seal content (sealer pubkey)  → rumor JSON (kind 14)
+     *
+     * @param giftWrapContent The encrypted content of the gift wrap event
+     * @param giftWrapPubkey The ephemeral pubkey of the gift wrap
+     * @param amberSignerService Signer used for both NIP-44 decrypts
+     * @return The decrypted rumor JSON, or null on failure
+     */
+    suspend fun unwrapGiftWrappedDMWithAmber(
+        giftWrapContent: String,
+        giftWrapPubkey: String,
+        amberSignerService: AmberSignerService,
+        silentOnly: Boolean = false,
+    ): String? {
+        try {
+            // Step 1: Amber decrypts the gift wrap → seal (kind 13) JSON.
+            val sealJson = amberSignerService.nip44Decrypt(giftWrapContent, giftWrapPubkey, silentOnly)
+                ?: run {
+                    Log.e(TAG, "Amber failed to decrypt gift wrap")
+                    return null
+                }
+
+            val sealObj = try {
+                kotlinx.serialization.json.Json.parseToJsonElement(sealJson).jsonObject
+            } catch (_: Exception) {
+                Log.e(TAG, "Failed to parse seal JSON")
+                return null
+            }
+
+            val sealerPubkey = sealObj["pubkey"]?.jsonPrimitive?.contentOrNull ?: return null
+            val sealContent = sealObj["content"]?.jsonPrimitive?.contentOrNull ?: return null
+
+            // Step 2: Amber decrypts the seal content → rumor (kind 14) JSON.
+            val rumorJson = amberSignerService.nip44Decrypt(sealContent, sealerPubkey, silentOnly)
+                ?: run {
+                    Log.e(TAG, "Amber failed to decrypt seal")
+                    return null
+                }
+
+            // Impersonation guard: the rumor author must equal the seal author
+            // (parity with iOS). Reject mismatches rather than display a forged sender.
+            val rumorObj = try {
+                kotlinx.serialization.json.Json.parseToJsonElement(rumorJson).jsonObject
+            } catch (_: Exception) {
+                Log.e(TAG, "Failed to parse rumor JSON")
+                return null
+            }
+            val rumorPubkey = rumorObj["pubkey"]?.jsonPrimitive?.contentOrNull
+            if (rumorPubkey != null && rumorPubkey != sealerPubkey) {
+                Log.w(TAG, "Seal pubkey != rumor pubkey — possible impersonation, dropping")
+                return null
+            }
+
+            return rumorJson
+        } catch (e: Exception) {
+            Log.e(TAG, "Amber gift wrap unwrap failed: ${e.message}")
+            return null
+        }
+    }
+
+    /**
      * Unwrap a received NIP-17 gift-wrapped DM.
      *
      * @param giftWrapContent The encrypted content of the gift wrap event

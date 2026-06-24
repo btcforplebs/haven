@@ -7,6 +7,8 @@ import com.nostrvault.data.remote.WebSocketClient
 import com.nostrvault.relay.HavenBridge
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.*
 import java.io.File
@@ -41,6 +43,7 @@ class DMService @Inject constructor(
         private const val EXTERNAL_FETCH_OVERLAP_MS = 60 * 60 * 1000L // 1 hour overlap
         private const val OPTIMISTIC_DEDUP_THRESHOLD_MS = 30_000L
         private const val MAX_INJECTED_DM_IDS = 5_000
+        private const val CACHE_SAVE_DEBOUNCE_MS = 500L
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -53,6 +56,11 @@ class DMService @Inject constructor(
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    /** Count of inbound DMs queued for (Amber) decryption but not yet processed.
+     *  Drives an optional "N pending" indicator; drained by [decryptPending]. */
+    private val _pendingDecryptCount = MutableStateFlow(0)
+    val pendingDecryptCount: StateFlow<Int> = _pendingDecryptCount.asStateFlow()
 
     val totalUnreadCount: Int
         get() = _conversations.value.sumOf { it.unreadCount }
@@ -70,12 +78,30 @@ class DMService @Inject constructor(
     /** Persistent live subscriptions to the user's PUBLIC DM relays. */
     private val liveExternalClients = mutableListOf<WebSocketClient>()
     private var periodicSyncJob: Job? = null
+    private var chatResubJob: Job? = null
 
     private val seenGiftWrapIds = ConcurrentHashMap.newKeySet<String>()
     private val injectedDmIds = ConcurrentHashMap.newKeySet<String>()
+
+    // ── Lazy (Amber) decryption queue ─────────────────────────────────
+    // In Amber mode we must NOT decrypt inbound DMs in the background: every
+    // decrypt is a remote-signer round-trip funneled through one app-wide lock,
+    // so a backlog would hammer Amber and stall all other signing. Instead we
+    // queue raw wraps and drain them sequentially, on demand, only while a DM
+    // screen is open. (Pattern borrowed from dark-wisp's pendingGiftWraps.)
+    private val pendingDecryptQueue = java.util.concurrent.ConcurrentLinkedQueue<JsonObject>()
+    private val queuedDecryptIds = ConcurrentHashMap.newKeySet<String>()
+    private val decryptDrainMutex = Mutex()
+    /** Set when the signer can't silently decrypt (Amber background signing not
+     *  granted). The drain stops instead of firing an Intent per message; the UI
+     *  surfaces this so the user can enable auto-signing in Amber. */
+    private val _decryptBlocked = MutableStateFlow(false)
+    val decryptBlocked: StateFlow<Boolean> = _decryptBlocked.asStateFlow()
+    private var lastBlockedSize = -1
     private var switchGeneration = 0
     private var lastExternalFetchTimestamp = 0L
     private var hasStarted = false
+    private var saveJob: Job? = null
 
     // ══════════════════════════════════════════════════════════════════
     // Lifecycle
@@ -91,6 +117,14 @@ class DMService @Inject constructor(
         hasStarted = true
         switchGeneration++
         val generation = switchGeneration
+
+        // Drop any pending decrypts queued for a previous account/generation.
+        pendingDecryptQueue.clear()
+        queuedDecryptIds.clear()
+        _pendingDecryptCount.value = 0
+        _decryptBlocked.value = false
+        lastBlockedSize = -1
+        chatResubJob?.cancel()
 
         loadCachedConversations()
         connectToLocalChatRelay(generation)
@@ -222,11 +256,20 @@ class DMService @Inject constructor(
                     val success = parsed.getOrNull(2)?.jsonPrimitive?.booleanOrNull ?: false
                     val reason = parsed.getOrNull(3)?.jsonPrimitive?.contentOrNull
                     Log.w(TAG, "DBG: /chat OK success=$success reason=$reason")
-                    if (success) {
-                        val ownerHex = nostrService.activeHexPubkey
-                        val filter = """{"kinds":[1059],"#p":["$ownerHex"]}"""
-                        inboxClient?.send("[\"REQ\",\"dm-nip17\",$filter]")
-                    }
+                    if (success) sendChatNip17Req()
+                }
+                "CLOSED" -> {
+                    // The /chat relay's RejectFilter is [MustAuth, MustBeInWotToQuery].
+                    // Its Web of Trust takes ~60s to build on launch, and until then
+                    // every query — even the owner's — is rejected with CLOSED. The
+                    // subscription is sent once on AUTH-OK and never retried, so a
+                    // cold start loses all NIP-17 (gift-wrapped) delivery until the
+                    // next reconnect happens to land after WoT is ready. Re-arm the
+                    // sub on a backoff so gift wraps start flowing once WoT warms up.
+                    val subId = parsed.getOrNull(1)?.jsonPrimitive?.contentOrNull
+                    val reason = parsed.getOrNull(2)?.jsonPrimitive?.contentOrNull
+                    Log.w(TAG, "DBG: /chat CLOSED sub=$subId reason=$reason")
+                    if (subId == "dm-nip17") scheduleChatResubscribe(generation)
                 }
                 "EVENT" -> {
                     if (parsed.size < 3) return
@@ -241,12 +284,40 @@ class DMService @Inject constructor(
                     }
                 }
                 "EOSE" -> {
-                    // Stored gift wraps finished streaming; live events follow.
+                    // EOSE only arrives if the REQ was ACCEPTED — WoT is ready and
+                    // stored gift wraps have streamed. Stop any resubscribe backoff.
+                    chatResubJob?.cancel()
                     _isLoading.value = false
                 }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Chat relay message parse error: ${e.message}")
+        }
+    }
+
+    /** (Re)send the kind-1059 subscription on the authed /chat socket. */
+    private fun sendChatNip17Req() {
+        val ownerHex = nostrService.activeHexPubkey
+        if (ownerHex.isBlank()) return
+        inboxClient?.send("[\"REQ\",\"dm-nip17\",{\"kinds\":[1059],\"#p\":[\"$ownerHex\"]}]")
+    }
+
+    /**
+     * Retry the /chat kind-1059 subscription on a backoff while the relay's Web of
+     * Trust is still warming up (it rejects queries with CLOSED until ~60s after
+     * launch). Cancelled as soon as an EOSE confirms the sub was accepted.
+     */
+    private fun scheduleChatResubscribe(generation: Int) {
+        if (chatResubJob?.isActive == true) return
+        chatResubJob = scope.launch {
+            var attempt = 0
+            while (isActive && switchGeneration == generation && attempt < 12) {
+                delay(12_000)
+                if (switchGeneration != generation) return@launch
+                attempt++
+                Log.w(TAG, "DBG: /chat re-subscribe dm-nip17 attempt=$attempt")
+                sendChatNip17Req()
+            }
         }
     }
 
@@ -278,28 +349,52 @@ class DMService @Inject constructor(
 
     private suspend fun handleIncomingGiftWrap(eventObj: JsonObject, generation: Int) {
         val eventId = eventObj["id"]?.jsonPrimitive?.contentOrNull ?: return
-        if (!seenGiftWrapIds.add(eventId)) { Log.w(TAG, "DBG: giftwrap ${eventId.take(8)} skipped (already seen)"); return }
         if (switchGeneration != generation) return
+        if (seenGiftWrapIds.contains(eventId)) { Log.w(TAG, "DBG: giftwrap ${eventId.take(8)} skipped (already seen)"); return }
 
-        withContext(Dispatchers.IO) {
+        // Amber mode: queue instead of decrypting now (see pendingDecryptQueue).
+        if (isAmberMode()) { enqueuePendingDecrypt(eventObj, eventId); return }
+
+        // Local key: decrypt eagerly — cheap, no signer IPC or prompts.
+        if (!seenGiftWrapIds.add(eventId)) return
+        decryptGiftWrap(eventObj, eventId, generation)
+    }
+
+    /**
+     * Decrypts a kind-1059 gift wrap and folds it into the conversation list.
+     * Caller has already claimed [eventId] in seenGiftWrapIds.
+     * @return true if processed (decrypted, or definitively undecryptable data);
+     *   false ONLY if the signer was unavailable for a silent decrypt (retryable).
+     */
+    private suspend fun decryptGiftWrap(eventObj: JsonObject, eventId: String, generation: Int): Boolean {
+        if (switchGeneration != generation) return true
+        return withContext(Dispatchers.IO) {
             try {
-                val giftWrapContent = eventObj["content"]?.jsonPrimitive?.contentOrNull ?: return@withContext
-                val giftWrapPubkey = eventObj["pubkey"]?.jsonPrimitive?.contentOrNull ?: return@withContext
+                val giftWrapContent = eventObj["content"]?.jsonPrimitive?.contentOrNull ?: return@withContext true
+                val giftWrapPubkey = eventObj["pubkey"]?.jsonPrimitive?.contentOrNull ?: return@withContext true
                 Log.w(TAG, "DBG: giftwrap ${eventId.take(8)} decrypting (amber=${isAmberMode()})")
 
                 val rumorJson = if (isAmberMode()) {
-                    // Amber handles NIP-44 decryption of the gift wrap
-                    amberSignerService.nip44Decrypt(giftWrapContent, giftWrapPubkey)
+                    // Gift wrap → seal → rumor is TWO NIP-44 layers; Amber must
+                    // decrypt both. silentOnly: a backlog drain must never fall back
+                    // to an interactive Intent per message (floods the signer).
+                    NIP17Service.unwrapGiftWrappedDMWithAmber(
+                        giftWrapContent, giftWrapPubkey, amberSignerService, silentOnly = true,
+                    ) ?: run {
+                        Log.w(TAG, "DBG: giftwrap ${eventId.take(8)} silent decrypt unavailable")
+                        return@withContext false // signer can't silently decrypt → retryable
+                    }
                 } else {
-                    val recipientPrivkey = resolvePrivateKey() ?: return@withContext
+                    val recipientPrivkey = resolvePrivateKey() ?: return@withContext true
                     NIP17Service.unwrapGiftWrappedDM(giftWrapContent, giftWrapPubkey, recipientPrivkey)
-                } ?: run { Log.w(TAG, "DBG: giftwrap ${eventId.take(8)} decrypt returned NULL"); return@withContext }
+                        ?: run { Log.w(TAG, "DBG: giftwrap ${eventId.take(8)} decrypt returned NULL"); return@withContext true }
+                }
 
                 // Parse the rumor JSON to extract sender, content, timestamp, tags
                 val rumorObj = json.parseToJsonElement(rumorJson).jsonObject
-                val senderPubkey = rumorObj["pubkey"]?.jsonPrimitive?.contentOrNull ?: return@withContext
-                val content = rumorObj["content"]?.jsonPrimitive?.contentOrNull ?: return@withContext
-                val timestamp = rumorObj["created_at"]?.jsonPrimitive?.longOrNull ?: return@withContext
+                val senderPubkey = rumorObj["pubkey"]?.jsonPrimitive?.contentOrNull ?: return@withContext true
+                val content = rumorObj["content"]?.jsonPrimitive?.contentOrNull ?: return@withContext true
+                val timestamp = rumorObj["created_at"]?.jsonPrimitive?.longOrNull ?: return@withContext true
                 val rumorTags = rumorObj["tags"]?.jsonArray?.map { t ->
                     t.jsonArray.map { it.jsonPrimitive.contentOrNull ?: "" }
                 } ?: emptyList()
@@ -307,7 +402,7 @@ class DMService @Inject constructor(
 
                 // Determine counterparty from rumor tags
                 val counterparty = if (isFromMe) {
-                    rumorTags.firstOrNull { it.size >= 2 && it[0] == "p" }?.get(1) ?: return@withContext
+                    rumorTags.firstOrNull { it.size >= 2 && it[0] == "p" }?.get(1) ?: return@withContext true
                 } else {
                     senderPubkey
                 }
@@ -324,22 +419,40 @@ class DMService @Inject constructor(
                 withContext(Dispatchers.Main.immediate) {
                     addMessageToConversation(counterparty, message)
                 }
+                true
             } catch (e: Exception) {
                 Log.w(TAG, "Gift wrap unwrap failed: ${e.message}")
+                true // bad data — don't requeue
             }
         }
     }
 
     private suspend fun handleIncomingNIP04(eventObj: JsonObject, generation: Int) {
         val eventId = eventObj["id"]?.jsonPrimitive?.contentOrNull ?: return
-        if (!seenGiftWrapIds.add(eventId)) { Log.w(TAG, "DBG: nip04 ${eventId.take(8)} skipped (already seen)"); return }
         if (switchGeneration != generation) return
+        if (seenGiftWrapIds.contains(eventId)) { Log.w(TAG, "DBG: nip04 ${eventId.take(8)} skipped (already seen)"); return }
 
-        withContext(Dispatchers.IO) {
+        // Amber mode: queue instead of decrypting now (see pendingDecryptQueue).
+        if (isAmberMode()) { enqueuePendingDecrypt(eventObj, eventId); return }
+
+        // Local key: decrypt eagerly — cheap, no signer IPC or prompts.
+        if (!seenGiftWrapIds.add(eventId)) return
+        decryptNip04(eventObj, eventId, generation)
+    }
+
+    /**
+     * Decrypts a kind-4 NIP-04 DM and folds it into the conversation list.
+     * Caller has already claimed [eventId] in seenGiftWrapIds.
+     * @return true if processed; false ONLY if the signer was unavailable for a
+     *   silent decrypt (retryable).
+     */
+    private suspend fun decryptNip04(eventObj: JsonObject, eventId: String, generation: Int): Boolean {
+        if (switchGeneration != generation) return true
+        return withContext(Dispatchers.IO) {
             try {
-                val pubkey = eventObj["pubkey"]?.jsonPrimitive?.contentOrNull ?: return@withContext
-                val content = eventObj["content"]?.jsonPrimitive?.contentOrNull ?: return@withContext
-                val createdAt = eventObj["created_at"]?.jsonPrimitive?.longOrNull ?: return@withContext
+                val pubkey = eventObj["pubkey"]?.jsonPrimitive?.contentOrNull ?: return@withContext true
+                val content = eventObj["content"]?.jsonPrimitive?.contentOrNull ?: return@withContext true
+                val createdAt = eventObj["created_at"]?.jsonPrimitive?.longOrNull ?: return@withContext true
                 val tags = eventObj["tags"]?.jsonArray?.map { t ->
                     t.jsonArray.map { it.jsonPrimitive.contentOrNull ?: "" }
                 } ?: emptyList()
@@ -347,19 +460,25 @@ class DMService @Inject constructor(
                 val ownerHex = nostrService.activeHexPubkey
                 val isFromMe = pubkey == ownerHex
                 val counterparty = if (isFromMe) {
-                    tags.firstOrNull { it.size >= 2 && it[0] == "p" }?.get(1) ?: return@withContext
+                    tags.firstOrNull { it.size >= 2 && it[0] == "p" }?.get(1) ?: return@withContext true
                 } else {
                     pubkey
                 }
                 Log.w(TAG, "DBG: nip04 ${eventId.take(8)} fromMe=$isFromMe cp=${counterparty.take(12)} decrypting (amber=${isAmberMode()})")
 
-                // Decrypt (Amber or local key)
+                // Decrypt (Amber or local key). silentOnly for the Amber path — a
+                // backlog drain must not launch an interactive Intent per message.
                 val plaintext = if (isAmberMode()) {
-                    amberSignerService.nip04Decrypt(content, counterparty)
+                    amberSignerService.nip04Decrypt(content, counterparty, silentOnly = true)
+                        ?: run {
+                            Log.w(TAG, "DBG: nip04 ${eventId.take(8)} silent decrypt unavailable")
+                            return@withContext false // retryable
+                        }
                 } else {
-                    val privkey = resolvePrivateKey() ?: return@withContext
+                    val privkey = resolvePrivateKey() ?: return@withContext true
                     NIP04Service.decrypt(content, counterparty, privkey)
-                } ?: run { Log.w(TAG, "DBG: nip04 ${eventId.take(8)} decrypt returned NULL"); return@withContext }
+                        ?: run { Log.w(TAG, "DBG: nip04 ${eventId.take(8)} decrypt returned NULL"); return@withContext true }
+                }
                 Log.w(TAG, "DBG: nip04 ${eventId.take(8)} decrypted len=${plaintext.length}")
 
                 val message = DMMessage(
@@ -374,9 +493,66 @@ class DMService @Inject constructor(
                 withContext(Dispatchers.Main.immediate) {
                     addMessageToConversation(counterparty, message)
                 }
+                true
             } catch (e: Exception) {
                 Log.w(TAG, "NIP-04 decrypt failed: ${e.message}")
+                true // bad data — don't requeue
             }
+        }
+    }
+
+    /** Queue a raw inbound DM event for on-demand (Amber) decryption. */
+    private fun enqueuePendingDecrypt(eventObj: JsonObject, eventId: String) {
+        if (seenGiftWrapIds.contains(eventId)) return
+        if (!queuedDecryptIds.add(eventId)) return
+        pendingDecryptQueue.add(eventObj)
+        _pendingDecryptCount.value = pendingDecryptQueue.size
+        Log.w(TAG, "DBG: queued ${eventId.take(8)} for decrypt (pending=${pendingDecryptQueue.size})")
+    }
+
+    /**
+     * Drain the queued inbound DMs, decrypting them ONE AT A TIME. Call this when
+     * a DM screen becomes visible. No-op in local-key mode (those decrypt eagerly
+     * on arrival). The drain mutex guarantees a single drainer even if the inbox
+     * and a thread both request it.
+     */
+    suspend fun decryptPending() {
+        if (!isAmberMode()) return
+        decryptDrainMutex.withLock {
+            // If we already blocked and nothing new has queued since, don't retry —
+            // this stops the UI's pendingDecryptCount collector from spinning the
+            // drain (and re-hitting the signer) in a tight loop while blocked.
+            if (_decryptBlocked.value && pendingDecryptQueue.size == lastBlockedSize) return@withLock
+            _decryptBlocked.value = false
+
+            while (true) {
+                val ev = pendingDecryptQueue.poll() ?: break
+                val id = ev["id"]?.jsonPrimitive?.contentOrNull
+                if (id == null) { _pendingDecryptCount.value = pendingDecryptQueue.size; continue }
+                queuedDecryptIds.remove(id)
+                if (!seenGiftWrapIds.add(id)) { _pendingDecryptCount.value = pendingDecryptQueue.size; continue }
+                val gen = switchGeneration
+                val processed = when (ev["kind"]?.jsonPrimitive?.intOrNull) {
+                    1059 -> decryptGiftWrap(ev, id, gen)
+                    4 -> decryptNip04(ev, id, gen)
+                    else -> true
+                }
+                if (!processed) {
+                    // Signer can't silently decrypt right now. Put the item back,
+                    // un-claim it, flag blocked, and STOP — do NOT machine-gun the
+                    // signer with an approval Intent per remaining message.
+                    seenGiftWrapIds.remove(id)
+                    queuedDecryptIds.add(id)
+                    pendingDecryptQueue.add(ev)
+                    lastBlockedSize = pendingDecryptQueue.size
+                    _decryptBlocked.value = true
+                    _pendingDecryptCount.value = pendingDecryptQueue.size
+                    Log.w(TAG, "DBG: drain blocked — signer silent-decrypt unavailable, ${pendingDecryptQueue.size} pending")
+                    return@withLock
+                }
+                _pendingDecryptCount.value = pendingDecryptQueue.size
+            }
+            _pendingDecryptCount.value = pendingDecryptQueue.size
         }
     }
 
@@ -507,6 +683,16 @@ class DMService @Inject constructor(
                 }
 
                 if (switchGeneration != generation) return@withContext
+
+                // Pre-mark our own self-copy gift wrap as seen. It is addressed to
+                // us (kind 1059, #p = self) so it echoes back through every DM
+                // subscription; without this it would be decrypted again — a wasted
+                // Amber round-trip per sent message for a message we already hold
+                // optimistically. (Pattern borrowed from dark-wisp markGiftWrapSeen.)
+                runCatching {
+                    json.parseToJsonElement(selfEvent).jsonObject["id"]
+                        ?.jsonPrimitive?.contentOrNull
+                }.getOrNull()?.let { seenGiftWrapIds.add(it) }
 
                 // Publish to local /chat relay
                 val config = configStore.config.value
@@ -859,10 +1045,25 @@ class DMService @Inject constructor(
                 if (!file.exists()) { Log.w(TAG, "DBG: loadCache no file key=$key"); return@launch }
 
                 val content = file.readText()
-                val convos = json.decodeFromString<List<DMConversation>>(content)
-                Log.w(TAG, "DBG: loadCache key=$key convos=${convos.size} msgs=${convos.sumOf { it.messages.size }}")
+                val rawConvos = json.decodeFromString<List<DMConversation>>(content)
 
-                // Seed dedup set
+                // One-time repair: earlier builds decrypted inbound NIP-17 gift
+                // wraps with a SINGLE nip44 decrypt and stored the still-encrypted
+                // seal content (NIP-44 v2 ciphertext) as the message body. Drop
+                // those corrupted entries and DO NOT seed their ids, so the live/
+                // catch-up subscriptions re-deliver them and the two-layer unwrap
+                // decrypts them correctly. NIP-04 messages were never affected.
+                var repaired = 0
+                val convos = rawConvos.mapNotNull { conv ->
+                    val good = conv.messages.filterNot { msg ->
+                        (!msg.isNIP04 && looksLikeNip44Ciphertext(msg.content)).also { if (it) repaired++ }
+                    }
+                    if (good.isEmpty()) null else conv.copy(messages = good)
+                }
+                Log.w(TAG, "DBG: loadCache key=$key convos=${convos.size} msgs=${convos.sumOf { it.messages.size }} repairedDropped=$repaired")
+
+                // Seed dedup set with the messages we KEPT (the dropped ones must be
+                // allowed to re-decrypt).
                 for (conv in convos) {
                     for (msg in conv.messages) {
                         seenGiftWrapIds.add(msg.id)
@@ -872,28 +1073,48 @@ class DMService @Inject constructor(
                 withContext(Dispatchers.Main.immediate) {
                     _conversations.value = convos
                 }
+
+                if (repaired > 0) {
+                    // Persist the cleaned cache and pull the dropped wraps back so
+                    // they decrypt with the fixed path.
+                    writeCacheNow()
+                    fetchFromExternalRelays()
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "DM cache load failed: ${e.message}")
             }
         }
     }
 
+    /**
+     * Debounced cache save. addMessageToConversation() fires this on every
+     * message add; during a backlog burst that would otherwise serialize the
+     * ENTIRE conversation history to disk N times. Coalesce into a single write
+     * ~500 ms after the burst settles. Cancelling the prior job is safe — the
+     * write always serializes the latest _conversations snapshot.
+     */
     private fun saveCachedConversations() {
-        scope.launch(Dispatchers.IO) {
-            try {
-                val key = currentCacheKey()
-                val dir = configStore.config.value.appSupportDir ?: return@launch
-                val dirFile = File(dir)
-                if (!dirFile.exists()) dirFile.mkdirs()
+        saveJob?.cancel()
+        saveJob = scope.launch(Dispatchers.IO) {
+            delay(CACHE_SAVE_DEBOUNCE_MS)
+            writeCacheNow()
+        }
+    }
 
-                val file = File(dir, "dm_cache_$key.json")
-                file.writeText(json.encodeToString(
-                    kotlinx.serialization.builtins.ListSerializer(DMConversation.serializer()),
-                    _conversations.value
-                ))
-            } catch (e: Exception) {
-                Log.w(TAG, "DM cache save failed: ${e.message}")
-            }
+    private fun writeCacheNow() {
+        try {
+            val key = currentCacheKey()
+            val dir = configStore.config.value.appSupportDir ?: return
+            val dirFile = File(dir)
+            if (!dirFile.exists()) dirFile.mkdirs()
+
+            val file = File(dir, "dm_cache_$key.json")
+            file.writeText(json.encodeToString(
+                kotlinx.serialization.builtins.ListSerializer(DMConversation.serializer()),
+                _conversations.value
+            ))
+        } catch (e: Exception) {
+            Log.w(TAG, "DM cache save failed: ${e.message}")
         }
     }
 
@@ -908,6 +1129,24 @@ class DMService @Inject constructor(
     // ══════════════════════════════════════════════════════════════════
 
     private fun isAmberMode(): Boolean = configStore.config.value.signingMode == "amber"
+
+    /**
+     * Heuristic: does [content] look like a NIP-44 v2 payload rather than human
+     * text? NIP-44 v2 = base64( 0x02 || nonce(32) || ciphertext || mac(32) ), so a
+     * valid decode whose first byte is 0x02 and whose length is at least the
+     * minimum (1+32+32+32 = 97 bytes) is almost certainly leftover ciphertext from
+     * the old single-decrypt NIP-17 bug — not a real message. Used only to purge
+     * corrupted cached entries on load.
+     */
+    private fun looksLikeNip44Ciphertext(content: String): Boolean {
+        if (content.length < 130 || content.any { it.isWhitespace() }) return false
+        return try {
+            val raw = android.util.Base64.decode(content, android.util.Base64.DEFAULT)
+            raw.size >= 97 && raw[0].toInt() == 0x02
+        } catch (_: Exception) {
+            false
+        }
+    }
 
     private fun resolvePrivateKey(): String? {
         val config = configStore.config.value

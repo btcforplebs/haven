@@ -98,6 +98,12 @@ class DMThreadViewModel @Inject constructor(
             nostrService.fetchMissingProfiles(listOf(counterpartyPubkey))
             dmService.markConversationRead(counterpartyPubkey)
         }
+        // Drain any queued (Amber) decrypts while the thread is open so newly
+        // arrived messages appear without leaving the conversation.
+        viewModelScope.launch {
+            dmService.decryptPending()
+            dmService.pendingDecryptCount.collect { if (it > 0) dmService.decryptPending() }
+        }
     }
 
     fun setMessageText(text: String) { _messageText.value = text }
