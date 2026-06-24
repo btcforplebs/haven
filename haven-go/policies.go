@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/barrydeen/haven/pkg/wot"
@@ -10,6 +13,28 @@ import (
 	"github.com/fiatjaf/khatru/policies"
 	"github.com/nbd-wtf/go-nostr"
 )
+
+// bypassLocalhostConnectionLimiter wraps a RejectConnection policy so that
+// connections originating from loopback (the owner's own app talking to its
+// embedded relay) are NEVER rejected. The IP-based ConnectionRateLimiter is
+// meant to throttle external strangers; applied to localhost it throttles the
+// app against itself — a burst of legitimate local connections (DM inbox, feed
+// parent/quoted-note fetches, stats) exhausts the small token bucket and the
+// relay starts answering 429, which the client retries, producing a reconnect
+// storm that pins CPU and janks the UI.
+func bypassLocalhostConnectionLimiter(inner func(r *http.Request) bool) func(r *http.Request) bool {
+	return func(r *http.Request) bool {
+		host := r.RemoteAddr
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		if host == "127.0.0.1" || host == "::1" || host == "localhost" ||
+			strings.HasPrefix(host, "127.") {
+			return false // allow: never rate-limit the owner's own app
+		}
+		return inner(r)
+	}
+}
 
 // whitelistBypassEventRateLimiter wraps EventIPRateLimiter so that events from
 // whitelisted pubkeys (the owner and any allowed accounts) are never rate-limited.

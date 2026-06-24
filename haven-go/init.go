@@ -223,11 +223,11 @@ func initRelays(ctx context.Context) error {
 	)
 
 	privateRelay.RejectConnection = append(privateRelay.RejectConnection,
-		policies.ConnectionRateLimiter(
+		bypassLocalhostConnectionLimiter(policies.ConnectionRateLimiter(
 			privateRelayLimits.ConnectionRateLimiterTokensPerInterval,
 			time.Minute*time.Duration(privateRelayLimits.ConnectionRateLimiterInterval),
 			privateRelayLimits.ConnectionRateLimiterMaxTokens,
-		),
+		)),
 	)
 
 	privateRelay.OnConnect = append(privateRelay.OnConnect, khatru.RequestAuth)
@@ -294,11 +294,11 @@ func initRelays(ctx context.Context) error {
 	)
 
 	chatRelay.RejectConnection = append(chatRelay.RejectConnection,
-		policies.ConnectionRateLimiter(
+		bypassLocalhostConnectionLimiter(policies.ConnectionRateLimiter(
 			chatRelayLimits.ConnectionRateLimiterTokensPerInterval,
 			time.Minute*time.Duration(chatRelayLimits.ConnectionRateLimiterInterval),
 			chatRelayLimits.ConnectionRateLimiterMaxTokens,
-		),
+		)),
 	)
 
 	chatRelay.OnConnect = append(chatRelay.OnConnect, khatru.RequestAuth)
@@ -363,11 +363,11 @@ func initRelays(ctx context.Context) error {
 	)
 
 	outboxRelay.RejectConnection = append(outboxRelay.RejectConnection,
-		policies.ConnectionRateLimiter(
+		bypassLocalhostConnectionLimiter(policies.ConnectionRateLimiter(
 			outboxRelayLimits.ConnectionRateLimiterTokensPerInterval,
 			time.Minute*time.Duration(outboxRelayLimits.ConnectionRateLimiterInterval),
 			outboxRelayLimits.ConnectionRateLimiterMaxTokens,
-		),
+		)),
 	)
 
 	outboxRelay.StoreEvent = append(outboxRelay.StoreEvent, outboxDB.SaveEvent, func(ctx context.Context, event *nostr.Event) error {
@@ -463,11 +463,11 @@ func initRelays(ctx context.Context) error {
 	)
 
 	inboxRelay.RejectConnection = append(inboxRelay.RejectConnection,
-		policies.ConnectionRateLimiter(
+		bypassLocalhostConnectionLimiter(policies.ConnectionRateLimiter(
 			inboxRelayLimits.ConnectionRateLimiterTokensPerInterval,
 			time.Minute*time.Duration(inboxRelayLimits.ConnectionRateLimiterInterval),
 			inboxRelayLimits.ConnectionRateLimiterMaxTokens,
-		),
+		)),
 	)
 
 	inboxRelay.StoreEvent = append(inboxRelay.StoreEvent, inboxDB.SaveEvent, func(ctx context.Context, event *nostr.Event) error {
