@@ -67,6 +67,9 @@ enum RelayLogParser {
         var isPortConflict: Bool = false
         var progressDateStr: String?
         var progressBump: Bool = false
+        /// Bodies of `🔔NOTIFY|` markers (everything after the prefix) collected
+        /// in this batch. Forwarded to LocalNotificationService on the main actor.
+        var notifyMarkers: [String] = []
     }
 
     // Cached regex patterns for boot/import status parsing
@@ -170,6 +173,12 @@ enum RelayLogParser {
         // the precise signal for the "new relay activity" red dot.
         if line.contains("in your inbox") || line.contains("in your chat relay") {
             batch.inboxActivityDelta += 1
+        }
+
+        // Local notification markers — collect for LocalNotificationService.
+        let notifyPrefix = "🔔NOTIFY|"
+        if let r = line.range(of: notifyPrefix) {
+            batch.notifyMarkers.append(String(line[r.upperBound...]))
         }
 
         // Booting status

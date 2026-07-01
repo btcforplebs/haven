@@ -833,10 +833,12 @@ class RelayProcessManager: ObservableObject {
                 self.applyBatchedUpdate(batch)
             }
         } else {
-            // Only dispatch for critical state changes (errors, boot/import completion)
+            // Only dispatch for critical state changes (errors, boot/import completion,
+            // or local notification markers which must fire even when UI is hidden).
             let hasCritical = batch.isLocked || batch.isPortConflict
                 || batch.stopBooting || batch.stopImporting
                 || batch.eventsStoredDelta != 0
+                || !batch.notifyMarkers.isEmpty
             if hasCritical {
                 Task { @MainActor in
                     self.applyBatchedUpdate(batch)
@@ -920,6 +922,14 @@ class RelayProcessManager: ObservableObject {
         if batch.isPortConflict {
             isPortConflict = true
         }
+
+        // Local notifications — forward NOTIFY markers to LocalNotificationService.
+        // Only compiled for iOS; macOS uses the push server path.
+        #if os(iOS)
+        for marker in batch.notifyMarkers {
+            LocalNotificationService.shared.handle(marker)
+        }
+        #endif
     }
 
     private func startLogThrottler() {

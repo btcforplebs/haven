@@ -1302,6 +1302,9 @@
     "Insufficient funds after fees" : {
 
     },
+    "Keep the bottom tab bar fully expanded at all times. When off, the bar shrinks and hides as you scroll." : {
+
+    },
     "Keep this key safe. Anyone with your nsec has full control of your Nostr identity." : {
 
     },
@@ -3079,6 +3082,9 @@
 
     },
     "System Logs" : {
+
+    },
+    "Tab Bar" : {
 
     },
     "Tap \"Scan Relays\" to search for historical contact lists." : {
