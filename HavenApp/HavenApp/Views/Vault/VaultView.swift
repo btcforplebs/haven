@@ -47,6 +47,9 @@ struct VaultView: View {
 
     // Debounce refreshAll() to prevent rapid-fire resubscriptions
     @State var refreshDebounceTask: Task<Void, Never>?
+    // Set when a .full refresh is requested during the debounce window so a
+    // later .incremental request can't downgrade it.
+    @State var pendingFullRefresh = false
 
     // New-event notification highlights for mode buttons
     @State var hasNewNotes = false
@@ -180,6 +183,10 @@ struct VaultView: View {
                 }
                 if nostrService.connectionStatus == "Disconnected" && !recentlyReconnected {
                     refreshAll()
+                } else {
+                    // Sockets are live: keep them, just ask the embedded relay
+                    // to catch up and top up the live subscriptions.
+                    refreshAll(.incremental)
                 }
                 initialLoad = true
                 updateDisplayData()
@@ -282,7 +289,7 @@ struct VaultView: View {
         }
         // -- handlers from viewContent --
         .onReceive(NotificationCenter.default.publisher(for: .feedInjectionComplete)) { _ in
-            refreshAll()
+            refreshAll(.incremental)
         }
         .onReceive(NotificationCenter.default.publisher(for: .mediaNotFoundChanged)) { _ in
             scheduleUpdateDisplayData()
@@ -366,7 +373,7 @@ struct VaultView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .refreshable {
-                refreshAll()
+                refreshAll(.incremental)
             }
             .scrollDirectionTracking(feedService: feedService)
         }
@@ -438,7 +445,7 @@ struct VaultView: View {
                                 }
                             }
                             .refreshable {
-                                refreshAll()
+                                refreshAll(.incremental)
                             }
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                         }
@@ -507,7 +514,7 @@ struct VaultView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .refreshable {
-                refreshAll()
+                refreshAll(.incremental)
             }
             .scrollDirectionTracking(feedService: feedService)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -697,7 +704,7 @@ struct VaultView: View {
             if viewMode == .zaps { updateZapsSettleState() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .feedInjectionComplete)) { _ in
-            refreshAll()
+            refreshAll(.incremental)
         }
         .onReceive(NotificationCenter.default.publisher(for: .mediaNotFoundChanged)) { _ in
             scheduleUpdateDisplayData()
@@ -769,6 +776,10 @@ struct VaultView: View {
                 }
                 if nostrService.connectionStatus == "Disconnected" && !recentlyReconnected {
                     refreshAll()
+                } else {
+                    // Sockets are live: keep them, just ask the embedded relay
+                    // to catch up and top up the live subscriptions.
+                    refreshAll(.incremental)
                 }
                 initialLoad = true
                 // Eagerly compute display data so tabs don't flash an empty state

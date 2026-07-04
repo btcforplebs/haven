@@ -232,6 +232,7 @@ func StartRelayC(importMode bool) {
 			}
 
 			cycle.spawn("subscribeInboxAndChat", func() { subscribeInboxAndChat(cycle.ctx) })
+			cycle.spawn("syncFeed", func() { syncFeed(cycle.ctx) })
 			cycle.spawn("periodicCloudBackups", func() { startPeriodicCloudBackups(cycle.ctx) })
 			cycle.spawn("wot.PeriodicRefresh", func() { wot.PeriodicRefresh(cycle.ctx, config.WotRefreshInterval) })
 		})
@@ -362,10 +363,12 @@ func StopRelayC() {
 	log.Println("🔌 HAVEN is shutting down (C-Shared Mode)")
 	relayLC.stopCycle(func(c *relayCycle) {
 		if c.server != nil {
-			// Use a bounded timeout so a hung handler can't block shutdown forever.
-			// The Android side already imposes a 5 s JNI timeout; this 4 s ceiling
-			// ensures the Go side finishes first and databases close cleanly.
-			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 4*time.Second)
+			// Use a bounded timeout so a hung handler can't block shutdown
+			// forever. The whole stop sequence (server drain + goroutine wait
+			// + DB close) must finish inside ~5 s: Android imposes a 5 s JNI
+			// timeout, and iOS SIGKILLs the app (0x8BADF00D) if termination
+			// takes longer than 5 s.
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer shutdownCancel()
 			if err := c.server.Shutdown(shutdownCtx); err != nil {
 				log.Printf("⚠️ HTTP server shutdown error (force-closing): %v", err)
@@ -376,8 +379,10 @@ func StopRelayC() {
 		// returns quickly; if something straggles, closing the DBs after a
 		// bounded wait is still safe — a late write hits Badger's
 		// ErrDBClosed (or the runsafe recover) instead of corrupting state.
-		if !c.waitBackground(10 * time.Second) {
-			log.Println("⚠️ background goroutines did not exit within 10s; closing DBs anyway")
+		// In a backgrounded app the sockets are frozen, so stragglers are
+		// common — the short wait matters more than a clean drain.
+		if !c.waitBackground(2 * time.Second) {
+			log.Println("⚠️ background goroutines did not exit within 2s; closing DBs anyway")
 		}
 		CloseDBs()
 	})
@@ -588,6 +593,89 @@ func countLeadingZeroBits(data []byte) int {
 	return n
 }
 
+// escapeStringForMining mirrors go-nostr's unexported escapeString (NIP-01 canonical
+// string escaping) so the mining fast-path below can build identical serialization
+// bytes without depending on vendor internals.
+func escapeStringForMining(dst []byte, s string) []byte {
+	dst = append(dst, '"')
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '"':
+			dst = append(dst, '\\', '"')
+		case c == '\\':
+			dst = append(dst, '\\', '\\')
+		case c >= 0x20:
+			dst = append(dst, c)
+		case c == 0x08:
+			dst = append(dst, '\\', 'b')
+		case c < 0x09:
+			dst = append(dst, '\\', 'u', '0', '0', '0', '0'+c)
+		case c == 0x09:
+			dst = append(dst, '\\', 't')
+		case c == 0x0a:
+			dst = append(dst, '\\', 'n')
+		case c == 0x0c:
+			dst = append(dst, '\\', 'f')
+		case c == 0x0d:
+			dst = append(dst, '\\', 'r')
+		case c < 0x10:
+			dst = append(dst, '\\', 'u', '0', '0', '0', 0x57+c)
+		case c < 0x1a:
+			dst = append(dst, '\\', 'u', '0', '0', '1', 0x20+c)
+		case c < 0x20:
+			dst = append(dst, '\\', 'u', '0', '0', '1', 0x47+c)
+		}
+	}
+	dst = append(dst, '"')
+	return dst
+}
+
+// buildMiningPrefixSuffix precomputes the NIP-01 serialization bytes surrounding a
+// nonce tag (always the last tag while mining) so each attempt only has to append
+// the nonce digits between them, rather than re-serializing the whole event.
+//
+// A full serialization looks like:
+//
+//	[0,"<pubkey>",<created_at>,<kind>,[...baseTags...,["nonce","<nonce>","<diff>"]],"<content>"]
+//
+// prefix covers everything through the opening quote of the nonce value; suffix
+// covers everything from the closing quote of the nonce value onward.
+func buildMiningPrefixSuffix(pubkey string, createdAt int64, kind int, baseTags nostr.Tags, content string, diffStr string) (prefix, suffix []byte) {
+	prefix = append(prefix, "[0,\""...)
+	prefix = append(prefix, pubkey...)
+	prefix = append(prefix, "\","...)
+	prefix = strconv.AppendInt(prefix, createdAt, 10)
+	prefix = append(prefix, ',')
+	prefix = strconv.AppendInt(prefix, int64(kind), 10)
+	prefix = append(prefix, ',', '[')
+	for i, tag := range baseTags {
+		if i > 0 {
+			prefix = append(prefix, ',')
+		}
+		prefix = append(prefix, '[')
+		for j, s := range tag {
+			if j > 0 {
+				prefix = append(prefix, ',')
+			}
+			prefix = escapeStringForMining(prefix, s)
+		}
+		prefix = append(prefix, ']')
+	}
+	if len(baseTags) > 0 {
+		prefix = append(prefix, ',')
+	}
+	prefix = append(prefix, "[\"nonce\",\""...)
+
+	suffix = append(suffix, "\",\""...)
+	suffix = append(suffix, diffStr...)
+	suffix = append(suffix, "\"]],"...)
+	suffix = escapeStringForMining(suffix, content)
+	suffix = append(suffix, ']')
+
+	return prefix, suffix
+}
+
 //export MineAndSignEventC
 func MineAndSignEventC(jsonStr *C.char, sk *C.char, difficulty C.int, maxAttempts C.int) *C.char {
 	diff := int(difficulty)
@@ -618,19 +706,32 @@ func MineAndSignEventC(jsonStr *C.char, sk *C.char, difficulty C.int, maxAttempt
 	baseTags := make(nostr.Tags, len(event.Tags))
 	copy(baseTags, event.Tags)
 
-	for nonce := 0; nonce < maxAtt; nonce++ {
-		// Build tags with nonce appended
-		mineTags := make(nostr.Tags, len(baseTags), len(baseTags)+1)
-		copy(mineTags, baseTags)
-		mineTags = append(mineTags, nostr.Tag{"nonce", strconv.Itoa(nonce), diffStr})
-		event.Tags = mineTags
+	// The nonce tag is always appended last, so everything around it (header,
+	// existing tags, content) is identical on every attempt. Precompute that
+	// once and only vary the nonce digits per attempt, instead of
+	// re-serializing (and re-escaping the full content) up to maxAttempts
+	// times — for longer notes that re-serialization cost dominates mining
+	// time and can turn a "few second" mine into a multi-minute one.
+	prefix, suffix := buildMiningPrefixSuffix(event.PubKey, int64(event.CreatedAt), event.Kind, baseTags, event.Content, diffStr)
+	buf := make([]byte, 0, len(prefix)+24+len(suffix))
 
-		// Serialize and hash
-		h := sha256.Sum256(event.Serialize())
+	for nonce := 0; nonce < maxAtt; nonce++ {
+		buf = buf[:0]
+		buf = append(buf, prefix...)
+		buf = strconv.AppendInt(buf, int64(nonce), 10)
+		buf = append(buf, suffix...)
+
+		// Hash
+		h := sha256.Sum256(buf)
 
 		// Check leading zero bits
 		if countLeadingZeroBits(h[:]) >= diff {
 			// Found valid nonce — sign and return
+			mineTags := make(nostr.Tags, len(baseTags), len(baseTags)+1)
+			copy(mineTags, baseTags)
+			mineTags = append(mineTags, nostr.Tag{"nonce", strconv.Itoa(nonce), diffStr})
+			event.Tags = mineTags
+
 			if err := event.Sign(C.GoString(sk)); err != nil {
 				slog.Error("MineAndSignEventC: failed to sign mined event", "error", err)
 				return nil

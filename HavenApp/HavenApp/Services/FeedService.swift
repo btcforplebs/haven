@@ -145,16 +145,31 @@ class FeedService: ObservableObject {
     private static let maxRawEventCacheSize = 1000
 
     /// Insert a raw event JSON string into the cache (for own posts / rebroadcast).
+    /// Every write to `rawEventCache` must go through here: a writer that
+    /// bypasses `rawEventCacheOrder` lets the dict outgrow the order array,
+    /// and eviction's removeFirst then traps (the recurring post-time crash).
     func cacheRawEvent(id: String, json: String) {
         if rawEventCache[id] == nil {
             rawEventCacheOrder.append(id)
         }
         rawEventCache[id] = json
         if rawEventCache.count > Self.maxRawEventCacheSize {
-            let overflow = rawEventCache.count - Self.maxRawEventCacheSize
+            // Clamp so a residual desync degrades to partial eviction
+            // instead of trapping in removeFirst.
+            let overflow = min(rawEventCache.count - Self.maxRawEventCacheSize,
+                               rawEventCacheOrder.count)
             let keysToRemove = rawEventCacheOrder.prefix(overflow)
             for key in keysToRemove { rawEventCache.removeValue(forKey: key) }
             rawEventCacheOrder.removeFirst(overflow)
+        }
+        if rawEventCache.count > Self.maxRawEventCacheSize {
+            // Still over cap: the dict holds keys the order array never
+            // tracked. Drop untracked keys until back under the cap.
+            let tracked = Set(rawEventCacheOrder)
+            for key in rawEventCache.keys.filter({ !tracked.contains($0) }) {
+                rawEventCache.removeValue(forKey: key)
+                if rawEventCache.count <= Self.maxRawEventCacheSize { break }
+            }
         }
     }
 
@@ -196,6 +211,10 @@ class FeedService: ObservableObject {
     /// Timestamp (unix seconds) of the newest event successfully processed.
     /// Used on resume to narrow the relay filter to only the gap period.
     private var lastEventTimestamp: Int64 = 0
+    /// `lastEventTimestamp` frozen at the start of the current subscription
+    /// round so every relay in the round gets the same `since` window (see
+    /// `feedSinceAndLimit`).
+    private var subscriptionRoundSince: Int64 = 0
     private var newSinceLastView = Date()
     private var eoseCount = 0   // track when all relays return EOSE
     /// Relay keys that have received primary feed EOSE — triggers deferred auxiliary subscriptions.
@@ -237,6 +256,15 @@ class FeedService: ObservableObject {
         guard RelayProcessManager.shared.isRunning,
               !RelayProcessManager.shared.isBooting else { return nil }
         return URL(string: ConfigService.shared.config.nostrURL + "/inbox")
+    }
+
+    /// Local feed-cache relay — follows' recent notes kept in sync by the
+    /// embedded relay (negentropy against the feed relays). Serves the feed
+    /// window from disk instantly on cold start and for pagination.
+    private var localFeedURL: URL? {
+        guard RelayProcessManager.shared.isRunning,
+              !RelayProcessManager.shared.isBooting else { return nil }
+        return URL(string: ConfigService.shared.config.nostrURL + "/feed")
     }
 
     /// Public relays used to supplement the local relay.
@@ -310,6 +338,10 @@ class FeedService: ObservableObject {
     // Profile saving
     private var profileSaveTimer: Timer?
 
+    // Periodic disk-snapshot persistence (crash safety; see init)
+    private var snapshotPersistTimer: Timer?
+    private var snapshotDirty = false
+
     private var configCancellables = Set<AnyCancellable>()
 
     // MARK: - Local Relay Injection
@@ -376,6 +408,22 @@ class FeedService: ObservableObject {
                 }
             }
             .store(in: &configCancellables)
+
+        // Persist the disk snapshot periodically while the feed changes — not
+        // just on background/terminate — so a crash or force-kill doesn't lose
+        // the session and the next cold launch still restores instantly.
+        $notes
+            .dropFirst()
+            .sink { [weak self] _ in self?.snapshotDirty = true }
+            .store(in: &configCancellables)
+        snapshotPersistTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self = self, self.snapshotDirty, !self.isPaused,
+                      self.feedMode != .popular, !self.notes.isEmpty else { return }
+                self.snapshotDirty = false
+                self.persistCurrentSnapshot()
+            }
+        }
     }
 
     /// Stable in-memory cache key for the active account. Uses the configured
@@ -731,6 +779,14 @@ class FeedService: ObservableObject {
     func refresh() {
         guard !isLoadingContacts, !isPaused else { return }
 
+        // Ask the embedded relay to catch up its inbox/outbox from external
+        // relays too, so a feed pull-to-refresh also freshens the Relay tab,
+        // DMs, and notifications. Non-blocking, coalesced, no-op-safe when the
+        // relay isn't running.
+        if RelayProcessManager.shared.isRunning && !RelayProcessManager.shared.isBooting {
+            RequestRelaySyncC()
+        }
+
         if feedMode == .popular {
             loadPopularFeed()
             return
@@ -1052,6 +1108,7 @@ class FeedService: ObservableObject {
         var desiredURLs: [URL] = []
         if let local = localRelayURL { desiredURLs.append(local) }
         if let inbox = localInboxURL { desiredURLs.append(inbox) }
+        if let feed = localFeedURL { desiredURLs.append(feed) }
         desiredURLs.append(contentsOf: externalRelayURLs)
 
         let missing = desiredURLs.filter { feedClients[$0.absoluteString] == nil }
@@ -1455,6 +1512,7 @@ class FeedService: ObservableObject {
         var allURLs: [URL] = []
         if let local = localRelayURL { allURLs.append(local) }
         if let inbox = localInboxURL { allURLs.append(inbox) }
+        if let feed = localFeedURL { allURLs.append(feed) }
         allURLs.append(contentsOf: externalRelayURLs)
 
         let totalRelays = allURLs.count
@@ -1951,6 +2009,8 @@ class FeedService: ObservableObject {
         subIdToRelayKey.removeAll()
         relayErrorCounts.removeAll()
         connectionStatus = "Loading feed…"
+        // Freeze the resume window for this round before any relay connects.
+        subscriptionRoundSince = lastEventTimestamp
 
         // Use faster flush interval during initial load for snappier content display.
         // Global mode gets ultra-fast real-time flushing for streaming effect.
@@ -1963,6 +2023,7 @@ class FeedService: ObservableObject {
         var allURLs: [URL] = []
         if let local = localRelayURL { allURLs.append(local) }
         if let inbox = localInboxURL { allURLs.append(inbox) }
+        if let feed = localFeedURL { allURLs.append(feed) }
         allURLs.append(contentsOf: externalRelayURLs)
 
         let allKeys = Set(allURLs.map { $0.absoluteString })
@@ -2004,7 +2065,7 @@ class FeedService: ObservableObject {
             if let existing = feedClients[key],
                existing.connectionState == .connected {
                 sendPrimaryFeedSubscription(client: existing, label: key)
-            } else if url == localRelayURL || url == localInboxURL {
+            } else if url == localRelayURL || url == localInboxURL || url == localFeedURL {
                 connectFeedRelay(url: url, totalRelays: totalRelays)
             } else {
                 externalQueue.append(url)
@@ -2128,10 +2189,18 @@ class FeedService: ObservableObject {
     }
 
     /// Shared "since" and filter computation for feed subscriptions.
+    ///
+    /// Uses `subscriptionRoundSince` — the value of `lastEventTimestamp` frozen
+    /// at the start of the current subscription round — NOT the live value.
+    /// Relays connect at different speeds (the local /feed cache answers in
+    /// milliseconds, externals stagger in over seconds); with the live value, a
+    /// fast relay's notes advance the timestamp before slow relays compute
+    /// their REQ, so externals get asked only for the last ~60s and everything
+    /// the fast relay didn't have silently disappears from the feed.
     private func feedSinceAndLimit(until: Int64? = nil) -> (since: Int64, limit: Int) {
-        let isResume = lastEventTimestamp > 0 && until == nil
+        let isResume = subscriptionRoundSince > 0 && until == nil
         if isResume {
-            return (lastEventTimestamp - 60, feedMode == .media ? 500 : 500)
+            return (subscriptionRoundSince - 60, feedMode == .media ? 500 : 500)
         } else {
             return (Int64(Date().timeIntervalSince1970) - (7 * 24 * 3600), feedMode == .media ? 300 : 500)
         }
@@ -2589,18 +2658,11 @@ class FeedService: ObservableObject {
             )
         }
 
-        // Merge raw event JSON entries into the cache for NIP-18 repost embedding
-        if !snap.rawEventEntries.isEmpty {
-            for entry in snap.rawEventEntries {
-                rawEventCache[entry.id] = entry.json
-            }
-            // Cap cache size to prevent unbounded growth.
-            // Sort keys so every device evicts the same (oldest/smallest) entries.
-            if rawEventCache.count > Self.maxRawEventCacheSize {
-                let overflow = rawEventCache.count - Self.maxRawEventCacheSize
-                let keysToRemove = rawEventCache.keys.sorted().prefix(overflow)
-                for key in keysToRemove { rawEventCache.removeValue(forKey: key) }
-            }
+        // Merge raw event JSON entries into the cache for NIP-18 repost embedding.
+        // Must go through cacheRawEvent so the FIFO order array stays in sync
+        // (it also enforces the size cap).
+        for entry in snap.rawEventEntries {
+            cacheRawEvent(id: entry.id, json: entry.json)
         }
 
         if added {
@@ -2847,7 +2909,7 @@ class FeedService: ObservableObject {
         if kind == 1 || kind == 30023 {
             if let evData = try? JSONSerialization.data(withJSONObject: ev, options: []),
                let evJSON = String(data: evData, encoding: .utf8) {
-                rawEventCache[id] = evJSON
+                cacheRawEvent(id: id, json: evJSON)
             }
         }
 

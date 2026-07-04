@@ -1302,7 +1302,7 @@ class NostrService: ObservableObject {
         return RelayProcessManager.shared.isRunning && !RelayProcessManager.shared.isBooting
     }
 
-    func fetchNotes(from relayURLs: [URL], until: Int64? = nil, authors: [String]? = nil) {
+    func fetchNotes(from relayURLs: [URL], until: Int64? = nil, since: Int64? = nil, authors: [String]? = nil) {
         // Count only the subscriptions we actually open/request below — NOT every
         // URL passed in. Skipped URLs (local relay not ready, already connecting,
         // reconnecting, or backing off) never deliver an EOSE, so pre-counting
@@ -1327,7 +1327,7 @@ class NostrService: ObservableObject {
 
             if let existing = clients[urlString] {
                 if existing.connectionState == .connected {
-                    sendRequest(to: existing, url: url, until: until, authors: authors)
+                    sendRequest(to: existing, url: url, until: until, since: since, authors: authors)
                     awaiting += 1
                     continue
                 } else if existing.connectionState == .connecting {
@@ -1359,7 +1359,7 @@ class NostrService: ObservableObject {
                     DispatchQueue.main.asyncAfter(deadline: .now() + (delay - timeSinceLastAttempt)) { [weak self] in
                         guard let self = self else { return }
                         guard self.clients[urlString] != nil else { return }
-                        self.fetchNotes(from: [url], until: until, authors: authors)
+                        self.fetchNotes(from: [url], until: until, since: since, authors: authors)
                     }
                     continue
                 }
@@ -1401,7 +1401,7 @@ class NostrService: ObservableObject {
                         // Reset backoff on successful connection
                         self.relayReconnectAttempts[urlString] = 0
                         self.relaysReconnecting.remove(urlString)
-                        self.sendRequest(to: client!, url: url, until: until, authors: authors)
+                        self.sendRequest(to: client!, url: url, until: until, since: since, authors: authors)
                     } else if state == .error {
                         self.relaysReconnecting.remove(urlString)
 
@@ -1483,7 +1483,7 @@ class NostrService: ObservableObject {
     }
 
 
-    private func sendRequest(to client: WebSocketClient, url: URL, until: Int64? = nil, authors: [String]? = nil) {
+    private func sendRequest(to client: WebSocketClient, url: URL, until: Int64? = nil, since: Int64? = nil, authors: [String]? = nil) {
         let urlString = url.absoluteString
         let isHistorical = until != nil
 
@@ -1523,6 +1523,7 @@ class NostrService: ObservableObject {
         func makeFilter(kinds: [Int], limit: Int, mentionsOwner: String?) -> [String: Any] {
             var f: [String: Any] = ["limit": limit, "kinds": kinds]
             if let until = until { f["until"] = until }
+            if let since = since { f["since"] = since }
             // Author scoping applies to the owner/whitelist feed, not the mentions feed.
             if mentionsOwner == nil, let authors = authors, !authors.isEmpty {
                 f["authors"] = authors

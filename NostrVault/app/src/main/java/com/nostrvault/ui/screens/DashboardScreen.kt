@@ -567,7 +567,29 @@ class DashboardViewModel @Inject constructor(
 
         // Keep existing data and only fetch new events (don't clear or full reload)
         _isRefreshing.value = true
-        connectToLocalRelay()
+
+        // Reuse live sockets: re-send the since-bounded subscriptions instead of
+        // tearing every connection down and replaying the whole window. Only
+        // rebuild connections when they're actually gone/dead.
+        val outboxUp = outboxClient?.connectionState?.value == WebSocketClient.ConnectionState.CONNECTED
+        val inboxUp = inboxClient?.connectionState?.value == WebSocketClient.ConnectionState.CONNECTED
+        if (outboxUp && inboxUp) {
+            val authors = buildAuthorSet()
+            val ownerHex = nostrService.activeHexPubkey
+            val config = configStore.config.value
+            val localUrl = "ws://127.0.0.1:${config.relayPort}"
+            val inboxUrl = "$localUrl/inbox"
+            val macWss = config.macRelayWssURL
+
+            outboxClient?.let { sendVaultSubscription(it, "vault-outbox", authors, ownerHex, localUrl) }
+            inboxClient?.let { sendVaultSubscription(it, "vault-inbox", authors, ownerHex, inboxUrl) }
+            macOutboxClient?.takeIf { it.connectionState.value == WebSocketClient.ConnectionState.CONNECTED }
+                ?.let { sendVaultSubscription(it, "vault-mac-outbox", authors, ownerHex, macWss) }
+            macInboxClient?.takeIf { it.connectionState.value == WebSocketClient.ConnectionState.CONNECTED }
+                ?.let { sendVaultSubscription(it, "vault-mac-inbox", authors, ownerHex, "$macWss/inbox") }
+        } else {
+            connectToLocalRelay()
+        }
     }
 
     /**

@@ -175,6 +175,11 @@ class FeedViewModel @Inject constructor(
     }
 
     fun refresh() {
+        // Ask the embedded relay to catch up its inbox/outbox from external
+        // relays too, so a feed pull-to-refresh also freshens the Dashboard,
+        // DMs, and notifications. Non-blocking, coalesced in Go, safe when the
+        // relay isn't running.
+        runCatching { com.nostrvault.relay.HavenBridge.requestRelaySync() }
         viewModelScope.launch {
             _isRefreshing.value = true
             feedService.refresh()

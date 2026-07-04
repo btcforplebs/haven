@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -15,6 +16,8 @@ import (
 	"github.com/fiatjaf/eventstore"
 	"github.com/nbd-wtf/go-nostr"
 
+	"github.com/barrydeen/haven/internal/negsync"
+	"github.com/barrydeen/haven/internal/tombstones"
 	"github.com/barrydeen/haven/pkg/runsafe"
 	"github.com/barrydeen/haven/pkg/wot"
 )
@@ -280,20 +283,51 @@ func subscribeInboxAndChat(ctx context.Context) {
 		}
 	}
 
+	// Tombstones record events that were fetched and intentionally rejected so
+	// negentropy sync never re-downloads them (the local store is a filtered
+	// subset of the remote set). Nil-safe: a failed open just means rejects get
+	// re-fetched and re-rejected each round.
+	tombs, tombErr := tombstones.Open(fs, config.TombstonePath,
+		time.Duration(config.SyncWindowDays+9)*24*time.Hour)
+	if tombErr != nil {
+		log.Println("⚠️ tombstone store unavailable (sync will re-fetch rejected events):", tombErr)
+	} else {
+		defer tombs.Close()
+	}
+
+	// Catch-up notifications are batched: a backlog import shouldn't fire
+	// hundreds of system notifications. The live subscription below bypasses
+	// this (notifier=nil ⇒ notify immediately).
+	notifier := &batchNotifier{}
+
+	inboxStore := &inboxNegStore{
+		inbox:    wdbInbox,
+		chat:     wdbChat,
+		tombs:    tombs,
+		notifier: notifier,
+		advance:  func(ts nostr.Timestamp) { advance(&lastSeen, ts) },
+	}
+	outboxStore := &outboxNegStore{
+		outbox:  wdbOutbox,
+		tombs:   tombs,
+		advance: func(ts nostr.Timestamp) { advance(&lastSeenOwner, ts) },
+	}
+
 	// inboxCatchup re-fetches tagged events (replies, reactions, zaps, reposts,
-	// mentions, gift-wrap DMs) published since the inbox watermark.
-	inboxCatchup := func() {
+	// mentions, gift-wrap DMs) published since the inbox watermark. Fallback
+	// path for relays without NIP-77.
+	inboxCatchup := func(relayList []string) {
 		since := nostr.Timestamp(lastSeen.Load() - 60) // 60s overlap to avoid boundary misses
 		filter := nostr.Filter{
 			Tags:  nostr.TagMap{"p": pTags},
 			Since: &since,
 		}
-		log.Println("📢 inbox catch-up pull since", time.Unix(int64(since), 0).Format(time.RFC3339))
-		for ev := range pool.FetchMany(ctx, relays, filter) {
+		log.Println("📢 inbox catch-up pull since", time.Unix(int64(since), 0).Format(time.RFC3339), "on", len(relayList), "relays")
+		for ev := range pool.FetchMany(ctx, relayList, filter) {
 			if ctx.Err() != nil {
 				return
 			}
-			processInboxEvent(ctx, ev, wdbInbox, wdbChat)
+			processInboxEvent(ctx, ev, wdbInbox, wdbChat, notifier)
 			advance(&lastSeen, ev.CreatedAt)
 		}
 	}
@@ -301,14 +335,14 @@ func subscribeInboxAndChat(ctx context.Context) {
 	// ownerCatchup re-fetches the owner's own events (notes, profile, follow
 	// list, reactions, reposts) published since the owner watermark — e.g. posts
 	// made from another client under the same key — into the outbox DB.
-	ownerCatchup := func() {
+	ownerCatchup := func(relayList []string) {
 		since := nostr.Timestamp(lastSeenOwner.Load() - 60)
 		filter := nostr.Filter{
 			Authors: pTags,
 			Since:   &since,
 		}
-		log.Println("📢 owner catch-up pull since", time.Unix(int64(since), 0).Format(time.RFC3339))
-		for ev := range pool.FetchMany(ctx, relays, filter) {
+		log.Println("📢 owner catch-up pull since", time.Unix(int64(since), 0).Format(time.RFC3339), "on", len(relayList), "relays")
+		for ev := range pool.FetchMany(ctx, relayList, filter) {
 			if ctx.Err() != nil {
 				return
 			}
@@ -317,10 +351,77 @@ func subscribeInboxAndChat(ctx context.Context) {
 		}
 	}
 
-	// Periodic + on-demand catch-up pull: re-fetch anything published since the
-	// watermarks so events missed while disconnected (or beyond the live window)
-	// are pulled in. Driven by INBOX_PULL_INTERVAL_SECONDS (previously loaded but
-	// never referenced) and by relaySyncCh (pull-to-refresh).
+	// The negentropy reconciliation window. Wider than the watermark on
+	// purpose: NIP-59 gift wraps randomize created_at up to 2 days into the
+	// past, and a relay that was down during earlier pulls may hold events the
+	// watermark has already moved past. ID-set reconciliation makes the wide
+	// window cheap — already-known IDs transfer as fingerprints, not events.
+	syncSince := func() nostr.Timestamp {
+		return nostr.Timestamp(time.Now().Add(-time.Duration(config.SyncWindowDays+2) * 24 * time.Hour).Unix())
+	}
+
+	isSeedRelay := func(url string) bool {
+		return slices.Contains(config.ImportSeedRelays, url)
+	}
+
+	// runCatchup reconciles each relay via NIP-77 when supported, collecting
+	// the rest for one watermark-based FetchMany pull. Sequential per relay to
+	// keep mobile CPU/battery use flat.
+	runCatchup := func() {
+		var fallback []string
+		if config.NegentropySyncEnabled {
+			since := syncSince()
+			inboxFilter := nostr.Filter{Tags: nostr.TagMap{"p": pTags}, Since: &since}
+			ownerFilter := nostr.Filter{Authors: pTags, Since: &since}
+			for _, url := range relays {
+				if ctx.Err() != nil {
+					return
+				}
+				if !relaySupportsNegentropy(ctx, url) {
+					fallback = append(fallback, url)
+					continue
+				}
+				rctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+				stats, err := negsync.Sync(rctx, inboxStore, url, inboxFilter, negsync.Down)
+				if err == nil {
+					markNegentropySupported(url)
+					log.Printf("📥 negentropy inbox sync %s: %d new (local set %d)", url, stats.Downloaded, stats.LocalHave)
+					// Owner sync (Both: heal gaps in both directions) only
+					// against seed relays — DM relays reject public kinds.
+					if isSeedRelay(url) {
+						ostats, oerr := negsync.Sync(rctx, outboxStore, url, ownerFilter, negsync.Both)
+						if oerr == nil {
+							log.Printf("📤 negentropy owner sync %s: %d down / %d up", url, ostats.Downloaded, ostats.Uploaded)
+						} else {
+							slog.Warn("negentropy owner sync failed", "relay", url, "err", oerr)
+						}
+					}
+				}
+				cancel()
+				switch {
+				case err == nil:
+				case errors.Is(err, negsync.ErrUnsupported):
+					log.Println("ℹ️ no NIP-77 support, using plain catch-up for", url)
+					markNegentropyUnsupported(url)
+					fallback = append(fallback, url)
+				default:
+					slog.Warn("negentropy sync failed, plain catch-up this round", "relay", url, "err", err)
+					fallback = append(fallback, url)
+				}
+			}
+		} else {
+			fallback = relays
+		}
+		if len(fallback) > 0 && ctx.Err() == nil {
+			inboxCatchup(fallback)
+			ownerCatchup(fallback)
+		}
+		notifier.flush()
+	}
+
+	// Periodic + on-demand catch-up pull: reconcile anything missed while
+	// disconnected (or beyond the live window). Driven by
+	// INBOX_PULL_INTERVAL_SECONDS and by relaySyncCh (pull-to-refresh).
 	pullEvery := config.InboxPullIntervalSeconds
 	if pullEvery <= 0 {
 		pullEvery = 3600
@@ -328,16 +429,24 @@ func subscribeInboxAndChat(ctx context.Context) {
 	runsafe.Go("subscribeInboxAndChat.catchup", func() {
 		ticker := time.NewTicker(time.Duration(pullEvery) * time.Second)
 		defer ticker.Stop()
+		var lastRun time.Time
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
 			case <-relaySyncCh:
+				// Throttle on-demand pulls: every sync round dials fresh
+				// connections to every relay, so rapid pull-to-refresh must
+				// not stack rounds and starve the clients' own sockets.
+				if time.Since(lastRun) < minSyncGap {
+					slog.Debug("relay sync request throttled", "since_last", time.Since(lastRun))
+					continue
+				}
 				log.Println("📢 relay sync requested (pull-to-refresh)")
 			}
-			inboxCatchup()
-			ownerCatchup()
+			runCatchup()
+			lastRun = time.Now()
 		}
 	})
 
@@ -356,7 +465,7 @@ func subscribeInboxAndChat(ctx context.Context) {
 		sawEvent := false
 		for ev := range pool.SubscribeMany(ctx, relays, filter) {
 			sawEvent = true
-			processInboxEvent(ctx, ev, wdbInbox, wdbChat)
+			processInboxEvent(ctx, ev, wdbInbox, wdbChat, nil)
 			advance(&lastSeen, ev.CreatedAt)
 		}
 		if ctx.Err() != nil {
@@ -377,20 +486,43 @@ func subscribeInboxAndChat(ctx context.Context) {
 	}
 }
 
-// processInboxEvent applies blacklist / Web-of-Trust / whitelist filtering to a
-// tagged event and stores it in the inbox (or chat) DB if it passes. Shared by
-// the live subscription and the periodic catch-up pull.
-func processInboxEvent(ctx context.Context, ev nostr.RelayEvent, wdbInbox, wdbChat eventstore.RelayWrapper) {
-	relayURL := ""
-	if ev.Relay != nil {
-		relayURL = ev.Relay.URL
-	}
+// rejectReason says why an inbox event was not accepted. The distinction
+// matters for tombstoning: only rejections based on immutable event content
+// (no whitelisted p-tag) may be recorded permanently. WoT and blacklist
+// membership change over time — a fresh instance's half-built WoT rejecting a
+// reply must NOT prevent that reply from importing on a later sync.
+type rejectReason int
+
+const (
+	rejectNone rejectReason = iota
+	rejectBlacklist
+	rejectNotInWot
+	rejectNoWhitelistedPTag
+)
+
+// permanent reports whether this rejection can never change for the event.
+func (r rejectReason) permanent() bool { return r == rejectNoWhitelistedPTag }
+
+// inboxClassification is the outcome of the inbox acceptance rules for one
+// tagged event.
+type inboxClassification struct {
+	accept bool
+	reason rejectReason // why not accepted (rejectNone when accept)
+	chat   bool         // store in the chat DB (gift wraps) instead of the inbox DB
+	notify bool         // author isn't the tagged owner — warrants a notification
+}
+
+// classifyInboxEvent applies the blacklist / Web-of-Trust / whitelisted-p-tag
+// rules to a tagged event. Single source of truth shared by the live
+// subscription, the watermark catch-up pull, and the negentropy sync path so
+// their accept/reject behavior cannot drift.
+func classifyInboxEvent(ctx context.Context, ev *nostr.Event) inboxClassification {
 	if _, ok := config.BlacklistedPubKeys[ev.PubKey]; ok {
 		slog.Debug("🚫discarding imported note from blacklisted pubkey", "pubkey", ev.PubKey, "id", ev.ID)
-		return
+		return inboxClassification{reason: rejectBlacklist}
 	}
 	if !wot.GetInstance().Has(ctx, ev.PubKey) && ev.Kind != nostr.KindGiftWrap {
-		return
+		return inboxClassification{reason: rejectNotInWot}
 	}
 	for tag := range ev.Tags.FindAll("p") {
 		if len(tag) < 2 {
@@ -399,47 +531,82 @@ func processInboxEvent(ctx context.Context, ev nostr.RelayEvent, wdbInbox, wdbCh
 		if _, ok := config.WhitelistedPubKeys[tag[1]]; !ok {
 			continue
 		}
-		dbToPublish := wdbInbox
-		if ev.Kind == nostr.KindGiftWrap {
-			dbToPublish = wdbChat
+		return inboxClassification{
+			accept: true,
+			chat:   ev.Kind == nostr.KindGiftWrap,
+			// Skip notifying when the author is tagging themselves (e.g.
+			// replying to their own note) — still imported, just not notified.
+			notify: ev.PubKey != tag[1],
 		}
+	}
+	return inboxClassification{reason: rejectNoWhitelistedPTag}
+}
 
-		slog.Debug("ℹ️ importing event", "kind", ev.Kind, "id", ev.ID, "relay", relayURL)
+// logInboxImport prints the human-readable import line for a stored inbox/chat
+// event. These exact phrases also drive the clients' relay-activity red dot.
+func logInboxImport(ev *nostr.Event) {
+	switch ev.Kind {
+	case nostr.KindTextNote:
+		log.Println("📰 new note in your inbox")
+	case nostr.KindReaction:
+		log.Println(ev.Content, "new reaction in your inbox")
+	case nostr.KindZap:
+		log.Println("⚡️ new zap in your inbox")
+	case nostr.KindEncryptedDirectMessage:
+		log.Println("🔒✉️ new encrypted message in your inbox")
+	case nostr.KindGiftWrap:
+		log.Println("🎁🔒️✉️ new gift-wrapped message in your chat relay")
+	case nostr.KindRepost:
+		log.Println("🔁 new repost in your inbox")
+	case nostr.KindFollowList:
+		// do nothing
+	default:
+		log.Println("📦 new event kind", ev.Kind, "event in your inbox")
+	}
+}
 
-		if isDuplicate(ctx, dbToPublish, ev.Event) {
-			slog.Debug("ℹ️ skipping duplicate event", "id", ev.ID)
-			return
-		}
-
-		if err := dbToPublish.Publish(ctx, *ev.Event); err != nil {
-			log.Println("🚫 error importing tagged note", ev.ID, ":", "from relay", relayURL, ":", err)
-			return
-		}
-
-		switch ev.Kind {
-		case nostr.KindTextNote:
-			log.Println("📰 new note in your inbox")
-		case nostr.KindReaction:
-			log.Println(ev.Content, "new reaction in your inbox")
-		case nostr.KindZap:
-			log.Println("⚡️ new zap in your inbox")
-		case nostr.KindEncryptedDirectMessage:
-			log.Println("🔒✉️ new encrypted message in your inbox")
-		case nostr.KindGiftWrap:
-			log.Println("🎁🔒️✉️ new gift-wrapped message in your chat relay")
-		case nostr.KindRepost:
-			log.Println("🔁 new repost in your inbox")
-		case nostr.KindFollowList:
-			// do nothing
-		default:
-			log.Println("📦 new event kind", ev.Kind, "event in your inbox")
-		}
-
-		// Emit a machine-parseable marker so clients can raise a local system
-		// notification for this newly-imported inbox/chat event. Self-filters by
-		// kind; the prose lines above are left intact for the relay-activity dot.
-		emitInboxNotify(ev.Event)
+// processInboxEvent applies blacklist / Web-of-Trust / whitelist filtering to a
+// tagged event and stores it in the inbox (or chat) DB if it passes. Shared by
+// the live subscription and the periodic catch-up pull. When notifier is nil
+// (live subscription) accepted events notify immediately; otherwise the
+// notifier applies catch-up batch suppression.
+func processInboxEvent(ctx context.Context, ev nostr.RelayEvent, wdbInbox, wdbChat eventstore.RelayWrapper, notifier *batchNotifier) {
+	relayURL := ""
+	if ev.Relay != nil {
+		relayURL = ev.Relay.URL
+	}
+	c := classifyInboxEvent(ctx, ev.Event)
+	if !c.accept {
 		return
+	}
+	dbToPublish := wdbInbox
+	if c.chat {
+		dbToPublish = wdbChat
+	}
+
+	slog.Debug("ℹ️ importing event", "kind", ev.Kind, "id", ev.ID, "relay", relayURL)
+
+	if isDuplicate(ctx, dbToPublish, ev.Event) {
+		slog.Debug("ℹ️ skipping duplicate event", "id", ev.ID)
+		return
+	}
+
+	if err := dbToPublish.Publish(ctx, *ev.Event); err != nil {
+		log.Println("🚫 error importing tagged note", ev.ID, ":", "from relay", relayURL, ":", err)
+		return
+	}
+
+	logInboxImport(ev.Event)
+
+	// Emit a machine-parseable marker so clients can raise a local system
+	// notification for this newly-imported inbox/chat event. Self-filters by
+	// kind; the prose lines above are left intact for the relay-activity dot.
+	if c.notify {
+		if notifier != nil {
+			notifier.maybeNotify(ev.Event)
+		} else {
+			emitInboxNotify(ev.Event)
+		}
 	}
 }
 
@@ -521,13 +688,17 @@ func processOwnerEvent(ctx context.Context, ev nostr.RelayEvent, wdbOutbox event
 // already pending is not lost and does not stack up.
 var relaySyncCh = make(chan struct{}, 1)
 
-// RequestRelaySync triggers an immediate inbox + owner catch-up pull if the
-// relay is running. Non-blocking; coalesces with any already-pending request.
-// Safe to call when no relay is running (the signal is simply consumed by the
-// next catch-up goroutine, or dropped).
+// RequestRelaySync triggers an immediate inbox + owner catch-up pull and a
+// feed-cache sync round if the relay is running. Non-blocking; coalesces with
+// any already-pending request. Safe to call when no relay is running (the
+// signals are simply consumed by the next catch-up goroutines, or dropped).
 func RequestRelaySync() {
 	select {
 	case relaySyncCh <- struct{}{}:
+	default:
+	}
+	select {
+	case feedSyncCh <- struct{}{}:
 	default:
 	}
 }

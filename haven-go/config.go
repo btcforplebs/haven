@@ -71,6 +71,15 @@ type Config struct {
 	BlastrRelays                         []string            `json:"blastr_relays"`
 	BlastrTimeoutSeconds                 int                 `json:"blastr_timeout_seconds"`
 	S3Config                             *S3Config           `json:"s3_config"`
+	NegentropySyncEnabled                bool                `json:"negentropy_sync_enabled"`
+	NegentropyServeEnabled               bool                `json:"negentropy_serve_enabled"`
+	SyncWindowDays                       int                 `json:"sync_window_days"`
+	TombstonePath                        string              `json:"tombstone_path"`
+	NotifyBatchLimit                     int                 `json:"notify_batch_limit"`
+	NotifyMaxAgeHours                    int                 `json:"notify_max_age_hours"`
+	FeedSyncEnabled                      bool                `json:"feed_sync_enabled"`
+	FeedSyncWindowDays                   int                 `json:"feed_sync_window_days"`
+	FeedSyncRelays                       []string            `json:"feed_sync_relays"`
 }
 
 const relaySoftware = "https://github.com/barrydeen/haven"
@@ -131,6 +140,15 @@ func loadConfig() Config {
 		BlastrRelays:                         getRelayListFromFile(getEnv("BLASTR_RELAYS_FILE")),
 		BlastrTimeoutSeconds:                 getEnvInt("BLASTR_TIMEOUT_SECONDS", 5),
 		S3Config:                             getS3Config(),
+		NegentropySyncEnabled:                getEnvBool("NEGENTROPY_SYNC_ENABLED", true),
+		NegentropyServeEnabled:               getEnvBool("NEGENTROPY_SERVE_ENABLED", true),
+		SyncWindowDays:                       getEnvInt("SYNC_WINDOW_DAYS", 30),
+		TombstonePath:                        getEnvString("TOMBSTONE_PATH", "db/tombstones.jsonl"),
+		NotifyBatchLimit:                     getEnvInt("NOTIFY_BATCH_LIMIT", 5),
+		NotifyMaxAgeHours:                    getEnvInt("NOTIFY_MAX_AGE_HOURS", 24),
+		FeedSyncEnabled:                      getEnvBool("FEED_SYNC_ENABLED", true),
+		FeedSyncWindowDays:                   getEnvInt("FEED_SYNC_WINDOW_DAYS", 7),
+		FeedSyncRelays:                       getRelayListFromFile(getEnvString("FEED_SYNC_RELAYS_FILE", "")),
 	}
 
 	// Relay owner is always whitelisted

@@ -52,6 +52,13 @@ var (
 	inboxDB    DBBackend
 )
 
+// Feed cache: follows' recent notes, kept in sync with the feed relays so
+// clients read the feed locally first (see feedsync.go).
+var (
+	feedRelay *khatru.Relay
+	feedDB    DBBackend
+)
+
 var (
 	blossomDB     DBBackend
 	blossomServer *blossom.BlossomServer
@@ -74,8 +81,16 @@ type DBBackend interface {
 var lmdbFactory func(path string) DBBackend
 
 func newBadgerBackend(path string) DBBackend {
+	// Bound the negentropy vector size explicitly: the library default is 16M
+	// events, which a NEG-OPEN with a broad filter could try to materialize in
+	// memory — far too much on a phone.
+	maxNeg := 200_000
+	if runtime.GOOS == "android" || runtime.GOOS == "ios" {
+		maxNeg = 50_000
+	}
 	return &badger.BadgerBackend{
-		Path: path,
+		Path:               path,
+		MaxLimitNegentropy: maxNeg,
 		BadgerOptionsModifier: func(opts badgerdb.Options) badgerdb.Options {
 			if runtime.GOOS == "android" {
 				// Android shares ~3-4 GB RAM with the JVM. With 5 databases
@@ -88,16 +103,16 @@ func newBadgerBackend(path string) DBBackend {
 				//   - No compression: saves CPU cycles
 				//   - Small block/index caches: avoids disk reads for hot data
 				return opts.
-					WithMemTableSize(8 << 20).             // 8 MiB (default 64 MiB)
-					WithValueLogFileSize(1 << 24).         // 16 MiB
-					WithNumMemtables(2).                   // default 5; allows 1 background flush
-					WithNumLevelZeroTables(1).             // default 5
-					WithNumLevelZeroTablesStall(2).        // default 15
-					WithNumCompactors(2).                  // default 4, minimum 2
-					WithCompression(badgeropts.None).      // disable compression (saves CPU)
-					WithBlockCacheSize(4 << 20).           // 4 MiB per DB (20 MiB total across 5 DBs)
-					WithIndexCacheSize(2 << 20).           // 2 MiB per DB (10 MiB total across 5 DBs)
-					WithValueThreshold(1 << 10)            // 1 KB: inline small values
+					WithMemTableSize(8 << 20).        // 8 MiB (default 64 MiB)
+					WithValueLogFileSize(1 << 24).    // 16 MiB
+					WithNumMemtables(2).              // default 5; allows 1 background flush
+					WithNumLevelZeroTables(1).        // default 5
+					WithNumLevelZeroTablesStall(2).   // default 15
+					WithNumCompactors(2).             // default 4, minimum 2
+					WithCompression(badgeropts.None). // disable compression (saves CPU)
+					WithBlockCacheSize(4 << 20).      // 4 MiB per DB (20 MiB total across 5 DBs)
+					WithIndexCacheSize(2 << 20).      // 2 MiB per DB (10 MiB total across 5 DBs)
+					WithValueThreshold(1 << 10)       // 1 KB: inline small values
 			}
 			// iOS / macOS / desktop: only limit vlog size for iOS mmap safety
 			return opts.WithValueLogFileSize(1 << 26) // 64 MiB
@@ -124,7 +139,7 @@ func newDBBackend(path string) DBBackend {
 }
 
 func initDBs() error {
-	return GranularInitDBs([]string{"private", "chat", "outbox", "inbox", "blossom"})
+	return GranularInitDBs([]string{"private", "chat", "outbox", "inbox", "blossom", "feed"})
 }
 
 // dbMu guards the dbs map and per-DB global assignment against
@@ -161,6 +176,8 @@ func GranularInitDBs(names []string) error {
 			inboxDB = db
 		case "blossom":
 			blossomDB = db
+		case "feed":
+			feedDB = db
 		}
 	}
 
@@ -189,6 +206,17 @@ func initRelays(ctx context.Context) error {
 	chatRelay = khatru.NewRelay()
 	outboxRelay = khatru.NewRelay()
 	inboxRelay = khatru.NewRelay()
+	feedRelay = khatru.NewRelay()
+
+	// Serve NIP-77 negentropy so clients and other Haven instances can
+	// set-reconcile against these relays instead of replaying whole windows.
+	if config.NegentropyServeEnabled {
+		privateRelay.Negentropy = true
+		chatRelay.Negentropy = true
+		outboxRelay.Negentropy = true
+		inboxRelay.Negentropy = true
+		feedRelay.Negentropy = true
+	}
 
 	if err := initDBs(); err != nil {
 		return err
@@ -503,6 +531,46 @@ func initRelays(ctx context.Context) error {
 		}
 	})
 
+	// ── Feed cache relay (/feed) ─────────────────────────────────────────
+	// Local-first store of follows' recent notes, filled by feedsync.go.
+	// Read-open on localhost; writes restricted to feed note kinds so client
+	// apps may inject live feed events they receive over their own sockets.
+	feedRelay.Info.Name = config.OutboxRelayName + " feed cache"
+	feedRelay.Info.Description = "local cache of your follows' recent notes"
+	feedRelay.Info.Version = config.RelayVersion
+	feedRelay.Info.Software = config.RelaySoftware
+	feedRelay.ServiceURL = "https://" + config.RelayURL + "/feed"
+
+	// Reuse the outbox limiter numbers: the feed route is localhost-facing,
+	// and localhost connections bypass the connection limiter anyway.
+	feedRelay.RejectEvent = append(feedRelay.RejectEvent,
+		policies.RejectEventsWithBase64Media,
+		whitelistBypassEventRateLimiter(
+			outboxRelayLimits.EventIPLimiterTokensPerInterval,
+			time.Minute*time.Duration(outboxRelayLimits.EventIPLimiterInterval),
+			outboxRelayLimits.EventIPLimiterMaxTokens,
+		),
+		OnlyFeedKinds,
+	)
+
+	feedRelay.RejectConnection = append(feedRelay.RejectConnection,
+		bypassLocalhostConnectionLimiter(policies.ConnectionRateLimiter(
+			outboxRelayLimits.ConnectionRateLimiterTokensPerInterval,
+			time.Minute*time.Duration(outboxRelayLimits.ConnectionRateLimiterInterval),
+			outboxRelayLimits.ConnectionRateLimiterMaxTokens,
+		)),
+	)
+
+	feedRelay.StoreEvent = append(feedRelay.StoreEvent, feedDB.SaveEvent)
+	feedRelay.QueryEvents = append(feedRelay.QueryEvents, feedDB.QueryEvents)
+	feedRelay.DeleteEvent = append(feedRelay.DeleteEvent, feedDB.DeleteEvent)
+	feedRelay.CountEvents = append(feedRelay.CountEvents, feedDB.CountEvents)
+	feedRelay.ReplaceEvent = append(feedRelay.ReplaceEvent, feedDB.ReplaceEvent)
+
+	feedRelay.Router().HandleFunc("GET /feed", func(w http.ResponseWriter, r *http.Request) {
+		renderFallbackPage(w, feedRelay.Info.Name, feedRelay.Info.Description, "wss://"+config.RelayURL+"/feed")
+	})
+
 	return nil
 }
 
@@ -519,6 +587,8 @@ func dynamicRelayHandler(w http.ResponseWriter, r *http.Request) {
 		relay = chatRelay
 	case "/inbox":
 		relay = inboxRelay
+	case "/feed":
+		relay = feedRelay
 	case "":
 		relay = outboxRelay
 	default:

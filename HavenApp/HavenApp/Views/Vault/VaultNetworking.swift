@@ -4,7 +4,20 @@ extension VaultView {
 
     // MARK: - Networking
 
-    func refreshAll() {
+    enum VaultRefreshMode {
+        /// Tear down all connections and re-query from scratch. Needed when the
+        /// connections are genuinely dead: first load, account switch, relay
+        /// restart. Blanks nothing visually (events are kept), but rebuilds
+        /// every socket.
+        case full
+        /// Keep existing connections and top up with a `since`-bounded REQ on
+        /// the live subscriptions. Used on tab entry, pull-to-refresh, and
+        /// feed-injection pings so re-entering the Vault tab never drops
+        /// sockets or re-downloads the whole window.
+        case incremental
+    }
+
+    func refreshAll(_ mode: VaultRefreshMode = .full) {
         // Only proceed if relay is actually ready
         guard relayManager.isRunning && !relayManager.isBooting else {
             #if DEBUG
@@ -12,6 +25,10 @@ extension VaultView {
             #endif
             return
         }
+
+        // A full refresh must never be downgraded by a later incremental
+        // request landing in the same debounce window.
+        if mode == .full { pendingFullRefresh = true }
 
         // Debounce: cancel any pending refresh and wait 0.5s before executing.
         // Multiple rapid lifecycle events (onAppear, onChange isBooting, onChange isRunning)
@@ -32,7 +49,17 @@ extension VaultView {
         // if the relay isn't running.
         RequestRelaySyncC()
 
-        nostrService.resetConnections()
+        // Fall back to a full reset when there's nothing on screen yet or the
+        // sockets aren't live — an incremental top-up has nothing to reuse then.
+        let needsFull = pendingFullRefresh
+            || nostrService.events.isEmpty
+            || nostrService.connectionStatus != "Connected"
+        pendingFullRefresh = false
+
+        if needsFull {
+            nostrService.resetConnections()
+        }
+
         // Use the centralized nostrURL which handles local vs remote correctly
         var urls = [configService.config.nostrURL, configService.config.nostrURL + "/inbox"].compactMap { URL(string: $0) }
         guard !urls.isEmpty else { return }
@@ -52,7 +79,14 @@ extension VaultView {
         for pk in configService.whitelistedHexPubkeys { authorsSet.insert(pk) }
         let authors = Array(authorsSet)
 
-        nostrService.fetchNotes(from: urls, authors: authors)
+        // Incremental: re-issue the live REQs on the existing connections,
+        // bounded to what's newer than we already have (60s overlap for
+        // boundary safety). fetchNotes reuses connected clients as-is.
+        let since: Int64? = needsFull
+            ? nil
+            : nostrService.events.map(\.created_at).max().map { $0 - 60 }
+
+        nostrService.fetchNotes(from: urls, since: since, authors: authors)
     }
 
     /// Fetch notes referenced by the owner's likes that aren't already in the events array.

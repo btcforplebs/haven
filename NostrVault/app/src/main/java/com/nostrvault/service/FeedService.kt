@@ -68,7 +68,7 @@ class FeedService @Inject constructor(
         private const val FLUSH_INTERVAL_GLOBAL_MS = 50L
         private const val NOTE_BATCH_DELAY_MS = 150L
         private const val STAGGER_RELAY_MS = 200L
-        private const val SNAPSHOT_MAX_AGE_MS = 24 * 60 * 60 * 1000L // 24 hours
+        private const val SNAPSHOT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000L // 7 days (matches iOS)
         private const val SNAPSHOT_MAX_NOTES = 200
         private const val EXTENDED_NETWORK_CACHE_MS = 60 * 60 * 1000L // 1 hour
         private const val MAX_SEEN_IDS = 10_000
@@ -94,6 +94,26 @@ class FeedService @Inject constructor(
 
     private val _notes = MutableStateFlow<List<FeedNote>>(emptyList())
     val notes: StateFlow<List<FeedNote>> = _notes.asStateFlow()
+
+    // Periodic disk-snapshot persistence (crash safety). Persisting only in
+    // pauseFeed() loses the whole session when the process is killed without a
+    // lifecycle callback; persist at most once a minute while the feed changes.
+    private var snapshotDirty = false
+
+    init {
+        scope.launch {
+            _notes.drop(1).collect { snapshotDirty = true }
+        }
+        scope.launch {
+            while (isActive) {
+                delay(60_000)
+                if (snapshotDirty && _notes.value.isNotEmpty() && _feedMode.value != FeedMode.POPULAR) {
+                    snapshotDirty = false
+                    persistCurrentSnapshot()
+                }
+            }
+        }
+    }
 
     private val _filteredNotes = MutableStateFlow<List<FeedNote>>(emptyList())
     val filteredNotes: StateFlow<List<FeedNote>> = _filteredNotes.asStateFlow()
@@ -681,6 +701,10 @@ class FeedService @Inject constructor(
         val relayUrls = buildList {
             config.nostrURL?.let { add(it) }
             config.localInboxURL?.let { add(it) }
+            // Local feed cache: follows' recent notes kept in sync by the
+            // embedded relay (negentropy against the feed relays). Serves the
+            // feed window from disk instantly on cold start and pagination.
+            config.nostrURL?.let { add("$it/feed") }
             config.inboxRelays?.let { addAll(it) }
             // Follows publish to feed/blastr relays, not just the local + inbox
             // set. Mirror iOS (externalRelayURLs) and the fetchReplies fix so
@@ -1181,14 +1205,10 @@ class FeedService @Inject constructor(
 
     /** Insert notes directly into the visible feed, re-sorting newest-first and capping size. */
     private fun insertNotesDirect(newNotes: List<FeedNote>) {
-        val currentNotes = _notes.value.toMutableList()
-        currentNotes.addAll(newNotes)
-        currentNotes.sortByDescending { it.createdAt }
-        _notes.value = if (currentNotes.size > MAX_FEED_NOTES) {
-            currentNotes.take(MAX_FEED_NOTES)
-        } else {
-            currentNotes
-        }
+        val merged = (_notes.value + newNotes)
+            .distinctBy { it.id } // LazyColumn keys on id — duplicates crash the UI
+            .sortedByDescending { it.createdAt }
+        _notes.value = if (merged.size > MAX_FEED_NOTES) merged.take(MAX_FEED_NOTES) else merged
     }
 
     /**
@@ -1441,7 +1461,12 @@ class FeedService @Inject constructor(
     // ══════════════════════════════════════════════════════════════════
 
     fun addNote(note: FeedNote) {
-        _notes.value = listOf(note) + _notes.value
+        // Register the id so the relay echo of this note is deduped — without
+        // this the optimistic insert + the echo produce a duplicate id, which
+        // crashes the LazyColumn (duplicate key) and, once snapshotted,
+        // crash-loops every launch.
+        seenIdsLock.withLock { seenIds.add(note.id) }
+        _notes.value = (listOf(note) + _notes.value).distinctBy { it.id }
         recomputeFilteredNotes()
     }
 
@@ -1455,6 +1480,7 @@ class FeedService @Inject constructor(
         if (pending.isEmpty()) return
 
         _notes.value = (pending + _notes.value)
+            .distinctBy { it.id }
             .sortedByDescending { it.createdAt }
             .take(MAX_FEED_NOTES)
         _pendingNotes.value = emptyList()
@@ -1534,6 +1560,9 @@ class FeedService @Inject constructor(
         val config = configStore.config.value
         val relayUrls = buildList {
             config.nostrURL?.let { add(it) }
+            // Local feed cache first — pagination inside the sync window is
+            // served from disk without hitting the network.
+            config.nostrURL?.let { add("$it/feed") }
             config.inboxRelays?.let { addAll(it) }
             // Match the live feed relay set so paginating older notes also
             // reaches follows who publish to feed/blastr relays.
@@ -2188,7 +2217,10 @@ class FeedService @Inject constructor(
                 }
 
                 withContext(Dispatchers.Main.immediate) {
-                    _notes.value = snapshot.notes
+                    // distinctBy: a snapshot written while _notes briefly held a
+                    // duplicate id would otherwise crash-loop every launch
+                    // (LazyColumn duplicate key on first render).
+                    _notes.value = snapshot.notes.distinctBy { it.id }
                     _followedPubkeys.value = snapshot.followedPubkeys
                     _noteStats.value = snapshot.noteStats
                     contactListContent = snapshot.contactListContent
