@@ -473,6 +473,9 @@ struct DiskFeedSnapshot: Codable {
     var lastFetchedContactCount: Int
     var capturedAt: Date
     var lastEventTimestamp: Int64 = 0
+    /// `created_at` of the contact list last published/committed locally.
+    /// Optional so existing snapshots (written before this field) still decode.
+    var ownContactListCreatedAt: Int64?
 
     /// Snapshots older than 7 days are considered stale.
     static let maxAge: TimeInterval = 7 * 24 * 60 * 60

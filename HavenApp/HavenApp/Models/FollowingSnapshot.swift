@@ -22,6 +22,11 @@ struct FollowingSnapshot: Codable, Identifiable {
     let pubkeys: [String]
     let pTags: [[String]]
     let contactListContent: String
+    /// `created_at` of the kind-3 event this snapshot represents. Optional so
+    /// legacy snapshots (written before this field existed) still decode rather
+    /// than wiping the durable backup. Used to refuse older relay copies that
+    /// would clobber a newer local edit.
+    var contactListCreatedAt: Int64?
     var followCount: Int { pubkeys.count }
 }
 

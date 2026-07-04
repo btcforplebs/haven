@@ -59,6 +59,7 @@ class FollowingBackupService @Inject constructor(
         pubkeys: List<String>,
         pTags: List<List<String>>,
         contactListContent: String,
+        contactListCreatedAt: Long? = null,
         forAccountKey: String,
     ) {
         if (pubkeys.isEmpty()) return
@@ -66,8 +67,17 @@ class FollowingBackupService @Inject constructor(
         val currentSet = pubkeys.toSet()
         val latest = _snapshots.value.firstOrNull()
 
-        // Skip if identical to most recent snapshot
-        if (latest != null && latest.pubkeys.toSet() == currentSet) return
+        // Skip if identical to most recent snapshot — but adopt a newer created_at
+        // so the local-edit guard reflects the latest publish.
+        if (latest != null && latest.pubkeys.toSet() == currentSet) {
+            if (contactListCreatedAt != null && contactListCreatedAt > (latest.contactListCreatedAt ?: 0L)) {
+                val updated = _snapshots.value.toMutableList()
+                updated[0] = latest.copy(contactListCreatedAt = contactListCreatedAt)
+                _snapshots.value = updated
+                saveSnapshots(forAccountKey, updated)
+            }
+            return
+        }
 
         val snapshot = FollowingSnapshot(
             id = UUID.randomUUID().toString(),
@@ -75,12 +85,23 @@ class FollowingBackupService @Inject constructor(
             pubkeys = pubkeys,
             pTags = pTags,
             contactListContent = contactListContent,
+            contactListCreatedAt = contactListCreatedAt,
         )
 
         val updated = (listOf(snapshot) + _snapshots.value)
             .take(FollowingSnapshotStore.MAX_SNAPSHOTS)
         _snapshots.value = updated
         saveSnapshots(forAccountKey, updated)
+    }
+
+    /**
+     * The created_at of the most recent durable snapshot for an account, or 0 if
+     * none. Primes the contact-list overwrite guard so an older relay copy can't
+     * clobber a newer local edit — even after the feed snapshot TTL.
+     */
+    fun latestContactListCreatedAt(forAccountKey: String): Long {
+        loadSnapshots(forAccountKey)
+        return _snapshots.value.firstOrNull()?.contactListCreatedAt ?: 0L
     }
 
     fun deleteSnapshot(id: String, forAccountKey: String) {
