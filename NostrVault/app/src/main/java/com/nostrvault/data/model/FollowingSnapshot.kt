@@ -13,6 +13,12 @@ data class FollowingSnapshot(
     val pubkeys: List<String>,
     val pTags: List<List<String>>,
     val contactListContent: String,
+    /**
+     * created_at (unix seconds) of the kind-3 event this snapshot represents.
+     * Null for legacy snapshots written before this field existed. Used to refuse
+     * older relay copies that would clobber a newer local edit.
+     */
+    val contactListCreatedAt: Long? = null,
 ) {
     val followCount: Int get() = pubkeys.size
 }

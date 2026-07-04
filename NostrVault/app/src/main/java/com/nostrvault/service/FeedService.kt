@@ -214,6 +214,19 @@ class FeedService @Inject constructor(
 
     // Contact list content (for safety checks)
     private var contactListContent: String = ""
+    // created_at of the contact list we last published/committed locally. The
+    // relay-fetch overwrite is only accepted when its created_at is >= this value;
+    // otherwise the relay copy is older than our latest local edit (e.g. a fresh
+    // follow whose publish hasn't propagated) and we keep the local set + re-publish.
+    // Primed from the durable following backup (keyed per account) so it survives
+    // relaunches and the feed snapshot TTL. @Volatile: written from both the main
+    // thread (guard prime / sync bump) and the IO publish coroutine.
+    @Volatile
+    private var ownContactListCreatedAt: Long = 0L
+    // Account key `ownContactListCreatedAt` belongs to; reset across account
+    // switches so a previous account's timestamp can't block the new account.
+    @Volatile
+    private var ownContactListAccountKey: String = ""
 
     // Account snapshots (in-memory)
     private val accountSnapshots = ConcurrentHashMap<String, AccountFeedSnapshot>()
@@ -424,17 +437,33 @@ class FeedService @Inject constructor(
         _isLoadingContacts.value = true
         Log.d(TAG, "loadContactList: starting, current followedPubkeys=${_followedPubkeys.value.size}")
 
+        // Prime the local-edit guard from THIS account's durable backup so a relay
+        // copy older than our last known edit can't clobber it — even on a cold
+        // start where the feed snapshot expired. Reset across account switches so a
+        // previous account's timestamp can't block the new account's relay copy.
+        val accountKey = configStore.config.value.activeAccountNpub
+            ?: configStore.config.value.ownerNpub
+        if (ownContactListAccountKey != accountKey) {
+            ownContactListAccountKey = accountKey
+            ownContactListCreatedAt = 0L
+        }
+        ownContactListCreatedAt = maxOf(
+            ownContactListCreatedAt,
+            followingBackupService.latestContactListCreatedAt(accountKey),
+        )
+
         withContext(Dispatchers.IO) {
             try {
                 val result = withTimeoutOrNull(CONTACT_LOAD_TIMEOUT_MS) {
                     fetchContactListFromRelays()
                 }
-                if (result != null) {
-                    val (pubkeys, content) = result
-                    Log.d(TAG, "loadContactList: found ${pubkeys.size} followed pubkeys")
+                if (result != null && result.third >= ownContactListCreatedAt) {
+                    val (pubkeys, content, createdAt) = result
+                    Log.d(TAG, "loadContactList: committing ${pubkeys.size} followed pubkeys (created_at=$createdAt)")
                     withContext(Dispatchers.Main.immediate) {
                         _followedPubkeys.value = pubkeys
                         contactListContent = content
+                        ownContactListCreatedAt = maxOf(ownContactListCreatedAt, createdAt)
                         _hasAttemptedContactLoad.value = true
                         _isLoadingContacts.value = false
                         recomputeFilteredNotes()
@@ -444,14 +473,27 @@ class FeedService @Inject constructor(
                         resubscribePrimaryToConnected()
 
                         // Auto-snapshot for following backup
-                        val accountKey = configStore.config.value.activeAccountNpub
-                            ?: configStore.config.value.ownerNpub
                         followingBackupService.maybeCreateSnapshot(
                             pubkeys = pubkeys,
-                            pTags = emptyList(),
+                            pTags = pubkeys.map { listOf("p", it) },
                             contactListContent = content,
+                            contactListCreatedAt = createdAt,
                             forAccountKey = accountKey,
                         )
+                    }
+                } else if (result != null) {
+                    // The newest relay kind-3 is OLDER than the list we last
+                    // published/committed locally — our latest edit (e.g. a fresh
+                    // follow) hasn't propagated to these relays yet, so committing it
+                    // would silently drop follows. Keep the local set and re-publish
+                    // so the network catches up (self-heal).
+                    Log.w(TAG, "loadContactList: relay kind-3 stale (relay created_at=${result.third} < local $ownContactListCreatedAt) — keeping ${_followedPubkeys.value.size} local follows and re-publishing")
+                    withContext(Dispatchers.Main.immediate) {
+                        _hasAttemptedContactLoad.value = true
+                        _isLoadingContacts.value = false
+                        if (_followedPubkeys.value.isNotEmpty()) {
+                            publishContactList(_followedPubkeys.value)
+                        }
                     }
                 } else {
                     Log.w(TAG, "loadContactList: no contact list found (timeout or empty relays)")
@@ -470,7 +512,7 @@ class FeedService @Inject constructor(
         }
     }
 
-    private suspend fun fetchContactListFromRelays(): Pair<List<String>, String>? {
+    private suspend fun fetchContactListFromRelays(): Triple<List<String>, String, Long>? {
         val config = configStore.config.value
         val relayUrls = buildList {
             config.nostrURL?.let { add(it) }
@@ -502,7 +544,7 @@ class FeedService @Inject constructor(
                     if (resumed) return
                     resumed = true
                     graceJob?.cancel()
-                    cont.resume(best?.let { it.first to it.second }) {}
+                    cont.resume(best) {}
                 }
             }
 
@@ -1354,13 +1396,32 @@ class FeedService @Inject constructor(
 
     private fun publishContactList(pubkeys: List<String>) {
         val tags = pubkeys.map { listOf("p", it) }
+        // Bump the local-edit guard synchronously to "now" so an immediate contact
+        // refresh (firing before the async sign/post below completes) can't accept a
+        // stale relay copy and drop the edit we're about to publish.
+        val accountKey = configStore.config.value.activeAccountNpub
+            ?: configStore.config.value.ownerNpub
+        ownContactListAccountKey = accountKey
+        ownContactListCreatedAt = maxOf(ownContactListCreatedAt, System.currentTimeMillis() / 1000L)
         scope.launch(Dispatchers.IO) {
             val event = nostrService.signEvent(
                 kind = 3,
                 content = contactListContent,
                 tags = tags,
             )
-            event?.let { nostrService.postEvent(it) }
+            event?.let {
+                // Record the published list's created_at + a durable backup so a
+                // later relay fetch returning an older copy can't clobber this edit.
+                ownContactListCreatedAt = maxOf(ownContactListCreatedAt, it.createdAt)
+                followingBackupService.maybeCreateSnapshot(
+                    pubkeys = pubkeys,
+                    pTags = tags,
+                    contactListContent = contactListContent,
+                    contactListCreatedAt = it.createdAt,
+                    forAccountKey = accountKey,
+                )
+                nostrService.postEvent(it)
+            }
         }
     }
 

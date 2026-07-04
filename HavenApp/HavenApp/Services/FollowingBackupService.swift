@@ -56,6 +56,7 @@ class FollowingBackupService: ObservableObject {
         pubkeys: [String],
         pTags: [[String]],
         contactListContent: String,
+        contactListCreatedAt: Int64? = nil,
         forAccountKey key: String
     ) {
         // Never snapshot an empty contact list
@@ -70,7 +71,18 @@ class FollowingBackupService: ObservableObject {
         if let latest = snapshots.last {
             let currentSet = Set(pubkeys)
             let latestSet = Set(latest.pubkeys)
-            if currentSet == latestSet { return }
+            if currentSet == latestSet {
+                // Same follow set — don't add a duplicate, but adopt a newer
+                // created_at so the local-edit guard reflects the latest publish.
+                if let ts = contactListCreatedAt,
+                   ts > (latest.contactListCreatedAt ?? 0) {
+                    var updated = latest
+                    updated.contactListCreatedAt = ts
+                    snapshots[snapshots.count - 1] = updated
+                    saveSnapshots(forAccountKey: key)
+                }
+                return
+            }
         }
 
         let snapshot = FollowingSnapshot(
@@ -78,7 +90,8 @@ class FollowingBackupService: ObservableObject {
             capturedAt: Date(),
             pubkeys: pubkeys,
             pTags: pTags,
-            contactListContent: contactListContent
+            contactListContent: contactListContent,
+            contactListCreatedAt: contactListCreatedAt
         )
         snapshots.append(snapshot)
 
@@ -89,6 +102,16 @@ class FollowingBackupService: ObservableObject {
         }
 
         saveSnapshots(forAccountKey: key)
+    }
+
+    /// The `created_at` of the most recent durable snapshot for an account, or 0
+    /// if none. Used to prime the contact-list overwrite guard so an older relay
+    /// copy can't clobber a newer local edit — even after the feed snapshot TTL.
+    func latestContactListCreatedAt(forAccountKey key: String) -> Int64 {
+        if loadedAccountKey != key {
+            loadSnapshots(forAccountKey: key)
+        }
+        return snapshots.last?.contactListCreatedAt ?? 0
     }
 
     func deleteSnapshot(id: UUID, forAccountKey key: String) {

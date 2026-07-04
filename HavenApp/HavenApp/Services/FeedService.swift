@@ -167,6 +167,18 @@ class FeedService: ObservableObject {
     /// Count of contacts returned by the last successful relay fetch.
     /// Used by the safety check in `publishContactList()`.
     private var lastFetchedContactCount: Int = 0
+    /// `created_at` of the contact list we last published or committed locally.
+    /// Guards the relay-fetch overwrite: a kind-3 from a relay is only accepted
+    /// when its `created_at` is >= this value. Otherwise the relay copy is older
+    /// than our latest local edit (e.g. a fresh follow whose publish hasn't
+    /// propagated yet) and would silently drop follows — so we keep the local set
+    /// and re-publish to heal the network. Persisted in the disk snapshot and the
+    /// durable following backup so it survives relaunches and the 7-day snapshot TTL.
+    private var ownContactListCreatedAt: Int64 = 0
+    /// Account key `ownContactListCreatedAt` currently belongs to. When the active
+    /// account changes the guard is reset so a previous account's (higher)
+    /// timestamp never blocks the new account's relay copy.
+    private var ownContactListAccountKey: String = ""
 
     /// Pubkeys that belong to the user's Web of Trust, loaded from the relay's
     /// cached WOT graph (`wot_cache.json`). Used to filter the GLOBAL feed and
@@ -459,6 +471,8 @@ class FeedService: ObservableObject {
         contactListContent = ""
         contactListPTags.removeAll()
         lastFetchedContactCount = 0
+        ownContactListCreatedAt = 0
+        ownContactListAccountKey = ""
         hasAttemptedContactLoad = false
         lastEventTimestamp = 0
         recomputeFilteredNotes()
@@ -486,7 +500,8 @@ class FeedService: ObservableObject {
             contactListPTags: contactListPTags,
             lastFetchedContactCount: lastFetchedContactCount,
             capturedAt: Date(),
-            lastEventTimestamp: lastEventTimestamp
+            lastEventTimestamp: lastEventTimestamp,
+            ownContactListCreatedAt: ownContactListCreatedAt
         )
         DispatchQueue.global(qos: .utility).async {
             if let data = try? JSONEncoder().encode(disk) {
@@ -535,6 +550,8 @@ class FeedService: ObservableObject {
         contactListContent = diskSnap.contactListContent
         contactListPTags = diskSnap.contactListPTags
         lastFetchedContactCount = diskSnap.lastFetchedContactCount
+        ownContactListCreatedAt = diskSnap.ownContactListCreatedAt ?? 0
+        ownContactListAccountKey = key
         seenIds = Set(diskSnap.notes.map { $0.id })
         lastEventTimestamp = diskSnap.lastEventTimestamp
         pendingNotes.removeAll()
@@ -1486,6 +1503,21 @@ class FeedService: ObservableObject {
             completion(); return
         }
 
+        // Prime the local-edit guard from THIS account's durable backup before
+        // fetching, so a relay copy older than our last known edit can't clobber it
+        // — even on a cold start where the feed disk snapshot has expired (7-day TTL).
+        // Reset across account switches so a previous account's timestamp can't
+        // block the new account's relay copy.
+        let snapshotKey = currentSnapshotKey()
+        if ownContactListAccountKey != snapshotKey {
+            ownContactListAccountKey = snapshotKey
+            ownContactListCreatedAt = 0
+        }
+        ownContactListCreatedAt = max(
+            ownContactListCreatedAt,
+            FollowingBackupService.shared.latestContactListCreatedAt(forAccountKey: snapshotKey)
+        )
+
         // Mark in-flight synchronously so a reconcile firing during the readiness
         // await doesn't kick off a duplicate fetch.
         isLoadingContacts = true
@@ -1544,6 +1576,7 @@ class FeedService: ObservableObject {
                 followedPubkeys = latest.pubkeys
                 contactListContent = latest.contactListContent
                 lastFetchedContactCount = latest.pubkeys.count
+                ownContactListCreatedAt = max(ownContactListCreatedAt, latest.contactListCreatedAt ?? 0)
                 scheduleContactRetry()
             }
         }
@@ -1600,7 +1633,7 @@ class FeedService: ObservableObject {
             self.contactLoadingTimeout?.invalidate()
             clients.forEach { $0.disconnect() }
 
-            if let best = best {
+            if let best = best, Int64(best.createdAt) >= self.ownContactListCreatedAt {
                 let parsed = ContactManager.parseContactList(
                     pTags: best.pTags,
                     ownerHex: ownerHex,
@@ -1613,6 +1646,7 @@ class FeedService: ObservableObject {
                 self.followedPubkeys = parsed.pubkeys
                 self.contactListContent = best.content
                 self.lastFetchedContactCount = parsed.relayPTagCount
+                self.ownContactListCreatedAt = max(self.ownContactListCreatedAt, Int64(best.createdAt))
                 self.connectionStatus = parsed.relayPTagCount == 0 ? "No contacts found" : "Loaded \(parsed.relayPTagCount) contacts"
                 // Re-filter already-loaded notes against the committed follow set so the
                 // visible feed reflects it immediately (don't wait for new notes to stream).
@@ -1621,8 +1655,20 @@ class FeedService: ObservableObject {
                     pubkeys: self.followedPubkeys,
                     pTags: parsed.pTags,
                     contactListContent: best.content,
+                    contactListCreatedAt: Int64(best.createdAt),
                     forAccountKey: self.currentSnapshotKey()
                 )
+            } else if let best = best {
+                // The newest kind-3 any relay returned is OLDER than the contact list
+                // we last published/committed locally — our latest edit (e.g. a fresh
+                // follow) hasn't propagated to these relays yet, so committing it would
+                // silently drop follows. Keep the local set authoritative and re-publish
+                // so the network catches up (self-heal).
+                #if DEBUG
+                print("FeedService: [contact] relay kind-3 stale (relay created_at=\(best.createdAt) < local \(self.ownContactListCreatedAt)) — keeping \(self.followedPubkeys.count) local follows and re-publishing")
+                #endif
+                self.connectionStatus = self.followedPubkeys.isEmpty ? "No contacts found" : "Loaded \(self.followedPubkeys.count) contacts"
+                self.publishContactList()
             } else {
                 // No kind-3 found anywhere — leave the existing follow set intact.
                 #if DEBUG
@@ -1911,10 +1957,31 @@ class FeedService: ObservableObject {
             #endif
             return
         }
-        Task {
-            guard let event = await NostrService.shared.signEventAsync(kind: 3, content: contactListContent, tags: contactListPTags) else { return }
+        // Bump the local-edit guard synchronously to "now" so an immediate contact
+        // refresh (firing before the async sign/post below completes) can't accept a
+        // stale relay copy and drop the edit we're about to publish.
+        ownContactListAccountKey = currentSnapshotKey()
+        ownContactListCreatedAt = max(ownContactListCreatedAt, Int64(Date().timeIntervalSince1970))
+        Task { [weak self] in
+            guard let self = self else { return }
+            guard let event = await NostrService.shared.signEventAsync(kind: 3, content: self.contactListContent, tags: self.contactListPTags) else { return }
+            await self.recordOwnContactList(event: event)
             NostrService.shared.postEvent(event)
         }
+    }
+
+    /// Records the timestamp + a durable backup of a contact list we just signed,
+    /// so a later relay fetch returning an older copy can't clobber this edit.
+    @MainActor
+    private func recordOwnContactList(event: NostrEvent) {
+        ownContactListCreatedAt = max(ownContactListCreatedAt, event.created_at)
+        FollowingBackupService.shared.maybeCreateSnapshot(
+            pubkeys: followedPubkeys,
+            pTags: contactListPTags,
+            contactListContent: contactListContent,
+            contactListCreatedAt: event.created_at,
+            forAccountKey: currentSnapshotKey()
+        )
     }
 
     /// Restores the contact list from a backup, bypassing the shrinkage safety check.
@@ -1925,8 +1992,10 @@ class FeedService: ObservableObject {
         self.followedPubkeys = pTags.compactMap { $0.count >= 2 ? $0[1] : nil }
         self.contactListContent = content
         self.lastFetchedContactCount = pTags.count
-        Task {
-            guard let event = await NostrService.shared.signEventAsync(kind: 3, content: contactListContent, tags: contactListPTags) else { return }
+        Task { [weak self] in
+            guard let self = self else { return }
+            guard let event = await NostrService.shared.signEventAsync(kind: 3, content: self.contactListContent, tags: self.contactListPTags) else { return }
+            await self.recordOwnContactList(event: event)
             NostrService.shared.postEvent(event)
         }
     }
