@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 import UserNotifications
 
 /// Fires local system notifications from the embedded relay's `🔔NOTIFY|` log markers.
@@ -11,8 +12,9 @@ final class LocalNotificationService {
     static let shared = LocalNotificationService()
     private init() {}
 
-    /// True while the app is foregrounded. Notifications are suppressed while active
-    /// (the in-app relay-activity dot covers live activity, same as Android).
+    /// True while the app is foregrounded. The system notification is suppressed while
+    /// active (it can't banner over a running app) and replaced with an in-app banner
+    /// (RelayActivityBanner) instead, so live activity is never silently dropped.
     var appInForeground: Bool = false
 
     private var seen = Set<String>()
@@ -43,10 +45,9 @@ final class LocalNotificationService {
             let s = String(part)
             if let eq = s.firstIndex(of: "=") {
                 fields[String(s[..<eq])] = String(s[s.index(after: eq)...])
-            }
-        }
+            }        }
 
-        guard let type = fields["type"], let id = fields["id"], !id.isEmpty else { return }
+         guard let type = fields["type"], let id = fields["id"], !id.isEmpty else { return }
         let author = fields["author"] ?? ""
 
         guard markSeen(id) else { return }
@@ -68,10 +69,14 @@ final class LocalNotificationService {
             }
         }()
         guard allowed else { return }
-        guard !appInForeground else { return }
 
         let name = author.isEmpty ? nil : NostrService.shared.profiles[author]?.bestName
-        post(id: id, type: type, name: name, preview: preview)
+
+        if appInForeground {
+            showInAppBanner(id: id, type: type, name: name, preview: preview)
+        } else {
+            post(id: id, type: type, name: name, preview: preview)
+        }
     }
 
     // MARK: - Private
@@ -86,31 +91,74 @@ final class LocalNotificationService {
         return true
     }
 
-    private func post(id: String, type: String, name: String?, preview: String) {
+    private func titleAndBody(type: String, name: String?, preview: String) -> (String, String) {
         let who = name ?? "Someone"
-        let (title, body): (String, String) = {
-            switch type {
-            case "mention":
-                return ("\(who) mentioned you",
-                        preview.isEmpty ? "You were mentioned in a note" : preview)
-            case "reply":
-                return ("\(who) replied to your note",
-                        preview.isEmpty ? "Tap to view the reply" : preview)
-            case "dm", "giftwrap":
-                return (name != nil ? "Message from \(who)" : "New message",
-                        "You have a new encrypted message")
-            case "zap":
-                return ("⚡ New zap",
-                        name != nil ? "\(who) zapped you" : "You received a zap")
-            case "reaction":
-                return ("\(who) reacted \(preview.isEmpty ? "❤️" : preview)",
-                        "Tap to view your note")
-            case "repost":
-                return ("\(who) reposted your note", "Tap to view")
-            default:
-                return ("New activity", "Tap to view")
-            }
-        }()
+        switch type {
+        case "mention":
+            return ("\(who) mentioned you",
+                    preview.isEmpty ? "You were mentioned in a note" : preview)
+        case "reply":
+            return ("\(who) replied to your note",
+                    preview.isEmpty ? "Tap to view the reply" : preview)
+        case "dm", "giftwrap":
+            return (name != nil ? "Message from \(who)" : "New message",
+                    "You have a new encrypted message")
+        case "zap":
+            return ("⚡ New zap",
+                    name != nil ? "\(who) zapped you" : "You received a zap")
+        case "reaction":
+            return ("\(who) reacted \(preview.isEmpty ? "❤️" : preview)",
+                    "Tap to view your note")
+        case "repost":
+            return ("\(who) reposted your note", "Tap to view")
+        default:
+            return ("New activity", "Tap to view")
+        }
+    }
+
+    /// Shows the in-app drop-down banner (RelayActivityBanner) for activity that arrives
+    /// while the app is foregrounded, tappable to jump straight to the relevant tab/note.
+    private func showInAppBanner(id: String, type: String, name: String?, preview: String) {
+        let (title, body) = titleAndBody(type: type, name: name, preview: preview)
+        let (icon, color) = iconAndColor(for: type)
+        RelayActivityNotificationManager.shared.show(icon: icon, title: title, body: body, color: color) {
+            Self.navigate(type: type, id: id)
+        }
+    }
+
+    private func iconAndColor(for type: String) -> (String, Color) {
+        switch type {
+        case "mention":        return ("at", Color.havenPurple)
+        case "reply":          return ("arrowshape.turn.up.left.fill", Color.havenPurple)
+        case "dm", "giftwrap": return ("envelope.fill", Color.blue)
+        case "zap":            return ("bolt.fill", Color.orange)
+        case "reaction":       return ("heart.fill", Color.pink)
+        case "repost":         return ("arrow.2.squarepath", Color(red: 0.2, green: 0.8, blue: 0.6))
+        default:               return ("bell.fill", Color.gray)
+        }
+    }
+
+    /// Mirrors AppDelegate's notification-tap dispatch so the in-app banner opens the
+    /// same destination a system notification of the same type would.
+    private static func navigate(type: String, id: String) {
+        switch type {
+        case "mention", "reply":
+            NotificationCenter.default.post(name: .havenOpenMentions, object: id)
+        case "reaction":
+            NotificationCenter.default.post(name: .havenOpenRelayLikes, object: nil)
+        case "repost":
+            NotificationCenter.default.post(name: .havenOpenRelayNotes, object: nil)
+        case "zap":
+            NotificationCenter.default.post(name: .havenOpenRelayZaps, object: nil)
+        case "dm", "giftwrap":
+            NotificationCenter.default.post(name: .havenOpenDMInbox, object: nil)
+        default:
+            break
+        }
+    }
+
+    private func post(id: String, type: String, name: String?, preview: String) {
+        let (title, body) = titleAndBody(type: type, name: name, preview: preview)
 
         let content = UNMutableNotificationContent()
         content.title = title

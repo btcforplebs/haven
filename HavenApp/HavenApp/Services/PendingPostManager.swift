@@ -1,5 +1,8 @@
 import SwiftUI
 import Combine
+#if canImport(UIKit)
+import UIKit
+#endif
 
 @MainActor
 class PendingPostManager: ObservableObject {
@@ -112,7 +115,7 @@ class PendingPostManager: ObservableObject {
             nostrService.postEvent(event)
             // The note is now broadcasting — safe to drop its draft.
             if let draftId {
-                Task { await DraftService.shared.deleteDraft(id: draftId) }
+                await DraftService.shared.deleteDraft(id: draftId)
             }
         }
     }
@@ -142,14 +145,13 @@ class PendingPostManager: ObservableObject {
                 ?? ConfigService.shared.config.activeBlastrRelays.first
                 ?? ConfigService.shared.config.nostrURL
 
-            Task {
-                let powSnap = PowPreferences.snapshot()
-                let powDiff = powSnap.noteEnabled ? powSnap.noteDifficulty : 0
-                guard let signed = await nostrService.mineAndSignEventAsync(
-                    kind: 6, content: embedded,
-                    tags: [["e", originalId, relayHint], ["p", originalPubkey]],
-                    difficulty: powDiff
-                ) else { return }
+            let powSnap = PowPreferences.snapshot()
+            let powDiff = powSnap.noteEnabled ? powSnap.noteDifficulty : 0
+            if let signed = await nostrService.mineAndSignEventAsync(
+                kind: 6, content: embedded,
+                tags: [["e", originalId, relayHint], ["p", originalPubkey]],
+                difficulty: powDiff
+            ) {
                 nostrService.postEvent(signed)
             }
             FeedService.shared.repostedEventIds.insert(originalId)
@@ -175,6 +177,7 @@ class PendingPostManager: ObservableObject {
     func cancel() {
         countdown?.cancel()
         countdown = nil
+        endBackgroundTaskIfNeeded()
         if let event = pendingEvent {
             FeedService.shared.removeNote(id: event.id)
         }
@@ -193,6 +196,7 @@ class PendingPostManager: ObservableObject {
         let quoteTo = pendingQuoteTo
         countdown?.cancel()
         countdown = nil
+        endBackgroundTaskIfNeeded()
         if let event = pendingEvent {
             FeedService.shared.removeNote(id: event.id)
         }
@@ -210,6 +214,7 @@ class PendingPostManager: ObservableObject {
     private func clearPrevious() {
         countdown?.cancel()
         countdown = nil
+        endBackgroundTaskIfNeeded()
         if let event = pendingEvent {
             FeedService.shared.removeNote(id: event.id)
         }
@@ -220,21 +225,51 @@ class PendingPostManager: ObservableObject {
         actionType = nil
     }
 
-    private func beginCountdown(onComplete: @escaping @MainActor () -> Void) {
+    private func beginCountdown(onComplete: @escaping @MainActor () async -> Void) {
+        // Covers the countdown + mine/sign + broadcast that follows it, so the
+        // OS doesn't suspend/kill the app mid-post if the user backgrounds it
+        // (e.g. locks the phone) right after tapping post — PoW mining can
+        // make this window last several seconds.
+        beginBackgroundTask()
         let endTime = Date().addingTimeInterval(ActionType.countdownDuration)
         countdown = Task { @MainActor in
             while Date() < endTime {
                 try? await Task.sleep(nanoseconds: 100_000_000)
-                if Task.isCancelled { return }
+                if Task.isCancelled {
+                    self.endBackgroundTaskIfNeeded()
+                    return
+                }
                 self.timeRemaining = max(0, endTime.timeIntervalSinceNow)
             }
-            if Task.isCancelled { return }
+            if Task.isCancelled {
+                self.endBackgroundTaskIfNeeded()
+                return
+            }
             withAnimation(.easeOut(duration: 0.4)) {
                 self.isShowing = false
                 self.actionType = nil
             }
             self.bannerNoteId = nil
-            onComplete()
+            await onComplete()
+            self.endBackgroundTaskIfNeeded()
         }
     }
+
+    #if os(iOS)
+    private var bgTaskId: UIBackgroundTaskIdentifier = .invalid
+
+    private func beginBackgroundTask() {
+        endBackgroundTaskIfNeeded()
+        bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "PendingPostBroadcast", expirationHandler: nil)
+    }
+
+    private func endBackgroundTaskIfNeeded() {
+        guard bgTaskId != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(bgTaskId)
+        bgTaskId = .invalid
+    }
+    #else
+    private func beginBackgroundTask() {}
+    private func endBackgroundTaskIfNeeded() {}
+    #endif
 }

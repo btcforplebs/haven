@@ -292,6 +292,7 @@ struct iPadSidebarView: View {
                 ZapNotificationBanner()
                 FollowNotificationBanner()
                 MediaUploadNotificationBanner()
+                RelayActivityBanner()
                 ActionToastBanner()
                 ErrorNotificationBanner()
             }
@@ -381,6 +382,7 @@ struct iPhoneTabView: View {
                 ZapNotificationBanner()
                 FollowNotificationBanner()
                 MediaUploadNotificationBanner()
+                RelayActivityBanner()
                 ActionToastBanner()
                 ErrorNotificationBanner()
             }

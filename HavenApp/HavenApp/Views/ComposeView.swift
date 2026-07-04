@@ -3,6 +3,9 @@ import PhotosUI
 import UniformTypeIdentifiers
 import CryptoKit
 import AVFoundation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Imports a PhotosPickerItem video as a file URL on disk, avoiding loading the
 /// entire video into memory. The system writes the picked file into our app's
@@ -21,6 +24,23 @@ struct ImportedVideoFile: Transferable {
             try? FileManager.default.removeItem(at: dest)
             try FileManager.default.copyItem(at: received.file, to: dest)
             return ImportedVideoFile(url: dest)
+        }
+    }
+}
+
+private extension View {
+    /// Overlays a small numbered badge on the top-trailing corner, matching the
+    /// unread-dot treatment used for conversation/group rows elsewhere in the app
+    /// (see GroupListView/DMInboxView) but with a count instead of a plain dot.
+    func draftCountBadge(_ count: Int, ringColor: Color) -> some View {
+        overlay(alignment: .topTrailing) {
+            Text("\(count)")
+                .font(.appSystem(size: 10, weight: .bold))
+                .foregroundColor(.white)
+                .frame(minWidth: 15, minHeight: 15)
+                .background(Color.havenPurple, in: Circle())
+                .overlay(Circle().stroke(ringColor, lineWidth: 1.5))
+                .offset(x: 10, y: -8)
         }
     }
 }
@@ -65,6 +85,7 @@ struct ComposeView: View {
     @State private var autoSaveTask: Task<Void, Never>? = nil
     @State private var lastSavedContent: String = ""
     @State private var showingDraftPicker = false
+    @State private var showingDiscardConfirm = false
     @StateObject private var draftService = DraftService.shared
 
     // Draft-loaded reply/quote context (overrides init-provided values)
@@ -215,25 +236,17 @@ struct ComposeView: View {
             .toolbar {
                 #if os(iOS)
                 ToolbarItem(placement: .cancellationAction) {
-                    HStack(spacing: 8) {
-                        Button("Cancel") { performDismiss() }
-
-                        if !draftService.draftsForActiveAccount.isEmpty && draftId == nil {
-                            Button {
-                                showingDraftPicker = true
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "doc.text")
-                                        .font(.appSystem(size: 12))
-                                    Text("\(draftService.draftsForActiveAccount.count)")
-                                        .font(.appCaption2.bold())
-                                }
+                    Button("Cancel") { handleCancelTapped() }
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    if !draftService.draftsForActiveAccount.isEmpty && draftId == nil {
+                        Button {
+                            showingDraftPicker = true
+                        } label: {
+                            Image(systemName: "doc.text")
+                                .font(.appSystem(size: 16, weight: .semibold))
                                 .foregroundColor(.havenPurple)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.havenPurple.opacity(0.12))
-                                .clipShape(Capsule())
-                            }
+                                .draftCountBadge(draftService.draftsForActiveAccount.count, ringColor: .platformSecondaryGroupedBackground)
                         }
                     }
                 }
@@ -253,6 +266,15 @@ struct ComposeView: View {
                 if let error = error {
                     Text(error)
                 }
+            }
+            .confirmationDialog(
+                "Save this note as a draft?",
+                isPresented: $showingDiscardConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Save Draft") { performDismiss() }
+                Button("Discard", role: .destructive) { discardDraftAndDismiss() }
+                Button("Keep Editing", role: .cancel) { }
             }
             .onAppear {
                 if !initialContent.isEmpty {
@@ -622,7 +644,7 @@ struct ComposeView: View {
     #if os(macOS)
     private var header: some View {
         HStack {
-            Button("Cancel") { performDismiss() }
+            Button("Cancel") { handleCancelTapped() }
                 .buttonStyle(.plain)
                 .foregroundColor(.secondary)
 
@@ -630,17 +652,10 @@ struct ComposeView: View {
                 Button {
                     showingDraftPicker = true
                 } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "doc.text")
-                            .font(.appSystem(size: 12))
-                        Text("\(draftService.draftsForActiveAccount.count)")
-                            .font(.appCaption2.bold())
-                    }
-                    .foregroundColor(.havenPurple)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.havenPurple.opacity(0.12))
-                    .clipShape(Capsule())
+                    Image(systemName: "doc.text")
+                        .font(.appSystem(size: 14, weight: .semibold))
+                        .foregroundColor(.havenPurple)
+                        .draftCountBadge(draftService.draftsForActiveAccount.count, ringColor: .platformControlBackground)
                 }
                 .buttonStyle(.plain)
             }
@@ -1103,6 +1118,19 @@ struct ComposeView: View {
         }
 
         Task {
+            // Request background execution time so upload + PoW mining (which can take
+            // several seconds, more on slower devices or with PoW set high) isn't killed
+            // mid-flight if the user backgrounds the app or locks the phone right after
+            // tapping post.
+            #if os(iOS)
+            let bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "ComposePost", expirationHandler: nil)
+            #endif
+            defer {
+                #if os(iOS)
+                UIApplication.shared.endBackgroundTask(bgTaskId)
+                #endif
+            }
+
             // 1. Upload media to Blossom mirrors
             // Convert `@name` display tokens back to canonical `nostr:npub…` references.
             var finalContent = convertMentionsToNostr(content)
@@ -1346,6 +1374,31 @@ struct ComposeView: View {
                 blossomMedia = result
                 isLoadingBlossomMedia = false
             }
+        }
+    }
+
+    private func handleCancelTapped() {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasSavableContent = !trimmed.isEmpty && (trimmed.contains(" ") || trimmed.count > 10)
+        if hasSavableContent {
+            showingDiscardConfirm = true
+        } else {
+            performDismiss()
+        }
+    }
+
+    private func discardDraftAndDismiss() {
+        autoSaveTask?.cancel()
+        if let id = draftId {
+            Task { await DraftService.shared.deleteDraft(id: id) }
+        }
+        // Nothing left to persist — mark current content "saved" so if performDismiss
+        // were ever reached again it wouldn't re-save.
+        lastSavedContent = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let onDismiss = onDismiss {
+            onDismiss()
+        } else {
+            dismiss()
         }
     }
 

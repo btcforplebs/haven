@@ -37,9 +37,16 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneDidDisconnect(_ scene: UIScene) {
-        // RelayProcessManager.shared.stopRelay() is the proper way to stop,
-        // but on disconnect we can call StopRelayC directly since the app is going away.
-        StopRelayC()
+        // Stop through the manager, never StopRelayC() directly:
+        // 1. The process often survives a scene disconnect. A direct call left
+        //    state/isRunning stale (.running), so the next scene connect could
+        //    never restart the relay and the feed reconnected into a dead
+        //    local socket (silent "feed never refreshes" until force-kill).
+        // 2. A synchronous call blocked the main thread inside the Go runtime
+        //    past iOS's 5s termination budget — the 0x8BADF00D watchdog kills.
+        // stopRelay() runs the Go shutdown on a background queue and resets
+        // state to .idle when done.
+        RelayProcessManager.shared.stopRelay()
     }
 
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
@@ -68,37 +75,50 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             NIP46Service.shared.connectFromConfig()
         }
 
-        // Reconnect the notes WebSocket after the app was suspended.
-        // The relay is still in-process; it un-freezes the moment we foreground.
-        // Give it a second to settle then re-fetch notes.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            guard RelayProcessManager.shared.isRunning else { return }
-            NostrService.shared.resetConnections()
-            // Mark that we handled foreground reconnection so ViewerView
-            // doesn't redundantly call refreshAll() on its next onAppear.
-            NostrService.shared.lastForegroundReconnectTime = Date()
+        // Reconnect immediately — REQs go out from each socket's .connected
+        // event, so a fixed "settle" delay only adds latency. The relay is
+        // in-process and un-freezes the moment we foreground; if it is still
+        // booting, FeedService's $isReadyForConnections observer re-runs the
+        // reconcile once it's up (the feed must be unpaused before then,
+        // which is why resumeFeed() is not gated on isRunning — the old
+        // one-shot `guard isRunning` bail was a silent "feed never
+        // refreshes until pull-to-refresh").
+        NostrService.shared.resetConnections()
+        // Mark that we handled foreground reconnection so ViewerView
+        // doesn't redundantly call refreshAll() on its next onAppear.
+        NostrService.shared.lastForegroundReconnectTime = Date()
+
+        // Reconnect feed WebSocket connections killed during suspend.
+        // Suspension kills sockets without flipping their state, so if the
+        // background handler didn't get to pause the feed, cycle it to clear
+        // zombie connections; resumeFeed() routes through the idempotent
+        // reconciler which reconnects only what's missing.
+        if !FeedService.shared.isPaused {
+            FeedService.shared.pauseFeed()
+        }
+        FeedService.shared.resumeFeed()
+
+        // Re-fetch the viewer (Relay tab) notes if the relay is up. If it
+        // isn't yet, ViewerView refreshes on its own appear path.
+        if RelayProcessManager.shared.isRunning {
             let config = ConfigService.shared.config
             var urls = [config.nostrURL, config.nostrURL + "/inbox"].compactMap { URL(string: $0) }
-            guard !urls.isEmpty else { return }
             let macURL = config.macRelayURL.trimmingCharacters(in: .whitespacesAndNewlines)
             if !macURL.isEmpty, let macInbox = URL(string: macURL + "/inbox") {
                 urls.append(macInbox)
             }
-            NostrService.shared.fetchNotes(from: urls)
-
-            // Rescan blossom directory for media that arrived while backgrounded
-            NotificationCenter.default.post(name: .blossomDirectoryChanged, object: nil)
-
-            // Refresh DM inbox to pick up messages received while backgrounded
-            DMService.shared.refresh()
-
-            // Reconnect feed WebSocket connections killed during suspend
-            if !FeedService.shared.isPaused {
-                FeedService.shared.pauseFeed()
+            if !urls.isEmpty {
+                NostrService.shared.fetchNotes(from: urls)
             }
-            FeedService.shared.resumeFeed()
         }
-        
+
+        // Rescan blossom directory for media that arrived while backgrounded
+        NotificationCenter.default.post(name: .blossomDirectoryChanged, object: nil)
+
+        // Refresh DM inbox to pick up messages received while backgrounded
+        DMService.shared.refresh()
+
+
         // Sync DMs from external relays on foreground
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
             DMService.shared.syncOnForeground()

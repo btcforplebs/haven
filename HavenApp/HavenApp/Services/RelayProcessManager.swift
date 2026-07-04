@@ -428,8 +428,8 @@ class RelayProcessManager: ObservableObject {
     /// Waits for StopRelayC to truly return — the old 5-second timeout that
     /// "force-reset" state and fired the completion early let callers start
     /// a new relay cycle while the Go side was still tearing down the old
-    /// one, corrupting BadgerDB. Go-side shutdown is bounded (~15s worst
-    /// case: 4s server shutdown + 10s goroutine drain + DB close), so
+    /// one, corrupting BadgerDB. Go-side shutdown is bounded (~5s worst
+    /// case: 2s server shutdown + 2s goroutine drain + DB close), so
     /// waiting honestly cannot hang.
     private func performStop() async {
         // Must check if running, booting, or importing
