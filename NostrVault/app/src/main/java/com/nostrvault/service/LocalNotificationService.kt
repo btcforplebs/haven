@@ -42,8 +42,9 @@ import android.app.NotificationManager as SystemNotificationManager
  *
  * Gating mirrors the (server-based) iOS push design: the global
  * `enablePushNotifications` master toggle plus the per-account [com.nostrvault.relay.PushPrefs]
- * per-type switches from Settings. Heads-up notifications are suppressed while the
- * app is in the foreground (the in-app relay-activity dot already covers that).
+ * per-type switches from Settings. Fires even while the app is foregrounded — the
+ * channel's IMPORTANCE_HIGH already makes it a heads-up notification, so this is not
+ * just a background push.
  */
 @Singleton
 class LocalNotificationService @Inject constructor(
@@ -62,13 +63,6 @@ class LocalNotificationService @Inject constructor(
         private const val MARKER = "🔔NOTIFY|"
         private const val PREVIEW_MARKER = "|preview="
         private const val MAX_SEEN = 500
-
-        /**
-         * Set from [MainActivity]'s lifecycle. When true, the app is on screen and
-         * we skip system notifications to avoid doubling up with the in-app dot.
-         */
-        @Volatile
-        var appInForeground: Boolean = false
     }
 
     // Dedup guard. The Go relay only logs NOTIFY for genuinely new events (it
@@ -161,12 +155,6 @@ class LocalNotificationService @Inject constructor(
         }
         if (!allowed) {
             Log.i(TAG, "skip: '$type' disabled in per-account prefs")
-            return
-        }
-
-        // The in-app dot already signals activity while the app is open.
-        if (appInForeground) {
-            Log.i(TAG, "skip: app in foreground (in-app dot covers it)")
             return
         }
 

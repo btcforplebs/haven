@@ -55,18 +55,10 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         // End the background task if the user has returned to the app.
         endBackgroundTask()
 
-        // Suppress local relay notifications while the app is visible.
-        LocalNotificationService.shared.appInForeground = true
-
         // Clear app badge and reset server-side badge counter
         Task { @MainActor in
             PushNotificationService.shared.clearBadge()
         }
-    }
-
-    func sceneWillResignActive(_ scene: UIScene) {
-        // Allow local relay notifications when the user leaves the app.
-        LocalNotificationService.shared.appInForeground = false
     }
 
     func sceneWillEnterForeground(_ scene: UIScene) {

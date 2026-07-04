@@ -279,7 +279,6 @@
 		D95FE9EAEC6CDCF53AC7E1E5 /* RelayListEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AB6A6872532B023E705FC6C /* RelayListEditor.swift */; };
 		D9E8EC6D2923CC7E627C8F2B /* FeedActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A85E435417789F6ABE84846C /* FeedActions.swift */; };
 		DB41813EABB4EE98C342A4CC /* NIP46Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = A79DD8C79F272181A636AC78 /* NIP46Service.swift */; };
-		DB633E5E1B56A294E4E29DB2 /* RelayActivityBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFCFB69179285150D04C19A9 /* RelayActivityBanner.swift */; };
 		DB68DA241565F5E69B9F2B43 /* RelayListEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AB6A6872532B023E705FC6C /* RelayListEditor.swift */; };
 		DBD32E19582D9012E15F92AD /* VideoPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3DD3ED79F874383BC2F54F2 /* VideoPlayerView.swift */; };
 		DD04EE05FF0607182930A4B5 /* VaultNoteRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B3C4D5E6F708192A3B4C5D6 /* VaultNoteRow.swift */; };
@@ -304,7 +303,6 @@
 		EE05FF060718293A4B5C6D7F /* VaultSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C4D5E6F708192A3B4C5D6E7 /* VaultSearch.swift */; };
 		EE55667788990011223344EF /* RelayConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA11223344556677889900AB /* RelayConfiguration.swift */; };
 		EE5F6A7B8C9D0E1F2A3B4C5D /* MediaGalleryToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD4E5F6A7B8C9D0E1F2A3B4C /* MediaGalleryToolbar.swift */; };
-		EF13D5619C84F7D78D0D6988 /* RelayActivityBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFCFB69179285150D04C19A9 /* RelayActivityBanner.swift */; };
 		F10135C9F1B704EF4CFDCDB7 /* MempoolAPIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71CC7FAABBAB90283299F087 /* MempoolAPIService.swift */; };
 		F22FA656E63FA88BF7E97461 /* CachedAsyncImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E04A276931F29CD944A3474 /* CachedAsyncImage.swift */; };
 		F2B3C4D5E6F7A8B9C0D1E2F3 /* FeedServiceTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1A2B3C4D5E6F7A8B9C0D1E2 /* FeedServiceTypes.swift */; };
@@ -465,7 +463,6 @@
 		CA0D1E2F3A4B5C6D7E8F9A0B /* BlossomDashboardComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlossomDashboardComponents.swift; sourceTree = "<group>"; };
 		CC44DD55EE66FF77AA88BB99 /* LocalNotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalNotificationService.swift; sourceTree = "<group>"; };
 		CD3A4B5C6D7E8F9A0B1C2D3E /* BlossomDashboardMirrors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlossomDashboardMirrors.swift; sourceTree = "<group>"; };
-		CFCFB69179285150D04C19A9 /* RelayActivityBanner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RelayActivityBanner.swift; sourceTree = "<group>"; };
 		D06D7E8F9A0B1C2D3E4F5A6B /* BlossomDashboardModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlossomDashboardModels.swift; sourceTree = "<group>"; };
 		D1E2F3A4B5C6D7E8F9A0B1C2 /* ProfileRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileRepository.swift; sourceTree = "<group>"; };
 		D402A79FB4D7F03B9F67E1D2 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -741,7 +738,6 @@
 				AB1ABE73DF67618E189147F2 /* MirrorStatusSheet.swift */,
 				26B94C55797E3C0F7E79B42B /* MediaGridItem.swift */,
 				EB34AB23F08ED4824A863B3E /* MediaListItem.swift */,
-				CFCFB69179285150D04C19A9 /* RelayActivityBanner.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -1130,7 +1126,6 @@
 				F909E9664DAB54DA38575736 /* WelcomeWindowView.swift in Sources */,
 				57E6069BC04523FD3F7A9DA7 /* ZapNotificationBanner.swift in Sources */,
 				30D8A68AB9D5370D2047AD1D /* ZapService.swift in Sources */,
-				DB633E5E1B56A294E4E29DB2 /* RelayActivityBanner.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1286,7 +1281,6 @@
 				2A158B439B79BA956648F917 /* WelcomeWindowView.swift in Sources */,
 				B98F984A810E762DDFBBB244 /* ZapNotificationBanner.swift in Sources */,
 				4E9D41F92A23243785F106A0 /* ZapService.swift in Sources */,
-				EF13D5619C84F7D78D0D6988 /* RelayActivityBanner.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

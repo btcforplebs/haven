@@ -23,7 +23,6 @@ import com.nostrvault.service.AmberResultBridge
 import com.nostrvault.service.DMService
 import com.nostrvault.service.FeedService
 import com.nostrvault.service.MediaUploadManager
-import com.nostrvault.service.LocalNotificationService
 import com.nostrvault.service.NostrService
 import com.nostrvault.service.PendingPostManager
 import com.nostrvault.ui.navigation.NostrVaultNavHost
@@ -104,17 +103,6 @@ class MainActivity : FragmentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleShareIntent(intent)
-    }
-
-    override fun onResume() {
-        super.onResume()
-        // App is on screen: suppress system notifications (the in-app dot covers it).
-        LocalNotificationService.appInForeground = true
-    }
-
-    override fun onPause() {
-        super.onPause()
-        LocalNotificationService.appInForeground = false
     }
 
     /** Request POST_NOTIFICATIONS on Android 13+ if not already granted. */

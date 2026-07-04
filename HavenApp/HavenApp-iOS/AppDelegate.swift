@@ -239,6 +239,12 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
             } else {
                 Self.pendingAction = action
             }
+        } else if let notifType = userInfo["notif_type"] as? String,
+                  let notifId = userInfo["notif_id"] as? String {
+            // Tapped a relay NOTIFY-marker notification (LocalNotificationService).
+            Task { @MainActor in
+                LocalNotificationService.navigate(type: notifType, id: notifId)
+            }
         }
 
         completionHandler()
