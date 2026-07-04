@@ -430,6 +430,20 @@ func subscribeInboxAndChat(ctx context.Context) {
 		ticker := time.NewTicker(time.Duration(pullEvery) * time.Second)
 		defer ticker.Stop()
 		var lastRun time.Time
+
+		// Initial catch-up shortly after start (WoT is already ready here).
+		// Without it the first reconciliation waits a full pull interval, so a
+		// relay holding stale local data — e.g. an outdated follow list the
+		// network has since superseded — keeps serving it for up to an hour
+		// after every app launch.
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(20 * time.Second):
+		}
+		runCatchup()
+		lastRun = time.Now()
+
 		for {
 			select {
 			case <-ctx.Done():
