@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0 (11) macOS / 1.2.0 (11) iOS] - 2026-07-06
+
+> **On-Device Notifications & Picture-in-Picture**: Notifications no longer depend on any remote push server — they're generated entirely on-device from your own relay, with correct per-account attribution on multi-account setups and a consolidated "N new notifications" summary after catching up from being away. Video now supports Picture-in-Picture on iOS and Android. Plus a Web of Trust self-heal fix that was the root cause of silently-dropped replies and reactions.
+
+### Added
+- **Picture-in-Picture Video (iOS + Android)**: Full-screen video keeps playing in a system PiP window when you swipe home or tap the PiP button. New unified full-screen control rail (play/pause, elapsed/duration, scrubber, mute, PiP) auto-hides after 3s of inactivity. Android's full-screen viewer now lives in the activity window instead of a `Dialog` so PiP can actually capture it; iOS's `PiPManager` retains the player past view dismissal so playback doesn't glitch when the viewer closes.
+- **Catch-Up Notification Summary**: Returning to the app after being away and catching up via Mac Relay Sync now shows a single "N new notifications" summary instead of one push per event — mirrors the same batching the relay's own live catch-up already used.
+- **Mac Relay Sync Status (Dashboard + Settings)**: New status widgets showing last-sync time and manual Sync Now / Full Resync / Reset controls.
+
+### Changed
+- **No More Remote Push Server**: Removed all APNs/remote push-server registration code. Every notification — mentions, replies, DMs, zaps, reactions, reposts — is generated entirely on-device from the embedded relay's own event stream. Nothing about your notification activity is ever visible to us, Apple, or Google.
+- **Per-Account Notification Attribution**: On devices with more than one whitelisted account, notifications now resolve preferences — and which account a tap switches to — against the account the event was actually tagged for, instead of guessing from whichever account happens to be active in the UI.
+- **Message Composer Recipient Chip**: Tapping a search result when starting a new message now visibly shows the selected recipient (previously nothing appeared to happen, even though the recipient actually registered).
+- **Settings**: "Push Notifications" renamed to "Notifications" throughout, since there's no push server involved anymore.
+
+### Fixed
+- **Stale Web of Trust Cache**: A Web of Trust snapshot computed during a past follow-list incident could get stuck and silently reject real replies/reactions as "not in WoT" for days, since the cache's TTL far outlives how long a mobile app process stays alive. The cache now checks its own age against the refresh interval at boot and refreshes in the background when due, instead of relying solely on an in-process timer that rarely gets 24 continuous hours to fire.
+- **Missing Notifications from Mac Relay Sync**: Events that only ever reached the phone via Mac Relay Sync's catch-up (as opposed to the live relay subscription) were imported silently — no notification, no relay-activity indicator. The local relay's inbox/chat storage path now runs the same notification logic as the live subscription path.
+- **Mac Relay Sync Could Take Down the Local Relay**: Mac Relay Sync had no minimum gap between opportunistic sync rounds, so repeated triggers (e.g. from feed reconnects) could fire back-to-back and overwhelm the local relay's own connections badly enough that it stopped responding — including to your own post attempts. Added the same minimum-gap throttle the relay's own catch-up sync already used.
+- **Mac Relay Sync `/private` and `/chat` Catch-Up**: These endpoints require NIP-42 authentication that Mac Relay Sync never performed, so every catch-up attempt against them silently timed out after 60 seconds without transferring anything. Now authenticates before querying.
+- **Xcode Incremental Build Could Ship a Stale Relay**: The Go relay archive's build script phases were configured in a way that let Xcode's build system skip rebuilding them entirely on incremental builds, with no error — meaning a real Go-side change could ship without actually being in the binary. Fixed the phase configuration so it always re-checks (and only recompiles when the source actually changed).
+
 ## [2.5.1 (10) macOS / 1.1.1 (10) iOS] - 2026-06-17
 
 > **Zaps Only Mode, @-mention Autocomplete & Feed Reliability**: New Appearance setting that strips likes/reactions from the app so zaps are the only engagement; inline @-mention autocomplete in the composer; tap-to-swipe full-screen note media; aspect-ratio-aware feed photos and videos; a feed cold-start reconciler that fixes "relay connected but feed empty" and reduces the need to pull-to-refresh; crash-safe drafts; and fixes for mention accuracy, draft re-sync, and follow-list freshness.

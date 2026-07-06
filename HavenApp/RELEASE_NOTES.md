@@ -1,44 +1,26 @@
-# Haven App v2.5.1 Build 7 (macOS) / v1.1.1 Build 7 (iOS) Release Notes
+# Haven App v2.6.0 Build 11 (macOS) / v1.2.0 Build 11 (iOS) Release Notes
 
-This update adds Web of Trust media filtering, FIPS overlay network publishing, outbox relay model support, instant cold-launch feed restore, proof of work mining, global search, and dozens of performance and reliability improvements across macOS, iOS, and iPadOS.
+This update removes the remote push server entirely — notifications are now generated fully on-device from your own relay — adds Picture-in-Picture video on iOS and Android, and fixes a Web of Trust bug that was causing real replies and reactions to go silently missing.
 
 ## Key Features
 
-*   **WoT Media Filtering**: The Media tab now shows only media from Web of Trust members (plus the owner's own), reducing noise and spam from unknown accounts. Falls back to showing everything if the WoT graph hasn't loaded yet.
-*   **FIPS Blossom Publishing (macOS)**: Detects whether nostr-vpn (nvpn) is running and lets users publish their `.fips` Blossom address in their server list (kind 10063). FIPS URL is appended last in the mirror list (clearnet-first per BUD-14).
-*   **Instant Cold-Launch Feed Restore**: Feed state is persisted to disk on app background/terminate and restored instantly on next cold launch, eliminating the blank-screen wait.
-*   **Proof of Work (NIP-13)**: Optional proof-of-work mining for notes, replies, reactions, reposts, and DMs. Configurable per-category difficulty (8–32 bits) in Settings.
-*   **Global Search (NIP-50)**: Search gains a relay/global toggle. Global mode queries public NIP-50 search relays with deduplication and a 4-second collection window.
-*   **Profile "Tagged" Tab**: Profile view adds a "Tagged" section listing notes from other users that mention, reply to, or tag the profile.
-*   **Outbox Relay Model (NIP-65)**: Write-side relay URLs from kind 10002 events are now parsed and cached, improving relay list discovery and DM relay routing.
+*   **No More Push Server**: Every notification — mentions, replies, DMs, zaps, reactions, reposts — is now generated entirely on-device from your own embedded relay. Nothing about who's contacting you, or when, ever passes through a third-party server — not Apple's, not Google's, not ours.
+*   **Picture-in-Picture Video**: Full-screen video now supports PiP on both iOS and Android — swipe home or tap the PiP button and it keeps playing in a floating window. A new unified control rail (play/pause, time, scrubber, mute, PiP) auto-hides while playing.
+*   **Catch-Up Summary Notifications**: Coming back to the app after being away now shows one clean "N new notifications" summary instead of a flood of individual pushes.
 
 ## Improvements
 
-*   **Event Publishing Reuses Feed Connection**: Publishes go through the existing feed WebSocket instead of opening a temporary connection per event.
-*   **Responsive Toolbar Menus**: Feed toolbars use `ViewThatFits` — filters render inline when space permits, collapsing to an overflow menu on narrow windows.
-*   **Video Shimmer Placeholder**: Animated gradient shimmer replaces the generic spinner while video thumbnails load.
-*   **Incremental Feed Row-Data Cache**: Profile updates, likes, zaps, and reposts trigger targeted row-level cache updates instead of full rebuilds, reducing frame drops.
-*   **Condensed Note View**: Per-feed compact mode with independent toggles per feed tab.
-*   **Audio Session Management**: Muted video autoplay no longer interrupts background music; unmuted playback properly takes over audio.
-*   **Counterpart DM Relay Inclusion**: DM fetching now includes relays from conversation counterparts for better message discovery.
-*   **Account Switch Reconnection**: Switching accounts now properly rebuilds WebSocket connections, fixing the stale relay indicator and empty feed.
-*   **Blossom Mirror Detection**: Mirror status checks blob SHA-256 against the local store instead of matching URL hosts.
-*   **macOS Keyboard Shortcuts**: Cmd+1–6 for tabs, Cmd+, for Settings, Cmd+N for Compose.
-*   **Log Level Filter**: Filter logs by severity (All/Info+/Warn+/Errors) in the Logs view.
+*   **Per-Account Notification Accuracy**: On multi-account setups, notifications now apply the correct account's preferences and open the correct account, instead of guessing from whichever one is currently active.
+*   **Mac Relay Sync Status**: New status widgets in the Dashboard and Settings show last-sync time with manual Sync Now / Full Resync / Reset controls.
+*   **Message Composer**: Selecting a recipient from search now visibly confirms the selection.
 
 ## Bug Fixes
 
-*   **Thread-Safe Event Deduplication**: `seenEventIds` guarded by `NSLock`, eliminating EXC_BAD_ACCESS crashes from concurrent Set mutations.
-*   **"Loading Notes…" Stuck Forever**: Fetch count now tracks only actually-opened subscriptions; 8-second watchdog force-clears stale fetches.
-*   **NIP-42 AUTH Signing**: DM NIP-42 AUTH now always uses the local relay's owner key.
-*   **Max Reconnect Slot Leak**: Dead relays release their slot from `activeSubscriptionCount`.
-*   **Go Relay File Descriptor Leak**: `initRelays` now defers `file.Close()` after copying downloaded data.
-*   **Relay List Fetch Broadened**: Queries both kind 10002 and 10050 in a single subscription; re-fetches when DM relay data is missing.
-*   **Profile Update Persistence**: In-place profile edits now persist immediately instead of waiting for the next periodic save.
+*   **Web of Trust Getting Stuck**: A stale Web of Trust snapshot could silently reject real replies and reactions as untrusted for days at a time. It now checks its own freshness on launch and refreshes itself in the background when due.
+*   **Notifications Missing After Catching Up**: Activity that arrived only through the Mac Relay catch-up sync (rather than live) wasn't triggering notifications at all. Fixed.
+*   **Local Relay Becoming Unreachable**: Mac Relay Sync could, in rare conditions, fire repeatedly and overwhelm the local relay badly enough that posting stopped working entirely. Fixed with a cooldown between sync rounds.
+*   **Mac Relay Private/Chat Catch-Up Silently Failing**: These required an authentication step that was never being performed, so catch-up against them always failed quietly. Fixed.
 
 ## Removed
 
-*   Relay Note Search Bar (superseded by Global Search)
-*   Dashboard Compact Stats Toggle
-*   Apple Sign In Identity Backup (experimental, never released)
-*   Lightning Balance in Profile
+*   Remote push server registration and all associated APNs plumbing
