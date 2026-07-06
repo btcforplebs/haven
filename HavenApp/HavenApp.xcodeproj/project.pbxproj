@@ -38,6 +38,7 @@
 		1A2B3C4D5E6F7A8B9C0D1E2F /* NostrServiceTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0D1E2F3A4B5C6D7E8F9A0B1 /* NostrServiceTypes.swift */; };
 		1B2C3D4E5F6A7B8C9D0E1F2A /* VaultModeLists.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A1B2C3D4E5F6A7B8C9D0E1F /* VaultModeLists.swift */; };
 		1C825DA9B33BBA981AE9C5AA /* NIP04Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7167339BB13F4557E0E0BB77 /* NIP04Service.swift */; };
+		1DE79AF4D129B38A7F8B9AF7 /* RelayActivityBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8D137775BE10F82EECBD000 /* RelayActivityBanner.swift */; };
 		1F0E85CA638E913E0179BA1D /* MediaTypeDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D08ABA7CDBFD26CF0423E33 /* MediaTypeDetector.swift */; };
 		1F2A3B4C5D6E7F8A9B0C1D2E /* VaultChangeHandlers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D0E1F2A3B4C5D6E7F8A9B0C /* VaultChangeHandlers.swift */; };
 		1F95FE3EAEC35F682BAF6EDD /* UGCReportingDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2181DC8AEE2B3F8376683F88 /* UGCReportingDialog.swift */; };
@@ -190,6 +191,7 @@
 		A51F2A3B4C5D6E7F8A9B0C1D /* MediaGalleryUpload.swift in Sources */ = {isa = PBXBuildFile; fileRef = A40E1F2A3B4C5D6E7F8A9B0C /* MediaGalleryUpload.swift */; };
 		A5DC568CD5B2B92D554D9D22 /* LinkPreviewService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3B2C3C269E23662DF825BFD /* LinkPreviewService.swift */; };
 		A62A3B4C5D6E7F8A9B0C1D2E /* MediaGalleryUpload.swift in Sources */ = {isa = PBXBuildFile; fileRef = A40E1F2A3B4C5D6E7F8A9B0C /* MediaGalleryUpload.swift */; };
+		A776D1AE55AE27F05E37227B /* MacRelaySyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F85AD2B0C4772CBF8D0DA51 /* MacRelaySyncService.swift */; };
 		A84C5D6E7F8A9B0C1D2E3F4A /* MediaGalleryViewer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A73B4C5D6E7F8A9B0C1D2E3F /* MediaGalleryViewer.swift */; };
 		A9175BE3300E9CE097E14F26 /* BlossomService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 803F7E83A0267F02449FA666 /* BlossomService.swift */; };
 		A945F90593453AEC2794E43C /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = E7F41B7A5FACA30EA7AE9015 /* Localizable.xcstrings */; };
@@ -223,6 +225,7 @@
 		BBADE21A4A5A36ACE752BE4A /* FeedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3041B6BA67CC97B2AC442E6D /* FeedView.swift */; };
 		BBD8C5A4D3CCA41A25E9B22D /* MirrorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B03DACD65D976F80B315E19 /* MirrorService.swift */; };
 		BBEB6E9E824AA4B887755B8E /* EventBroadcastSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26251868EAC178C0BAF356A8 /* EventBroadcastSheet.swift */; };
+		BC3C6223ADAFD06FFD722780 /* RelayActivityBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8D137775BE10F82EECBD000 /* RelayActivityBanner.swift */; };
 		BEAB1A49455D2E415783E4E1 /* GroupChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7491F74869677E43C247E1B4 /* GroupChatView.swift */; };
 		C138835F2B5212D5C42C6580 /* IconFilterButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E8A86EFFF76E4D69A9C8FA4 /* IconFilterButton.swift */; };
 		C1931E4661855040B7AE4F22 /* FeedDashboardSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B74B8A0474563E1D52A9E652 /* FeedDashboardSheet.swift */; };
@@ -310,6 +313,7 @@
 		F48C4A72B9BB0E5A9A151D0B /* GroupCreateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CB855E7379DA2448EE2AAE1 /* GroupCreateView.swift */; };
 		F5ED654B64AE76341592BE7A /* SourceIndicatorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8818A6FD67F56862456B7CE9 /* SourceIndicatorView.swift */; };
 		F60718293A4B5C6D7E8F90A1 /* MediaGalleryTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E5F60718293A4B5C6D7E8F /* MediaGalleryTypes.swift */; };
+		F676AB961AF68E25309E527B /* MacRelaySyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F85AD2B0C4772CBF8D0DA51 /* MacRelaySyncService.swift */; };
 		F6A7B8C9D0E1F2A3B4C5D6E7 /* ContactManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E5F6A7B8C9D0E1F2A3B4C5 /* ContactManager.swift */; };
 		F869E49FB6A5FA8DDFC1A20C /* StatsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05E22622B26A3F1A5C9D0A2A /* StatsService.swift */; };
 		F909E9664DAB54DA38575736 /* WelcomeWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34B22EE405098B9706D5B1D8 /* WelcomeWindowView.swift */; };
@@ -388,6 +392,7 @@
 		6C4DB7AE9CD6CD117019324D /* LightningAnimationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LightningAnimationView.swift; sourceTree = "<group>"; };
 		6CFC29BEE8A95187513A3787 /* CustomZapSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomZapSheet.swift; sourceTree = "<group>"; };
 		6F4A9C4C8BD9711513C84185 /* ErrorNotificationBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorNotificationBanner.swift; sourceTree = "<group>"; };
+		6F85AD2B0C4772CBF8D0DA51 /* MacRelaySyncService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MacRelaySyncService.swift; sourceTree = "<group>"; };
 		70CE0E2EC47B06E218FF6548 /* LogsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogsView.swift; sourceTree = "<group>"; };
 		7167339BB13F4557E0E0BB77 /* NIP04Service.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NIP04Service.swift; sourceTree = "<group>"; };
 		7170B65E0299D14E11CEE3D8 /* AudioPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioPlayerView.swift; sourceTree = "<group>"; };
@@ -448,6 +453,7 @@
 		B18859E95D1E981CB5491E8F /* SupportedMediaFormats.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupportedMediaFormats.swift; sourceTree = "<group>"; };
 		B201E5DCC6B60F417B3AEB84 /* RetryableAsyncImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RetryableAsyncImage.swift; sourceTree = "<group>"; };
 		B74B8A0474563E1D52A9E652 /* FeedDashboardSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedDashboardSheet.swift; sourceTree = "<group>"; };
+		B8D137775BE10F82EECBD000 /* RelayActivityBanner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RelayActivityBanner.swift; sourceTree = "<group>"; };
 		B9AD59B52FA7C675CB3E04BC /* BitcoinSweepView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BitcoinSweepView.swift; sourceTree = "<group>"; };
 		BAD62347E7E49CB5F2D3C53B /* FIPSDetectionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FIPSDetectionService.swift; sourceTree = "<group>"; };
 		BB22334455667788990011BC /* RelayLogParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelayLogParser.swift; sourceTree = "<group>"; };
@@ -738,6 +744,7 @@
 				AB1ABE73DF67618E189147F2 /* MirrorStatusSheet.swift */,
 				26B94C55797E3C0F7E79B42B /* MediaGridItem.swift */,
 				EB34AB23F08ED4824A863B3E /* MediaListItem.swift */,
+				B8D137775BE10F82EECBD000 /* RelayActivityBanner.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -811,6 +818,7 @@
 				3CB15AE080BDC0999543399A /* WebSocketClient.swift */,
 				A6DAA5E7383F9175577A61C7 /* ZapService.swift */,
 				8DAE52B32FDAD53F0099799B /* SleepWakeMonitor.swift */,
+				6F85AD2B0C4772CBF8D0DA51 /* MacRelaySyncService.swift */,
 			);
 			name = Services;
 			path = HavenApp/Services;
@@ -944,7 +952,6 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(PROJECT_DIR)/build/libhaven.a",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -963,7 +970,6 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(PROJECT_DIR)/build/ios/libhaven_ios.a",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -1126,6 +1132,8 @@
 				F909E9664DAB54DA38575736 /* WelcomeWindowView.swift in Sources */,
 				57E6069BC04523FD3F7A9DA7 /* ZapNotificationBanner.swift in Sources */,
 				30D8A68AB9D5370D2047AD1D /* ZapService.swift in Sources */,
+				BC3C6223ADAFD06FFD722780 /* RelayActivityBanner.swift in Sources */,
+				F676AB961AF68E25309E527B /* MacRelaySyncService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1281,6 +1289,8 @@
 				2A158B439B79BA956648F917 /* WelcomeWindowView.swift in Sources */,
 				B98F984A810E762DDFBBB244 /* ZapNotificationBanner.swift in Sources */,
 				4E9D41F92A23243785F106A0 /* ZapService.swift in Sources */,
+				1DE79AF4D129B38A7F8B9AF7 /* RelayActivityBanner.swift in Sources */,
+				A776D1AE55AE27F05E37227B /* MacRelaySyncService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1296,7 +1306,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = 525WQ48Y72;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -1319,7 +1329,7 @@
 					"$(PROJECT_DIR)/build",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 2.5.1;
+				MARKETING_VERSION = 2.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.havenapp.relay;
 				PRODUCT_NAME = "Nostr Vault";
 				SDKROOT = macosx;
@@ -1336,7 +1346,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = 525WQ48Y72;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -1359,7 +1369,7 @@
 					"$(PROJECT_DIR)/build",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 2.5.1;
+				MARKETING_VERSION = 2.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.havenapp.relay;
 				PRODUCT_NAME = "Nostr Vault";
 				SDKROOT = macosx;
@@ -1372,7 +1382,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = 525WQ48Y72;
 				GENERATE_INFOPLIST_FILE = NO;
 				HEADER_SEARCH_PATHS = (
@@ -1390,7 +1400,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/build/ios",
 				);
-				MARKETING_VERSION = 1.1.1;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.havenapp.relay;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1404,7 +1414,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = 525WQ48Y72;
 				GENERATE_INFOPLIST_FILE = NO;
 				HEADER_SEARCH_PATHS = (
@@ -1422,7 +1432,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/build/ios",
 				);
-				MARKETING_VERSION = 1.1.1;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.havenapp.relay;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
