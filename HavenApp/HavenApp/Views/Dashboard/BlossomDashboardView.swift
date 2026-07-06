@@ -324,30 +324,97 @@ struct BlossomDashboardView: View {
 
     private func pushAllToMirrors() {
         Task {
-            let needsBackup = stats.totalFiles - stats.backedUpCount
-            guard needsBackup > 0 else {
-                await MainActor.run {
-                    addLog("All files already backed up", level: .info)
-                }
+            let mirrorURLs = await MainActor.run { configService.config.activeBlossomMirrors }
+            guard !mirrorURLs.isEmpty else {
+                await MainActor.run { addLog("No mirrors configured — add one in Blossom Settings", level: .warning) }
+                return
+            }
+
+            let hashes = await localBlossomFileHashes()
+            guard !hashes.isEmpty else {
+                await MainActor.run { addLog("No local files to back up", level: .info) }
                 return
             }
 
             await MainActor.run {
                 isPushing = true
                 syncProgress = 0
-                syncMessage = "Starting backup of \(needsBackup) files..."
-                addLog("Started pushing \(needsBackup) files to mirrors", level: .info)
+                syncMessage = "Checking mirror status..."
+                addLog("Checking \(hashes.count) file\(hashes.count == 1 ? "" : "s") against \(mirrorURLs.count) mirror\(mirrorURLs.count == 1 ? "" : "s")...", level: .info)
             }
 
-            // TODO: Get list of files that need backup and push them
-            // For now just refresh stats
-            await loadDashboard()
+            let service = BlossomService(configService: configService, nostrService: nostrService)
+
+            // Only push blobs missing from at least one configured mirror — a HEAD
+            // check is far cheaper than re-uploading blobs that are already there.
+            // The checking phase gets the first half of the progress bar so it
+            // doesn't sit at 0% while potentially scanning many files.
+            var needsPush: [String] = []
+            for (index, hash) in hashes.enumerated() {
+                let status = await service.checkMirrorStatus(sha256: hash)
+                if mirrorURLs.contains(where: { status[$0] != true }) {
+                    needsPush.append(hash)
+                }
+                await MainActor.run {
+                    syncProgress = 0.5 * Double(index + 1) / Double(hashes.count)
+                }
+            }
+
+            guard !needsPush.isEmpty else {
+                await MainActor.run {
+                    isPushing = false
+                    syncMessage = ""
+                    stats.backedUpCount = hashes.count
+                    addLog("All files already backed up", level: .success)
+                }
+                return
+            }
+
+            await MainActor.run {
+                syncMessage = "Backing up \(needsPush.count) file\(needsPush.count == 1 ? "" : "s")..."
+                addLog("Pushing \(needsPush.count) file\(needsPush.count == 1 ? "" : "s") to mirrors", level: .info)
+            }
+
+            var succeeded = 0
+            var failed = 0
+            for (index, hash) in needsPush.enumerated() {
+                let ok = await service.pushLocalToMirrors(sha256: hash)
+                if ok { succeeded += 1 } else { failed += 1 }
+                await MainActor.run {
+                    syncProgress = 0.5 + 0.5 * Double(index + 1) / Double(needsPush.count)
+                    syncMessage = "Backed up \(index + 1) of \(needsPush.count)..."
+                }
+            }
 
             await MainActor.run {
                 isPushing = false
                 syncMessage = ""
-                addLog("Completed backup operation", level: .success)
+                stats.backedUpCount = hashes.count - failed
+                if failed == 0 {
+                    addLog("Completed backup — \(succeeded) file\(succeeded == 1 ? "" : "s") pushed to mirrors", level: .success)
+                } else {
+                    addLog("Backup finished with \(failed) failure\(failed == 1 ? "" : "s") (\(succeeded) succeeded)", level: .warning)
+                }
             }
+        }
+    }
+
+    /// Local Blossom blob hashes (filename minus extension) — same hex-sha256
+    /// filter loadStats() uses to recognize a real blob vs stray file.
+    private func localBlossomFileHashes() async -> [String] {
+        let relayDataDir = await MainActor.run { configService.relayDataDir }
+        let blossomPath = await MainActor.run { configService.config.blossomPath }
+        let blossomDir = relayDataDir.appendingPathComponent(blossomPath)
+
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: blossomDir,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        return files.compactMap { url in
+            let hash = url.deletingPathExtension().lastPathComponent
+            return (hash.count == 64 && hash.allSatisfy { $0.isHexDigit }) ? hash : nil
         }
     }
 

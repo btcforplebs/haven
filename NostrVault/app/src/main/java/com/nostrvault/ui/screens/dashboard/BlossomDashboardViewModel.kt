@@ -107,21 +107,13 @@ class BlossomDashboardViewModel @Inject constructor(
     }
 
     /**
-     * A blob counts as backed up when it is present on every reachable mirror.
-     * Costs one `/list/<pubkey>` request per mirror, not per blob. Mirrors that
-     * fail to respond are excluded rather than treated as missing the blob.
+     * Each reachable mirror's full blob-hash set for [pubkey], one `/list/<pubkey>`
+     * request per mirror (not per blob). A mirror that fails to respond is
+     * excluded from the result rather than treated as missing every blob, so a
+     * transient outage doesn't make everything look unbacked-up.
      */
-    private suspend fun computeBackedUpCount(
-        localBlobs: List<com.nostrvault.service.BlobDescriptor>,
-        mirrorUrls: List<String>,
-    ) {
-        if (localBlobs.isEmpty() || mirrorUrls.isEmpty()) {
-            _backedUpCount.value = 0
-            return
-        }
-
-        val pubkey = nostrService.ownerHexPubkey
-        val mirrorHashSets = mirrorUrls.map { mirror ->
+    private suspend fun fetchMirrorHashSets(pubkey: String, mirrorUrls: List<String>): List<Set<String>> =
+        mirrorUrls.map { mirror ->
             viewModelScope.async(Dispatchers.IO) {
                 try {
                     statsService.fetchBlobList(pubkey, mirror)
@@ -133,6 +125,19 @@ class BlossomDashboardViewModel @Inject constructor(
             }
         }.awaitAll().filterNotNull()
 
+    /**
+     * A blob counts as backed up when it is present on every reachable mirror.
+     */
+    private suspend fun computeBackedUpCount(
+        localBlobs: List<com.nostrvault.service.BlobDescriptor>,
+        mirrorUrls: List<String>,
+    ) {
+        if (localBlobs.isEmpty() || mirrorUrls.isEmpty()) {
+            _backedUpCount.value = 0
+            return
+        }
+
+        val mirrorHashSets = fetchMirrorHashSets(nostrService.ownerHexPubkey, mirrorUrls)
         if (mirrorHashSets.isEmpty()) {
             _backedUpCount.value = 0
             return
@@ -212,15 +217,52 @@ class BlossomDashboardViewModel @Inject constructor(
         if (_isPushing.value) return
         _isPushing.value = true
         _syncProgress.value = 0f
-        _syncMessage.value = "Pushing to mirrors..."
+        _syncMessage.value = "Checking mirror status..."
         addLog("Starting push to mirrors...", BlossomActivityLog.LogLevel.INFO)
 
         viewModelScope.launch {
             try {
-                val blobs = statsService.fetchBlobList(nostrService.ownerHexPubkey)
-                var pushed = 0
+                val config = configStore.config.value
+                val mirrorUrls = config.activeBlossomMirrors
+                if (mirrorUrls.isEmpty()) {
+                    addLog("No mirrors configured", BlossomActivityLog.LogLevel.WARNING)
+                    _syncMessage.value = "No mirrors configured"
+                    return@launch
+                }
 
-                for ((index, blob) in blobs.withIndex()) {
+                val blobs = statsService.fetchBlobList(nostrService.ownerHexPubkey)
+                if (blobs.isEmpty()) {
+                    addLog("No local files to back up", BlossomActivityLog.LogLevel.INFO)
+                    _syncMessage.value = "No local files to back up"
+                    return@launch
+                }
+
+                // Only push blobs missing from at least one reachable mirror — a
+                // /list call per mirror is far cheaper than re-uploading blobs that
+                // are already there. If every mirror fails to list (hashSets empty),
+                // we can't tell what's missing, so fall back to pushing everything.
+                val mirrorHashSets = fetchMirrorHashSets(nostrService.ownerHexPubkey, mirrorUrls)
+                val needsPush = if (mirrorHashSets.isEmpty()) {
+                    blobs
+                } else {
+                    blobs.filter { blob ->
+                        val hash = blob.sha256?.lowercase()
+                        hash == null || mirrorHashSets.any { hash !in it }
+                    }
+                }
+
+                if (needsPush.isEmpty()) {
+                    addLog("All files already backed up", BlossomActivityLog.LogLevel.SUCCESS)
+                    _syncMessage.value = "All files already backed up"
+                    _backedUpCount.value = blobs.size
+                    return@launch
+                }
+
+                addLog("Pushing ${needsPush.size} file(s) to mirrors", BlossomActivityLog.LogLevel.INFO)
+                _syncMessage.value = "Pushing ${needsPush.size} file(s)..."
+
+                var pushed = 0
+                for ((index, blob) in needsPush.withIndex()) {
                     val sha256 = blob.sha256 ?: continue
                     try {
                         blossomService.pushLocalToMirrors(sha256)
@@ -228,12 +270,19 @@ class BlossomDashboardViewModel @Inject constructor(
                     } catch (e: Exception) {
                         addLog("Failed to push ${sha256.take(8)}: ${e.message}", BlossomActivityLog.LogLevel.WARNING)
                     }
-                    _syncProgress.value = (index + 1).toFloat() / blobs.size
-                    _syncMessage.value = "Pushed ${index + 1}/${blobs.size}..."
+                    _syncProgress.value = (index + 1).toFloat() / needsPush.size
+                    _syncMessage.value = "Pushed ${index + 1}/${needsPush.size}..."
                 }
 
-                addLog("Push complete: $pushed files synced", BlossomActivityLog.LogLevel.SUCCESS)
-                _syncMessage.value = "Push complete: $pushed files"
+                val failed = needsPush.size - pushed
+                _backedUpCount.value = blobs.size - failed
+                if (failed == 0) {
+                    addLog("Push complete: $pushed file(s) synced", BlossomActivityLog.LogLevel.SUCCESS)
+                    _syncMessage.value = "Push complete: $pushed file(s)"
+                } else {
+                    addLog("Push finished with $failed failure(s) ($pushed succeeded)", BlossomActivityLog.LogLevel.WARNING)
+                    _syncMessage.value = "$pushed succeeded, $failed failed"
+                }
                 loadDashboard()
             } catch (e: Exception) {
                 addLog("Push failed: ${e.message}", BlossomActivityLog.LogLevel.ERROR)
