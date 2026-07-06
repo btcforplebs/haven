@@ -1,4 +1,4 @@
-# Haven App v2.6.0 Build 11 (macOS) / v1.2.0 Build 11 (iOS) Release Notes
+# Haven App v2.6.0 Build 11 (macOS) / v1.1.1 Build 11 (iOS) Release Notes
 
 This update removes the remote push server entirely — notifications are now generated fully on-device from your own relay — adds Picture-in-Picture video on iOS and Android, and fixes a Web of Trust bug that was causing real replies and reactions to go silently missing.
 

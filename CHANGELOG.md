@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.6.0 (11) macOS / 1.2.0 (11) iOS] - 2026-07-06
+## [2.6.0 (11) macOS / 1.1.1 (11) iOS / 1.2.0 (5) Android] - 2026-07-06
 
 > **On-Device Notifications & Picture-in-Picture**: Notifications no longer depend on any remote push server — they're generated entirely on-device from your own relay, with correct per-account attribution on multi-account setups and a consolidated "N new notifications" summary after catching up from being away. Video now supports Picture-in-Picture on iOS and Android. Plus a Web of Trust self-heal fix that was the root cause of silently-dropped replies and reactions.
 
