@@ -2,6 +2,7 @@ package com.nostrvault.ui.screens.settings
 
 import android.content.Intent
 import android.net.Uri
+import com.nostrvault.BuildConfig
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -25,7 +26,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 
 /** App version string shown in the About section (mirrors iOS appVersion). */
-private const val APP_VERSION = "1.0.0"
+private val APP_VERSION = BuildConfig.VERSION_NAME
 
 /** Developer / abuse-reporting npub (matches iOS SettingsView). */
 private const val DEVELOPER_NPUB =
