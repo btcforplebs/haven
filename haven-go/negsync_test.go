@@ -253,10 +253,10 @@ func TestBatchNotifierSuppression(t *testing.T) {
 	}
 
 	// Two fresh events notify, the rest are suppressed.
-	n.maybeNotify(fresh('a'))
-	n.maybeNotify(fresh('b'))
-	n.maybeNotify(fresh('c'))
-	n.maybeNotify(fresh('d'))
+	n.maybeNotify(fresh('a'), owner)
+	n.maybeNotify(fresh('b'), owner)
+	n.maybeNotify(fresh('c'), owner)
+	n.maybeNotify(fresh('d'), owner)
 	if n.emitted != 2 || n.suppressed != 2 {
 		t.Fatalf("emitted=%d suppressed=%d, want 2/2", n.emitted, n.suppressed)
 	}
@@ -266,7 +266,7 @@ func TestBatchNotifierSuppression(t *testing.T) {
 		ID: hexid('e'), PubKey: hexid('1'), Kind: nostr.KindTextNote,
 		CreatedAt: now - nostr.Timestamp(48*3600),
 	}
-	n.maybeNotify(old)
+	n.maybeNotify(old, owner)
 	if n.emitted != 2 || n.suppressed != 2 {
 		t.Fatal("stale event affected notifier counters")
 	}

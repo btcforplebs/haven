@@ -48,7 +48,7 @@ struct SettingsView: View {
         case appearance = "Appearance"
         case feed = "Feed Relays"
         case dm = "DM Relays"
-        case pushNotifications = "Push Notifications"
+        case pushNotifications = "Notifications"
         case importNotes = "Import"
         case backup = "Backup"
         case followingBackup = "Following Backup"
@@ -2891,14 +2891,6 @@ struct AppearanceSettingsView: View {
                 }
                 .onChange(of: configService.config.zapsOnlyMode) { _, _ in
                     configService.save()
-                    // Re-push notification preferences so the server applies/lifts the
-                    // reaction-push override immediately (see PushNotificationService).
-                    if configService.config.enablePushNotifications,
-                       let token = PushNotificationService.shared.deviceToken {
-                        Task {
-                            await PushNotificationService.shared.registerAllAccountsWithRemoteServer(deviceToken: token)
-                        }
-                    }
                 }
             } header: {
                 Text("Engagement")
@@ -3191,6 +3183,7 @@ struct MacRelayDomainSettingsView: View {
 /// populates Import relays, Blastr relays, and Blossom mirrors automatically.
 struct MacRelaySettingsView: View {
     @EnvironmentObject var configService: ConfigService
+    @StateObject private var macSyncService = MacRelaySyncService.shared
 
     /// Track computed URLs from the previous save so we can migrate array entries on URL change.
     @State private var prevWssURL: String = ""
@@ -3298,7 +3291,66 @@ struct MacRelaySettingsView: View {
                 } header: {
                     Text("Derived Addresses")
                 } footer: {
-                    Text("Your Mac relay is automatically included in all relay lists. Events sync continuously via standard Nostr subscriptions.")
+                    Text("Your Mac relay is automatically included in all relay lists. Events sync continuously via standard Nostr subscriptions while the app is open, and via the catch-up sync below otherwise.")
+                }
+
+                // ── Sync Controls ──────────────────────────────────────
+                Section {
+                    if macSyncService.isSyncing {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text(macSyncService.syncStatus)
+                                .font(.appCaption)
+                                .foregroundColor(.secondary)
+                        }
+                    } else if !macSyncService.syncStatus.isEmpty {
+                        HStack(spacing: 6) {
+                            Image(systemName: macSyncService.notesSynced > 0 ? "checkmark.circle.fill" : "info.circle.fill")
+                                .foregroundColor(macSyncService.notesSynced > 0 ? .green : .blue)
+                                .font(.appCaption)
+                            Text(macSyncService.syncStatus)
+                                .font(.appCaption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    if let lastSync = macSyncService.lastSyncDate {
+                        HStack(spacing: 6) {
+                            Image(systemName: "clock")
+                                .font(.appCaption)
+                                .foregroundColor(.secondary)
+                            Text("Last sync \(lastSync, style: .relative) ago")
+                                .font(.appCaption2)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    HStack(spacing: 12) {
+                        Button(action: { macSyncService.forceSync() }) {
+                            Label("Sync Now", systemImage: "arrow.triangle.2.circlepath")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Color.havenPurple)
+                        .disabled(macSyncService.isSyncing)
+
+                        Button(action: {
+                            macSyncService.resetSync()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                macSyncService.forceSync()
+                            }
+                        }) {
+                            Label("Full Resync", systemImage: "arrow.clockwise")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(Color.havenPurple)
+                        .disabled(macSyncService.isSyncing)
+                    }
+                } header: {
+                    Text("Sync")
+                } footer: {
+                    Text("Sync Now fetches notes missed since the last sync — this is what runs automatically on app foreground and in the background refresh window. Full Resync resets the timestamp and re-fetches everything from the beginning.")
                 }
             }
         }

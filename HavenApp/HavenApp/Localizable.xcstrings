@@ -1311,6 +1311,9 @@
     "Key imported successfully!" : {
 
     },
+    "Last sync %@ ago" : {
+
+    },
     "LIGHTNING BALANCE" : {
 
     },
@@ -1363,6 +1366,9 @@
 
     },
     "Looking up note..." : {
+
+    },
+    "MAC RELAY SYNC" : {
 
     },
     "Mac Relay Sync Server" : {
@@ -1558,6 +1564,9 @@
     "Notes will be fetched starting from this date." : {
 
     },
+    "Notifications for mentions, replies, DMs, zaps, and more are generated on-device by your relay — no external server involved." : {
+
+    },
     "Npub" : {
 
     },
@@ -1687,9 +1696,6 @@
     "RECEIVE" : {
 
     },
-    "Receive notifications for mentions, replies, DMs, zaps, and more." : {
-
-    },
     "Recent" : {
 
     },
@@ -1760,6 +1766,9 @@
 
     },
     "Request deletion of this post? Not all relays honor NIP-09 deletion requests." : {
+
+    },
+    "Reset" : {
 
     },
     "Resolved: %@..." : {
@@ -3081,6 +3090,15 @@
     "Switch" : {
 
     },
+    "Sync" : {
+
+    },
+    "Sync Now" : {
+
+    },
+    "Sync Now fetches notes missed since the last sync — this is what runs automatically on app foreground and in the background refresh window. Full Resync resets the timestamp and re-fetches everything from the beginning." : {
+
+    },
     "System Logs" : {
 
     },
@@ -3287,7 +3305,7 @@
     "Your ecash tokens are stored encrypted on your Haven private relay using NIP-60. Unlike other wallets that depend on third-party relays, your tokens live on infrastructure you control:" : {
 
     },
-    "Your Mac relay is automatically included in all relay lists. Events sync continuously via standard Nostr subscriptions." : {
+    "Your Mac relay is automatically included in all relay lists. Events sync continuously via standard Nostr subscriptions while the app is open, and via the catch-up sync below otherwise." : {
 
     },
     "Your Nostr key is a valid Bitcoin Taproot key. This address is derived deterministically from your npub via BIP-341 — no separate seed phrase needed." : {

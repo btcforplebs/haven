@@ -88,7 +88,7 @@ type batchNotifier struct {
 	suppressed int
 }
 
-func (n *batchNotifier) maybeNotify(ev *nostr.Event) {
+func (n *batchNotifier) maybeNotify(ev *nostr.Event, recipient string) {
 	if ev == nil {
 		return
 	}
@@ -100,7 +100,7 @@ func (n *batchNotifier) maybeNotify(ev *nostr.Event) {
 	defer n.mu.Unlock()
 	if n.emitted < config.NotifyBatchLimit {
 		n.emitted++
-		emitInboxNotify(ev)
+		emitInboxNotify(ev, recipient)
 		return
 	}
 	n.suppressed++
@@ -108,12 +108,14 @@ func (n *batchNotifier) maybeNotify(ev *nostr.Event) {
 
 // flush emits a single summary marker for anything suppressed this batch and
 // resets the counters for the next catch-up round. Clients that don't know
-// type=summary ignore the line.
+// type=summary ignore the line. No single recipient applies to a suppressed
+// batch (it may span multiple whitelisted accounts), so the field is empty —
+// clients already treat type=summary as account-agnostic.
 func (n *batchNotifier) flush() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.suppressed > 0 {
-		log.Printf("🔔NOTIFY|type=summary|kind=0|author=|id=|preview=%d more new items while you were away", n.suppressed)
+		log.Printf("🔔NOTIFY|type=summary|kind=0|author=|id=|recipient=|preview=%d more new items while you were away", n.suppressed)
 	}
 	n.emitted = 0
 	n.suppressed = 0
@@ -185,7 +187,7 @@ func (s *inboxNegStore) Publish(ctx context.Context, ev nostr.Event) error {
 		s.advance(ev.CreatedAt)
 	}
 	if c.notify && s.notifier != nil {
-		s.notifier.maybeNotify(&ev)
+		s.notifier.maybeNotify(&ev, c.recipient)
 	}
 	return nil
 }

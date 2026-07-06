@@ -64,21 +64,25 @@ func (wt *SimpleInMemory) Has(_ context.Context, pubKey string) bool {
 	return (*m)[pubKey]
 }
 
-// LoadFromCache attempts to load WoT from cache file if it exists and is fresh
-func (wt *SimpleInMemory) LoadFromCache() bool {
+// LoadFromCache attempts to load WoT from cache file if it exists and is fresh.
+// ageMinutes is only meaningful when ok is true — callers use it to decide
+// whether to also kick off an async Refresh even though the still-within-TTL
+// cache is already serving Has() lookups (see PeriodicRefresh's doc comment
+// for why a boot-time check is needed in addition to the in-process ticker).
+func (wt *SimpleInMemory) LoadFromCache() (ok bool, ageMinutes int64) {
 	if wt.CachePath == "" {
-		return false
+		return false, 0
 	}
 
 	data, err := os.ReadFile(wt.CachePath)
 	if err != nil {
-		return false
+		return false, 0
 	}
 
 	var cache wotCache
 	if err := json.Unmarshal(data, &cache); err != nil {
 		slog.Warn("🚫 Failed to parse WoT cache", "error", err)
-		return false
+		return false, 0
 	}
 
 	// Check if cache is still valid
@@ -86,12 +90,12 @@ func (wt *SimpleInMemory) LoadFromCache() bool {
 	age := (now - cache.Timestamp) / 60 // age in minutes
 	if age > int64(wt.CacheTTLMinutes) {
 		slog.Info("⏰ WoT cache expired", "age_minutes", age, "ttl_minutes", wt.CacheTTLMinutes)
-		return false
+		return false, 0
 	}
 
 	wt.pubkeys.Store(&cache.Pubkeys)
 	slog.Info("💾 Loaded WoT from cache", "pubkeys", len(cache.Pubkeys), "age_minutes", age)
-	return true
+	return true, age
 }
 
 // SaveCache writes the current WoT pubkeys to cache file

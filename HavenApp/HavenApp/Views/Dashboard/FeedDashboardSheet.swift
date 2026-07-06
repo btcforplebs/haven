@@ -268,7 +268,72 @@ struct FeedDashboardSheet: View {
 
     #if os(iOS)
     private var macRelaySyncSection: some View {
-        EmptyView()
+        let macURL = configService.config.macRelayURL
+
+        return Group {
+            if !macURL.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("MAC RELAY SYNC")
+                        .font(.appSystem(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundColor(.secondary.opacity(0.8))
+
+                    VStack(spacing: 1) {
+                        // Status row
+                        SyncStatusRow(
+                            icon: "desktopcomputer",
+                            title: "Mac Relay",
+                            statusText: MacRelaySyncService.shared.isSyncing ? "Syncing..." : (MacRelaySyncService.shared.syncStatus.isEmpty ? "Idle" : MacRelaySyncService.shared.syncStatus),
+                            statusColor: MacRelaySyncService.shared.isSyncing ? Color.havenPurple : (MacRelaySyncService.shared.lastSyncDate != nil ? .green : .secondary),
+                            lastDate: MacRelaySyncService.shared.lastSyncDate,
+                            lastDateLabel: "Last sync"
+                        )
+
+                        // Action row
+                        HStack(spacing: 12) {
+                            Button {
+                                MacRelaySyncService.shared.forceSync()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    if MacRelaySyncService.shared.isSyncing {
+                                        ProgressView().controlSize(.small).tint(.white)
+                                    } else {
+                                        Image(systemName: "arrow.clockwise")
+                                    }
+                                    Text("Sync Now")
+                                }
+                                .font(.appSystem(size: 12, weight: .bold))
+                                .padding(.vertical, 8)
+                                .padding(.horizontal, 16)
+                                .background(Color.havenPurple)
+                                .foregroundColor(.white)
+                                .cornerRadius(8)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(MacRelaySyncService.shared.isSyncing)
+
+                            Button {
+                                MacRelaySyncService.shared.resetSync()
+                            } label: {
+                                Text("Reset")
+                                    .font(.appSystem(size: 12, weight: .medium))
+                                    .padding(.vertical, 8)
+                                    .padding(.horizontal, 16)
+                                    .background(Color.secondary.opacity(0.1))
+                                    .foregroundColor(.secondary)
+                                    .cornerRadius(8)
+                            }
+                            .buttonStyle(.plain)
+
+                            Spacer()
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(Color(red: 0.12, green: 0.12, blue: 0.12).opacity(0.5))
+                    }
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+            }
+        }
     }
     #endif
 

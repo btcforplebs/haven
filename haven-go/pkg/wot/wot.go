@@ -97,6 +97,13 @@ func Initialize(ctx context.Context, model Model, g *ReadyGate) {
 	g.markReady()
 }
 
+// PeriodicRefresh re-computes the WoT every interval for as long as the process
+// stays alive. The ticker starts from zero on every call, so on a process that
+// restarts often (a mobile app backgrounded/relaunched constantly, unlike a
+// long-running Mac/server instance) it may go a very long time without ever
+// firing — the boot-time age check in main.go/cshared.go (comparing the loaded
+// cache's age against this same interval) is what actually keeps those
+// installs from getting stuck on a stale cache indefinitely.
 func PeriodicRefresh(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

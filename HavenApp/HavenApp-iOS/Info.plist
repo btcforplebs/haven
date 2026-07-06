@@ -61,8 +61,8 @@
 	</dict>
 	<key>UIBackgroundModes</key>
 	<array>
+		<string>audio</string>
 		<string>fetch</string>
-		<string>remote-notification</string>
 		<string>processing</string>
 	</array>
 	<key>UILaunchScreen</key>

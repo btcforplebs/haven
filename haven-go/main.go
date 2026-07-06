@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/nbd-wtf/go-nostr"
 	"github.com/spf13/afero"
@@ -101,11 +102,18 @@ func main() {
 	runsafe.Go("background-setup", func() {
 		// Try to load from cache first - instant startup
 		// Only run full network rebuild if cache is missing or expired
-		cacheLoaded := wotModel.LoadFromCache()
+		cacheLoaded, cacheAgeMinutes := wotModel.LoadFromCache()
 		gate := wot.NewCycle()
 		if cacheLoaded {
 			wot.MarkReady(gate, wotModel)
 			log.Println("  ✓ Web of Trust loaded from cache, skipping rebuild")
+
+			// See the identical check in cshared.go for why this is needed in
+			// addition to the wot.PeriodicRefresh ticker spawned below.
+			if time.Duration(cacheAgeMinutes)*time.Minute >= config.WotRefreshInterval {
+				log.Println("  🔄 WoT cache is due for a refresh, updating in the background")
+				runsafe.Go("wot.Refresh.stale", func() { wotModel.Refresh(mainCtx) })
+			}
 		} else {
 			runsafe.Go("wot.Initialize", func() { wot.Initialize(mainCtx, wotModel, gate) })
 			log.Println("  ✓ Web of Trust initializing from network")

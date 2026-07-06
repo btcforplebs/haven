@@ -74,7 +74,7 @@ func runImport(ctx context.Context) {
 	// Try to load from cache first. MarkReady on the cache-hit path also
 	// stores the instance, so GetInstance() below never returns nil.
 	gate := wot.NewCycle()
-	if wotModel.LoadFromCache() {
+	if cacheLoaded, _ := wotModel.LoadFromCache(); cacheLoaded {
 		wot.MarkReady(gate, wotModel)
 	} else {
 		// Cache miss or invalid, initialize from network
@@ -520,10 +520,11 @@ func (r rejectReason) permanent() bool { return r == rejectNoWhitelistedPTag }
 // inboxClassification is the outcome of the inbox acceptance rules for one
 // tagged event.
 type inboxClassification struct {
-	accept bool
-	reason rejectReason // why not accepted (rejectNone when accept)
-	chat   bool         // store in the chat DB (gift wraps) instead of the inbox DB
-	notify bool         // author isn't the tagged owner — warrants a notification
+	accept    bool
+	reason    rejectReason // why not accepted (rejectNone when accept)
+	chat      bool         // store in the chat DB (gift wraps) instead of the inbox DB
+	notify    bool         // author isn't the tagged owner — warrants a notification
+	recipient string       // hex pubkey of the whitelisted account this event is tagged for
 }
 
 // classifyInboxEvent applies the blacklist / Web-of-Trust / whitelisted-p-tag
@@ -550,7 +551,8 @@ func classifyInboxEvent(ctx context.Context, ev *nostr.Event) inboxClassificatio
 			chat:   ev.Kind == nostr.KindGiftWrap,
 			// Skip notifying when the author is tagging themselves (e.g.
 			// replying to their own note) — still imported, just not notified.
-			notify: ev.PubKey != tag[1],
+			notify:    ev.PubKey != tag[1],
+			recipient: tag[1],
 		}
 	}
 	return inboxClassification{reason: rejectNoWhitelistedPTag}
@@ -617,9 +619,9 @@ func processInboxEvent(ctx context.Context, ev nostr.RelayEvent, wdbInbox, wdbCh
 	// kind; the prose lines above are left intact for the relay-activity dot.
 	if c.notify {
 		if notifier != nil {
-			notifier.maybeNotify(ev.Event)
+			notifier.maybeNotify(ev.Event, c.recipient)
 		} else {
-			emitInboxNotify(ev.Event)
+			emitInboxNotify(ev.Event, c.recipient)
 		}
 	}
 }
@@ -628,12 +630,17 @@ func processInboxEvent(ctx context.Context, ev nostr.RelayEvent, wdbInbox, wdbCh
 // imported inbox/chat event so clients (currently the Android app's LogStore)
 // can raise a local system notification without a remote push server. Format:
 //
-//	🔔NOTIFY|type=<t>|kind=<k>|author=<hex>|id=<hex>|preview=<text>
+//	🔔NOTIFY|type=<t>|kind=<k>|author=<hex>|id=<hex>|recipient=<hex>|preview=<text>
 //
+// `recipient` is the whitelisted account's hex pubkey this event was tagged
+// for — the relay's inbox is shared across every whitelisted account on the
+// device, so clients need this to apply the right account's notification
+// preferences and to switch to the right account on tap, instead of guessing
+// from whichever account happens to be active in the UI.
 // `preview` is always the LAST field (it may contain spaces) and is empty for
 // encrypted/opaque kinds (DMs, gift wraps, zaps). Self-filters by kind: kinds
 // that should not notify (e.g. follow lists) produce no line.
-func emitInboxNotify(ev *nostr.Event) {
+func emitInboxNotify(ev *nostr.Event, recipient string) {
 	if ev == nil {
 		return
 	}
@@ -662,7 +669,7 @@ func emitInboxNotify(ev *nostr.Event) {
 	default:
 		return // follow lists and anything else: no notification
 	}
-	log.Printf("🔔NOTIFY|type=%s|kind=%d|author=%s|id=%s|preview=%s", typ, ev.Kind, ev.PubKey, ev.ID, preview)
+	log.Printf("🔔NOTIFY|type=%s|kind=%d|author=%s|id=%s|recipient=%s|preview=%s", typ, ev.Kind, ev.PubKey, ev.ID, recipient, preview)
 }
 
 // sanitizeNotifyPreview collapses newlines and trims a content string to a short

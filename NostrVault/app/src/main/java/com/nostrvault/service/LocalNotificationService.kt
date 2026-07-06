@@ -21,6 +21,7 @@ import coil.request.ImageRequest
 import com.nostrvault.MainActivity
 import com.nostrvault.R
 import com.nostrvault.data.local.ConfigStore
+import com.nostrvault.relay.HavenBridge
 import dagger.Lazy
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
@@ -128,8 +129,13 @@ class LocalNotificationService @Inject constructor(
         }
         val type = fields["type"] ?: return
         val author = fields["author"].orEmpty()
-        val id = fields["id"] ?: return
-        if (id.isEmpty()) return
+
+        // The catch-up backlog "summary" marker has no per-event id (it isn't
+        // one event) — synthesize one so it isn't rejected by the empty-id
+        // check that every other type relies on for dedup.
+        val rawId = fields["id"].orEmpty()
+        if (type != "summary" && rawId.isEmpty()) return
+        val id = rawId.ifEmpty { "summary-${System.currentTimeMillis()}" }
         Log.i(TAG, "marker received: type=$type id=${id.take(8)}")
 
         if (!markSeen(id)) {
@@ -142,7 +148,17 @@ class LocalNotificationService @Inject constructor(
             Log.i(TAG, "skip: enablePushNotifications is OFF (turn it on in Settings → Notifications)")
             return
         }
-        val prefs = config.pushPrefsFor(config.activeOrOwnerNpub())
+
+        // The inbox is shared across every whitelisted account on this device, so the
+        // marker's `recipient` (the whitelisted hex pubkey it was actually tagged for —
+        // see haven-go's classifyInboxEvent) tells us whose prefs to check. Falling back
+        // to whichever account happens to be active in the UI would apply the wrong
+        // account's settings whenever the event isn't for the currently-active one.
+        val recipientHex = fields["recipient"].orEmpty()
+        val npub = recipientHex.takeIf { it.isNotEmpty() }
+            ?.let { HavenBridge.hexToNpub(it) }
+            ?: config.activeOrOwnerNpub()
+        val prefs = config.pushPrefsFor(npub)
 
         val allowed = when (type) {
             "mention" -> prefs.mentions
@@ -151,6 +167,7 @@ class LocalNotificationService @Inject constructor(
             "zap" -> prefs.zaps
             "reaction" -> prefs.reactions
             "repost" -> prefs.reposts
+            "summary" -> true // catch-up backlog count, no per-type pref applies
             else -> false
         }
         if (!allowed) {
@@ -160,7 +177,7 @@ class LocalNotificationService @Inject constructor(
 
         val profile = if (author.length == 64) nostrService.get().profiles.value[author] else null
         val (title, text) = buildContent(type, profile?.bestName, preview)
-        post(id, title, text, type, author, profile?.pictureURL)
+        post(id, title, text, type, author, npub, profile?.pictureURL)
     }
 
     /** Returns true if this id is newly seen (and records it); false if a duplicate. */
@@ -189,12 +206,13 @@ class LocalNotificationService @Inject constructor(
             "zap" -> "⚡ New zap" to if (name != null) "$who zapped you" else "You received a zap"
             "reaction" -> "$who reacted ${preview.ifBlank { "❤️" }}" to "Tap to view your note"
             "repost" -> "$who reposted your note" to "Tap to view"
+            "summary" -> "Catching up" to preview.ifBlank { "New activity while you were away" }
             else -> "New activity" to "Tap to view"
         }
     }
 
     @SuppressLint("MissingPermission") // guarded by the runtime check below
-    private fun post(id: String, title: String, text: String, type: String, author: String, pictureUrl: String?) {
+    private fun post(id: String, title: String, text: String, type: String, author: String, npub: String, pictureUrl: String?) {
         ensureChannel()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
@@ -210,6 +228,10 @@ class LocalNotificationService @Inject constructor(
             putExtra("notif_type", type)
             putExtra("notif_event_id", id)
             putExtra("notif_author", author)
+            // Not yet consumed on tap (Android has no equivalent of iOS's account-switch-
+            // on-navigate yet) — included now so that's a follow-up wiring change, not
+            // another missing-data problem to debug later.
+            putExtra("notif_npub", npub)
         }
         val pending = PendingIntent.getActivity(
             context,

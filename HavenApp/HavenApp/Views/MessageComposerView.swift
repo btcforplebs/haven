@@ -49,7 +49,37 @@ struct MessageComposerView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 // Recipient Selection
-                if recipientPubkey == nil {
+                if let recipient = selectedRecipient ?? recipientPubkey {
+                    let profile = nostrService.profiles[recipient]
+                    HStack(spacing: 12) {
+                        AvatarView(url: profile?.pictureURL, pubkey: recipient)
+                            .frame(width: 32, height: 32)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(profile?.bestName ?? String(Array(recipient.prefix(8))))
+                                .font(.appSystem(size: 13, weight: .semibold))
+                                .foregroundColor(.primary)
+                        }
+
+                        Spacer()
+
+                        Button(action: {
+                            if recipientPubkey == nil {
+                                selectedRecipient = nil
+                                searchText = ""
+                            }
+                        }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary.opacity(0.6))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(12)
+                    .background(Color.platformTertiaryGroupedBackground)
+                    .cornerRadius(8)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                } else {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("To:")
                             .font(.appSystem(size: 12, weight: .semibold))
@@ -105,36 +135,6 @@ struct MessageComposerView: View {
                         .padding(.horizontal, 16)
                     }
                     .padding(.vertical, 16)
-                } else if let recipient = selectedRecipient ?? recipientPubkey,
-                          let profile = nostrService.profiles[recipient] {
-                    HStack(spacing: 12) {
-                        AvatarView(url: profile.pictureURL, pubkey: recipient)
-                            .frame(width: 32, height: 32)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(profile.bestName)
-                                .font(.appSystem(size: 13, weight: .semibold))
-                                .foregroundColor(.primary)
-                        }
-
-                        Spacer()
-
-                        Button(action: {
-                            if recipientPubkey == nil {
-                                selectedRecipient = nil
-                                searchText = ""
-                            }
-                        }) {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(.secondary.opacity(0.6))
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(12)
-                    .background(Color.platformTertiaryGroupedBackground)
-                    .cornerRadius(8)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
                 }
 
                 Divider()

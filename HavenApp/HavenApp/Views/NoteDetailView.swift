@@ -151,6 +151,9 @@ struct NoteDetailView: View {
         }
         .background(Color.platformWindowBackground)
         .refreshable {
+            #if os(iOS)
+            MacRelaySyncService.shared.syncIfConfigured()
+            #endif
             fetchParents()
             fetchReplies()
         }

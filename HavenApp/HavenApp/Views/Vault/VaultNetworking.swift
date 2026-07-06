@@ -49,6 +49,11 @@ extension VaultView {
         // if the relay isn't running.
         RequestRelaySyncC()
 
+        // Also sync from Mac relay if configured
+        #if os(iOS)
+        MacRelaySyncService.shared.syncIfConfigured()
+        #endif
+
         // Fall back to a full reset when there's nothing on screen yet or the
         // sockets aren't live — an incremental top-up has nothing to reuse then.
         let needsFull = pendingFullRefresh

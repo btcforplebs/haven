@@ -333,6 +333,12 @@ func initRelays(ctx context.Context) error {
 
 	chatRelay.StoreEvent = append(chatRelay.StoreEvent, chatDB.SaveEvent, func(ctx context.Context, event *nostr.Event) error {
 		slog.Info("event stored")
+		// Same gap as inboxRelay.StoreEvent above, for gift-wrapped DMs synced in
+		// via MacRelaySyncService's /chat injection — see the comment there.
+		logInboxImport(event)
+		if c := classifyInboxEvent(ctx, event); c.accept && c.notify {
+			emitInboxNotify(event, c.recipient)
+		}
 		return nil
 	})
 	chatRelay.QueryEvents = append(chatRelay.QueryEvents, chatDB.QueryEvents)
@@ -500,6 +506,21 @@ func initRelays(ctx context.Context) error {
 
 	inboxRelay.StoreEvent = append(inboxRelay.StoreEvent, inboxDB.SaveEvent, func(ctx context.Context, event *nostr.Event) error {
 		slog.Info("event stored")
+		// Only reached for a genuinely new event — inboxDB.SaveEvent (registered
+		// above) returns eventstore.ErrDupEvent for anything already stored, which
+		// khatru treats as a short-circuit and never calls this handler. So this is
+		// safe to notify from without re-checking for duplicates.
+		//
+		// This is the only path a direct client publish to /inbox takes — notably
+		// MacRelaySyncService's catch-up injection from a Mac relay, which bypasses
+		// the live-subscription/negentropy paths (processInboxEvent, inboxNegStore)
+		// entirely. Without this, events that only ever reach the phone this way
+		// were stored silently: no 🔔NOTIFY marker, no "in your inbox" line for the
+		// relay-activity red dot.
+		logInboxImport(event)
+		if c := classifyInboxEvent(ctx, event); c.accept && c.notify {
+			emitInboxNotify(event, c.recipient)
+		}
 		return nil
 	})
 	inboxRelay.QueryEvents = append(inboxRelay.QueryEvents, inboxDB.QueryEvents)

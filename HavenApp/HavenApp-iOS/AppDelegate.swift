@@ -86,9 +86,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         // Set notification center delegate
         UNUserNotificationCenter.current().delegate = self
 
-        // Only register for push notifications if the user has already
+        // Only request local notification permission if the user has already
         // completed setup (has an npub). First-time users will be prompted
-        // after the setup wizard finishes.
+        // after the setup wizard finishes. No remote/APNs registration —
+        // notifications are generated on-device from the relay's NOTIFY markers.
         if ConfigService.shared.config.hasCompletedSetup {
             Task { @MainActor in
                 PushNotificationService.shared.requestPermissionAndRegister()
@@ -97,28 +98,6 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         }
 
         return true
-    }
-
-    // MARK: - Remote Notifications (APNs)
-
-    /// Called when APNs registration succeeds
-    func application(
-        _ application: UIApplication,
-        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
-    ) {
-        Task { @MainActor in
-            PushNotificationService.shared.didRegister(deviceTokenData: deviceToken)
-        }
-    }
-
-    /// Called when APNs registration fails
-    func application(
-        _ application: UIApplication,
-        didFailToRegisterForRemoteNotificationsWithError error: Error
-    ) {
-        Task { @MainActor in
-            PushNotificationService.shared.didFailToRegister(error: error)
-        }
     }
 
     // MARK: - Orientation Lock
@@ -135,19 +114,42 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     // MARK: - Background App Refresh (no push server needed!)
 
+    /// Starts the relay if a prior force-quit stopped it (SceneDelegate.sceneDidDisconnect
+    /// calls stopRelay(), so a background wake after a full quit finds isRunning == false),
+    /// then waits up to `maxBootWaitSeconds` for it to leave the booting state. Without this,
+    /// MacRelaySyncService.syncIfConfigured()'s own readiness guard silently no-ops for the
+    /// entire background window whenever the app wasn't just backgrounded but fully quit.
+    private static func ensureRelayRunning(maxBootWaitSeconds: Int) async {
+        if !RelayProcessManager.shared.isRunning {
+            RelayProcessManager.shared.startRelay(config: ConfigService.shared.config)
+        }
+        var waited = 0
+        while RelayProcessManager.shared.isBooting && waited < maxBootWaitSeconds {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            waited += 1
+        }
+    }
+
     static func handleAppRefreshTask(_ task: BGAppRefreshTask) {
         scheduleAppRefresh()
-        
+
         task.expirationHandler = {
             task.setTaskCompleted(success: false)
         }
-        
+
         Task { @MainActor in
             let countBefore = FeedService.shared.notes.count
             FeedService.shared.refresh()
 
             // Sync DMs from external relays
             DMService.shared.syncOnForeground()
+
+            // Also sync from Mac relay if configured — pulls anything new the
+            // always-on Mac relay has accumulated and injects it into the local
+            // relay, which fires real per-type notifications via the same
+            // NOTIFY-marker pipeline as live events.
+            await ensureRelayRunning(maxBootWaitSeconds: 10)
+            MacRelaySyncService.shared.syncIfConfigured()
 
             // Give it up to 25s to connect to relays and receive events
             try? await Task.sleep(nanoseconds: 25_000_000_000)
@@ -158,7 +160,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
             task.setTaskCompleted(success: true)
         }
     }
-    
+
     static func scheduleAppRefresh() {
         let request = BGAppRefreshTaskRequest(identifier: kBGRefreshTaskID)
         request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60) // 15 minutes
@@ -183,13 +185,26 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     // MARK: - Background Processing Task
 
-    /// Called by BGTaskScheduler when the system grants background processing time.
+    /// Called by BGTaskScheduler when the system grants background processing time
+    /// (requires charging + Wi-Fi, so windows are typically longer and less frequent
+    /// than BGAppRefreshTask — a good fit for the same relay-start + Mac-relay-sync
+    /// work with more generous timing).
     private static func handleBackgroundProcessingTask(_ task: BGProcessingTask) {
         scheduleBackgroundProcessing()
+
         task.expirationHandler = {
+            task.setTaskCompleted(success: false)
+        }
+
+        Task { @MainActor in
+            await ensureRelayRunning(maxBootWaitSeconds: 20)
+            MacRelaySyncService.shared.syncIfConfigured()
+
+            // More generous window than BGAppRefreshTask — this task only runs
+            // when iOS grants a longer, less time-pressured slot.
+            try? await Task.sleep(nanoseconds: 45_000_000_000)
             task.setTaskCompleted(success: true)
         }
-        task.setTaskCompleted(success: true)
     }
 
     /// Schedule the next BGProcessingTask request.
@@ -242,8 +257,9 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
         } else if let notifType = userInfo["notif_type"] as? String,
                   let notifId = userInfo["notif_id"] as? String {
             // Tapped a relay NOTIFY-marker notification (LocalNotificationService).
+            let notifNpub = userInfo["notif_npub"] as? String
             Task { @MainActor in
-                LocalNotificationService.navigate(type: notifType, id: notifId)
+                LocalNotificationService.navigate(type: notifType, id: notifId, npub: notifNpub)
             }
         }
 

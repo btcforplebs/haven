@@ -7,25 +7,15 @@ struct PushNotificationSettingsView: View {
     var body: some View {
         Form {
             Section {
-                Toggle("Push Notifications", isOn: $configService.config.enablePushNotifications)
+                Toggle("Notifications", isOn: $configService.config.enablePushNotifications)
                     .onChange(of: configService.config.enablePushNotifications) { _, enabled in
                         configService.save()
                         if enabled {
-                            if let token = PushNotificationService.shared.deviceToken {
-                                Task {
-                                    await PushNotificationService.shared.registerAllAccountsWithRemoteServer(deviceToken: token)
-                                }
-                            } else {
-                                PushNotificationService.shared.requestPermissionAndRegister()
-                            }
-                        } else {
-                            Task {
-                                await PushNotificationService.shared.unregisterFromRemoteServer()
-                            }
+                            PushNotificationService.shared.requestPermissionAndRegister()
                         }
                     }
             } footer: {
-                Text("Receive notifications for mentions, replies, DMs, zaps, and more.")
+                Text("Notifications for mentions, replies, DMs, zaps, and more are generated on-device by your relay — no external server involved.")
             }
 
             if configService.config.enablePushNotifications {

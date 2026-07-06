@@ -55,10 +55,18 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         // End the background task if the user has returned to the app.
         endBackgroundTask()
 
+        // Show the in-app banner (not a system push) for relay activity while visible.
+        LocalNotificationService.shared.appInForeground = true
+
         // Clear app badge and reset server-side badge counter
         Task { @MainActor in
             PushNotificationService.shared.clearBadge()
         }
+    }
+
+    func sceneWillResignActive(_ scene: UIScene) {
+        // Back to system push notifications once the app leaves the foreground.
+        LocalNotificationService.shared.appInForeground = false
     }
 
     func sceneWillEnterForeground(_ scene: UIScene) {
@@ -115,6 +123,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
             DMService.shared.syncOnForeground()
         }
+
+        // Also sync from Mac relay if configured
+        MacRelaySyncService.shared.syncIfConfigured()
     }
 
     func sceneDidEnterBackground(_ scene: UIScene) {

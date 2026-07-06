@@ -221,11 +221,24 @@ func StartRelayC(importMode bool) {
 
 			// Try to load from cache first - instant startup
 			// Only run full network rebuild if cache is missing or expired
-			cacheLoaded := wotModel.LoadFromCache()
+			cacheLoaded, cacheAgeMinutes := wotModel.LoadFromCache()
 			gate := wot.NewCycle()
 			if cacheLoaded {
 				wot.MarkReady(gate, wotModel)
 				log.Println("  ✓ Web of Trust loaded from cache, skipping rebuild")
+
+				// wot.PeriodicRefresh's ticker (spawned below) only fires after a
+				// full WotRefreshInterval of continuous uptime, which this app may
+				// never accumulate. Check the cache's actual age against the same
+				// interval here so a WoT that's due for a refresh doesn't sit
+				// stale for the full WotCacheTTLMinutes — e.g. a cache computed
+				// while the follow list was briefly clobbered by an unrelated bug
+				// would otherwise keep silently rejecting real replies/reactions
+				// as "not in WoT" until the TTL fully expired.
+				if time.Duration(cacheAgeMinutes)*time.Minute >= config.WotRefreshInterval {
+					log.Println("  🔄 WoT cache is due for a refresh, updating in the background")
+					cycle.spawn("wot.Refresh.stale", func() { wotModel.Refresh(cycle.ctx) })
+				}
 			} else {
 				cycle.spawn("wot.Initialize", func() { wot.Initialize(cycle.ctx, wotModel, gate) })
 				log.Println("  ✓ Web of Trust initializing from network")
