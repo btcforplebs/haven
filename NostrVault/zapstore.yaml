@@ -22,9 +22,15 @@ description: |
   Your data, your relay, your media — all under your control.
 website: https://nostrvault.app
 repository: https://github.com/btcforplebs/nostr-vault
-source_url: https://github.com/btcforplebs/nostr-vault
+source_url: https://github.com/btcforplebs/nostr-vault/tree/v2.6.0-b11
 tags: [nostr, bitcoin, relay, blossom, lightning]
 release_notes: ../CHANGELOG.md
+images:
+  - screenshots/01_blossom_dashboard.png
+  - screenshots/02_media_gallery.png
+  - screenshots/03_feed.png
+  - screenshots/04_relay_dashboard.png
+  - screenshots/05_settings.png
 
 release_source:
   asset_url: https://logen.btcforplebs.com/301e7f62f03e1b3d5259878de296d943ba173947ca103da4bf5bdebf62102dc3.apk
