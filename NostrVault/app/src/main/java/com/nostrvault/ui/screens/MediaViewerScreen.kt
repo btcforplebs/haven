@@ -34,6 +34,7 @@ import com.nostrvault.data.local.ConfigStore
 import com.nostrvault.service.BlossomService
 import com.nostrvault.service.MediaSaveService
 import com.nostrvault.ui.components.AudioPlayer
+import com.nostrvault.ui.components.VideoPiPBridge
 import com.nostrvault.ui.components.VideoPlayer
 import com.nostrvault.ui.components.ZoomableImage
 import com.nostrvault.ui.notification.NotificationManager
@@ -173,6 +174,8 @@ fun MediaViewerScreen(
 
     val mirrorStatus by viewModel.mirrorStatus.collectAsState()
     val isCheckingMirrors by viewModel.isCheckingMirrors.collectAsState()
+    // Hide all viewer chrome while the activity is shown in a PiP window
+    val isInPiP by VideoPiPBridge.isInPiP.collectAsState()
     var showMirrorSheet by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<DeleteScope?>(null) }
 
@@ -314,25 +317,27 @@ fun MediaViewerScreen(
             }
         }
 
-        // Close button (fades during drag)
-        IconButton(
-            onClick = onBack,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .statusBarsPadding()
-                .padding(8.dp)
-                .graphicsLayer { alpha = overlayAlpha },
-        ) {
-            Icon(
-                imageVector = NostrVaultIcons.Dismiss,
-                contentDescription = "Close",
-                tint = Color.White,
-            )
+        // Close button (fades during drag, hidden in PiP)
+        if (!isInPiP) {
+            IconButton(
+                onClick = onBack,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(8.dp)
+                    .graphicsLayer { alpha = overlayAlpha },
+            ) {
+                Icon(
+                    imageVector = NostrVaultIcons.Dismiss,
+                    contentDescription = "Close",
+                    tint = Color.White,
+                )
+            }
         }
 
-        // Top-right actions (fade during drag)
+        // Top-right actions (fade during drag, hidden in PiP)
         val menuItem = items.getOrNull(pagerState.currentPage)
-        Row(
+        if (!isInPiP) Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .align(Alignment.TopEnd)
@@ -377,7 +382,7 @@ fun MediaViewerScreen(
             mirroredCount > 0 -> Color(0xFFFF9800)
             else -> Color.Gray
         }
-        Column(
+        if (!isInPiP) Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier
                 .align(Alignment.BottomCenter)

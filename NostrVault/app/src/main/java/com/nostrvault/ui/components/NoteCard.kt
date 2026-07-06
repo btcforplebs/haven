@@ -1,5 +1,6 @@
 package com.nostrvault.ui.components
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -23,8 +24,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -32,8 +35,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -526,27 +527,17 @@ fun MediaPreviewRow(
     urls: List<String>,
     modifier: Modifier = Modifier,
 ) {
-    var viewingIndex by remember { mutableStateOf<Int?>(null) }
-
     if (urls.size == 1) {
         SingleMediaPreview(
             url = urls.first(),
-            onMediaClick = { viewingIndex = 0 },
+            onMediaClick = { FullScreenMediaRouter.open(urls, 0) },
             modifier = modifier,
         )
     } else {
         MediaCarousel(
             urls = urls,
-            onMediaClick = { index -> viewingIndex = index },
+            onMediaClick = { index -> FullScreenMediaRouter.open(urls, index) },
             modifier = modifier,
-        )
-    }
-
-    viewingIndex?.let { index ->
-        FullScreenMediaPager(
-            urls = urls,
-            initialIndex = index,
-            onDismiss = { viewingIndex = null },
         )
     }
 }
@@ -557,6 +548,10 @@ fun MediaPreviewRow(
  * vertical drag-to-dismiss (matching the dedicated gallery viewer / iOS). Keeps
  * the lightweight mirror pill + close affordances of the old single-item dialog;
  * the mirror pill tracks whichever page is currently visible.
+ *
+ * Rendered as an activity-window overlay via [FullScreenMediaHost] — NOT a Dialog —
+ * so Picture-in-Picture (which only captures the activity's own window) can show
+ * the playing video. All chrome hides while the activity is in PiP.
  */
 @Composable
 internal fun FullScreenMediaPager(
@@ -566,6 +561,7 @@ internal fun FullScreenMediaPager(
     viewModel: FeedMediaMirrorViewModel = hiltViewModel(),
 ) {
     val mirrorState by viewModel.state.collectAsState()
+    val isInPiP by VideoPiPBridge.isInPiP.collectAsState()
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
 
@@ -595,15 +591,15 @@ internal fun FullScreenMediaPager(
         derivedStateOf { (1f - abs(dragOffsetY.value) / 100f).coerceIn(0f, 1f) }
     }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+    BackHandler(onBack = onDismiss)
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = backgroundAlpha))
+            // Swallow taps that no child consumed so they can't reach the UI beneath
+            .pointerInput(Unit) { detectTapGestures { } },
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = backgroundAlpha)),
-        ) {
             HorizontalPager(
                 state = pagerState,
                 // Lock paging while a page is zoomed so pan doesn't flip pages.
@@ -653,24 +649,26 @@ internal fun FullScreenMediaPager(
                 }
             }
 
-            IconButton(
-                onClick = onDismiss,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .statusBarsPadding()
-                    .padding(8.dp)
-                    .size(40.dp)
-                    .graphicsLayer { alpha = overlayAlpha }
-                    .background(Color.Black.copy(alpha = 0.4f), CircleShape),
-            ) {
-                Icon(
-                    imageVector = NostrVaultIcons.Dismiss,
-                    contentDescription = "Close",
-                    tint = Color.White,
-                )
+            if (!isInPiP) {
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .statusBarsPadding()
+                        .padding(8.dp)
+                        .size(40.dp)
+                        .graphicsLayer { alpha = overlayAlpha }
+                        .background(Color.Black.copy(alpha = 0.4f), CircleShape),
+                ) {
+                    Icon(
+                        imageVector = NostrVaultIcons.Dismiss,
+                        contentDescription = "Close",
+                        tint = Color.White,
+                    )
+                }
             }
 
-            if (viewModel.canMirror) {
+            if (!isInPiP && viewModel.canMirror) {
                 MirrorToBlossomPill(
                     state = mirrorState,
                     onMirror = { viewModel.mirror(currentUrl) },
@@ -683,7 +681,7 @@ internal fun FullScreenMediaPager(
             }
 
             // Page-position dots, only when the note carries more than one item.
-            if (urls.size > 1) {
+            if (urls.size > 1 && !isInPiP) {
                 Row(
                     horizontalArrangement = Arrangement.Center,
                     verticalAlignment = Alignment.CenterVertically,
@@ -708,7 +706,6 @@ internal fun FullScreenMediaPager(
                     }
                 }
             }
-        }
     }
 }
 

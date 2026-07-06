@@ -1,8 +1,10 @@
 package com.nostrvault
 
 import android.Manifest
+import android.app.PictureInPictureParams
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -10,12 +12,14 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.Lifecycle
 import com.nostrvault.data.local.ConfigStore
 import com.nostrvault.relay.LogStore
 import com.nostrvault.relay.RelayForegroundService
@@ -25,6 +29,8 @@ import com.nostrvault.service.FeedService
 import com.nostrvault.service.MediaUploadManager
 import com.nostrvault.service.NostrService
 import com.nostrvault.service.PendingPostManager
+import com.nostrvault.ui.components.FullScreenMediaHost
+import com.nostrvault.ui.components.VideoPiPBridge
 import com.nostrvault.ui.navigation.NostrVaultNavHost
 import com.nostrvault.ui.notification.NotificationManager
 import com.nostrvault.ui.theme.NostrVaultTheme
@@ -66,6 +72,9 @@ class MainActivity : FragmentActivity() {
         // Handle media shared into the app via the system share sheet (ACTION_SEND)
         handleShareIntent(intent)
 
+        // Keep PiP auto-enter params in sync with whichever video is playing full-screen
+        VideoPiPBridge.onActiveVideoChanged = { refreshPipParams() }
+
         setContent {
             val config by configStore.config.collectAsState()
 
@@ -83,17 +92,22 @@ class MainActivity : FragmentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = WindowBackground,
                 ) {
-                    NostrVaultNavHost(
-                        isSetupComplete = config.hasCompletedSetup,
-                        configStore = configStore,
-                        feedService = feedService,
-                        nostrService = nostrService,
-                        logStore = logStore,
-                        dmUnreadCount = dmService.totalUnreadCountFlow,
-                        hasNewRelayActivity = RelayForegroundService.hasNewRelayActivity,
-                        notificationManager = notificationManager,
-                        pendingPostManager = pendingPostManager,
-                    )
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        NostrVaultNavHost(
+                            isSetupComplete = config.hasCompletedSetup,
+                            configStore = configStore,
+                            feedService = feedService,
+                            nostrService = nostrService,
+                            logStore = logStore,
+                            dmUnreadCount = dmService.totalUnreadCountFlow,
+                            hasNewRelayActivity = RelayForegroundService.hasNewRelayActivity,
+                            notificationManager = notificationManager,
+                            pendingPostManager = pendingPostManager,
+                        )
+                        // Full-screen media viewer overlay — lives in the activity window
+                        // (not a Dialog) so Picture-in-Picture can capture the video.
+                        FullScreenMediaHost()
+                    }
                 }
             }
         }
@@ -163,9 +177,61 @@ class MainActivity : FragmentActivity() {
         )
     }
 
+    // ---- Picture-in-Picture ----
+
+    private val hasPipFeature: Boolean
+        get() = packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+
+    private fun pipParams(): PictureInPictureParams {
+        val builder = PictureInPictureParams.Builder()
+        VideoPiPBridge.aspectRatio?.let { builder.setAspectRatio(it) }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // Swiping home while a full-screen video plays pops it into PiP automatically
+            builder.setAutoEnterEnabled(VideoPiPBridge.hasActiveVideo)
+        }
+        return builder.build()
+    }
+
+    private fun refreshPipParams() {
+        if (!hasPipFeature) return
+        runCatching { setPictureInPictureParams(pipParams()) }
+    }
+
+    /** Manual PiP entry, called from the video player's PiP button. */
+    fun enterVideoPiP() {
+        if (!hasPipFeature || !VideoPiPBridge.hasActiveVideo) return
+        runCatching { enterPictureInPictureMode(pipParams()) }
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        // Pre-Android 12 has no auto-enter param — enter PiP by hand on home-press.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S &&
+            hasPipFeature && VideoPiPBridge.hasActiveVideo
+        ) {
+            runCatching { enterPictureInPictureMode(pipParams()) }
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration,
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        VideoPiPBridge.isInPiP.value = isInPictureInPictureMode
+        // Leaving PiP while the activity is not visible means the PiP window was
+        // closed (not expanded back) — stop playback so audio doesn't continue.
+        if (!isInPictureInPictureMode &&
+            !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        ) {
+            VideoPiPBridge.pauseActive()
+        }
+    }
+
     override fun onStop() {
         super.onStop()
-        // Snapshot the feed and disconnect WebSockets when the app goes to background.
+        // Entering PiP pauses but does not stop the activity, so this only runs on a
+        // real background transition: snapshot the feed and disconnect WebSockets.
         // The Go relay keeps running via the foreground service.
         if (configStore.config.value.hasCompletedSetup) {
             feedService.pauseFeed()

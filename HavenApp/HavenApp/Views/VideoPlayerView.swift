@@ -16,6 +16,11 @@ class AudioSessionManager {
     #if os(iOS)
     /// Configure audio session to allow background music to continue (for muted videos)
     func enableMixingWithOthers() {
+        // Never tear down the playback session while PiP is running — deactivating
+        // it (or dropping to .ambient) interrupts and pauses the PiP video. This is
+        // hit constantly by inline feed players spinning up during scroll; PiPManager
+        // restores the mixing session itself when PiP ends.
+        if PiPManager.shared.isPiPActive { return }
         do {
             let audioSession = AVAudioSession.sharedInstance()
             // Deactivate the active playback session so background music can resume
@@ -59,6 +64,99 @@ class AudioSessionManager {
     func enablePlayback() {}
     #endif
 }
+
+// MARK: - PiPManager
+
+#if os(iOS)
+/// Owns the `AVPictureInPictureController` for the video currently shown full-screen.
+/// Lives beyond the SwiftUI view hierarchy so PiP keeps rendering after the viewer
+/// is dismissed — it retains the player layer until PiP actually stops.
+final class PiPManager: NSObject, ObservableObject {
+    static let shared = PiPManager()
+
+    @Published private(set) var isPiPActive = false
+    @Published private(set) var isPiPPossible = false
+
+    /// Set by the presenting viewer so it can dismiss itself when PiP takes over.
+    var onPiPWillStart: (() -> Void)?
+
+    private var controller: AVPictureInPictureController?
+    private var playerLayer: AVPlayerLayer?
+    private var possibleObservation: NSKeyValueObservation?
+    private(set) var activeURL: URL?
+
+    static var isSupported: Bool { AVPictureInPictureController.isPictureInPictureSupported() }
+
+    func attach(layer: AVPlayerLayer, url: URL) {
+        guard Self.isSupported, !isPiPActive, playerLayer !== layer else { return }
+
+        guard let pip = AVPictureInPictureController(playerLayer: layer) else { return }
+        pip.delegate = self
+        if #available(iOS 14.2, *) {
+            // Swiping home while a full-screen video plays pops it into PiP automatically
+            pip.canStartPictureInPictureAutomaticallyFromInline = true
+        }
+        controller = pip
+        playerLayer = layer
+        activeURL = url
+        possibleObservation = pip.observe(\.isPictureInPicturePossible, options: [.initial, .new]) { [weak self] _, change in
+            DispatchQueue.main.async { self?.isPiPPossible = change.newValue ?? false }
+        }
+    }
+
+    /// Drops the controller when the presenting view goes away without starting PiP.
+    func detach(url: URL) {
+        guard !isPiPActive, activeURL == url else { return }
+        teardown()
+    }
+
+    func start() { controller?.startPictureInPicture() }
+    func stop() { controller?.stopPictureInPicture() }
+
+    /// True while PiP is rendering from this layer — the hosting view must not unhook its player.
+    func ownsLayer(_ layer: AVPlayerLayer) -> Bool {
+        isPiPActive && playerLayer === layer
+    }
+
+    private func teardown() {
+        possibleObservation?.invalidate()
+        possibleObservation = nil
+        controller = nil
+        playerLayer = nil
+        activeURL = nil
+        isPiPPossible = false
+    }
+}
+
+extension PiPManager: AVPictureInPictureControllerDelegate {
+    func pictureInPictureControllerWillStartPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        isPiPActive = true
+        onPiPWillStart?()
+        onPiPWillStart = nil
+    }
+
+    func pictureInPictureControllerDidStopPictureInPicture(_ pictureInPictureController: AVPictureInPictureController) {
+        isPiPActive = false
+        // PiP window closed: end playback and hand audio back to other apps.
+        playerLayer?.player?.pause()
+        playerLayer?.player?.isMuted = true
+        // Only clear full-screen ownership if it's still ours — a new full-screen
+        // video may have claimed it while stopping this PiP.
+        if VideoPlayerCache.shared.activeFullScreenURL == activeURL {
+            VideoPlayerCache.shared.activeFullScreenURL = nil
+            AudioSessionManager.shared.enableMixingWithOthers()
+        }
+        teardown()
+    }
+
+    func pictureInPictureController(
+        _ pictureInPictureController: AVPictureInPictureController,
+        restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void
+    ) {
+        completionHandler(true)
+    }
+}
+#endif
 
 // MARK: - VideoPlayerCache
 
@@ -142,10 +240,11 @@ class VideoPlayerCache: ObservableObject {
         cache[url] = player
         observers[url] = observer
 
-        // Evict oldest if limit exceeded
+        // Evict oldest if limit exceeded — but never the full-screen/PiP video,
+        // which must keep playing while feed cells create players underneath it
         if cache.count > limit {
-            if let oldest = accessOrder.first {
-                accessOrder.removeFirst()
+            if let oldest = accessOrder.first(where: { $0 != activeFullScreenURL }) {
+                accessOrder.removeAll { $0 == oldest }
                 if let oldPlayer = cache.removeValue(forKey: oldest) {
                     oldPlayer.pause()
                 }
@@ -337,6 +436,8 @@ struct VideoPlayerView: View {
 /// Minimal seek bar — thin progress line with drag-to-seek.
 struct VideoScrubber: View {
     let player: AVPlayer
+    /// Fired on every drag update so a container can keep its auto-hiding controls visible.
+    var onScrub: (() -> Void)? = nil
 
     @State private var progress: Double = 0
     @State private var isDragging: Bool = false
@@ -360,6 +461,7 @@ struct VideoScrubber: View {
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
                         isDragging = true
+                        onScrub?()
                         let fraction = min(max(value.location.x / geo.size.width, 0), 1)
                         progress = fraction
                         seek(to: fraction)
@@ -660,11 +762,14 @@ struct InlineFeedVideoPlayer: View {
 struct InlinePlayerLayer: NSViewRepresentable {
     let player: AVPlayer
     var videoGravity: AVLayerVideoGravity = .resizeAspectFill
+    /// Called with the backing AVPlayerLayer once created (used to wire up PiP on iOS).
+    var onLayerReady: ((AVPlayerLayer) -> Void)? = nil
 
     func makeNSView(context: Context) -> PlayerNSView {
         let view = PlayerNSView()
         view.playerLayer.player = player
         view.playerLayer.videoGravity = videoGravity
+        onLayerReady?(view.playerLayer)
         return view
     }
 
@@ -712,11 +817,14 @@ class PlayerNSView: NSView {
 struct InlinePlayerLayer: UIViewRepresentable {
     let player: AVPlayer
     var videoGravity: AVLayerVideoGravity = .resizeAspectFill
+    /// Called with the backing AVPlayerLayer once created (used to wire up PiP).
+    var onLayerReady: ((AVPlayerLayer) -> Void)? = nil
 
     func makeUIView(context: Context) -> PlayerUIView {
         let view = PlayerUIView()
         view.playerLayer.player = player
         view.playerLayer.videoGravity = videoGravity
+        onLayerReady?(view.playerLayer)
         return view
     }
 
@@ -730,6 +838,9 @@ struct InlinePlayerLayer: UIViewRepresentable {
     }
     
     static func dismantleUIView(_ uiView: PlayerUIView, coordinator: Coordinator) {
+        // PiP keeps rendering from this layer after the view leaves the hierarchy —
+        // unhooking the player here would blank the PiP window.
+        if PiPManager.shared.ownsLayer(uiView.playerLayer) { return }
         uiView.playerLayer.player = nil
     }
 
@@ -781,16 +892,129 @@ struct NativeVideoPlayer: UIViewControllerRepresentable {
 }
 #endif
 
+// MARK: - VideoControlBar
+
+/// Bottom control rail for the full-screen player:
+/// play/pause · elapsed · scrubber · duration · mute · PiP.
+struct VideoControlBar: View {
+    let player: AVPlayer
+    /// Non-nil shows the PiP button (iOS devices where PiP is currently possible).
+    var onPiP: (() -> Void)? = nil
+    /// Called on any control interaction so the container can restart its auto-hide timer.
+    var onInteract: (() -> Void)? = nil
+
+    @State private var isPlaying: Bool = true
+    @State private var isMuted: Bool = false
+    @State private var elapsed: Double = 0
+    @State private var duration: Double = 0
+    @State private var timeObserver: Any?
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button {
+                onInteract?()
+                if isPlaying { player.pause() } else { player.play() }
+            } label: {
+                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                    .font(.appSystem(size: 18, weight: .semibold))
+                    .foregroundColor(.white)
+                    .frame(width: 34, height: 34)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Text(Self.timeString(elapsed))
+                .font(.appSystem(size: 12, weight: .medium).monospacedDigit())
+                .foregroundColor(.white.opacity(0.85))
+
+            VideoScrubber(player: player, onScrub: { onInteract?() })
+
+            Text(Self.timeString(duration))
+                .font(.appSystem(size: 12, weight: .medium).monospacedDigit())
+                .foregroundColor(.white.opacity(0.85))
+
+            Button {
+                onInteract?()
+                isMuted.toggle()
+                player.isMuted = isMuted
+            } label: {
+                Image(systemName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .font(.appSystem(size: 15, weight: .medium))
+                    .foregroundColor(.white)
+                    .frame(width: 34, height: 34)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if let onPiP = onPiP {
+                Button {
+                    onPiP()
+                } label: {
+                    Image(systemName: "pip.enter")
+                        .font(.appSystem(size: 15, weight: .medium))
+                        .foregroundColor(.white)
+                        .frame(width: 34, height: 34)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .onReceive(player.publisher(for: \.timeControlStatus)) { status in
+            isPlaying = (status != .paused)
+        }
+        .onAppear {
+            isMuted = player.isMuted
+            startObserving()
+        }
+        .onDisappear { stopObserving() }
+    }
+
+    private func startObserving() {
+        let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
+        timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
+            elapsed = CMTimeGetSeconds(time)
+            if let itemDuration = player.currentItem?.duration,
+               itemDuration.isValid, !itemDuration.isIndefinite {
+                duration = CMTimeGetSeconds(itemDuration)
+            }
+        }
+    }
+
+    private func stopObserving() {
+        if let observer = timeObserver {
+            player.removeTimeObserver(observer)
+            timeObserver = nil
+        }
+    }
+
+    static func timeString(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return "0:00" }
+        let total = Int(seconds)
+        let m = total / 60
+        let s = total % 60
+        return String(format: "%d:%02d", m, s)
+    }
+}
+
 // MARK: - FullScreenVideoPlayer
 
 /// Chromeless full-screen video player for use in FeedMediaViewer.
-/// Auto-plays unmuted with looping. All overlay controls (mirror, close) are provided by FeedMediaViewer.
+/// Auto-plays unmuted with looping. Shows an auto-hiding control rail
+/// (play/pause, time, scrubber, mute, PiP); mirror/close overlays are
+/// provided by FeedMediaViewer.
 struct FullScreenVideoPlayer: View {
     let url: URL
     var mimeType: String? = nil
+    /// Called when PiP takes over so the presenting viewer can dismiss itself.
+    var onPiPStart: (() -> Void)? = nil
 
     @State private var player: AVPlayer?
     @State private var loadError: String? = nil
+    @State private var showControls: Bool = true
+    @State private var hideControlsWork: DispatchWorkItem? = nil
+    #if os(iOS)
+    @ObservedObject private var pipManager = PiPManager.shared
+    #endif
 
     var body: some View {
         ZStack {
@@ -806,29 +1030,72 @@ struct FullScreenVideoPlayer: View {
                         .foregroundColor(.white)
                 }
             } else if let player = player {
-                InlinePlayerLayer(player: player, videoGravity: .resizeAspect)
-                    .allowsHitTesting(false)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                InlinePlayerLayer(player: player, videoGravity: .resizeAspect, onLayerReady: { layer in
+                    #if os(iOS)
+                    PiPManager.shared.attach(layer: layer, url: url)
+                    #endif
+                })
+                .allowsHitTesting(false)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ProgressView().tint(.white)
             }
 
-            if let player = player {
+            if let player = player, showControls {
                 VStack {
                     Spacer()
-                    VideoScrubber(player: player)
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 16)
+                    VideoControlBar(player: player, onPiP: pipAction, onInteract: scheduleAutoHide)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 8)
+                        .background(alignment: .bottom) {
+                            LinearGradient(
+                                colors: [.black.opacity(0), .black.opacity(0.55)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                            .frame(height: 130)
+                            .allowsHitTesting(false)
+                        }
                 }
+                .transition(.opacity)
             }
         }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showControls.toggle()
+            }
+            if showControls { scheduleAutoHide() }
+        }
         .onAppear {
+            #if os(iOS)
+            // Opening a new video full-screen takes over from any running PiP
+            if PiPManager.shared.isPiPActive && PiPManager.shared.activeURL != url {
+                PiPManager.shared.stop()
+            }
+            #endif
             VideoPlayerCache.shared.activeFullScreenURL = url
             // Configure audio session to take over playback for unmuted full-screen video
             AudioSessionManager.shared.enablePlayback()
+            #if os(iOS)
+            PiPManager.shared.onPiPWillStart = { onPiPStart?() }
+            #endif
             setupPlayer()
+            scheduleAutoHide()
         }
         .onDisappear {
+            hideControlsWork?.cancel()
+            hideControlsWork = nil
+            #if os(iOS)
+            if PiPManager.shared.isPiPActive && PiPManager.shared.activeURL == url {
+                // PiP owns playback now — leave the player, audio session, and
+                // activeFullScreenURL to PiPManager's teardown when PiP ends.
+                player = nil
+                return
+            }
+            PiPManager.shared.detach(url: url)
+            PiPManager.shared.onPiPWillStart = nil
+            #endif
             VideoPlayerCache.shared.activeFullScreenURL = nil
             // Restore standard inline muted play
             player?.isMuted = true
@@ -836,6 +1103,28 @@ struct FullScreenVideoPlayer: View {
             // Restore audio session to allow mixing with background music
             AudioSessionManager.shared.enableMixingWithOthers()
         }
+    }
+
+    /// Non-nil only when PiP can actually start right now.
+    private var pipAction: (() -> Void)? {
+        #if os(iOS)
+        guard pipManager.isPiPPossible else { return nil }
+        return { PiPManager.shared.start() }
+        #else
+        return nil
+        #endif
+    }
+
+    private func scheduleAutoHide() {
+        hideControlsWork?.cancel()
+        let work = DispatchWorkItem {
+            guard player?.timeControlStatus == .playing else { return }
+            withAnimation(.easeInOut(duration: 0.25)) {
+                showControls = false
+            }
+        }
+        hideControlsWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: work)
     }
 
     private func setupPlayer() {

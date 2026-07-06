@@ -118,7 +118,7 @@ struct FeedMediaViewer: View {
                 if isLoadingType {
                     ProgressView().tint(.white)
                 } else if isVideo {
-                    FullScreenVideoPlayer(url: url)
+                    FullScreenVideoPlayer(url: url, onPiPStart: { performDismiss() })
                 } else if isGIF {
                     AnimatedImage(url: url, contentMode: .fit, shouldAnimate: true)
                 } else {

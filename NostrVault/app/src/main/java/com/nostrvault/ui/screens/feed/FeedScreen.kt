@@ -45,7 +45,7 @@ import com.nostrvault.data.model.FeedMode
 import com.nostrvault.data.model.FeedNote
 import com.nostrvault.data.model.PopularFilter
 import com.nostrvault.ui.components.CustomZapSheet
-import com.nostrvault.ui.components.FullScreenMediaPager
+import com.nostrvault.ui.components.FullScreenMediaRouter
 import com.nostrvault.ui.components.RetryableAsyncImage
 import com.nostrvault.ui.components.isVideoUrl
 import com.nostrvault.ui.components.BroadcastSheet
@@ -622,7 +622,6 @@ private fun MediaFeedGrid(
     // The pager opens across the first media of every cell, so its indices line up
     // 1:1 with the grid. filterMediaNotes guarantees a non-empty mediaURLs per note.
     val gridUrls = remember(notes) { notes.map { it.mediaURLs.first() } }
-    var viewerIndex by remember { mutableStateOf<Int?>(null) }
 
     // Infinite scroll: load older media as the user nears the end of the grid.
     val shouldLoadMore by remember {
@@ -654,7 +653,7 @@ private fun MediaFeedGrid(
             MediaGridCell(
                 url = note.mediaURLs.first(),
                 mediaCount = note.mediaURLs.size,
-                onTap = { viewerIndex = index },
+                onTap = { FullScreenMediaRouter.open(gridUrls, index) },
                 onLongPress = { onNoteClick(note.id) },
             )
         }
@@ -676,13 +675,6 @@ private fun MediaFeedGrid(
         }
     }
 
-    viewerIndex?.let { index ->
-        FullScreenMediaPager(
-            urls = gridUrls,
-            initialIndex = index,
-            onDismiss = { viewerIndex = null },
-        )
-    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)

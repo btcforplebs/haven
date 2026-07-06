@@ -1,27 +1,39 @@
 package com.nostrvault.ui.components
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import com.nostrvault.MainActivity
 import com.nostrvault.ui.theme.NostrVaultIcons
 import kotlinx.coroutines.delay
 
@@ -30,9 +42,12 @@ import kotlinx.coroutines.delay
  *
  * Features:
  * - Auto-play with looping (matches iOS FullScreenVideoPlayer behaviour)
- * - Tap to toggle controls overlay
- * - Center play/pause button
- * - Bottom bar with mute toggle and progress indicator
+ * - Tap to toggle the control rail; auto-hides after 3s while playing
+ * - Bottom rail: play/pause · elapsed · scrubber · duration · mute · PiP
+ *   (same layout as the iOS VideoControlBar)
+ * - Picture-in-Picture: registers with [VideoPiPBridge] so MainActivity can
+ *   auto-enter PiP on home-press; the rail's PiP button enters it on demand.
+ *   All chrome hides while in PiP.
  * - Proper lifecycle management (releases player on dispose)
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -44,12 +59,20 @@ fun VideoPlayer(
     autoplay: Boolean = true,
 ) {
     val context = LocalContext.current
+    val isInPiP by VideoPiPBridge.isInPiP.collectAsState()
+    val supportsPiP = remember {
+        context.packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)
+    }
 
     var isPlaying by remember { mutableStateOf(autoplay) }
     var isMuted by remember { mutableStateOf(false) }
     var progress by remember { mutableFloatStateOf(0f) }
+    var positionMs by remember { mutableLongStateOf(0L) }
+    var durationMs by remember { mutableLongStateOf(0L) }
     var isSeeking by remember { mutableStateOf(false) }
     var showControls by remember { mutableStateOf(true) }
+    // Bumped on every control interaction to restart the auto-hide countdown
+    var interactionEpoch by remember { mutableIntStateOf(0) }
 
     val exoPlayer = remember {
         ExoPlayer.Builder(context).build().apply {
@@ -60,15 +83,21 @@ fun VideoPlayer(
         }
     }
 
-    // Listen to player state changes and release on dispose
+    // Listen to player state changes, register for PiP, and release on dispose
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
             }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                VideoPiPBridge.updateAspectRatio(videoSize.width, videoSize.height)
+            }
         }
         exoPlayer.addListener(listener)
+        VideoPiPBridge.setActive(exoPlayer)
         onDispose {
+            VideoPiPBridge.clearActive(exoPlayer)
             exoPlayer.removeListener(listener)
             exoPlayer.release()
         }
@@ -77,15 +106,16 @@ fun VideoPlayer(
     // Poll progress ~4 times per second while playing (skip updates during seek)
     LaunchedEffect(isPlaying, isSeeking) {
         while (isPlaying && !isSeeking) {
-            val duration = exoPlayer.duration.coerceAtLeast(1L)
-            progress = exoPlayer.currentPosition.toFloat() / duration.toFloat()
+            durationMs = exoPlayer.duration.takeIf { it > 0 } ?: 0L
+            positionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
+            progress = if (durationMs > 0) positionMs.toFloat() / durationMs else 0f
             delay(250)
         }
     }
 
-    // Auto-hide controls after 3 seconds
-    LaunchedEffect(showControls) {
-        if (showControls && isPlaying) {
+    // Auto-hide controls after 3 seconds; any interaction restarts the countdown
+    LaunchedEffect(showControls, isPlaying, interactionEpoch) {
+        if (showControls && isPlaying && !isSeeking) {
             delay(3000)
             showControls = false
         }
@@ -98,7 +128,9 @@ fun VideoPlayer(
             .clickable(
                 indication = null,
                 interactionSource = remember { MutableInteractionSource() },
-            ) { showControls = !showControls },
+            ) {
+                if (!isInPiP) showControls = !showControls
+            },
     ) {
         // Video surface
         AndroidView(
@@ -112,47 +144,84 @@ fun VideoPlayer(
             modifier = Modifier.fillMaxSize(),
         )
 
-        // Controls overlay
+        // Control rail overlay (never shown while the activity is in a PiP window)
         AnimatedVisibility(
-            visible = showControls,
+            visible = showControls && !isInPiP,
             enter = fadeIn(),
             exit = fadeOut(),
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.align(Alignment.BottomCenter),
         ) {
-            Box(modifier = Modifier.fillMaxSize()) {
-                // Center play/pause
-                IconButton(
-                    onClick = {
-                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-                    },
+            Box(modifier = Modifier.fillMaxWidth()) {
+                // Soft scrim so white controls read on bright footage
+                Box(
                     modifier = Modifier
-                        .align(Alignment.Center)
-                        .size(64.dp)
+                        .matchParentSize()
                         .background(
-                            color = Color.Black.copy(alpha = 0.4f),
-                            shape = CircleShape,
+                            Brush.verticalGradient(
+                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f)),
+                            ),
                         ),
-                ) {
-                    Icon(
-                        imageVector = if (isPlaying) NostrVaultIcons.PauseIcon
-                                      else NostrVaultIcons.PlayArrow,
-                        contentDescription = if (isPlaying) "Pause" else "Play",
-                        tint = Color.White,
-                        modifier = Modifier.size(36.dp),
-                    )
-                }
+                )
 
-                // Bottom bar: mute toggle + progress
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
                     modifier = Modifier
-                        .align(Alignment.BottomCenter)
                         .fillMaxWidth()
                         .navigationBarsPadding()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
                 ) {
                     IconButton(
                         onClick = {
+                            interactionEpoch++
+                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                        },
+                        modifier = Modifier.size(40.dp),
+                    ) {
+                        Icon(
+                            imageVector = if (isPlaying) NostrVaultIcons.PauseIcon
+                                          else NostrVaultIcons.PlayArrow,
+                            contentDescription = if (isPlaying) "Pause" else "Play",
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp),
+                        )
+                    }
+
+                    Text(
+                        text = formatPlayerTime(positionMs),
+                        color = Color.White.copy(alpha = 0.85f),
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                    )
+
+                    ThinSeekBar(
+                        progress = progress,
+                        onSeekStart = {
+                            isSeeking = true
+                            interactionEpoch++
+                        },
+                        onSeek = { fraction ->
+                            progress = fraction
+                            val duration = exoPlayer.duration.coerceAtLeast(1L)
+                            exoPlayer.seekTo((fraction * duration).toLong())
+                            positionMs = (fraction * duration).toLong()
+                        },
+                        onSeekEnd = { isSeeking = false },
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 6.dp),
+                    )
+
+                    Text(
+                        text = formatPlayerTime(durationMs),
+                        color = Color.White.copy(alpha = 0.85f),
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                    )
+
+                    IconButton(
+                        onClick = {
+                            interactionEpoch++
                             isMuted = !isMuted
                             exoPlayer.volume = if (isMuted) 0f else 1f
                         },
@@ -163,39 +232,105 @@ fun VideoPlayer(
                                           else NostrVaultIcons.VolumeUp,
                             contentDescription = if (isMuted) "Unmute" else "Mute",
                             tint = Color.White,
+                            modifier = Modifier.size(20.dp),
                         )
                     }
 
-                    Slider(
-                        value = progress,
-                        onValueChange = { newProgress ->
-                            isSeeking = true
-                            progress = newProgress
-                            val duration = exoPlayer.duration.coerceAtLeast(1L)
-                            exoPlayer.seekTo((newProgress * duration).toLong())
-                        },
-                        onValueChangeFinished = {
-                            isSeeking = false
-                        },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(20.dp)
-                            .padding(horizontal = 8.dp),
-                        colors = SliderDefaults.colors(
-                            thumbColor = Color.White,
-                            activeTrackColor = Color.White,
-                            inactiveTrackColor = Color.White.copy(alpha = 0.3f),
-                        ),
-                        thumb = {
-                            Box(
-                                modifier = Modifier
-                                    .size(width = 5.dp, height = 14.dp)
-                                    .background(Color.White, RoundedCornerShape(2.5.dp)),
+                    if (supportsPiP) {
+                        IconButton(
+                            onClick = {
+                                (context.findActivity() as? MainActivity)?.enterVideoPiP()
+                            },
+                            modifier = Modifier.size(40.dp),
+                        ) {
+                            Icon(
+                                imageVector = NostrVaultIcons.PictureInPicture,
+                                contentDescription = "Picture in picture",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp),
                             )
-                        },
-                    )
+                        }
+                    }
                 }
             }
         }
     }
+}
+
+/**
+ * Hairline capsule scrubber — 3dp track that thickens to 6dp under a drag,
+ * matching the iOS VideoScrubber. Tap or drag anywhere on its (tall) hit
+ * area to seek.
+ */
+@Composable
+private fun ThinSeekBar(
+    progress: Float,
+    onSeekStart: () -> Unit,
+    onSeek: (Float) -> Unit,
+    onSeekEnd: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    var dragging by remember { mutableStateOf(false) }
+    val trackHeight by animateDpAsState(
+        targetValue = if (dragging) 6.dp else 3.dp,
+        label = "seekbar-height",
+    )
+
+    BoxWithConstraints(
+        contentAlignment = Alignment.CenterStart,
+        modifier = modifier
+            .height(32.dp)
+            .pointerInput(Unit) {
+                detectTapGestures { offset ->
+                    onSeekStart()
+                    onSeek((offset.x / size.width).coerceIn(0f, 1f))
+                    onSeekEnd()
+                }
+            }
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures(
+                    onDragStart = { offset ->
+                        dragging = true
+                        onSeekStart()
+                        onSeek((offset.x / size.width).coerceIn(0f, 1f))
+                    },
+                    onDragEnd = {
+                        dragging = false
+                        onSeekEnd()
+                    },
+                    onDragCancel = {
+                        dragging = false
+                        onSeekEnd()
+                    },
+                ) { change, _ ->
+                    change.consume()
+                    onSeek((change.position.x / size.width).coerceIn(0f, 1f))
+                }
+            },
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(trackHeight)
+                .background(Color.White.copy(alpha = 0.3f), RoundedCornerShape(50)),
+        )
+        Box(
+            modifier = Modifier
+                .width(maxWidth * progress.coerceIn(0f, 1f))
+                .height(trackHeight)
+                .background(Color.White.copy(alpha = 0.85f), RoundedCornerShape(50)),
+        )
+    }
+}
+
+private fun formatPlayerTime(ms: Long): String {
+    if (ms <= 0) return "0:00"
+    val totalSeconds = ms / 1000
+    return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
