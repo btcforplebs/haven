@@ -125,6 +125,9 @@ struct FeedView: View {
     @State private var galleryDragOffset: CGSize = .zero
     @State private var isRefreshing = false
     @State private var showingGlobalMediaWarning = false
+    @State private var showingSpyglassInput = false
+    @State private var spyglassInputText = ""
+    @State private var spyglassInputError: String?
     @State private var isAtTop: Bool = true
     @State private var scrolledNoteID: String?
     @State private var lastScrollOffset: CGFloat = 0
@@ -166,6 +169,96 @@ struct FeedView: View {
         configService.config.feedCompactModes[feedService.feedMode.rawValue] = !compactModeEnabledForCurrentFeed
         configService.save()
         expandedNoteId = nil
+    }
+
+    // MARK: - Spyglass Mode
+
+    /// Decodes the Spyglass input field (npub1... or raw 64-char hex) and enters
+    /// Spyglass Mode on success. Purely client-side — see FeedService.enterSpyglass.
+    private func submitSpyglassInput() {
+        let trimmed = spyglassInputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        var hex: String? = nil
+        if trimmed.range(of: "^[a-fA-F0-9]{64}$", options: .regularExpression) != nil {
+            hex = trimmed.lowercased()
+        } else if trimmed.lowercased().hasPrefix("npub1"), let decoded = Bech32.decode(trimmed)?.hexString {
+            hex = decoded
+        }
+        guard let hexPubkey = hex else {
+            spyglassInputError = "Enter a valid npub or hex pubkey"
+            return
+        }
+        spyglassInputText = ""
+        spyglassInputError = nil
+        showingSpyglassInput = false
+        feedService.enterSpyglass(pubkey: hexPubkey)
+    }
+
+    private var spyglassDisplayName: String {
+        guard let pubkey = feedService.spyglassPubkey else { return "" }
+        let profile = feedService.spyglassProfile ?? nostrService.profiles[pubkey]
+        return profile?.displayName ?? profile?.name ?? String(pubkey.prefix(8))
+    }
+
+    @ViewBuilder
+    private var spyglassMenuEntry: some View {
+        Menu {
+            Button {
+                showingSpyglassInput = true
+            } label: {
+                Label("Spyglass Mode", systemImage: "binoculars")
+            }
+            if feedService.spyglassPubkey != nil {
+                Button(role: .destructive) {
+                    feedService.exitSpyglass()
+                } label: {
+                    Label("Exit Spyglass", systemImage: "xmark.circle")
+                }
+            }
+        } label: {
+            AvatarView(
+                url: nostrService.profiles[nostrService.activeHexPubkey]?.pictureURL,
+                pubkey: nostrService.activeHexPubkey,
+                size: 28
+            )
+        }
+        .accessibilityLabel("Account menu")
+    }
+
+    /// Full-screen visual change while Spyglass Mode is active: a persistent
+    /// top banner (name + exit affordance) plus a colored border around the
+    /// whole feed so it's unambiguous you're viewing someone else's graph.
+    @ViewBuilder
+    private var spyglassBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "binoculars.fill")
+            Group {
+                #if os(iOS)
+                Text("Viewing as \(spyglassDisplayName) — shake to exit")
+                #else
+                Text("Viewing as \(spyglassDisplayName)")
+                #endif
+            }
+            .font(.appSystem(size: 13, weight: .semibold))
+            .lineLimit(1)
+            Spacer()
+            if feedService.isLoadingSpyglass {
+                ProgressView().scaleEffect(0.7)
+            }
+            Button {
+                feedService.exitSpyglass()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Exit Spyglass Mode")
+        }
+        .foregroundColor(.white)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(Color.havenPurple)
+        .clipShape(Capsule())
+        .padding(.top, 8)
+        .shadow(radius: 4)
     }
 
     /// Compact mode is active for all feeds except Media grid
@@ -350,28 +443,104 @@ struct FeedView: View {
     }
 
     var body: some View {
+        Group {
+            #if os(iOS)
+            NavigationStack(path: $navigationPath) {
+                rootContent
+                    .navigationTitle("")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbarBackground(.hidden, for: .navigationBar)
+                    .navigationDestination(for: FeedNote.self) { note in
+                        NoteDetailView(note: note)
+                    }
+            }
+            #else
+            VStack(spacing: 0) {
+                macFeedHeader
+                Divider()
+                rootContent
+            }
+            #endif
+        }
+        // Full-screen visual change while Spyglass Mode is active, so it's
+        // unambiguous you're viewing someone else's graph, not your own.
+        .overlay(alignment: .top) {
+            if feedService.spyglassPubkey != nil {
+                spyglassBanner
+            }
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 0)
+                .stroke(Color.havenPurple, lineWidth: feedService.spyglassPubkey != nil ? 3 : 0)
+                .allowsHitTesting(false)
+        )
+        .sheet(isPresented: $showingSpyglassInput) {
+            spyglassInputSheet
+        }
         #if os(iOS)
-        NavigationStack(path: $navigationPath) {
-            rootContent
-                .navigationTitle("")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbarBackground(.hidden, for: .navigationBar)
-                .navigationDestination(for: FeedNote.self) { note in
-                    NoteDetailView(note: note)
+        .onReceive(NotificationCenter.default.publisher(for: .deviceDidShake)) { _ in
+            if feedService.spyglassPubkey != nil {
+                feedService.exitSpyglass()
+            }
+        }
+        #endif
+    }
+
+    @ViewBuilder
+    private var spyglassInputSheet: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("View Following and Discover as if you were this pubkey — computed entirely on-device from public follow-graph data. Nothing is published or shared.")
+                    .font(.appSystem(size: 13))
+                    .foregroundColor(.secondary)
+
+                TextField("npub1... or hex pubkey", text: $spyglassInputText)
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    #endif
+                    .autocorrectionDisabled()
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { submitSpyglassInput() }
+
+                if let error = spyglassInputError {
+                    Text(error)
+                        .font(.appSystem(size: 12))
+                        .foregroundColor(.red)
                 }
+
+                Spacer()
+            }
+            .padding()
+            .navigationTitle("Spyglass Mode")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        spyglassInputText = ""
+                        spyglassInputError = nil
+                        showingSpyglassInput = false
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("View") { submitSpyglassInput() }
+                        .disabled(spyglassInputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
         }
+        #if os(macOS)
+        .frame(width: 420, height: 220)
         #else
-        VStack(spacing: 0) {
-            macFeedHeader
-            Divider()
-            rootContent
-        }
+        .presentationDetents([.height(260)])
         #endif
     }
 
     #if os(macOS)
     private var macFeedHeader: some View {
         HStack(spacing: 12) {
+            spyglassMenuEntry
+
             // Connection dot
             Button(action: { showingRelayStatus = true }) {
                 Circle()
@@ -553,6 +722,8 @@ struct FeedView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
                 HStack(spacing: 12) {
+                    spyglassMenuEntry
+
                     Button(action: { showingRelayStatus = true }) {
                         Circle()
                             .fill(feedService.connectionDotColor)

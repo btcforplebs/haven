@@ -16,7 +16,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         // leaving relayManager.isRunning = false forever, which causes the
         // ViewerView notes fetch guard to always bail.
 
-        let window = UIWindow(windowScene: windowScene)
+        // ShakeDetectingWindow (not plain UIWindow) so Spyglass Mode can exit on shake.
+        let window = ShakeDetectingWindow(windowScene: windowScene)
         
         let configService = ConfigService.shared
         let relayManager = RelayProcessManager.shared
