@@ -135,8 +135,25 @@ class AmberSignerService @Inject constructor(
     // Event signing
     // ══════════════════════════════════════════════════════════════════
 
-    /** Sign an event. Returns the full signed event JSON, or null on failure. */
+    /**
+     * Sign an event. Returns the full signed event JSON, or null on failure.
+     *
+     * Amber is currently owner-only by design: [cachedPubkey] is a single global
+     * value seeded from config.ownerNpub, and there's no per-account Amber
+     * identity/permission tracking. AccountSettingsScreen's add-account flow only
+     * offers "local"/"nip46" for secondary accounts, so this path shouldn't be
+     * reachable with a non-owner account active — but if it ever is (e.g. a future
+     * bug elsewhere), fail loudly here instead of silently signing as the owner
+     * while purporting to act for a different account.
+     */
     suspend fun signEvent(unsignedEventJson: String): String? {
+        val config = configStore.config.value
+        val activeNpub = config.activeAccountNpub
+        if (!activeNpub.isNullOrEmpty() && activeNpub != config.ownerNpub) {
+            Log.e(TAG, "signEvent: refusing to sign — active account ($activeNpub) is not the owner, and Amber has no per-account identity to sign as")
+            return null
+        }
+
         if (cachedPubkey == null) restoreCachedPubkey()
         val currentUser = cachedPubkey
         if (currentUser == null) {
@@ -239,6 +256,14 @@ class AmberSignerService @Inject constructor(
         pubkey: String,
         silentOnly: Boolean = false,
     ): String? {
+        // Amber is owner-only by design — see signEvent()'s doc comment.
+        val config = configStore.config.value
+        val activeNpub = config.activeAccountNpub
+        if (!activeNpub.isNullOrEmpty() && activeNpub != config.ownerNpub) {
+            Log.e(TAG, "cryptoOp $intentType: refusing — active account ($activeNpub) is not the owner, and Amber has no per-account identity to act as")
+            return null
+        }
+
         // Self-heal like signEvent(): if the pubkey wasn't cached at init (config
         // / bridge not ready), restore it now — otherwise every decrypt silently
         // no-ops (no prompt, no content query) and DMs never decrypt.

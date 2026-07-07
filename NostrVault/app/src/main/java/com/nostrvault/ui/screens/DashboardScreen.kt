@@ -63,6 +63,9 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
@@ -331,6 +334,40 @@ class DashboardViewModel @Inject constructor(
                 mergeNostrServiceEvents()
                 scheduleUpdateDisplayData()
             }
+        }
+
+        // allEvents (this ViewModel's own event store, separate from NostrService's)
+        // had no account-switch observer at all — same class of bug as FeedService's
+        // missing forceReload() wiring. Without this, the Relay/Vault tab kept showing
+        // the previous account's notes/reactions/zaps mixed in with the new account's.
+        viewModelScope.launch {
+            configStore.config
+                .map { it.activeAccountNpub }
+                .distinctUntilChanged()
+                .drop(1) // Skip initial emission
+                .collect { resetForAccountSwitch() }
+        }
+    }
+
+    /** Clears all per-account event state and reconnects fresh. See init{}'s observer. */
+    private fun resetForAccountSwitch() {
+        disconnectFromLocalRelay()
+        viewModelScope.launch {
+            allEventsMutex.withLock { allEvents.clear() }
+            seenIds.clear()
+            newestEventCreatedAt = 0L
+            updateGeneration++
+            _notesHasLoadedOnce.value = false
+            _likesHasLoadedOnce.value = false
+            _zapsHasLoadedOnce.value = false
+            _displayNotes.value = emptyList()
+            _displayLikedNotes.value = emptyList()
+            _displayZappedNotes.value = emptyList()
+            _reactionMap.value = emptyMap()
+            _zapMap.value = emptyMap()
+            _repostMap.value = emptyMap()
+            _quoteMap.value = emptyMap()
+            connectToLocalRelay()
         }
     }
 

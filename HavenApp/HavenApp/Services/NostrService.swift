@@ -637,12 +637,18 @@ class NostrService: ObservableObject {
     ///   - tags: The event tags
     ///   - password: Optional password for NIP-49 encrypted keys. If not provided, will attempt to retrieve from Keychain.
     /// - Returns: The signed NostrEvent, or nil if signing fails
-    func signEvent(kind: Int, content: String, tags: [[String]] = [], password: String? = nil, forceOwner: Bool = false) -> NostrEvent? {
+    /// - Parameter signAsNpub: Sign as this specific account instead of whichever is
+    ///   currently active, WITHOUT touching config.activeAccountNpub. Use this for any
+    ///   publish that targets a non-active account (e.g. syncing a secondary account's
+    ///   mute/relay list) — temporarily mutating the shared active-account pointer is
+    ///   observed by every subscriber (FeedService/NostrService's own account-switch
+    ///   handlers), making a background publish look like a real user-driven switch.
+    func signEvent(kind: Int, content: String, tags: [[String]] = [], password: String? = nil, forceOwner: Bool = false, signAsNpub: String? = nil) -> NostrEvent? {
         var sk: String?
         let config = ConfigService.shared.config
 
         // Determine which account is signing
-        let activeNpub = config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
+        let activeNpub = (signAsNpub ?? config.activeAccountNpub).trimmingCharacters(in: .whitespacesAndNewlines)
         let signingAsOwner = forceOwner || activeNpub.isEmpty || activeNpub == config.ownerNpub
         
         if signingAsOwner {
@@ -685,8 +691,10 @@ class NostrService: ObservableObject {
             return nil
         }
 
-        // Use the active account's pubkey for the event
-        let signingPubkey = signingAsOwner ? ownerHexPubkey : activeHexPubkey
+        // Use the signing account's pubkey for the event — decoded directly from
+        // activeNpub (which already reflects signAsNpub when provided) rather than
+        // the cached activeHexPubkey, which only ever reflects the real active account.
+        let signingPubkey = signingAsOwner ? ownerHexPubkey : (Bech32.decode(activeNpub)?.hexString ?? activeHexPubkey)
 
         let finalTags = EventPublisher.appendClientTag(to: tags, kind: kind)
         let eventDict = EventPublisher.buildUnsignedEvent(pubkey: signingPubkey, kind: kind, content: content, tags: finalTags)
@@ -702,7 +710,11 @@ class NostrService: ObservableObject {
 
     /// Async variant of signEvent that supports both local key and NIP-46 remote signing.
     /// When signingMode is "nip46", delegates to NIP46Service. Otherwise wraps the local signEvent().
-    func signEventAsync(kind: Int, content: String, tags: [[String]] = [], password: String? = nil, forceOwner: Bool = false) async -> NostrEvent? {
+    /// - Parameter signAsNpub: See signEvent(_:signAsNpub:) — signs as this account
+    ///   without touching config.activeAccountNpub. NIP-46 mode ignores it (falls back
+    ///   to whatever the active bunker connection is already signing for), since a
+    ///   background publish can't switch bunker connections without user interaction.
+    func signEventAsync(kind: Int, content: String, tags: [[String]] = [], password: String? = nil, forceOwner: Bool = false, signAsNpub: String? = nil) async -> NostrEvent? {
         let config = ConfigService.shared.config
         let mode = config.activeSigningMode()
         print("NostrService: signEventAsync mode=\(mode) activeNpub=\(config.activeAccountNpub.prefix(20)) ownerNpub=\(config.ownerNpub.prefix(20)) forceOwner=\(forceOwner)")
@@ -745,7 +757,7 @@ class NostrService: ObservableObject {
                 return nil
             }
         } else {
-            return signEvent(kind: kind, content: content, tags: tags, password: password, forceOwner: forceOwner)
+            return signEvent(kind: kind, content: content, tags: tags, password: password, forceOwner: forceOwner, signAsNpub: signAsNpub)
         }
     }
 
@@ -860,20 +872,8 @@ class NostrService: ObservableObject {
 
         let tags = hexKeys.map { ["p", $0] }
 
-        // Capture the current active account so we can restore it after signing
-        let originalActive = ConfigService.shared.config.activeAccountNpub
-
         Task {
-            // Temporarily set activeAccountNpub to sign with the correct key.
-            // Mutation is inside the Task and wrapped in defer to guarantee restoration.
-            ConfigService.shared.config.activeAccountNpub = (accountNpub == ConfigService.shared.config.ownerNpub) ? "" : accountNpub
-            ConfigService.shared.refreshActiveAccountHex()
-            defer {
-                ConfigService.shared.config.activeAccountNpub = originalActive
-                ConfigService.shared.refreshActiveAccountHex()
-            }
-
-            if let event = await signEventAsync(kind: 10000, content: "", tags: tags) {
+            if let event = await signEventAsync(kind: 10000, content: "", tags: tags, signAsNpub: accountNpub) {
                 postEvent(event)
                 ConfigService.shared.config.blockedNpubsLastSyncTimestamp[accountNpub] = event.created_at
                 ConfigService.shared.save()
@@ -965,18 +965,8 @@ class NostrService: ObservableObject {
             tags.append(["r", macRelay])
         }
 
-        // Temporarily switch signing context to the target account
-        let originalActive = ConfigService.shared.config.activeAccountNpub
-
         Task {
-            ConfigService.shared.config.activeAccountNpub = (accountNpub == config.ownerNpub) ? "" : accountNpub
-            ConfigService.shared.refreshActiveAccountHex()
-            defer {
-                ConfigService.shared.config.activeAccountNpub = originalActive
-                ConfigService.shared.refreshActiveAccountHex()
-            }
-
-            if let event = await signEventAsync(kind: 10002, content: "", tags: tags) {
+            if let event = await signEventAsync(kind: 10002, content: "", tags: tags, signAsNpub: accountNpub) {
                 postEvent(event)
                 #if DEBUG
                 print("NostrService: Published Kind 10002 relay list for \(accountNpub.prefix(8)) with \(tags.count) relays")
