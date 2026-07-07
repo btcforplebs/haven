@@ -143,26 +143,6 @@ class FeedService @Inject constructor(
     private val _extendedNetworkPubkeys = MutableStateFlow<List<String>>(emptyList())
     val extendedNetworkPubkeys: StateFlow<List<String>> = _extendedNetworkPubkeys.asStateFlow()
 
-    // ── Spyglass Mode ─────────────────────────────────────────
-    // View Following/Discover as if you were some other pubkey, computed entirely
-    // on-device from public kind-3 data (no relay-side service, no NIP-90 job
-    // protocol — just the same follow-graph hop Discover conceptually does,
-    // rooted at someone else). Kept in dedicated state, deliberately never
-    // touching _followedPubkeys/_extendedNetworkPubkeys — those feed the
-    // follow-list overwrite guard and publish/follow logic, and must always
-    // reflect the real account regardless of what's being spyglassed.
-    private val _spyglassPubkey = MutableStateFlow<String?>(null)
-    val spyglassPubkey: StateFlow<String?> = _spyglassPubkey.asStateFlow()
-
-    private val _spyglassFollowedPubkeys = MutableStateFlow<List<String>>(emptyList())
-    val spyglassFollowedPubkeys: StateFlow<List<String>> = _spyglassFollowedPubkeys.asStateFlow()
-
-    private val _spyglassExtendedNetworkPubkeys = MutableStateFlow<List<String>>(emptyList())
-    val spyglassExtendedNetworkPubkeys: StateFlow<List<String>> = _spyglassExtendedNetworkPubkeys.asStateFlow()
-
-    private val _isLoadingSpyglass = MutableStateFlow(false)
-    val isLoadingSpyglass: StateFlow<Boolean> = _isLoadingSpyglass.asStateFlow()
-
     private val _isLoadingContacts = MutableStateFlow(false)
     val isLoadingContacts: StateFlow<Boolean> = _isLoadingContacts.asStateFlow()
 
@@ -783,169 +763,6 @@ class FeedService @Inject constructor(
     }
 
     // ══════════════════════════════════════════════════════════════════
-    // Spyglass Mode
-    // ══════════════════════════════════════════════════════════════════
-    // View Following/Discover as if you were some other pubkey, computed entirely
-    // on-device from public kind-3 data — no relay-side service, no NIP-90 job
-    // protocol, just a genuine 2-hop follow-graph fetch (each root's own kind-3,
-    // then tally mutual follows among their follows' kind-3s), rooted at someone
-    // else instead of the real account. This is independent of loadExtendedNetwork()
-    // above, which derives Discover from cached relay-list data rather than a real
-    // fetch — Spyglass needs the real graph hop since there's no cached data for
-    // an arbitrary target's follows.
-
-    /**
-     * Fetches a single arbitrary pubkey's own kind-3 follow list (the "root hop"
-     * for Spyglass Mode — the equivalent of _followedPubkeys, but for someone
-     * else). One-shot, temporary connections; not cached beyond the current
-     * spyglass session.
-     */
-    private suspend fun fetchFollowList(pubkey: String, relayUrls: List<String>): List<String> {
-        if (relayUrls.isEmpty()) return emptyList()
-        var newestCreatedAt = -1L
-        var pubkeys: List<String> = emptyList()
-        val clients = mutableListOf<WebSocketClient>()
-
-        withContext(Dispatchers.IO) {
-            for (relayUrl in relayUrls) {
-                val client = WebSocketClient(url = relayUrl, scope = scope, trustLocalhost = relayUrl.contains("localhost") || relayUrl.contains("127.0.0.1"))
-                clients.add(client)
-                scope.launch {
-                    client.messages.collect { msg ->
-                        try {
-                            val parsed = json.parseToJsonElement(msg).jsonArray
-                            val type = parsed.getOrNull(0)?.jsonPrimitive?.contentOrNull ?: return@collect
-                            if (type == "EVENT" && parsed.size >= 3) {
-                                val ev = parsed[2].jsonObject
-                                val kind = ev["kind"]?.jsonPrimitive?.intOrNull
-                                val createdAt = ev["created_at"]?.jsonPrimitive?.longOrNull
-                                if (kind == 3 && createdAt != null && createdAt > newestCreatedAt) {
-                                    newestCreatedAt = createdAt
-                                    val tags = ev["tags"]?.jsonArray?.map { t -> t.jsonArray.map { it.jsonPrimitive.contentOrNull ?: "" } } ?: emptyList()
-                                    pubkeys = tags.filter { it.size >= 2 && it[0] == "p" }.map { it[1] }
-                                }
-                            }
-                        } catch (_: Exception) {}
-                    }
-                }
-                client.connect()
-                val filter = """{"kinds":[3],"authors":["$pubkey"],"limit":1}"""
-                client.send("[\"REQ\",\"spy-root-${UUID.randomUUID().toString().take(6)}\",$filter]")
-            }
-            delay(6000)
-            clients.forEach { it.disconnect() }
-        }
-        return pubkeys
-    }
-
-    /**
-     * Computes 2-hop mutual-follow counts rooted at [rootPubkeys] — fetches each
-     * root pubkey's own kind-3 follow list from [relayUrls], tallying how many
-     * roots follow each second-hop person (excluding the roots themselves).
-     */
-    private suspend fun fetchExtendedNetworkFor(rootPubkeys: List<String>, relayUrls: List<String>): Map<String, Int> {
-        if (relayUrls.isEmpty() || rootPubkeys.isEmpty()) return emptyMap()
-        val excludeSet = rootPubkeys.toSet()
-        val mutualCounts = mutableMapOf<String, Int>()
-        val clients = mutableListOf<WebSocketClient>()
-
-        withContext(Dispatchers.IO) {
-            for (relayUrl in relayUrls) {
-                val client = WebSocketClient(url = relayUrl, scope = scope, trustLocalhost = relayUrl.contains("localhost") || relayUrl.contains("127.0.0.1"))
-                clients.add(client)
-                scope.launch {
-                    client.messages.collect { msg ->
-                        try {
-                            val parsed = json.parseToJsonElement(msg).jsonArray
-                            val type = parsed.getOrNull(0)?.jsonPrimitive?.contentOrNull ?: return@collect
-                            if (type == "EVENT" && parsed.size >= 3) {
-                                val ev = parsed[2].jsonObject
-                                val kind = ev["kind"]?.jsonPrimitive?.intOrNull
-                                if (kind == 3) {
-                                    val tags = ev["tags"]?.jsonArray?.map { t -> t.jsonArray.map { it.jsonPrimitive.contentOrNull ?: "" } } ?: emptyList()
-                                    val localCounts = contactManager.countMutualFollows(tags, excludeSet)
-                                    for ((pk, count) in localCounts) {
-                                        mutualCounts[pk] = (mutualCounts[pk] ?: 0) + count
-                                    }
-                                }
-                            }
-                        } catch (_: Exception) {}
-                    }
-                }
-                client.connect()
-                var current = 0
-                var chunkIndex = 0
-                while (current < rootPubkeys.size) {
-                    val end = minOf(current + 200, rootPubkeys.size)
-                    val chunk = rootPubkeys.subList(current, end)
-                    val authorsJson = chunk.joinToString(",") { "\"$it\"" }
-                    val filter = """{"kinds":[3],"authors":[$authorsJson]}"""
-                    client.send("[\"REQ\",\"spy-ext-$chunkIndex-${UUID.randomUUID().toString().take(4)}\",$filter]")
-                    current = end
-                    chunkIndex++
-                }
-            }
-            delay(10000)
-            clients.forEach { it.disconnect() }
-        }
-        return mutualCounts
-    }
-
-    /**
-     * Enters Spyglass Mode: rebuilds Following/Discover as if you were [pubkey],
-     * entirely on-device. No relay-side service involved.
-     */
-    fun enterSpyglass(pubkey: String) {
-        if (_spyglassPubkey.value == pubkey) return
-        _spyglassPubkey.value = pubkey
-        _spyglassFollowedPubkeys.value = emptyList()
-        _spyglassExtendedNetworkPubkeys.value = emptyList()
-        _isLoadingSpyglass.value = true
-        _notes.value = emptyList()
-        recomputeFilteredNotes()
-
-        scope.launch {
-            val config = configStore.config.value
-            val relayUrls = buildList {
-                config.nostrURL?.let { add(it) }
-                addAll(config.activeFeedRelays)
-                addAll(config.activeBlastrRelays)
-            }.distinct()
-
-            val follows = fetchFollowList(pubkey, relayUrls)
-            if (_spyglassPubkey.value != pubkey) return@launch // superseded by another call/exit
-            _spyglassFollowedPubkeys.value = follows
-            resubscribePrimaryToConnected()
-
-            if (follows.isEmpty()) {
-                _isLoadingSpyglass.value = false
-                return@launch
-            }
-
-            val mutualCounts = fetchExtendedNetworkFor(follows, relayUrls)
-            if (_spyglassPubkey.value != pubkey) return@launch
-            _spyglassExtendedNetworkPubkeys.value = contactManager.rankExtendedNetwork(mutualCounts)
-            _isLoadingSpyglass.value = false
-            resubscribePrimaryToConnected()
-        }
-    }
-
-    /**
-     * Exits Spyglass Mode, clearing its isolated state and restoring the normal
-     * feed for whichever mode is currently selected.
-     */
-    fun exitSpyglass() {
-        if (_spyglassPubkey.value == null) return
-        _spyglassPubkey.value = null
-        _spyglassFollowedPubkeys.value = emptyList()
-        _spyglassExtendedNetworkPubkeys.value = emptyList()
-        _isLoadingSpyglass.value = false
-        _notes.value = emptyList()
-        recomputeFilteredNotes()
-        refresh()
-    }
-
-    // ══════════════════════════════════════════════════════════════════
     // Relay subscription
     // ══════════════════════════════════════════════════════════════════
 
@@ -1119,12 +936,6 @@ class FeedService @Inject constructor(
     private fun sendPrimaryFeedSubscription(relayUrl: String, subId: String) {
         val client = feedClients[relayUrl] ?: return
         val ownerHex = nostrService.activeHexPubkey
-        // While Spyglass Mode is active, Following/Discover/Media-following
-        // substitute the spyglassed pubkey's own graph instead of the real
-        // account's — see enterSpyglass().
-        val spyglassing = _spyglassPubkey.value != null
-        val effectiveFollowedPubkeys = if (spyglassing) _spyglassFollowedPubkeys.value else _followedPubkeys.value
-        val effectiveExtendedNetworkPubkeys = if (spyglassing) _spyglassExtendedNetworkPubkeys.value else _extendedNetworkPubkeys.value
 
         val filter = buildString {
             append("{\"kinds\":[1,6,30023]")
@@ -1132,13 +943,13 @@ class FeedService @Inject constructor(
                 FeedMode.FOLLOWING -> {
                     // Send the full follow list (iOS does not cap); capping at
                     // 500 silently hid notes from any follows beyond that.
-                    val authors = effectiveFollowedPubkeys
+                    val authors = _followedPubkeys.value
                     if (authors.isNotEmpty()) {
                         append(",\"authors\":[${authors.joinToString(",") { "\"$it\"" }}]")
                     }
                 }
                 FeedMode.DISCOVERY -> {
-                    val authors = effectiveExtendedNetworkPubkeys.take(500)
+                    val authors = _extendedNetworkPubkeys.value.take(500)
                     if (authors.isNotEmpty()) {
                         append(",\"authors\":[${authors.joinToString(",") { "\"$it\"" }}]")
                     }
@@ -1148,7 +959,7 @@ class FeedService @Inject constructor(
                 }
                 FeedMode.MEDIA -> {
                     val authors = when (_mediaFeedMode.value) {
-                        MediaFeedMode.FOLLOWING -> effectiveFollowedPubkeys.take(500)
+                        MediaFeedMode.FOLLOWING -> _followedPubkeys.value.take(500)
                         MediaFeedMode.GLOBAL -> _wotPubkeys.value.take(500).toList()
                     }
                     if (authors.isNotEmpty()) {
@@ -1524,24 +1335,13 @@ class FeedService @Inject constructor(
             .mapNotNull { (npub, max) -> nostrService.npubToHex(npub)?.let { it to max } }
             .toMap()
 
-        // While spyglassing, "Following"-shaped filtering should judge membership
-        // against the spyglassed pubkey's follows, not the real account's — same
-        // substitution as sendPrimaryFeedSubscription(), otherwise notes that
-        // arrive via the (correctly spyglass-scoped) subscription get filtered
-        // right back out here.
-        val effectiveFollowedPubkeys = if (_spyglassPubkey.value != null) {
-            _spyglassFollowedPubkeys.value.toSet()
-        } else {
-            _followedPubkeys.value.toSet()
-        }
-
         _filteredNotes.value = feedFilterEngine.filterFeedNotes(
             notes = _notes.value,
             mode = _feedMode.value,
             blocked = blockedPubkeys,
             showReposts = _showReposts.value,
             showReplies = _showReplies.value,
-            followedPubkeys = effectiveFollowedPubkeys,
+            followedPubkeys = _followedPubkeys.value.toSet(),
             wotPubkeys = _wotPubkeys.value,
             popularFilter = _popularFilter.value,
             popularNoteScores = _popularNoteScores.value,

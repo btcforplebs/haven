@@ -105,7 +105,6 @@
 		587441300839972EAF70AF41 /* NIP49Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75ABEDE255E82775CCD37559 /* NIP49Service.swift */; };
 		59965C511D2D8F2DCDA83D3C /* BitcoinSweepDisclaimerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89A56934F313BFA876DC49BA /* BitcoinSweepDisclaimerView.swift */; };
 		5B6C7D8E9F0A1B2C3D4E5F6A /* VaultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A5B6C7D8E9F0A1B2C3D4E5F /* VaultView.swift */; };
-		5C580086CCEEEEA1023B380E /* ShakeDetectingWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16BBC7995E5023954A27C248 /* ShakeDetectingWindow.swift */; };
 		5C5ECE08A0CAF2114BA64954 /* MediaListItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = EB34AB23F08ED4824A863B3E /* MediaListItem.swift */; };
 		5DC48B896DEBD607FC44DE13 /* MediaGridItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26B94C55797E3C0F7E79B42B /* MediaGridItem.swift */; };
 		5E6F7A8B9C0D1E2F3A4B5C6D /* ProfileRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1E2F3A4B5C6D7E8F9A0B1C2 /* ProfileRepository.swift */; };
@@ -344,7 +343,6 @@
 		0FDA644A2B01FFA0F183C0D7 /* templates */ = {isa = PBXFileReference; lastKnownFileType = folder; name = templates; path = Resources/templates; sourceTree = SOURCE_ROOT; };
 		12AB34CD56EF78AB90CD12EF /* CredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialStore.swift; sourceTree = "<group>"; };
 		139A3600AEB6297BCC772096 /* ZapValidationService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ZapValidationService.swift; sourceTree = "<group>"; };
-		16BBC7995E5023954A27C248 /* ShakeDetectingWindow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ShakeDetectingWindow.swift; sourceTree = "<group>"; };
 		1810634848EE1957C7E49DAF /* ConfigService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigService.swift; sourceTree = "<group>"; };
 		181FBA6695959DF3B88E2211 /* CashuService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CashuService.swift; sourceTree = "<group>"; };
 		19B6B870C61AB1313009408E /* NWCService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NWCService.swift; sourceTree = "<group>"; };
@@ -698,7 +696,6 @@
 				1D1A35E8F156B18C3269D943 /* HavenApp_iOS.swift */,
 				863739F1E447BD3531D8C720 /* HavenApp-iOS.entitlements */,
 				AECE3C16F322D12D0CC02FC1 /* SceneDelegate.swift */,
-				16BBC7995E5023954A27C248 /* ShakeDetectingWindow.swift */,
 			);
 			path = "HavenApp-iOS";
 			sourceTree = "<group>";
@@ -1142,7 +1139,6 @@
 				BC3C6223ADAFD06FFD722780 /* RelayActivityBanner.swift in Sources */,
 				F676AB961AF68E25309E527B /* MacRelaySyncService.swift in Sources */,
 				98129FCDB5AB43F70626CA07 /* ZapValidationService.swift in Sources */,
-				5C580086CCEEEEA1023B380E /* ShakeDetectingWindow.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

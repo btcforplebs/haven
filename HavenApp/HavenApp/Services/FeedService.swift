@@ -36,20 +36,6 @@ class FeedService: ObservableObject {
     /// When the extended network was last computed. Used to skip re-fetching within 1 hour.
     private var extendedNetworkComputedAt: Date?
     private static let extendedNetworkCacheAge: TimeInterval = 3600 // 1 hour
-
-    // MARK: - Spyglass Mode
-    // View Following/Discover as if you were some other pubkey, computed entirely
-    // on-device from public kind-3 data (no relay-side service, no NIP-90 job
-    // protocol — just the same follow-graph hop Discover already does, rooted at
-    // someone else). Kept in dedicated state, deliberately never touching
-    // followedPubkeys/extendedNetworkPubkeys — those feed the follow-list
-    // overwrite guard and publish/follow logic, and must always reflect the real
-    // account regardless of what's being spyglassed.
-    @Published var spyglassPubkey: String? = nil
-    @Published var spyglassProfile: FeedProfile? = nil
-    @Published var spyglassFollowedPubkeys: [String] = []
-    @Published var spyglassExtendedNetworkPubkeys: [String] = []
-    @Published var isLoadingSpyglass = false
     @Published var isLoadingContacts = false
     /// True once contact loading has completed at least once (success, empty, or timeout).
     /// Used to gate follow/unfollow so we don't publish before the kind-3 has had a chance to arrive.
@@ -110,12 +96,6 @@ class FeedService: ObservableObject {
         rebuildNoteIndex()
         let blocked = ConfigService.shared.activeAccountBlockedHexPubkeys
         let throttled = ConfigService.shared.activeAccountThrottledHexPubkeys
-        // While spyglassing, "Following"-shaped filtering should judge membership
-        // against the spyglassed pubkey's follows, not the real account's — same
-        // substitution as desiredPrimaryAuthorsForMode(), otherwise notes that
-        // arrive via the (correctly spyglass-scoped) subscription get filtered
-        // right back out here.
-        let effectiveFollowedPubkeys = spyglassPubkey != nil ? spyglassFollowedPubkeys : followedPubkeys
 
         let newFiltered = FeedFilterEngine.filterFeedNotes(
             notes: notes,
@@ -123,7 +103,7 @@ class FeedService: ObservableObject {
             blocked: blocked,
             showReposts: ConfigService.shared.config.showReposts,
             showReplies: ConfigService.shared.config.showReplies,
-            followedPubkeys: effectiveFollowedPubkeys,
+            followedPubkeys: followedPubkeys,
             wotPubkeys: wotPubkeys,
             popularFilter: popularFilter,
             popularNoteScores: popularNoteScores,
@@ -1102,18 +1082,7 @@ class FeedService: ObservableObject {
 
     /// The authoritative author set the current mode's primary subscription should
     /// carry. Empty means "no valid primary sub" for author-filtered modes.
-    /// While Spyglass Mode is active, Following/Discover-shaped modes substitute
-    /// the spyglassed pubkey's own graph instead of the real account's — see
-    /// enterSpyglass().
     private func desiredPrimaryAuthorsForMode() -> [String] {
-        if spyglassPubkey != nil {
-            switch feedMode {
-            case .following: return spyglassFollowedPubkeys
-            case .media: return mediaFeedMode == .following ? spyglassFollowedPubkeys : []
-            case .discovery: return spyglassExtendedNetworkPubkeys
-            case .global, .popular: return []
-            }
-        }
         switch feedMode {
         case .following: return followedPubkeys
         case .media: return mediaFeedMode == .following ? followedPubkeys : []
@@ -1141,19 +1110,6 @@ class FeedService: ObservableObject {
 
         guard !isPaused else { return }
         guard feedMode != .popular else { return }   // popular has no relay subs
-
-        if spyglassPubkey != nil {
-            // Spyglass Mode manages its own fetch-and-retry entirely within
-            // enterSpyglass() — don't self-heal into (re)loading the REAL
-            // account's contacts here just because the spyglass fetch hasn't
-            // resolved yet, and don't gate on the real (non-spyglass)
-            // extendedNetworkPubkeys, which desiredPrimaryAuthorsForMode()
-            // already correctly substitutes for below.
-            if isAuthorFilteredMode && desiredPrimaryAuthorsForMode().isEmpty { return }
-            ensureRelaySetConnected()
-            resubscribePrimaryIfNeeded()
-            return
-        }
 
         // Author-filtered mode with no follows yet → no valid primary sub. Don't
         // send a dead authors:[] REQ; instead self-heal by (re)fetching contacts
@@ -1910,10 +1866,7 @@ class FeedService: ObservableObject {
 
     /// Computes 2-hop mutual-follow counts rooted at `rootPubkeys` — fetches each
     /// root pubkey's own kind-3 follow list from `relays`, tallying how many roots
-    /// follow each second-hop person (excluding the roots themselves). Used by
-    /// Discover (rooted at your own follows via loadExtendedNetwork above) and
-    /// Spyglass Mode (rooted at someone else's, via loadSpyglassNetwork below) —
-    /// identical graph hop, just a different starting set.
+    /// follow each second-hop person (excluding the roots themselves).
     private func fetchExtendedNetworkInParallel(from relays: [URL], rootPubkeys: [String], completion: @escaping ([String: Int]) -> Void) {
         guard !relays.isEmpty, !rootPubkeys.isEmpty else {
             completion([:])
@@ -2010,169 +1963,6 @@ class FeedService: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) { finish() }
     }
 
-    // MARK: - Spyglass Mode
-
-    private var spyglassTimeout: Timer?
-
-    /// Fetches a single arbitrary pubkey's own kind-3 follow list (the "root hop"
-    /// for Spyglass Mode — the equivalent of `followedPubkeys`, but for someone
-    /// else). One-shot, temporary connection; not cached beyond the current
-    /// spyglass session.
-    private func fetchFollowList(for pubkey: String, from relays: [URL], completion: @escaping ([String]) -> Void) {
-        guard !relays.isEmpty else {
-            completion([])
-            return
-        }
-
-        var completed = false
-        var eoseCount = 0
-        var clients: [WebSocketClient] = []
-        var newestCreatedAt: Int64 = -1
-        var pubkeys: [String] = []
-
-        let finish: () -> Void = {
-            guard !completed else { return }
-            completed = true
-            clients.forEach { $0.disconnect() }
-            completion(pubkeys)
-        }
-
-        for url in relays {
-            let c = WebSocketClient()
-            c.isTemporary = true
-            clients.append(c)
-
-            c.messageSubject
-                .receive(on: DispatchQueue.global(qos: .userInitiated))
-                .sink { msg in
-                    guard !completed else { return }
-                    guard let data = msg.data(using: .utf8),
-                          let json = try? JSONSerialization.jsonObject(with: data) as? [Any],
-                          let type = json[0] as? String else { return }
-
-                    if type == "EVENT", json.count >= 3,
-                       let eventDict = json[2] as? [String: Any],
-                       let kind = eventDict["kind"] as? Int, kind == 3,
-                       let createdAt = eventDict["created_at"] as? Int64,
-                       let tags = eventDict["tags"] as? [[String]] {
-                        DispatchQueue.main.async {
-                            guard createdAt > newestCreatedAt else { return }
-                            newestCreatedAt = createdAt
-                            pubkeys = tags.compactMap { $0.count >= 2 && $0[0] == "p" ? $0[1] : nil }
-                        }
-                    } else if type == "EOSE" {
-                        DispatchQueue.main.async {
-                            eoseCount += 1
-                            if eoseCount >= relays.count { finish() }
-                        }
-                    }
-                }
-                .store(in: &cancellables)
-
-            c.$connectionState
-                .receive(on: DispatchQueue.main)
-                .sink { state in
-                    guard !completed, state == .connected else { return }
-                    let filter: [String: Any] = ["kinds": [3], "authors": [pubkey], "limit": 1]
-                    let req = ["REQ", "spy-root-\(UUID().uuidString.prefix(6))", filter] as [Any]
-                    if let data = try? JSONSerialization.data(withJSONObject: req),
-                       let str = String(data: data, encoding: .utf8) {
-                        c.send(text: str)
-                    }
-                }
-                .store(in: &cancellables)
-
-            c.connect(url: url)
-        }
-
-        // Same reasoning as fetchExtendedNetworkInParallel's timeout: without
-        // this, a single relay that never connects or never sends EOSE stalls
-        // Spyglass Mode forever with nothing ever loading.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) { finish() }
-    }
-
-    /// Enters Spyglass Mode: rebuilds Following/Discover as if you were `pubkey`,
-    /// entirely on-device (their kind-3 follow list, then the same 2-hop graph
-    /// computation Discover already does, just rooted there instead of your own
-    /// account). No relay-side service involved.
-    func enterSpyglass(pubkey: String) {
-        guard spyglassPubkey != pubkey else { return }
-        spyglassPubkey = pubkey
-        spyglassProfile = NostrService.shared.profiles[pubkey]
-        if spyglassProfile == nil {
-            NostrService.shared.fetchMissingProfiles(for: [pubkey])
-        }
-        spyglassFollowedPubkeys = []
-        spyglassExtendedNetworkPubkeys = []
-        isLoadingSpyglass = true
-        notes.removeAll()
-        recomputeFilteredNotes()
-
-        // The target's own kind-3 (and their follows' kind-3s, for the 2-hop
-        // computation) may well not be on your local relay or your configured
-        // feed relays at all — those are tuned for YOUR OWN network, not an
-        // arbitrary third party's. Mirror ProfileView's approach: also query
-        // their own outbox relays (NIP-65) if already known — likely, since
-        // Spyglass is triggered from a note of theirs you're already viewing,
-        // so their profile/relay-list was probably already fetched normally.
-        var candidates: [URL] = ([localRelayURL] + externalRelayURLs).compactMap { $0 }
-        if let outbox = NostrService.shared.outboxRelays[pubkey] {
-            let existing = Set(candidates.map { $0.absoluteString })
-            for relayStr in outbox.prefix(3) where !existing.contains(relayStr) {
-                if let url = URL(string: relayStr) { candidates.append(url) }
-            }
-        }
-
-        spyglassTimeout?.invalidate()
-        spyglassTimeout = Timer.scheduledTimer(withTimeInterval: 20.0, repeats: false) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                guard let self = self, self.isLoadingSpyglass else { return }
-                self.isLoadingSpyglass = false
-            }
-        }
-
-        fetchFollowList(for: pubkey, from: candidates) { [weak self] follows in
-            guard let self = self, self.spyglassPubkey == pubkey else { return }
-            self.spyglassFollowedPubkeys = follows
-            self.reconcileFeedSubscriptions()
-
-            guard !follows.isEmpty else {
-                self.spyglassTimeout?.invalidate()
-                self.isLoadingSpyglass = false
-                return
-            }
-
-            self.fetchExtendedNetworkInParallel(from: candidates, rootPubkeys: follows) { [weak self] mutualCounts in
-                guard let self = self, self.spyglassPubkey == pubkey else { return }
-                self.spyglassTimeout?.invalidate()
-                self.spyglassExtendedNetworkPubkeys = ContactManager.rankExtendedNetwork(mutualCounts: mutualCounts)
-                self.isLoadingSpyglass = false
-                self.reconcileFeedSubscriptions()
-            }
-        }
-    }
-
-    /// Exits Spyglass Mode, clearing its isolated state and restoring the normal
-    /// feed for whichever mode is currently selected.
-    func exitSpyglass() {
-        guard spyglassPubkey != nil else { return }
-        spyglassTimeout?.invalidate()
-        spyglassPubkey = nil
-        spyglassProfile = nil
-        spyglassFollowedPubkeys = []
-        spyglassExtendedNetworkPubkeys = []
-        isLoadingSpyglass = false
-        notes.removeAll()
-        recomputeFilteredNotes()
-        // refresh() alone — it already reconciles subscriptions as part of its
-        // own flow. Calling reconcileFeedSubscriptions() first (as this used to)
-        // could set isLoadingContacts = true via its own loadContactList() call,
-        // then refresh()'s own `guard !isLoadingContacts` immediately after would
-        // silently no-op — leaving the feed empty (notes was just cleared above)
-        // with nothing to repopulate it. That's what "takes forever to exit"
-        // actually was: not slow, just silently doing nothing.
-        refresh()
-    }
 
     // MARK: - Follow / Unfollow
 

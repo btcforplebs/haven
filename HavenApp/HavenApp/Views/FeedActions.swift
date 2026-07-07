@@ -45,7 +45,6 @@ struct FeedActions {
     var followUser: (String) -> Void = { _ in }
     var unfollowUser: (String) -> Void = { _ in }
     var throttleUser: (String, Int) -> Void = { _, _ in }
-    var spyglassUser: (String) -> Void = { _ in }
 
     // DM
     var dmUser: (String) -> Void = { _ in }
@@ -178,9 +177,6 @@ struct FeedActions {
                 guard let data = Bech32.hexToData(hexPubkey),
                       let npub = Bech32.encode(hrp: "npub", data: data) else { return }
                 ConfigService.shared.throttleProfile(npub, maxPosts: maxPosts)
-            },
-            spyglassUser: { hexPubkey in
-                feedService.enterSpyglass(pubkey: hexPubkey)
             },
             dmUser: { hexPubkey in
                 NotificationCenter.default.post(

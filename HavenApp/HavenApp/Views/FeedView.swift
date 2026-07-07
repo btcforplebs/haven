@@ -168,51 +168,6 @@ struct FeedView: View {
         expandedNoteId = nil
     }
 
-    // MARK: - Spyglass Mode
-
-    private var spyglassDisplayName: String {
-        guard let pubkey = feedService.spyglassPubkey else { return "" }
-        let profile = feedService.spyglassProfile ?? nostrService.profiles[pubkey]
-        return profile?.displayName ?? profile?.name ?? String(pubkey.prefix(8))
-    }
-
-    /// Full-screen visual change while Spyglass Mode is active: a persistent
-    /// top banner (name + exit affordance) plus a colored border around the
-    /// whole feed so it's unambiguous you're viewing someone else's graph.
-    @ViewBuilder
-    private var spyglassBanner: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "binoculars.fill")
-            Group {
-                #if os(iOS)
-                Text("Viewing as \(spyglassDisplayName) — shake to exit")
-                #else
-                Text("Viewing as \(spyglassDisplayName)")
-                #endif
-            }
-            .font(.appSystem(size: 13, weight: .semibold))
-            .lineLimit(1)
-            Spacer()
-            if feedService.isLoadingSpyglass {
-                ProgressView().scaleEffect(0.7)
-            }
-            Button {
-                feedService.exitSpyglass()
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Exit Spyglass Mode")
-        }
-        .foregroundColor(.white)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(Color.havenPurple)
-        .clipShape(Capsule())
-        .padding(.top, 8)
-        .shadow(radius: 4)
-    }
-
     /// Compact mode is active for all feeds except Media grid
     private var isCompactModeActive: Bool {
         guard compactModeEnabledForCurrentFeed else { return false }
@@ -395,42 +350,21 @@ struct FeedView: View {
     }
 
     var body: some View {
-        Group {
-            #if os(iOS)
-            NavigationStack(path: $navigationPath) {
-                rootContent
-                    .navigationTitle("")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbarBackground(.hidden, for: .navigationBar)
-                    .navigationDestination(for: FeedNote.self) { note in
-                        NoteDetailView(note: note)
-                    }
-            }
-            #else
-            VStack(spacing: 0) {
-                macFeedHeader
-                Divider()
-                rootContent
-            }
-            #endif
-        }
-        // Full-screen visual change while Spyglass Mode is active, so it's
-        // unambiguous you're viewing someone else's graph, not your own.
-        .overlay(alignment: .top) {
-            if feedService.spyglassPubkey != nil {
-                spyglassBanner
-            }
-        }
-        .overlay(
-            RoundedRectangle(cornerRadius: 0)
-                .stroke(Color.havenPurple, lineWidth: feedService.spyglassPubkey != nil ? 3 : 0)
-                .allowsHitTesting(false)
-        )
         #if os(iOS)
-        .onReceive(NotificationCenter.default.publisher(for: .deviceDidShake)) { _ in
-            if feedService.spyglassPubkey != nil {
-                feedService.exitSpyglass()
-            }
+        NavigationStack(path: $navigationPath) {
+            rootContent
+                .navigationTitle("")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbarBackground(.hidden, for: .navigationBar)
+                .navigationDestination(for: FeedNote.self) { note in
+                    NoteDetailView(note: note)
+                }
+        }
+        #else
+        VStack(spacing: 0) {
+            macFeedHeader
+            Divider()
+            rootContent
         }
         #endif
     }
@@ -2558,14 +2492,6 @@ struct FeedNoteRow: View {
                     icon: "hand.raised.fill",
                     message: "Blocked \(displayName)",
                     color: .red
-                )
-                dismiss()
-            }
-            glassIcon("binoculars.fill", tint: .havenPurple, expanded: expanded, index: 3) {
-                actions.spyglassUser(pubkey)
-                ActionToastManager.shared.show(
-                    icon: "binoculars.fill",
-                    message: "Viewing as \(displayName)"
                 )
                 dismiss()
             }
