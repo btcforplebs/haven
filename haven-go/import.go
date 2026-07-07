@@ -124,7 +124,7 @@ func importOwnerNotes(ctx context.Context) {
 					if ctx.Err() != nil {
 						break // Stop the loop on timeout
 					}
-					if _, ok := config.BlacklistedPubKeys[ev.PubKey]; ok {
+					if isBlacklisted(ev.PubKey) {
 						slog.Debug("🚫 skipping event from blacklisted pubkey", "pubkey", ev.PubKey, "id", ev.ID)
 						continue
 					}
@@ -195,7 +195,7 @@ func importTaggedNotes(ctx context.Context) {
 					break // Stop the loop on timeout
 				}
 
-				if _, ok := config.BlacklistedPubKeys[ev.PubKey]; ok {
+				if isBlacklisted(ev.PubKey) {
 					slog.Debug("🚫 skipping tagged event from blacklisted pubkey", "pubkey", ev.PubKey, "id", ev.ID)
 					continue
 				}
@@ -532,7 +532,7 @@ type inboxClassification struct {
 // subscription, the watermark catch-up pull, and the negentropy sync path so
 // their accept/reject behavior cannot drift.
 func classifyInboxEvent(ctx context.Context, ev *nostr.Event) inboxClassification {
-	if _, ok := config.BlacklistedPubKeys[ev.PubKey]; ok {
+	if isBlacklisted(ev.PubKey) {
 		slog.Debug("🚫discarding imported note from blacklisted pubkey", "pubkey", ev.PubKey, "id", ev.ID)
 		return inboxClassification{reason: rejectBlacklist}
 	}
@@ -708,7 +708,7 @@ func processOwnerEvent(ctx context.Context, ev nostr.RelayEvent, wdbOutbox event
 	if _, ok := config.WhitelistedPubKeys[ev.PubKey]; !ok {
 		return // relay returned a non-owner event; ignore
 	}
-	if _, ok := config.BlacklistedPubKeys[ev.PubKey]; ok {
+	if isBlacklisted(ev.PubKey) {
 		return
 	}
 	if isDuplicate(ctx, wdbOutbox, ev.Event) {

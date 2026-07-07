@@ -185,6 +185,19 @@ struct HavenConfig: Codable, Equatable {
 
     // Per-account blocked list (dictionary of npub: [blocked npubs])
     var blockedNpubsPerAccount: [String: [String]] = [:]
+
+    /// All npubs blocked on ANY configured account, combined. The relay-level
+    /// blacklist (BLACKLISTED_NPUBS_FILE / the live UpdateBlacklistC push) is
+    /// global, not per-account — blocking someone on any account should stop
+    /// the relay importing/notifying about them for every account on this
+    /// device, not just the one that blocked them. blacklistedNpubs itself is
+    /// left untouched by this: it's the legacy owner-only field several UI
+    /// call sites still read as a fallback, not something to repurpose.
+    var allBlockedNpubsAcrossAccounts: [String] {
+        var combined = Set(blockedNpubsPerAccount.values.flatMap { $0 })
+        combined.formUnion(blacklistedNpubs)
+        return Array(combined)
+    }
     // Last processed/published Kind 10000 event timestamp per account (npub: created_at)
     var blockedNpubsLastSyncTimestamp: [String: Int64] = [:]
 

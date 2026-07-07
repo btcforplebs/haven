@@ -9,6 +9,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -236,6 +237,39 @@ func getNpubsFromFile(filePath string) map[string]struct{} {
 		}
 	}
 	return pubKeys
+}
+
+// blacklistOverride lets the client push a live update to the blacklist
+// without restarting the relay. config.BlacklistedPubKeys itself is only
+// ever populated once, from BLACKLISTED_NPUBS_FILE at config-load time — so
+// blocking someone mid-session (the client-side "Block" action) previously
+// had no way to take effect at the relay level until the next app launch. In
+// the meantime the relay kept importing and notifying about that pubkey's
+// activity, which the client's own feed/vault filters correctly hid
+// everywhere — exactly the "red dot fires, nothing in any filter" symptom.
+// An atomic pointer swap (mirroring pkg/wot's pattern) rather than a mutex
+// since this is read on every tagged/whitelisted event across many goroutines
+// and written rarely (only when the user blocks/unblocks someone).
+var blacklistOverride atomic.Pointer[map[string]struct{}]
+
+// isBlacklisted checks the live override if one has been pushed, falling back
+// to the blacklist loaded from BLACKLISTED_NPUBS_FILE at startup. All
+// blacklist checks should go through this rather than reading
+// config.BlacklistedPubKeys directly, so a live update actually takes effect.
+func isBlacklisted(pubkey string) bool {
+	if m := blacklistOverride.Load(); m != nil {
+		_, ok := (*m)[pubkey]
+		return ok
+	}
+	_, ok := config.BlacklistedPubKeys[pubkey]
+	return ok
+}
+
+// UpdateBlacklist atomically replaces the live blacklist. Called whenever the
+// client blocks/unblocks a pubkey, on any account — takes effect on the very
+// next event processed, no relay restart required.
+func UpdateBlacklist(pubkeys map[string]struct{}) {
+	blacklistOverride.Store(&pubkeys)
 }
 
 func getEnv(key string) string {

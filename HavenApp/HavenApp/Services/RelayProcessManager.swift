@@ -262,7 +262,7 @@ class RelayProcessManager: ObservableObject {
         
         // Write blacklisted_npubs.json
         let blacklistURL = relayDataDir.appendingPathComponent("blacklisted_npubs.json")
-        if let data = try? encoder.encode(config.blacklistedNpubs) {
+        if let data = try? encoder.encode(config.allBlockedNpubsAcrossAccounts) {
             try? data.write(to: blacklistURL)
         }
         
@@ -612,7 +612,7 @@ class RelayProcessManager: ObservableObject {
         if let data = try? encoder.encode(config.activeBlastrRelays.isEmpty ? [] : config.activeBlastrRelays) { try? data.write(to: relayDataDir.appendingPathComponent(config.blastrRelaysFile)) }
         if let data = try? encoder.encode(config.dmRelays) { try? data.write(to: relayDataDir.appendingPathComponent("relays_dm.json")) }
         if let data = try? encoder.encode(config.whitelistedNpubs) { try? data.write(to: relayDataDir.appendingPathComponent("whitelisted_npubs.json")) }
-        if let data = try? encoder.encode(config.blacklistedNpubs) { try? data.write(to: relayDataDir.appendingPathComponent("blacklisted_npubs.json")) }
+        if let data = try? encoder.encode(config.allBlockedNpubsAcrossAccounts) { try? data.write(to: relayDataDir.appendingPathComponent("blacklisted_npubs.json")) }
         
         let envURL = relayDataDir.appendingPathComponent(".env")
         let envContent = generateMinimalEnv(config: config)
@@ -984,7 +984,7 @@ class RelayProcessManager: ObservableObject {
         if let data = try? encoder.encode(config.whitelistedNpubs) {
             try? data.write(to: relayDataDir.appendingPathComponent(config.whitelistedNpubsFile))
         }
-        if let data = try? encoder.encode(config.blacklistedNpubs) {
+        if let data = try? encoder.encode(config.allBlockedNpubsAcrossAccounts) {
             try? data.write(to: relayDataDir.appendingPathComponent(config.blacklistedNpubsFile))
         }
 

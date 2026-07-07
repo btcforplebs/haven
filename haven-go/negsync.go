@@ -250,7 +250,7 @@ func (s *outboxNegStore) Publish(ctx context.Context, ev nostr.Event) error {
 	if _, ok := config.WhitelistedPubKeys[ev.PubKey]; !ok {
 		return nil // relay returned a non-owner event
 	}
-	if _, ok := config.BlacklistedPubKeys[ev.PubKey]; ok {
+	if isBlacklisted(ev.PubKey) {
 		return nil
 	}
 	if isDuplicate(ctx, s.outbox, &ev) {

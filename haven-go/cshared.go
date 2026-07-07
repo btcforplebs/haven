@@ -408,6 +408,26 @@ func RequestRelaySyncC() {
 	RequestRelaySync()
 }
 
+//export UpdateBlacklistC
+func UpdateBlacklistC(npubsJSON *C.char) {
+	// Called whenever the client blocks/unblocks a pubkey, on any account, so
+	// it takes effect at the relay immediately instead of only on next launch
+	// — see UpdateBlacklist's doc comment for why that gap mattered.
+	var npubs []string
+	if err := json.Unmarshal([]byte(C.GoString(npubsJSON)), &npubs); err != nil {
+		log.Printf("⚠️ UpdateBlacklistC: failed to parse npubs JSON: %v", err)
+		return
+	}
+	pubkeys := make(map[string]struct{}, len(npubs))
+	for _, npub := range npubs {
+		if pk := nPubToPubkey(strings.TrimSpace(npub)); pk != "" {
+			pubkeys[pk] = struct{}{}
+		}
+	}
+	UpdateBlacklist(pubkeys)
+	log.Printf("🚷 Live blacklist updated: %d pubkey(s)", len(pubkeys))
+}
+
 //export BackupDatabaseC
 func BackupDatabaseC(outputPath *C.char) (ret C.int) {
 	defer func() {

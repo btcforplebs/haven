@@ -102,7 +102,7 @@ func MustBeInWotToPost(ctx context.Context, event *nostr.Event) (bool, string) {
 
 func MustNotBeBlacklistedToPost(ctx context.Context, event *nostr.Event) (bool, string) {
 	// Events from a blacklisted pubkey ARE always rejected
-	if _, ok := config.BlacklistedPubKeys[event.PubKey]; ok {
+	if isBlacklisted(event.PubKey) {
 		slog.Debug("🚫 event rejected: event author is blacklisted", "event", event.ID, "pubkey", event.PubKey)
 		return true, "you are blacklisted from this relay"
 	}
@@ -111,7 +111,7 @@ func MustNotBeBlacklistedToPost(ctx context.Context, event *nostr.Event) (bool, 
 	if authenticatedUser == "" {
 		return true, "auth-required: you must be authenticated to post to this relay"
 	}
-	if _, ok := config.BlacklistedPubKeys[authenticatedUser]; ok {
+	if isBlacklisted(authenticatedUser) {
 		slog.Debug("🚫 event rejected: authenticated user is blacklisted", "event", event.ID, "pubkey", authenticatedUser)
 		return true, "you are blacklisted from this relay"
 	}

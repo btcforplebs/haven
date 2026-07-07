@@ -668,47 +668,67 @@ class ConfigService: ObservableObject {
     func blockProfile(_ npub: String) {
         let active = config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
         let targetNpub = active.isEmpty ? config.ownerNpub : active
-        
+
         var current = config.blockedNpubsPerAccount[targetNpub] ?? []
         if !current.contains(npub) {
             current.append(npub)
             config.blockedNpubsPerAccount[targetNpub] = current
-            
+
             // Sync owner to blacklistedNpubs for Go backend compatibility
             if targetNpub == config.ownerNpub {
                 config.blacklistedNpubs = current
             }
             save()
-            
+            syncBlacklistToRelay()
+
             // Post notification for instant UI refresh
             NotificationCenter.default.post(name: NSNotification.Name("BlockedAccountsUpdated"), object: nil)
-            
+
             // Publish updated mute list back to Nostr
             NostrService.shared.publishMuteList(for: targetNpub, blockedNpubs: current)
         }
     }
-    
+
     func unblockProfile(_ npub: String) {
         let active = config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
         let targetNpub = active.isEmpty ? config.ownerNpub : active
-        
+
         var current = config.blockedNpubsPerAccount[targetNpub] ?? []
         if let index = current.firstIndex(of: npub) {
             current.remove(at: index)
             config.blockedNpubsPerAccount[targetNpub] = current
-            
+
             // Sync owner to blacklistedNpubs for Go backend compatibility
             if targetNpub == config.ownerNpub {
                 config.blacklistedNpubs = current
             }
             save()
-            
+            syncBlacklistToRelay()
+
             // Post notification for instant UI refresh
             NotificationCenter.default.post(name: NSNotification.Name("BlockedAccountsUpdated"), object: nil)
-            
+
             // Publish updated mute list back to Nostr
             NostrService.shared.publishMuteList(for: targetNpub, blockedNpubs: current)
         }
+    }
+
+    /// Pushes the combined (all-accounts) blocked list to the running relay
+    /// immediately. Without this, BLACKLISTED_NPUBS_FILE is only ever read once
+    /// at relay startup — blocking someone mid-session previously had no effect
+    /// at the relay level until the next app launch, so the relay kept
+    /// importing and notifying about their activity even though the client's
+    /// own feed/vault filters correctly hid it everywhere (the red dot fires,
+    /// but nothing shows up in any filter — that mismatch is the bug this
+    /// closes). Also fixes secondary/non-owner accounts never reaching the
+    /// relay's blacklist at all, since the relay-level list is global, not
+    /// per-account, and previously only the owner's blocks were synced to it.
+    private func syncBlacklistToRelay() {
+        guard let data = try? JSONEncoder().encode(config.allBlockedNpubsAcrossAccounts),
+              let json = String(data: data, encoding: .utf8),
+              let cJSON = strdup(json) else { return }
+        UpdateBlacklistC(cJSON)
+        free(cJSON)
     }
 
     // MARK: - Throttle (Slow Down)
