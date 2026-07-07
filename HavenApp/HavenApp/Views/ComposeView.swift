@@ -1222,21 +1222,62 @@ struct ComposeView: View {
                     return tag[3] != "mention"
                 }
 
+                // NIP-10/NIP-01: addressable-event a-tags, alongside the e-tags above.
+                // A parameterized replaceable event (kind 30000–39999, e.g. a long-form
+                // article) gets a new event id every time it's edited, so an e-tag-only
+                // reply silently becomes orphaned from other clients' view of the thread
+                // once the author edits it — the "a" coordinate (kind:pubkey:d-tag) is
+                // what stays stable across edits.
+                func addressableCoordinate(kind: Int, pubkey: String, tags: [[String]]) -> String? {
+                    guard kind >= 30000 && kind < 40000,
+                          let dTag = tags.first(where: { $0.count >= 2 && $0[0] == "d" })?[1] else { return nil }
+                    return "\(kind):\(pubkey):\(dTag)"
+                }
+                let parentNonMentionATags = effectiveParentTags.filter { tag in
+                    guard tag.count >= 2 && tag[0] == "a" else { return false }
+                    guard tag.count >= 4 else { return true }
+                    return tag[3] != "mention"
+                }
+
                 if parentNonMentionETags.isEmpty {
-                    // Parent IS the root note — single e-tag with "root" marker
-                    tags.append(["e", effectiveParentId, relayHint, "root"])
+                    // Parent IS the root note — single e-tag with "root" marker.
+                    // NIP-10: the optional 5th element is the event author's pubkey,
+                    // used by the outbox model to know whose relays to fetch it from.
+                    tags.append(["e", effectiveParentId, relayHint, "root", effectiveParentPubkey])
+                    if let coord = addressableCoordinate(kind: parent.kind, pubkey: effectiveParentPubkey, tags: effectiveParentTags) {
+                        tags.append(["a", coord, relayHint, "root"])
+                    }
                 } else {
                     // Parent is itself a reply — find the thread root
                     let threadRootId: String
+                    let threadRootPubkey: String?
                     if let rootTag = parentNonMentionETags.first(where: { $0.count >= 4 && $0[3] == "root" }) {
                         // Preferred: explicit "root" marker in parent's tags
                         threadRootId = rootTag[1]
+                        threadRootPubkey = rootTag.count >= 5 ? rootTag[4] : nil
                     } else {
                         // Deprecated positional: first e-tag is the root
                         threadRootId = parentNonMentionETags[0][1]
+                        threadRootPubkey = parentNonMentionETags[0].count >= 5 ? parentNonMentionETags[0][4] : nil
                     }
-                    tags.append(["e", threadRootId, relayHint, "root"])
-                    tags.append(["e", effectiveParentId, relayHint, "reply"])
+                    if let pk = threadRootPubkey {
+                        tags.append(["e", threadRootId, relayHint, "root", pk])
+                    } else {
+                        tags.append(["e", threadRootId, relayHint, "root"])
+                    }
+                    tags.append(["e", effectiveParentId, relayHint, "reply", effectiveParentPubkey])
+
+                    // Root a-tag: we only have the root's event id here (not its kind/
+                    // pubkey/d-tag), so propagate it forward from the parent's own root
+                    // a-tag if it had one.
+                    if let rootATag = parentNonMentionATags.first(where: { $0.count >= 4 && $0[3] == "root" }) ?? parentNonMentionATags.first {
+                        tags.append(["a", rootATag[1], relayHint, "root"])
+                    }
+
+                    // Reply a-tag: the immediate parent might itself be addressable.
+                    if let coord = addressableCoordinate(kind: parent.kind, pubkey: effectiveParentPubkey, tags: effectiveParentTags) {
+                        tags.append(["a", coord, relayHint, "reply"])
+                    }
                 }
 
                 // Always tag the parent author

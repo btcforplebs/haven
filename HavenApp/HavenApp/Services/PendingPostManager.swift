@@ -131,9 +131,11 @@ class PendingPostManager: ObservableObject {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { isShowing = true }
 
         // NIP-18: always repost the ORIGINAL event, not a repost wrapper.
-        // For kind 6 notes, repostedEventId points to the original kind 1 event.
+        // For kind 6 notes, repostedEventId points to the original kind 1 event
+        // (the only kind this app has ever wrapped in kind 6).
         let originalId = sourceNote.repostedEventId ?? sourceNote.id
         let originalPubkey = sourceNote.pubkey // already swapped to inner author for kind 6
+        let originalKind = sourceNote.repostedEventId != nil ? 1 : sourceNote.kind
 
         beginCountdown {
             // NIP-18: content SHOULD be the stringified JSON of the reposted event.
@@ -145,11 +147,20 @@ class PendingPostManager: ObservableObject {
                 ?? ConfigService.shared.config.activeBlastrRelays.first
                 ?? ConfigService.shared.config.nostrURL
 
+            // NIP-18: kind 6 is reserved for reposting kind-1 notes. Anything else
+            // (e.g. a kind-30023 long-form article) needs kind 16 with a "k" tag
+            // naming the original kind, or most clients will reject/ignore it.
+            let repostKind = originalKind == 1 ? 6 : 16
+            var tags: [[String]] = [["e", originalId, relayHint], ["p", originalPubkey]]
+            if repostKind == 16 {
+                tags.append(["k", String(originalKind)])
+            }
+
             let powSnap = PowPreferences.snapshot()
             let powDiff = powSnap.noteEnabled ? powSnap.noteDifficulty : 0
             if let signed = await nostrService.mineAndSignEventAsync(
-                kind: 6, content: embedded,
-                tags: [["e", originalId, relayHint], ["p", originalPubkey]],
+                kind: repostKind, content: embedded,
+                tags: tags,
                 difficulty: powDiff
             ) {
                 nostrService.postEvent(signed)

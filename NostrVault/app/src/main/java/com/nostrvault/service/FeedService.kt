@@ -2456,16 +2456,38 @@ class FeedService @Inject constructor(
         saveInteractionState()
     }
 
-    /** Repost a note (kind 6). */
+    /** Repost a note (kind 6 for kind-1 notes, kind 16 + k-tag otherwise, per NIP-18). */
     fun repostNote(noteId: String) {
         val existing = _repostedEventIds.value
         if (noteId in existing) return
         _repostedEventIds.value = existing + noteId
 
         scope.launch(Dispatchers.IO) {
-            val rawEvent = rawEventCache[noteId] ?: ""
-            val tags = listOf(listOf("e", noteId))
-            val event = nostrService.signEvent(kind = 6, content = rawEvent, tags = tags)
+            // NIP-18: always repost the ORIGINAL event, not a repost wrapper. For kind
+            // 6 notes, repostedEventId points to the original kind-1 event (the only
+            // kind this app has ever wrapped in kind 6).
+            val note = findNote(noteId)
+            val originalId = note?.repostedEventId ?: noteId
+            val originalPubkey = note?.pubkey
+            val originalKind = if (note?.repostedEventId != null) 1 else (note?.kind ?: 1)
+
+            val rawEvent = rawEventCache[originalId] ?: ""
+            val config = configStore.config.value
+            // NIP-18: e tag MUST include a relay URL as its third entry.
+            val relayHint = config.activeFeedRelays.firstOrNull()
+                ?: config.activeBlastrRelays.firstOrNull()
+                ?: (config.nostrURL ?: "")
+
+            // NIP-18: kind 6 is reserved for reposting kind-1 notes. Anything else
+            // (e.g. a kind-30023 long-form article) needs kind 16 with a "k" tag
+            // naming the original kind, or most clients will reject/ignore it.
+            val repostKind = if (originalKind == 1) 6 else 16
+            val tags = buildList {
+                add(listOf("e", originalId, relayHint))
+                originalPubkey?.let { add(listOf("p", it)) }
+                if (repostKind == 16) add(listOf("k", originalKind.toString()))
+            }
+            val event = nostrService.signEvent(kind = repostKind, content = rawEvent, tags = tags)
             event?.let { nostrService.postEvent(it) }
         }
 

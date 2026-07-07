@@ -791,19 +791,63 @@ class ComposeNoteViewModel @Inject constructor(
         val parentETags = parentNote.tags.filter { it.size >= 2 && it[0] == "e" }
         val parentNonMentionETags = parentETags.filter { it.size < 4 || it[3] != "mention" }
 
+        // NIP-10/NIP-01: addressable-event a-tags, alongside the e-tags above. A
+        // parameterized replaceable event (kind 30000–39999, e.g. a long-form article)
+        // gets a new event id every time it's edited, so an e-tag-only reply silently
+        // becomes orphaned from other clients' view of the thread once the author edits
+        // it — the "a" coordinate (kind:pubkey:d-tag) is what stays stable across edits.
+        fun addressableCoordinate(kind: Int, pubkey: String, noteTags: List<List<String>>): String? {
+            if (kind < 30000 || kind >= 40000) return null
+            val dTag = noteTags.firstOrNull { it.size >= 2 && it[0] == "d" }?.get(1) ?: return null
+            return "$kind:$pubkey:$dTag"
+        }
+        val parentNonMentionATags = parentNote.tags.filter { it.size >= 2 && it[0] == "a" }
+            .filter { it.size < 4 || it[3] != "mention" }
+
         if (parentNonMentionETags.isEmpty()) {
-            // Parent IS the root note — single e-tag with "root" marker
-            tags.add(listOf("e", parentId, "", "root"))
+            // Parent IS the root note — single e-tag with "root" marker. NIP-10: the
+            // optional 5th element is the event author's pubkey, used by the outbox
+            // model to know whose relays to fetch it from.
+            tags.add(listOf("e", parentId, "", "root", parentNote.pubkey))
+            addressableCoordinate(parentNote.kind, parentNote.pubkey, parentNote.tags)?.let { coord ->
+                tags.add(listOf("a", coord, "", "root"))
+            }
         } else {
             // Parent is itself a reply — find the thread root
             val rootTag = parentNonMentionETags.firstOrNull { it.size >= 4 && it[3] == "root" }
             val threadRootId = rootTag?.get(1) ?: parentNonMentionETags[0][1]
-            tags.add(listOf("e", threadRootId, "", "root"))
-            tags.add(listOf("e", parentId, "", "reply"))
+            val threadRootSource = rootTag ?: parentNonMentionETags[0]
+            val threadRootPubkey = if (threadRootSource.size >= 5) threadRootSource[4] else null
+            tags.add(
+                if (threadRootPubkey != null) listOf("e", threadRootId, "", "root", threadRootPubkey)
+                else listOf("e", threadRootId, "", "root")
+            )
+            tags.add(listOf("e", parentId, "", "reply", parentNote.pubkey))
+
+            // Root a-tag: we only have the root's event id here (not its kind/pubkey/
+            // d-tag), so propagate it forward from the parent's own root a-tag if it had one.
+            val rootATag = parentNonMentionATags.firstOrNull { it.size >= 4 && it[3] == "root" }
+                ?: parentNonMentionATags.firstOrNull()
+            rootATag?.let { tags.add(listOf("a", it[1], "", "root")) }
+
+            // Reply a-tag: the immediate parent might itself be addressable.
+            addressableCoordinate(parentNote.kind, parentNote.pubkey, parentNote.tags)?.let { coord ->
+                tags.add(listOf("a", coord, "", "reply"))
+            }
         }
 
         // Always tag the parent author
         tags.add(listOf("p", parentNote.pubkey))
+
+        // NIP-10: "the reply event's p tags should contain all of E's p tags as well
+        // as the pubkey of the event being replied to" — otherwise everyone else in
+        // the thread except the immediate parent silently stops being notified.
+        val seenPubkeys = mutableSetOf(parentNote.pubkey)
+        for (tag in parentNote.tags) {
+            if (tag.size >= 2 && tag[0] == "p" && seenPubkeys.add(tag[1])) {
+                tags.add(listOf("p", tag[1]))
+            }
+        }
 
         return tags
     }
