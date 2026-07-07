@@ -36,6 +36,20 @@ class FeedService: ObservableObject {
     /// When the extended network was last computed. Used to skip re-fetching within 1 hour.
     private var extendedNetworkComputedAt: Date?
     private static let extendedNetworkCacheAge: TimeInterval = 3600 // 1 hour
+
+    // MARK: - Spyglass Mode
+    // View Following/Discover as if you were some other pubkey, computed entirely
+    // on-device from public kind-3 data (no relay-side service, no NIP-90 job
+    // protocol — just the same follow-graph hop Discover already does, rooted at
+    // someone else). Kept in dedicated state, deliberately never touching
+    // followedPubkeys/extendedNetworkPubkeys — those feed the follow-list
+    // overwrite guard and publish/follow logic, and must always reflect the real
+    // account regardless of what's being spyglassed.
+    @Published var spyglassPubkey: String? = nil
+    @Published var spyglassProfile: FeedProfile? = nil
+    @Published var spyglassFollowedPubkeys: [String] = []
+    @Published var spyglassExtendedNetworkPubkeys: [String] = []
+    @Published var isLoadingSpyglass = false
     @Published var isLoadingContacts = false
     /// True once contact loading has completed at least once (success, empty, or timeout).
     /// Used to gate follow/unfollow so we don't publish before the kind-3 has had a chance to arrive.
@@ -96,6 +110,12 @@ class FeedService: ObservableObject {
         rebuildNoteIndex()
         let blocked = ConfigService.shared.activeAccountBlockedHexPubkeys
         let throttled = ConfigService.shared.activeAccountThrottledHexPubkeys
+        // While spyglassing, "Following"-shaped filtering should judge membership
+        // against the spyglassed pubkey's follows, not the real account's — same
+        // substitution as desiredPrimaryAuthorsForMode(), otherwise notes that
+        // arrive via the (correctly spyglass-scoped) subscription get filtered
+        // right back out here.
+        let effectiveFollowedPubkeys = spyglassPubkey != nil ? spyglassFollowedPubkeys : followedPubkeys
 
         let newFiltered = FeedFilterEngine.filterFeedNotes(
             notes: notes,
@@ -103,7 +123,7 @@ class FeedService: ObservableObject {
             blocked: blocked,
             showReposts: ConfigService.shared.config.showReposts,
             showReplies: ConfigService.shared.config.showReplies,
-            followedPubkeys: followedPubkeys,
+            followedPubkeys: effectiveFollowedPubkeys,
             wotPubkeys: wotPubkeys,
             popularFilter: popularFilter,
             popularNoteScores: popularNoteScores,
@@ -206,6 +226,16 @@ class FeedService: ObservableObject {
 
     // One client per relay URL
     private var feedClients: [String: WebSocketClient] = [:]
+    /// Relay keys whose messageSubject/connectionState sinks are currently live.
+    /// A warm account switch calls cancellables.removeAll() but deliberately keeps
+    /// feed clients connected (to avoid a full relay reconnect) — that call also
+    /// silently orphans those clients' sinks, since removeAll() cancels every
+    /// Combine subscription regardless of which relay it belonged to. Without this
+    /// tracking, subscribeToAllRelays()'s "already connected, just resend the REQ"
+    /// reuse branch has no way to know its sink is gone, so every incoming
+    /// EVENT/EOSE on that socket is delivered to zero subscribers and silently
+    /// dropped — the new account's feed looks stuck until the loading timeout.
+    private var subscribedClientKeys = Set<String>()
     private var cancellables = Set<AnyCancellable>()
     private var seenIds = Set<String>()
     private static let maxSeenIds = 10_000
@@ -687,6 +717,10 @@ class FeedService: ObservableObject {
         // otherwise a reconcile could see a "matching" stale set and skip the
         // resubscribe the new account needs.
         subscribedAuthorsByRelay.removeAll()
+        // The removeAll() above just orphaned every surviving feed client's sink
+        // (see subscribedClientKeys) — clear so subscribeToAllRelays() knows to
+        // re-establish them instead of silently dropping this account's events.
+        subscribedClientKeys.removeAll()
         contactRetryScheduled = false
 
         // 4. Either restore an in-memory snapshot OR cold-load.
@@ -1005,6 +1039,7 @@ class FeedService: ObservableObject {
         // No live subscriptions remain — drop the author-set bookkeeping so a
         // later reconcile doesn't think a relay is still subscribed.
         subscribedAuthorsByRelay.removeAll()
+        subscribedClientKeys.removeAll()
         contactRetryScheduled = false
     }
 
@@ -1067,7 +1102,18 @@ class FeedService: ObservableObject {
 
     /// The authoritative author set the current mode's primary subscription should
     /// carry. Empty means "no valid primary sub" for author-filtered modes.
+    /// While Spyglass Mode is active, Following/Discover-shaped modes substitute
+    /// the spyglassed pubkey's own graph instead of the real account's — see
+    /// enterSpyglass().
     private func desiredPrimaryAuthorsForMode() -> [String] {
+        if spyglassPubkey != nil {
+            switch feedMode {
+            case .following: return spyglassFollowedPubkeys
+            case .media: return mediaFeedMode == .following ? spyglassFollowedPubkeys : []
+            case .discovery: return spyglassExtendedNetworkPubkeys
+            case .global, .popular: return []
+            }
+        }
         switch feedMode {
         case .following: return followedPubkeys
         case .media: return mediaFeedMode == .following ? followedPubkeys : []
@@ -1828,7 +1874,7 @@ class FeedService: ObservableObject {
 
         isLoadingExtendedNetwork = true
         connectionStatus = "Analyzing network..."
-        
+
         extendedNetworkTimeout?.invalidate()
         extendedNetworkTimeout = Timer.scheduledTimer(withTimeInterval: 15.0, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -1837,16 +1883,27 @@ class FeedService: ObservableObject {
                 completion()
             }
         }
-        
+
         let candidates: [URL] = ([localRelayURL] + externalRelayURLs).compactMap { $0 }
-        fetchExtendedNetworkInParallel(from: candidates, completion: completion)
+        fetchExtendedNetworkInParallel(from: candidates, rootPubkeys: followedPubkeys) { [weak self] mutualCounts in
+            guard let self = self else { return }
+            self.extendedNetworkTimeout?.invalidate()
+            self.extendedNetworkPubkeys = ContactManager.rankExtendedNetwork(mutualCounts: mutualCounts)
+            self.extendedNetworkComputedAt = Date()
+            self.isLoadingExtendedNetwork = false
+            completion()
+        }
     }
 
-    private func fetchExtendedNetworkInParallel(from relays: [URL], completion: @escaping () -> Void) {
-        guard !relays.isEmpty else {
-            extendedNetworkTimeout?.invalidate()
-            isLoadingExtendedNetwork = false
-            completion()
+    /// Computes 2-hop mutual-follow counts rooted at `rootPubkeys` — fetches each
+    /// root pubkey's own kind-3 follow list from `relays`, tallying how many roots
+    /// follow each second-hop person (excluding the roots themselves). Used by
+    /// Discover (rooted at your own follows via loadExtendedNetwork above) and
+    /// Spyglass Mode (rooted at someone else's, via loadSpyglassNetwork below) —
+    /// identical graph hop, just a different starting set.
+    private func fetchExtendedNetworkInParallel(from relays: [URL], rootPubkeys: [String], completion: @escaping ([String: Int]) -> Void) {
+        guard !relays.isEmpty, !rootPubkeys.isEmpty else {
+            completion([:])
             return
         }
 
@@ -1854,21 +1911,15 @@ class FeedService: ObservableObject {
         var eoseCount = 0
         var clients: [WebSocketClient] = []
         var mutualCounts: [String: Int] = [:]
-        
-        // Exclude current follows and owner
-        let excludeSet = Set(followedPubkeys)
 
-        let finish: () -> Void = { [weak self] in
-            guard let self = self, !completed else { return }
+        // Exclude the roots themselves
+        let excludeSet = Set(rootPubkeys)
+
+        let finish: () -> Void = {
+            guard !completed else { return }
             completed = true
-            self.extendedNetworkTimeout?.invalidate()
             clients.forEach { $0.disconnect() }
-
-            self.extendedNetworkPubkeys = ContactManager.rankExtendedNetwork(mutualCounts: mutualCounts)
-            self.extendedNetworkComputedAt = Date()
-
-            self.isLoadingExtendedNetwork = false
-            completion()
+            completion(mutualCounts)
         }
 
         for url in relays {
@@ -1899,7 +1950,7 @@ class FeedService: ObservableObject {
                                 mutualCounts[pk, default: 0] += count
                             }
                         }
-                        
+
                     } else if type == "EOSE" {
                         DispatchQueue.main.async {
                             eoseCount += 1
@@ -1916,20 +1967,14 @@ class FeedService: ObservableObject {
 
             c.$connectionState
                 .receive(on: DispatchQueue.main)
-                .sink { [weak self] state in
-                    guard !completed, state == .connected, let self = self else { return }
-                    
+                .sink { state in
+                    guard !completed, state == .connected else { return }
+
                     var current = 0
                     var chunkIndex = 0
-                    // if empty, send empty filter just to trigger EOSE
-                    if self.followedPubkeys.isEmpty {
-                        let req = ["REQ", "ext-0", ["kinds": [3], "limit": 0]] as [Any]
-                        if let data = try? JSONSerialization.data(withJSONObject: req), let str = String(data: data, encoding: .utf8) { c.send(text: str) }
-                    }
-                    
-                    while current < self.followedPubkeys.count {
-                        let end = min(current + 200, self.followedPubkeys.count)
-                        let chunk = Array(self.followedPubkeys[current..<end])
+                    while current < rootPubkeys.count {
+                        let end = min(current + 200, rootPubkeys.count)
+                        let chunk = Array(rootPubkeys[current..<end])
                         let filter: [String: Any] = ["kinds": [3], "authors": chunk]
                         let req = ["REQ", "ext-\(chunkIndex)-\(UUID().uuidString.prefix(4))", filter] as [Any]
                         if let data = try? JSONSerialization.data(withJSONObject: req),
@@ -1944,6 +1989,146 @@ class FeedService: ObservableObject {
 
             c.connect(url: url)
         }
+    }
+
+    // MARK: - Spyglass Mode
+
+    private var spyglassTimeout: Timer?
+
+    /// Fetches a single arbitrary pubkey's own kind-3 follow list (the "root hop"
+    /// for Spyglass Mode — the equivalent of `followedPubkeys`, but for someone
+    /// else). One-shot, temporary connection; not cached beyond the current
+    /// spyglass session.
+    private func fetchFollowList(for pubkey: String, from relays: [URL], completion: @escaping ([String]) -> Void) {
+        guard !relays.isEmpty else {
+            completion([])
+            return
+        }
+
+        var completed = false
+        var eoseCount = 0
+        var clients: [WebSocketClient] = []
+        var newestCreatedAt: Int64 = -1
+        var pubkeys: [String] = []
+
+        let finish: () -> Void = {
+            guard !completed else { return }
+            completed = true
+            clients.forEach { $0.disconnect() }
+            completion(pubkeys)
+        }
+
+        for url in relays {
+            let c = WebSocketClient()
+            c.isTemporary = true
+            clients.append(c)
+
+            c.messageSubject
+                .receive(on: DispatchQueue.global(qos: .userInitiated))
+                .sink { msg in
+                    guard !completed else { return }
+                    guard let data = msg.data(using: .utf8),
+                          let json = try? JSONSerialization.jsonObject(with: data) as? [Any],
+                          let type = json[0] as? String else { return }
+
+                    if type == "EVENT", json.count >= 3,
+                       let eventDict = json[2] as? [String: Any],
+                       let kind = eventDict["kind"] as? Int, kind == 3,
+                       let createdAt = eventDict["created_at"] as? Int64,
+                       let tags = eventDict["tags"] as? [[String]] {
+                        DispatchQueue.main.async {
+                            guard createdAt > newestCreatedAt else { return }
+                            newestCreatedAt = createdAt
+                            pubkeys = tags.compactMap { $0.count >= 2 && $0[0] == "p" ? $0[1] : nil }
+                        }
+                    } else if type == "EOSE" {
+                        DispatchQueue.main.async {
+                            eoseCount += 1
+                            if eoseCount >= relays.count { finish() }
+                        }
+                    }
+                }
+                .store(in: &cancellables)
+
+            c.$connectionState
+                .receive(on: DispatchQueue.main)
+                .sink { state in
+                    guard !completed, state == .connected else { return }
+                    let filter: [String: Any] = ["kinds": [3], "authors": [pubkey], "limit": 1]
+                    let req = ["REQ", "spy-root-\(UUID().uuidString.prefix(6))", filter] as [Any]
+                    if let data = try? JSONSerialization.data(withJSONObject: req),
+                       let str = String(data: data, encoding: .utf8) {
+                        c.send(text: str)
+                    }
+                }
+                .store(in: &cancellables)
+
+            c.connect(url: url)
+        }
+    }
+
+    /// Enters Spyglass Mode: rebuilds Following/Discover as if you were `pubkey`,
+    /// entirely on-device (their kind-3 follow list, then the same 2-hop graph
+    /// computation Discover already does, just rooted there instead of your own
+    /// account). No relay-side service involved.
+    func enterSpyglass(pubkey: String) {
+        guard spyglassPubkey != pubkey else { return }
+        spyglassPubkey = pubkey
+        spyglassProfile = NostrService.shared.profiles[pubkey]
+        if spyglassProfile == nil {
+            NostrService.shared.fetchMissingProfiles(for: [pubkey])
+        }
+        spyglassFollowedPubkeys = []
+        spyglassExtendedNetworkPubkeys = []
+        isLoadingSpyglass = true
+        notes.removeAll()
+        recomputeFilteredNotes()
+
+        let candidates: [URL] = ([localRelayURL] + externalRelayURLs).compactMap { $0 }
+
+        spyglassTimeout?.invalidate()
+        spyglassTimeout = Timer.scheduledTimer(withTimeInterval: 20.0, repeats: false) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self = self, self.isLoadingSpyglass else { return }
+                self.isLoadingSpyglass = false
+            }
+        }
+
+        fetchFollowList(for: pubkey, from: candidates) { [weak self] follows in
+            guard let self = self, self.spyglassPubkey == pubkey else { return }
+            self.spyglassFollowedPubkeys = follows
+            self.reconcileFeedSubscriptions()
+
+            guard !follows.isEmpty else {
+                self.spyglassTimeout?.invalidate()
+                self.isLoadingSpyglass = false
+                return
+            }
+
+            self.fetchExtendedNetworkInParallel(from: candidates, rootPubkeys: follows) { [weak self] mutualCounts in
+                guard let self = self, self.spyglassPubkey == pubkey else { return }
+                self.spyglassTimeout?.invalidate()
+                self.spyglassExtendedNetworkPubkeys = ContactManager.rankExtendedNetwork(mutualCounts: mutualCounts)
+                self.isLoadingSpyglass = false
+                self.reconcileFeedSubscriptions()
+            }
+        }
+    }
+
+    /// Exits Spyglass Mode, clearing its isolated state and restoring the normal
+    /// feed for whichever mode is currently selected.
+    func exitSpyglass() {
+        guard spyglassPubkey != nil else { return }
+        spyglassTimeout?.invalidate()
+        spyglassPubkey = nil
+        spyglassProfile = nil
+        spyglassFollowedPubkeys = []
+        spyglassExtendedNetworkPubkeys = []
+        isLoadingSpyglass = false
+        notes.removeAll()
+        recomputeFilteredNotes()
+        reconcileFeedSubscriptions()
+        refresh()
     }
 
     // MARK: - Follow / Unfollow
@@ -2137,6 +2322,23 @@ class FeedService: ObservableObject {
             let key = url.absoluteString
             if let existing = feedClients[key],
                existing.connectionState == .connected {
+                // A warm account switch's cancellables.removeAll() can have orphaned
+                // this client's sink (see subscribedClientKeys) without disconnecting
+                // it — re-establish it before resending the REQ, or the response is
+                // delivered to zero subscribers and silently dropped.
+                if !subscribedClientKeys.contains(key) {
+                    let isLocalRelay = url.host == "127.0.0.1" || url.host == "localhost"
+                    subscribedClientKeys.insert(key)
+                    existing.messageSubject
+                        .receive(on: processingQueue)
+                        .sink { [weak self] msg in
+                            self?.handleFeedMsgBackground(msg, totalRelays: totalRelays)
+                            if !isLocalRelay {
+                                self?.handleExternalEventInjection(msg)
+                            }
+                        }
+                        .store(in: &cancellables)
+                }
                 sendPrimaryFeedSubscription(client: existing, label: key)
             } else if url == localRelayURL || url == localInboxURL || url == localFeedURL {
                 connectFeedRelay(url: url, totalRelays: totalRelays)
@@ -2176,6 +2378,7 @@ class FeedService: ObservableObject {
 
         let isLocalRelay = url.host == "127.0.0.1" || url.host == "localhost"
 
+        subscribedClientKeys.insert(key)
         c.messageSubject
             .receive(on: processingQueue)
             .sink { [weak self] msg in
