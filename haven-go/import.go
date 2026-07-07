@@ -618,7 +618,11 @@ func processInboxEvent(ctx context.Context, ev nostr.RelayEvent, wdbInbox, wdbCh
 	// logInboxImport is gated on c.notify (not just c.accept above) so
 	// self-tagged events (e.g. replying to your own note) don't light up the
 	// red dot — they're still imported, just not "activity from someone else".
-	if c.notify {
+	// Also gated on isNotifyableAge so old backlog (e.g. a catch-up round that
+	// only just succeeded after being stuck) doesn't light up the dot either —
+	// notifier.maybeNotify already skipped its own emitInboxNotify call for
+	// this, but previously still let logInboxImport through unconditionally.
+	if c.notify && isNotifyableAge(ev.Event) {
 		logInboxImport(ev.Event)
 		if notifier != nil {
 			notifier.maybeNotify(ev.Event, c.recipient)
@@ -637,6 +641,17 @@ func processInboxEvent(ctx context.Context, ev nostr.RelayEvent, wdbInbox, wdbCh
 // `recipient` is the whitelisted account's hex pubkey this event was tagged
 // for — the relay's inbox is shared across every whitelisted account on the
 // device, so clients need this to apply the right account's notification
+// isNotifyableAge reports whether ev is recent enough to notify about. Events
+// older than NotifyMaxAgeHours are historical backlog, not something that just
+// happened — an unrelated bug fix or a Mac relay reconnecting after a long gap
+// can suddenly let days/weeks of previously-stuck backlog through, and firing
+// a live notification (red dot + sound) for each one reads as noise, not news.
+// A zero/negative NotifyMaxAgeHours disables the check entirely.
+func isNotifyableAge(ev *nostr.Event) bool {
+	maxAge := time.Duration(config.NotifyMaxAgeHours) * time.Hour
+	return maxAge <= 0 || time.Since(ev.CreatedAt.Time()) <= maxAge
+}
+
 // preferences and to switch to the right account on tap, instead of guessing
 // from whichever account happens to be active in the UI.
 // `preview` is always the LAST field (it may contain spaces) and is empty for

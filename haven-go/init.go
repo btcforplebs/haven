@@ -363,7 +363,11 @@ func initRelays(ctx context.Context) error {
 		// Same gap as inboxRelay.StoreEvent above, for gift-wrapped DMs synced in
 		// via MacRelaySyncService's /chat injection — see the comment there.
 		// logInboxImport gated on c.notify, same reasoning as inboxRelay above.
-		if c := classifyInboxEvent(ctx, event); c.accept && c.notify {
+		// Also gated on isNotifyableAge: this path has no age check at all
+		// otherwise, and MacRelaySyncService injection is exactly where a large
+		// stuck backlog (e.g. one that only just started succeeding after an
+		// unrelated bug fix) would light up the dot for every old item.
+		if c := classifyInboxEvent(ctx, event); c.accept && c.notify && isNotifyableAge(event) {
 			logInboxImport(event)
 			emitInboxNotify(event, c.recipient)
 		}
@@ -548,8 +552,14 @@ func initRelays(ctx context.Context) error {
 		//
 		// logInboxImport is gated on c.notify (not just c.accept) so self-tagged
 		// events (e.g. replying to your own note) don't light up the red dot —
-		// they're still imported, just not "activity from someone else".
-		if c := classifyInboxEvent(ctx, event); c.accept && c.notify {
+		// they're still imported, just not "activity from someone else". Also
+		// gated on isNotifyableAge: this path had no age check at all otherwise,
+		// and MacRelaySyncService injection is exactly where a large stuck
+		// backlog (e.g. one that only just started succeeding after an
+		// unrelated bug fix, such as the NIP-42 AUTH fix for /private and /chat)
+		// would light up the dot and play a sound for every old item, reading
+		// as constant noise for events that aren't actually news.
+		if c := classifyInboxEvent(ctx, event); c.accept && c.notify && isNotifyableAge(event) {
 			logInboxImport(event)
 			emitInboxNotify(event, c.recipient)
 		}

@@ -92,8 +92,7 @@ func (n *batchNotifier) maybeNotify(ev *nostr.Event, recipient string) {
 	if ev == nil {
 		return
 	}
-	if maxAge := time.Duration(config.NotifyMaxAgeHours) * time.Hour; maxAge > 0 &&
-		time.Since(ev.CreatedAt.Time()) > maxAge {
+	if !isNotifyableAge(ev) {
 		return // old backlog, not news
 	}
 	n.mu.Lock()
@@ -186,8 +185,13 @@ func (s *inboxNegStore) Publish(ctx context.Context, ev nostr.Event) error {
 		s.advance(ev.CreatedAt)
 	}
 	// logInboxImport gated on c.notify so self-tagged events don't light up
-	// the relay-activity red dot — same reasoning as processInboxEvent.
-	if c.notify {
+	// the relay-activity red dot — same reasoning as processInboxEvent. Also
+	// gated on isNotifyableAge: this is the negentropy catch-up path, exactly
+	// where a large stuck backlog (e.g. one that just started succeeding after
+	// an unrelated bug fix) would otherwise light up the dot for every old
+	// item — maybeNotify already skipped the actual notification for these,
+	// but previously still let logInboxImport through unconditionally.
+	if c.notify && isNotifyableAge(&ev) {
 		logInboxImport(&ev)
 		if s.notifier != nil {
 			s.notifier.maybeNotify(&ev, c.recipient)
