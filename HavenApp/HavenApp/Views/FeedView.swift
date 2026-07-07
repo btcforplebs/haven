@@ -125,9 +125,6 @@ struct FeedView: View {
     @State private var galleryDragOffset: CGSize = .zero
     @State private var isRefreshing = false
     @State private var showingGlobalMediaWarning = false
-    @State private var showingSpyglassInput = false
-    @State private var spyglassInputText = ""
-    @State private var spyglassInputError: String?
     @State private var isAtTop: Bool = true
     @State private var scrolledNoteID: String?
     @State private var lastScrollOffset: CGFloat = 0
@@ -173,55 +170,10 @@ struct FeedView: View {
 
     // MARK: - Spyglass Mode
 
-    /// Decodes the Spyglass input field (npub1... or raw 64-char hex) and enters
-    /// Spyglass Mode on success. Purely client-side — see FeedService.enterSpyglass.
-    private func submitSpyglassInput() {
-        let trimmed = spyglassInputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        var hex: String? = nil
-        if trimmed.range(of: "^[a-fA-F0-9]{64}$", options: .regularExpression) != nil {
-            hex = trimmed.lowercased()
-        } else if trimmed.lowercased().hasPrefix("npub1"), let decoded = Bech32.decode(trimmed)?.hexString {
-            hex = decoded
-        }
-        guard let hexPubkey = hex else {
-            spyglassInputError = "Enter a valid npub or hex pubkey"
-            return
-        }
-        spyglassInputText = ""
-        spyglassInputError = nil
-        showingSpyglassInput = false
-        feedService.enterSpyglass(pubkey: hexPubkey)
-    }
-
     private var spyglassDisplayName: String {
         guard let pubkey = feedService.spyglassPubkey else { return "" }
         let profile = feedService.spyglassProfile ?? nostrService.profiles[pubkey]
         return profile?.displayName ?? profile?.name ?? String(pubkey.prefix(8))
-    }
-
-    @ViewBuilder
-    private var spyglassMenuEntry: some View {
-        Menu {
-            Button {
-                showingSpyglassInput = true
-            } label: {
-                Label("Spyglass Mode", systemImage: "binoculars")
-            }
-            if feedService.spyglassPubkey != nil {
-                Button(role: .destructive) {
-                    feedService.exitSpyglass()
-                } label: {
-                    Label("Exit Spyglass", systemImage: "xmark.circle")
-                }
-            }
-        } label: {
-            AvatarView(
-                url: nostrService.profiles[nostrService.activeHexPubkey]?.pictureURL,
-                pubkey: nostrService.activeHexPubkey,
-                size: 28
-            )
-        }
-        .accessibilityLabel("Account menu")
     }
 
     /// Full-screen visual change while Spyglass Mode is active: a persistent
@@ -474,9 +426,6 @@ struct FeedView: View {
                 .stroke(Color.havenPurple, lineWidth: feedService.spyglassPubkey != nil ? 3 : 0)
                 .allowsHitTesting(false)
         )
-        .sheet(isPresented: $showingSpyglassInput) {
-            spyglassInputSheet
-        }
         #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: .deviceDidShake)) { _ in
             if feedService.spyglassPubkey != nil {
@@ -486,61 +435,9 @@ struct FeedView: View {
         #endif
     }
 
-    @ViewBuilder
-    private var spyglassInputSheet: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("View Following and Discover as if you were this pubkey — computed entirely on-device from public follow-graph data. Nothing is published or shared.")
-                    .font(.appSystem(size: 13))
-                    .foregroundColor(.secondary)
-
-                TextField("npub1... or hex pubkey", text: $spyglassInputText)
-                    #if os(iOS)
-                    .textInputAutocapitalization(.never)
-                    #endif
-                    .autocorrectionDisabled()
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { submitSpyglassInput() }
-
-                if let error = spyglassInputError {
-                    Text(error)
-                        .font(.appSystem(size: 12))
-                        .foregroundColor(.red)
-                }
-
-                Spacer()
-            }
-            .padding()
-            .navigationTitle("Spyglass Mode")
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        spyglassInputText = ""
-                        spyglassInputError = nil
-                        showingSpyglassInput = false
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("View") { submitSpyglassInput() }
-                        .disabled(spyglassInputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-            }
-        }
-        #if os(macOS)
-        .frame(width: 420, height: 220)
-        #else
-        .presentationDetents([.height(260)])
-        #endif
-    }
-
     #if os(macOS)
     private var macFeedHeader: some View {
         HStack(spacing: 12) {
-            spyglassMenuEntry
-
             // Connection dot
             Button(action: { showingRelayStatus = true }) {
                 Circle()
@@ -722,8 +619,6 @@ struct FeedView: View {
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
                 HStack(spacing: 12) {
-                    spyglassMenuEntry
-
                     Button(action: { showingRelayStatus = true }) {
                         Circle()
                             .fill(feedService.connectionDotColor)
@@ -2663,6 +2558,14 @@ struct FeedNoteRow: View {
                     icon: "hand.raised.fill",
                     message: "Blocked \(displayName)",
                     color: .red
+                )
+                dismiss()
+            }
+            glassIcon("binoculars.fill", tint: .havenPurple, expanded: expanded, index: 3) {
+                actions.spyglassUser(pubkey)
+                ActionToastManager.shared.show(
+                    icon: "binoculars.fill",
+                    message: "Viewing as \(displayName)"
                 )
                 dismiss()
             }
