@@ -330,11 +330,16 @@ data class FeedNote(
                 lastChar = char
             }
 
-            // Hashtag / mention stuffing
+            // Hashtag / mention stuffing. Skip the mention half for replies: NIP-10
+            // has them correctly carry a p-tag for every thread participant (so
+            // everyone gets notified), which easily exceeds this threshold in a
+            // busy thread — that's normal protocol structure, not spam, and hiding
+            // it made people's own replies vanish from thread views.
             if (trimmed.length < 100) {
                 val hashtags = tags.count { it.size >= 2 && it[0] == "t" }
+                val isReply = tags.any { it.size >= 2 && it[0] == "e" && (it.size < 4 || it[3] != "mention") }
                 val mentions = tags.count { it.size >= 2 && it[0] == "p" }
-                if (hashtags > 6 || mentions > 6) return true
+                if (hashtags > 6 || (!isReply && mentions > 6)) return true
             }
 
             // Common spam keywords

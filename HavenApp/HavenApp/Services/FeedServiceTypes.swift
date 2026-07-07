@@ -317,11 +317,21 @@ struct FeedNote: Identifiable, Hashable, Equatable, Codable {
             lastChar = char
         }
         
-        // 3. Hashtag or Mention stuffing (in very short content)
+        // 3. Hashtag or Mention stuffing (in very short content). Skip the mention
+        // half of this check for replies: NIP-10 has them correctly carry a p-tag
+        // for every thread participant (so everyone gets notified), which easily
+        // exceeds this threshold in a busy thread — that's normal protocol
+        // structure, not spam, and hiding it made people's own replies vanish
+        // from thread views.
         let hashtags = tags.filter { $0.count >= 2 && $0[0] == "t" }
+        let eTags = tags.filter { $0.count >= 2 && $0[0] == "e" }
+        let isReply = eTags.contains { tag in
+            guard tag.count >= 4 else { return true }
+            return tag[3] != "mention"
+        }
         let mentions = tags.filter { $0.count >= 2 && $0[0] == "p" }
         if trimmed.count < 100 {
-            if hashtags.count > 6 || mentions.count > 6 {
+            if hashtags.count > 6 || (!isReply && mentions.count > 6) {
                 return true
             }
         }
