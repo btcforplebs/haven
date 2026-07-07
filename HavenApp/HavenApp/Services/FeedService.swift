@@ -2108,7 +2108,20 @@ class FeedService: ObservableObject {
         notes.removeAll()
         recomputeFilteredNotes()
 
-        let candidates: [URL] = ([localRelayURL] + externalRelayURLs).compactMap { $0 }
+        // The target's own kind-3 (and their follows' kind-3s, for the 2-hop
+        // computation) may well not be on your local relay or your configured
+        // feed relays at all — those are tuned for YOUR OWN network, not an
+        // arbitrary third party's. Mirror ProfileView's approach: also query
+        // their own outbox relays (NIP-65) if already known — likely, since
+        // Spyglass is triggered from a note of theirs you're already viewing,
+        // so their profile/relay-list was probably already fetched normally.
+        var candidates: [URL] = ([localRelayURL] + externalRelayURLs).compactMap { $0 }
+        if let outbox = NostrService.shared.outboxRelays[pubkey] {
+            let existing = Set(candidates.map { $0.absoluteString })
+            for relayStr in outbox.prefix(3) where !existing.contains(relayStr) {
+                if let url = URL(string: relayStr) { candidates.append(url) }
+            }
+        }
 
         spyglassTimeout?.invalidate()
         spyglassTimeout = Timer.scheduledTimer(withTimeInterval: 20.0, repeats: false) { [weak self] _ in
@@ -2151,7 +2164,13 @@ class FeedService: ObservableObject {
         isLoadingSpyglass = false
         notes.removeAll()
         recomputeFilteredNotes()
-        reconcileFeedSubscriptions()
+        // refresh() alone — it already reconciles subscriptions as part of its
+        // own flow. Calling reconcileFeedSubscriptions() first (as this used to)
+        // could set isLoadingContacts = true via its own loadContactList() call,
+        // then refresh()'s own `guard !isLoadingContacts` immediately after would
+        // silently no-op — leaving the feed empty (notes was just cleared above)
+        // with nothing to repopulate it. That's what "takes forever to exit"
+        // actually was: not slow, just silently doing nothing.
         refresh()
     }
 
