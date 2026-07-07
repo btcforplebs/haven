@@ -1142,6 +1142,19 @@ class FeedService: ObservableObject {
         guard !isPaused else { return }
         guard feedMode != .popular else { return }   // popular has no relay subs
 
+        if spyglassPubkey != nil {
+            // Spyglass Mode manages its own fetch-and-retry entirely within
+            // enterSpyglass() — don't self-heal into (re)loading the REAL
+            // account's contacts here just because the spyglass fetch hasn't
+            // resolved yet, and don't gate on the real (non-spyglass)
+            // extendedNetworkPubkeys, which desiredPrimaryAuthorsForMode()
+            // already correctly substitutes for below.
+            if isAuthorFilteredMode && desiredPrimaryAuthorsForMode().isEmpty { return }
+            ensureRelaySetConnected()
+            resubscribePrimaryIfNeeded()
+            return
+        }
+
         // Author-filtered mode with no follows yet → no valid primary sub. Don't
         // send a dead authors:[] REQ; instead self-heal by (re)fetching contacts
         // if the relay is ready and we're not already loading. When follows land,
@@ -1989,6 +2002,12 @@ class FeedService: ObservableObject {
 
             c.connect(url: url)
         }
+
+        // Without this, a single relay that never connects or never sends EOSE
+        // (a slow/offline relay, or one that just doesn't implement it) stalls
+        // this forever — finish() otherwise only fires once eoseCount reaches
+        // relays.count, which a bad relay can never contribute to.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10.0) { finish() }
     }
 
     // MARK: - Spyglass Mode
@@ -2065,6 +2084,11 @@ class FeedService: ObservableObject {
 
             c.connect(url: url)
         }
+
+        // Same reasoning as fetchExtendedNetworkInParallel's timeout: without
+        // this, a single relay that never connects or never sends EOSE stalls
+        // Spyglass Mode forever with nothing ever loading.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) { finish() }
     }
 
     /// Enters Spyglass Mode: rebuilds Following/Discover as if you were `pubkey`,
