@@ -1066,10 +1066,21 @@ class FeedService @Inject constructor(
                 accumulator.addReaction(targetId, pubkey)
             }
             9735 -> {
-                // Zap receipt — track engagement
+                // Zap receipt — track engagement. NIP-57: a receipt is spoofable by
+                // anyone who can reach a relay we query, so only trust it once we've
+                // confirmed it came from the recipient's own authorized publisher.
                 val zapReceipt = ZapService.parseZapReceipt(id, pubkey, content, tags, createdAt)
-                zapReceipt?.targetEventId?.let { targetId ->
-                    accumulator.addZap(targetId, zapReceipt.amountSats)
+                if (zapReceipt?.targetEventId != null) {
+                    scope.launch {
+                        val valid = ZapValidationService.isValidReceipt(
+                            receiptPubkey = zapReceipt.receiptPubkey,
+                            recipientPubkey = zapReceipt.recipientPubkey,
+                            profiles = nostrService.profiles.value,
+                        )
+                        if (valid) {
+                            accumulator.addZap(zapReceipt.targetEventId, zapReceipt.amountSats)
+                        }
+                    }
                 }
             }
             else -> {

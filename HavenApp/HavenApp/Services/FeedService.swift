@@ -2587,7 +2587,15 @@ class FeedService: ObservableObject {
             if let evData = try? JSONSerialization.data(withJSONObject: ev),
                let event = try? JSONDecoder().decode(NostrEvent.self, from: evData) {
                 DispatchQueue.main.async {
-                    NostrService.shared.injectEvent(event)
+                    if kind == 9735 {
+                        guard let recipientPubkey = tags.first(where: { $0.count >= 2 && $0[0] == "p" })?[1] else { return }
+                        Task {
+                            guard await ZapValidationService.isValidReceipt(pubkey: pubkey, recipientPubkey: recipientPubkey) else { return }
+                            NostrService.shared.injectEvent(event)
+                        }
+                    } else {
+                        NostrService.shared.injectEvent(event)
+                    }
                 }
             }
             return

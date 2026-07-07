@@ -47,6 +47,7 @@ import com.nostrvault.relay.RelayForegroundService
 import com.nostrvault.service.NostrEvent
 import com.nostrvault.service.NostrService
 import com.nostrvault.service.StatsService
+import com.nostrvault.service.ZapValidationService
 import com.nostrvault.ui.components.CustomZapSheet
 import com.nostrvault.ui.components.GlassPill
 import com.nostrvault.ui.components.GlassScaffold
@@ -772,6 +773,21 @@ class DashboardViewModel @Inject constructor(
                     if (kind in listOf(0, 10002, 10050, 10063, 10000)) {
                         nostrService.processRelayMessage(msg, relayUrl)
                         return
+                    }
+
+                    // NIP-57: a zap receipt is spoofable by anyone who can reach a relay
+                    // we query — only trust it if it came from the pubkey the recipient's
+                    // own LNURL endpoint designates as authorized to publish on their behalf.
+                    if (kind == 9735) {
+                        val recipientPubkey = tags.firstOrNull { it.size >= 2 && it[0] == "p" }?.get(1)
+                        if (recipientPubkey == null || !ZapValidationService.isValidReceipt(
+                                receiptPubkey = pubkey,
+                                recipientPubkey = recipientPubkey,
+                                profiles = nostrService.profiles.value,
+                            )
+                        ) {
+                            return
+                        }
                     }
 
                     val nostrEvent = NostrEvent(

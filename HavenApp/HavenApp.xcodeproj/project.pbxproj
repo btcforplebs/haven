@@ -12,6 +12,7 @@
 		0187825E75EB359DC64021CB /* NostrContentFormatter.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF76B5373E734C5934402DBD /* NostrContentFormatter.swift */; };
 		02C56DADF8359B80C31AFCF8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 915DF9A0796218139DE0703E /* Assets.xcassets */; };
 		030FF35B36CBFC4F36DB234A /* FIPSDetectionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAD62347E7E49CB5F2D3C53B /* FIPSDetectionService.swift */; };
+		0363D34093A8EFFCE181F988 /* ZapValidationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 139A3600AEB6297BCC772096 /* ZapValidationService.swift */; };
 		0550886023E5A566CEFD6FC3 /* AnimatedImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FBC15E9329FDE2D78ED1BD1 /* AnimatedImage.swift */; };
 		0731D8B3DE085946811D3C1A /* libhaven.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 27A87225270090D65AC98D48 /* libhaven.a */; };
 		07D3B5A3AB257E7D23940245 /* CustomZapSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CFC29BEE8A95187513A3787 /* CustomZapSheet.swift */; };
@@ -176,6 +177,7 @@
 		9281BA2E40137E09870E026E /* BitcoinSweepDisclaimerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89A56934F313BFA876DC49BA /* BitcoinSweepDisclaimerView.swift */; };
 		92BA603CA1FF1A6F13674A52 /* BitcoinSweepView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B9AD59B52FA7C675CB3E04BC /* BitcoinSweepView.swift */; };
 		955DEBE033584FD38C092029 /* FilterButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88F66077A2BB87C08E44C801 /* FilterButton.swift */; };
+		98129FCDB5AB43F70626CA07 /* ZapValidationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 139A3600AEB6297BCC772096 /* ZapValidationService.swift */; };
 		9A218E4A2B203DE0C9D92A48 /* FollowingBackupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 678F22C7D5983DCD0CEDBCDC /* FollowingBackupView.swift */; };
 		9A29693B7623772411B51DE7 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A271B5E3364858651DC05603 /* SettingsView.swift */; };
 		9AAB8FFAA8AC7D7BFDDC0E84 /* FeedView.swift.backup in Resources */ = {isa = PBXBuildFile; fileRef = 333BA8F59A1EAF77B3F6711E /* FeedView.swift.backup */; };
@@ -340,6 +342,7 @@
 		0FBC15E9329FDE2D78ED1BD1 /* AnimatedImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnimatedImage.swift; sourceTree = "<group>"; };
 		0FDA644A2B01FFA0F183C0D7 /* templates */ = {isa = PBXFileReference; lastKnownFileType = folder; name = templates; path = Resources/templates; sourceTree = SOURCE_ROOT; };
 		12AB34CD56EF78AB90CD12EF /* CredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CredentialStore.swift; sourceTree = "<group>"; };
+		139A3600AEB6297BCC772096 /* ZapValidationService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ZapValidationService.swift; sourceTree = "<group>"; };
 		1810634848EE1957C7E49DAF /* ConfigService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigService.swift; sourceTree = "<group>"; };
 		181FBA6695959DF3B88E2211 /* CashuService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CashuService.swift; sourceTree = "<group>"; };
 		19B6B870C61AB1313009408E /* NWCService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NWCService.swift; sourceTree = "<group>"; };
@@ -819,6 +822,7 @@
 				A6DAA5E7383F9175577A61C7 /* ZapService.swift */,
 				8DAE52B32FDAD53F0099799B /* SleepWakeMonitor.swift */,
 				6F85AD2B0C4772CBF8D0DA51 /* MacRelaySyncService.swift */,
+				139A3600AEB6297BCC772096 /* ZapValidationService.swift */,
 			);
 			name = Services;
 			path = HavenApp/Services;
@@ -1134,6 +1138,7 @@
 				30D8A68AB9D5370D2047AD1D /* ZapService.swift in Sources */,
 				BC3C6223ADAFD06FFD722780 /* RelayActivityBanner.swift in Sources */,
 				F676AB961AF68E25309E527B /* MacRelaySyncService.swift in Sources */,
+				98129FCDB5AB43F70626CA07 /* ZapValidationService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1291,6 +1296,7 @@
 				4E9D41F92A23243785F106A0 /* ZapService.swift in Sources */,
 				1DE79AF4D129B38A7F8B9AF7 /* RelayActivityBanner.swift in Sources */,
 				A776D1AE55AE27F05E37227B /* MacRelaySyncService.swift in Sources */,
+				0363D34093A8EFFCE181F988 /* ZapValidationService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

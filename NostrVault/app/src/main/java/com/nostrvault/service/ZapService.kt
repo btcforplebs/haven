@@ -18,6 +18,7 @@ object ZapService {
 
     data class ZapReceipt(
         val id: String,
+        val receiptPubkey: String,
         val senderPubkey: String,
         val recipientPubkey: String,
         val amountSats: Long,
@@ -60,6 +61,7 @@ object ZapService {
 
         return ZapReceipt(
             id = id,
+            receiptPubkey = pubkey,
             senderPubkey = senderPubkey,
             recipientPubkey = recipientPubkey,
             amountSats = amountSats,

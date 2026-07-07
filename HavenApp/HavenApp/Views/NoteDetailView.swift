@@ -1199,8 +1199,14 @@ struct NoteDetailView: View {
                     perNoteReposts[targetNoteId, default: []].append(event)
                 }
             } else if kind == 9735 {
-                if !(perNoteZaps[targetNoteId]?.contains(where: { $0.id == id }) ?? false) {
-                    perNoteZaps[targetNoteId, default: []].append(event)
+                if !(perNoteZaps[targetNoteId]?.contains(where: { $0.id == id }) ?? false),
+                   let recipientPubkey = tags.first(where: { $0.count >= 2 && $0[0] == "p" })?[1] {
+                    Task {
+                        guard await ZapValidationService.isValidReceipt(pubkey: pubkey, recipientPubkey: recipientPubkey) else { return }
+                        if !(self.perNoteZaps[targetNoteId]?.contains(where: { $0.id == id }) ?? false) {
+                            self.perNoteZaps[targetNoteId, default: []].append(event)
+                        }
+                    }
                 }
             }
 
