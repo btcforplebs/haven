@@ -718,22 +718,32 @@ class CashuService: ObservableObject {
             let subId = "cashu-restore-\(UUID().uuidString.prefix(8))"
             var receivedEvents: [NostrEvent] = []
 
+            func sendReq() {
+                let filter: [String: Any] = [
+                    "kinds": [7375],
+                    "authors": [ownPubkey]
+                ]
+                let req: [Any] = ["REQ", subId, filter]
+                if let data = try? JSONSerialization.data(withJSONObject: req),
+                   let str = String(data: data, encoding: .utf8) {
+                    client.send(text: str)
+                }
+            }
+
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                 var hasResumed = false
+                // The /private endpoint (first in relayURLs) requires NIP-42 AUTH before
+                // it'll answer a REQ (haven-go's khatru.RequestAuth + policies.MustAuth);
+                // the blastr relays that follow it in this same loop never challenge, so
+                // this only ever fires for /private. Without it, that REQ was silently
+                // rejected and this always burned the full 10s timeout with zero results.
+                var authSent = false
 
                 client.$connectionState
                     .receive(on: DispatchQueue.main)
                     .sink { state in
                         if state == .connected {
-                            let filter: [String: Any] = [
-                                "kinds": [7375],
-                                "authors": [ownPubkey]
-                            ]
-                            let req: [Any] = ["REQ", subId, filter]
-                            if let data = try? JSONSerialization.data(withJSONObject: req),
-                               let str = String(data: data, encoding: .utf8) {
-                                client.send(text: str)
-                            }
+                            sendReq()
                         }
                     }
                     .store(in: &self.cancellables)
@@ -744,6 +754,26 @@ class CashuService: ObservableObject {
                         guard let data = text.data(using: .utf8),
                               let arr = try? JSONSerialization.jsonObject(with: data) as? [Any],
                               let type = arr.first as? String else { return }
+
+                        if type == "AUTH", !authSent, let challenge = arr[safe: 1] as? String {
+                            authSent = true
+                            Task {
+                                guard let authEvent = await NostrService.shared.signEventAsync(
+                                    kind: 22242, content: "",
+                                    tags: [["relay", relayURL.absoluteString], ["challenge", challenge]],
+                                    forceOwner: true
+                                ) else { return }
+                                let msg: [Any] = ["AUTH", self.eventToDict(authEvent)]
+                                if let msgData = try? JSONSerialization.data(withJSONObject: msg),
+                                   let msgStr = String(data: msgData, encoding: .utf8) {
+                                    client.send(text: msgStr)
+                                }
+                                // The original REQ (sent immediately on connect, before this
+                                // challenge arrived) was rejected pre-auth — resend now.
+                                sendReq()
+                            }
+                            return
+                        }
 
                         if type == "EVENT", arr.count >= 3,
                            let eventDict = arr[2] as? [String: Any],
@@ -780,6 +810,18 @@ class CashuService: ObservableObject {
 
         recalculateBalance()
         saveState()
+    }
+
+    private func eventToDict(_ event: NostrEvent) -> [String: Any] {
+        return [
+            "id": event.id,
+            "pubkey": event.pubkey,
+            "created_at": event.created_at,
+            "kind": event.kind,
+            "tags": event.tags,
+            "content": event.content,
+            "sig": event.sig
+        ]
     }
 
     private func processTokenEvent(_ event: NostrEvent) async {

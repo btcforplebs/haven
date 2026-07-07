@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"runtime"
 	"sync"
 	"text/template"
@@ -198,6 +199,32 @@ func CloseDBs() {
 	}
 }
 
+// relayServiceURL builds the canonical URL a client actually connects to for
+// the given khatru mount path — used as the relay's ServiceURL, which khatru
+// validates NIP-42 AUTH "relay" tags against (getBaseURL prefers ServiceURL
+// over the request's real Host header). Getting either half wrong makes every
+// AUTH attempt fail with a scheme/host mismatch, even though the challenge and
+// signature are otherwise correct:
+//   - Host: config.RelayURL is only set when the user configured a public
+//     domain (e.g. the Mac relay feature); otherwise it's "" and this instance
+//     is local-only, reachable at 127.0.0.1:<port>.
+//   - Scheme: a configured public domain is always fronted by TLS (Cloudflare/
+//     reverse proxy terminate it) regardless of this device's own setting, but
+//     a bare local address reflects this device's actual HAVEN_ENABLE_TLS —
+//     "1" on iOS (App Transport Security requires HTTPS even for localhost),
+//     "0" on macOS/Android (plain HTTP locally, TLS only for a public domain).
+func relayServiceURL(path string) string {
+	scheme := "https"
+	host := config.RelayURL
+	if host == "" {
+		host = fmt.Sprintf("127.0.0.1:%d", config.RelayPort)
+		if os.Getenv("HAVEN_ENABLE_TLS") != "1" {
+			scheme = "http"
+		}
+	}
+	return scheme + "://" + host + path
+}
+
 func initRelays(ctx context.Context) error {
 	// Re-create relay instances on each call so their internal HTTP muxes are fresh.
 	// This prevents "pattern already registered" panics when the relay is restarted
@@ -230,7 +257,7 @@ func initRelays(ctx context.Context) error {
 	privateRelay.Info.Icon = config.PrivateRelayIcon
 	privateRelay.Info.Version = config.RelayVersion
 	privateRelay.Info.Software = config.RelaySoftware
-	privateRelay.ServiceURL = "https://" + config.RelayURL + "/private"
+	privateRelay.ServiceURL = relayServiceURL("/private")
 
 	if !privateRelayLimits.AllowEmptyFilters {
 		privateRelay.RejectFilter = append(privateRelay.RejectFilter, policies.NoEmptyFilters)
@@ -299,7 +326,7 @@ func initRelays(ctx context.Context) error {
 	chatRelay.Info.Icon = config.ChatRelayIcon
 	chatRelay.Info.Version = config.RelayVersion
 	chatRelay.Info.Software = config.RelaySoftware
-	chatRelay.ServiceURL = "https://" + config.RelayURL + "/chat"
+	chatRelay.ServiceURL = relayServiceURL("/chat")
 
 	if !chatRelayLimits.AllowEmptyFilters {
 		chatRelay.RejectFilter = append(chatRelay.RejectFilter, policies.NoEmptyFilters)
@@ -377,7 +404,7 @@ func initRelays(ctx context.Context) error {
 	outboxRelay.Info.Icon = config.OutboxRelayIcon
 	outboxRelay.Info.Version = config.RelayVersion
 	outboxRelay.Info.Software = config.RelaySoftware
-	outboxRelay.ServiceURL = "https://" + config.RelayURL
+	outboxRelay.ServiceURL = relayServiceURL("")
 
 	if !outboxRelayLimits.AllowEmptyFilters {
 		outboxRelay.RejectFilter = append(outboxRelay.RejectFilter, policies.NoEmptyFilters)
@@ -474,7 +501,7 @@ func initRelays(ctx context.Context) error {
 	inboxRelay.Info.Icon = config.InboxRelayIcon
 	inboxRelay.Info.Version = config.RelayVersion
 	inboxRelay.Info.Software = config.RelaySoftware
-	inboxRelay.ServiceURL = "https://" + config.RelayURL + "/inbox"
+	inboxRelay.ServiceURL = relayServiceURL("/inbox")
 
 	if !inboxRelayLimits.AllowEmptyFilters {
 		inboxRelay.RejectFilter = append(inboxRelay.RejectFilter, policies.NoEmptyFilters)
@@ -560,7 +587,7 @@ func initRelays(ctx context.Context) error {
 	feedRelay.Info.Description = "local cache of your follows' recent notes"
 	feedRelay.Info.Version = config.RelayVersion
 	feedRelay.Info.Software = config.RelaySoftware
-	feedRelay.ServiceURL = "https://" + config.RelayURL + "/feed"
+	feedRelay.ServiceURL = relayServiceURL("/feed")
 
 	// Reuse the outbox limiter numbers: the feed route is localhost-facing,
 	// and localhost connections bypass the connection limiter anyway.

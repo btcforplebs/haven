@@ -997,12 +997,13 @@ class DMService @Inject constructor(
         if (parsed.size < 2) return
         val challenge = parsed[1].jsonPrimitive.contentOrNull ?: return
         val config = configStore.config.value
-        // The NIP-42 relay tag must match the chat relay's ServiceURL, which the
-        // Go relay sets to "https://" + RELAY_URL + "/chat" → khatru NormalizeURL
-        // turns https→wss. We connect over ws:// (local, no TLS), but the AUTH
-        // tag must use the wss scheme + bare host or the relay rejects it.
-        val host = (config.nostrURL ?: return).substringAfter("://").trimEnd('/')
-        val relayUrl = "wss://$host/chat"
+        // The NIP-42 relay tag must match the chat relay's ServiceURL. The Go relay
+        // now builds that from the same scheme this device actually serves locally
+        // over (ws://, since Android never enables local TLS — see
+        // haven-go/init.go's relayServiceURL), so config.nostrURL's own scheme is
+        // already correct here — no need to force wss:// against the client's real
+        // connection scheme like this used to.
+        val relayUrl = "${(config.nostrURL ?: return).trimEnd('/')}/chat"
 
         scope.launch(Dispatchers.IO) {
             val tags = listOf(

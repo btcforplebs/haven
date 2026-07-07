@@ -261,22 +261,31 @@ class DraftService: ObservableObject {
         let subId = "drafts-\(UUID().uuidString.prefix(8))"
         var receivedEvents: [NostrEvent] = []
 
+        func sendReq() {
+            let filter: [String: Any] = [
+                "kinds": [31234],
+                "authors": [ownPubkey]
+            ]
+            let req: [Any] = ["REQ", subId, filter]
+            if let data = try? JSONSerialization.data(withJSONObject: req),
+               let str = String(data: data, encoding: .utf8) {
+                client.send(text: str)
+            }
+        }
+
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             var hasResumed = false
+            // /private requires NIP-42 AUTH before it'll answer a REQ (see
+            // haven-go/init.go's khatru.RequestAuth + policies.MustAuth) — without
+            // this, the REQ above is silently rejected and we just burn the full
+            // 5s timeout below on every call, never actually fetching drafts.
+            var authSent = false
 
             client.$connectionState
                 .receive(on: DispatchQueue.main)
                 .sink { state in
                     if state == .connected {
-                        let filter: [String: Any] = [
-                            "kinds": [31234],
-                            "authors": [ownPubkey]
-                        ]
-                        let req: [Any] = ["REQ", subId, filter]
-                        if let data = try? JSONSerialization.data(withJSONObject: req),
-                           let str = String(data: data, encoding: .utf8) {
-                            client.send(text: str)
-                        }
+                        sendReq()
                     }
                 }
                 .store(in: &self.cancellables)
@@ -287,6 +296,26 @@ class DraftService: ObservableObject {
                     guard let data = text.data(using: .utf8),
                           let arr = try? JSONSerialization.jsonObject(with: data) as? [Any],
                           let type = arr.first as? String else { return }
+
+                    if type == "AUTH", !authSent, let challenge = arr[safe: 1] as? String {
+                        authSent = true
+                        Task {
+                            guard let authEvent = await NostrService.shared.signEventAsync(
+                                kind: 22242, content: "",
+                                tags: [["relay", config.nostrURL + "/private"], ["challenge", challenge]],
+                                forceOwner: true
+                            ) else { return }
+                            let msg: [Any] = ["AUTH", self.eventToDict(authEvent)]
+                            if let msgData = try? JSONSerialization.data(withJSONObject: msg),
+                               let msgStr = String(data: msgData, encoding: .utf8) {
+                                client.send(text: msgStr)
+                            }
+                            // The original REQ (sent immediately on connect, before this
+                            // challenge arrived) was rejected pre-auth — resend now.
+                            sendReq()
+                        }
+                        return
+                    }
 
                     if type == "EVENT", arr.count >= 3,
                        let eventDict = arr[2] as? [String: Any],
@@ -447,5 +476,17 @@ class DraftService: ObservableObject {
 
             client.connect(url: url)
         }
+    }
+
+    private func eventToDict(_ event: NostrEvent) -> [String: Any] {
+        return [
+            "id": event.id,
+            "pubkey": event.pubkey,
+            "created_at": event.created_at,
+            "kind": event.kind,
+            "tags": event.tags,
+            "content": event.content,
+            "sig": event.sig
+        ]
     }
 }
