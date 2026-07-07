@@ -26,9 +26,17 @@ object EventPublisher {
         content: String,
         tags: List<List<String>>,
     ): String {
+        // NIP-17/NIP-59: the seal (kind 13) and gift wrap (kind 1059) SHOULD randomize
+        // created_at up to two days into the past, so the real send time isn't leaked
+        // to anyone who sees the event on relays (matches iOS's NIP17Service jitter).
+        val createdAt = if (kind == 13 || kind == 1059) {
+            System.currentTimeMillis() / 1000 - (0..172_800L).random()
+        } else {
+            System.currentTimeMillis() / 1000
+        }
         val event = buildJsonObject {
             put("pubkey", pubkey)
-            put("created_at", System.currentTimeMillis() / 1000)
+            put("created_at", createdAt)
             put("kind", kind)
             put("content", content)
             put("tags", buildJsonArray {
