@@ -33,6 +33,17 @@ class MacRelaySyncService: ObservableObject {
     private var lastAutoSyncAt: Date = .distantPast
     private let minAutoSyncGap: TimeInterval = 60
 
+    // Whether the sync currently in flight should announce a "Catching up — N new
+    // notifications" summary when it finishes. Only true for syncs the user actually
+    // experiences as "returning" (app foreground, explicit Sync Now) — the opportunistic
+    // syncIfConfigured() calls sprinkled through feed-load/view-appear code paths fire
+    // every ~60s during perfectly normal active use, and wrapping those in the same
+    // catch-up batching produced a "Catching up" notification roughly once a minute
+    // while the user was sitting right there, not away at all. Those still inject any
+    // new events; they just don't announce a batch summary — individual per-event
+    // notifications flow through the normal (un-batched) path instead.
+    private var currentSyncShouldAnnounceCatchUp = false
+
     /// Thread-safe accumulator for background event processing.
     /// All access is serialized on `processingQueue` to avoid data races.
     private let bgAccumulator = SyncAccumulator()
@@ -89,7 +100,10 @@ class MacRelaySyncService: ObservableObject {
 
     /// Syncs missed notes from the configured Mac relay.
     /// Call this on app foreground or after the local relay finishes booting.
-    func syncIfConfigured() {
+    /// `isForegroundReturn` should only be true for syncs the user actually experiences
+    /// as "returning" (see `currentSyncShouldAnnounceCatchUp`) — leave it false for
+    /// opportunistic calls from feed-load/view-appear code paths.
+    func syncIfConfigured(isForegroundReturn: Bool = false) {
         let macURL = ConfigService.shared.config.macRelayURL
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -123,24 +137,26 @@ class MacRelaySyncService: ObservableObject {
         }
 
         lastAutoSyncAt = Date()
+        currentSyncShouldAnnounceCatchUp = isForegroundReturn
         performSync(macRelayURL: macURL)
     }
     /// Force a manual sync (e.g., from a button tap in settings)
     func forceSync() {
         let macURL = ConfigService.shared.config.macRelayURL
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        
+
         guard !macURL.isEmpty else {
             syncStatus = "No Mac relay URL configured"
             return
         }
-        
+
         // Cancel any existing sync
         cancelSync()
-        
-        // For a force sync, we go back 24 hours from the current last sync 
+
+        // For a force sync, we go back 24 hours from the current last sync
         // to catch anything that might have been missed during clock drifts or filter issues.
         let startTime = max(0, lastSyncTimestamp - (24 * 3600))
+        currentSyncShouldAnnounceCatchUp = true
         performSync(macRelayURL: macURL, fromTimestamp: startTime)
     }
     
@@ -492,7 +508,13 @@ class MacRelaySyncService: ObservableObject {
         // relay processes it (see haven-go's inboxRelay/chatRelay StoreEvent hooks) —
         // without batching, catching up after being away would flood the user with
         // one notification per event instead of a single "N new notifications" summary.
-        LocalNotificationService.shared.beginCatchUpBatch()
+        // Only announce that summary for syncs the user experiences as "returning"
+        // (see currentSyncShouldAnnounceCatchUp) — opportunistic rounds that happen
+        // during normal active use just let individual notifications through as-is.
+        let shouldAnnounce = currentSyncShouldAnnounceCatchUp
+        if shouldAnnounce {
+            LocalNotificationService.shared.beginCatchUpBatch()
+        }
 
         Task {
             defer {
@@ -501,7 +523,9 @@ class MacRelaySyncService: ObservableObject {
                     isSyncing = false
                     syncStatus = "Sync interrupted"
                 }
-                LocalNotificationService.shared.endCatchUpBatch()
+                if shouldAnnounce {
+                    LocalNotificationService.shared.endCatchUpBatch()
+                }
             }
 
             for endpoint in endpoints {
