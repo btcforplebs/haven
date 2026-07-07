@@ -1490,8 +1490,10 @@ struct ProfileView: View {
         // Use up to 3 external relays to improve chances of finding the user's data.
         relayURLs.append(contentsOf: externalStrs.prefix(3).compactMap { URL(string: $0) })
 
-        // If we have the user's NIP-65 relay list, also query their preferred relays
-        if let userRelays = nostrService.relayLists[pubkey] {
+        // NIP-65 outbox model: we're fetching events FROM this user, so query their
+        // write/outbox relays (where they actually publish), not their read/inbox
+        // relays (where others send things TO them).
+        if let userRelays = nostrService.outboxRelays[pubkey] {
             let existingStrings = Set(relayURLs.map { $0.absoluteString })
             for relayStr in userRelays.prefix(3) {
                 if !existingStrings.contains(relayStr), let url = URL(string: relayStr) {

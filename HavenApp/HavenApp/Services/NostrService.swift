@@ -51,6 +51,10 @@ class NostrService: ObservableObject {
     // Relay List Metadata Cache (Kind 10002)
     @Published var relayLists: [String: [String]] = [:] // [Pubkey: [InboxRelayURLs]]
     @Published var outboxRelays: [String: [String]] = [:] // [Pubkey: [WriteRelayURLs]]
+    /// created_at of the kind-10002 event currently reflected in relayLists/outboxRelays,
+    /// per pubkey — guards against a late-arriving stale relay list (from a lagging relay)
+    /// clobbering a fresher one, same failure mode as the kind-3 follow-list clobber bug.
+    private var relayListCreatedAt: [String: Int64] = [:]
     private var relaysInFlight = Set<String>()
 
     // DM Relay List Cache (Kind 10050 - NIP-17)
@@ -1686,11 +1690,14 @@ class NostrService: ObservableObject {
             if event.kind == 10002 {
                 let parsed = ProfileRepository.parseRelayListTags(event.tags)
                 let pubkey = event.pubkey
+                let createdAt = event.created_at
                 DispatchQueue.main.async { [weak self] in
                     guard let self = self else { return }
+                    self.relaysInFlight.remove(pubkey)
+                    if let known = self.relayListCreatedAt[pubkey], createdAt < known { return }
+                    self.relayListCreatedAt[pubkey] = createdAt
                     if !parsed.inbox.isEmpty { self.relayLists[pubkey] = parsed.inbox }
                     if !parsed.write.isEmpty { self.outboxRelays[pubkey] = parsed.write }
-                    self.relaysInFlight.remove(pubkey)
                     self.saveProfilesThrottled()
                 }
                 return

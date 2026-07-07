@@ -523,7 +523,7 @@ class NostrService @Inject constructor(
                 return
             }
             10002 -> {
-                parseRelayListEvent(pubkey, tags)
+                parseRelayListEvent(pubkey, tags, createdAt)
                 return
             }
             10050 -> {
@@ -876,9 +876,18 @@ class NostrService @Inject constructor(
         }
     }
 
-    private fun parseRelayListEvent(pubkey: String, tags: List<List<String>>) {
+    // created_at of the kind-10002 event currently reflected in _relayLists/
+    // _outboxRelays, per pubkey — guards against a late-arriving stale relay list
+    // (from a lagging relay) clobbering a fresher one, same failure mode as the
+    // kind-3 follow-list clobber bug.
+    private val relayListCreatedAt = mutableMapOf<String, Long>()
+
+    private fun parseRelayListEvent(pubkey: String, tags: List<List<String>>, createdAt: Long) {
         val (readRelays, writeRelays) = profileRepository.parseRelayListTags(tags)
         scope.launch(Dispatchers.Main.immediate) {
+            val known = relayListCreatedAt[pubkey]
+            if (known != null && createdAt < known) return@launch
+            relayListCreatedAt[pubkey] = createdAt
             if (readRelays.isNotEmpty()) {
                 _relayLists.value = _relayLists.value + (pubkey to readRelays)
             }
@@ -1513,9 +1522,10 @@ class NostrService @Inject constructor(
                 listOf("wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol")
             }
             addAll(feed.take(3))
-            // NIP-65: also query the user's own preferred relays so their notes
-            // are found even when they don't post to the common public relays.
-            _relayLists.value[pubkey]?.let { addAll(it.take(3)) }
+            // NIP-65 outbox model: we're fetching events FROM this user, so query
+            // their write/outbox relays (where they actually publish), not their
+            // read/inbox relays (where others send things TO them).
+            _outboxRelays.value[pubkey]?.let { addAll(it.take(3)) }
         }.distinct().take(6)
         return ProfileStream(pubkey, relays)
     }
