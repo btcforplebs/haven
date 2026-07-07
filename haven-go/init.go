@@ -362,8 +362,9 @@ func initRelays(ctx context.Context) error {
 		slog.Info("event stored")
 		// Same gap as inboxRelay.StoreEvent above, for gift-wrapped DMs synced in
 		// via MacRelaySyncService's /chat injection — see the comment there.
-		logInboxImport(event)
+		// logInboxImport gated on c.notify, same reasoning as inboxRelay above.
 		if c := classifyInboxEvent(ctx, event); c.accept && c.notify {
+			logInboxImport(event)
 			emitInboxNotify(event, c.recipient)
 		}
 		return nil
@@ -544,8 +545,12 @@ func initRelays(ctx context.Context) error {
 		// entirely. Without this, events that only ever reach the phone this way
 		// were stored silently: no 🔔NOTIFY marker, no "in your inbox" line for the
 		// relay-activity red dot.
-		logInboxImport(event)
+		//
+		// logInboxImport is gated on c.notify (not just c.accept) so self-tagged
+		// events (e.g. replying to your own note) don't light up the red dot —
+		// they're still imported, just not "activity from someone else".
 		if c := classifyInboxEvent(ctx, event); c.accept && c.notify {
+			logInboxImport(event)
 			emitInboxNotify(event, c.recipient)
 		}
 		return nil

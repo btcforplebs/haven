@@ -182,12 +182,16 @@ func (s *inboxNegStore) Publish(ctx context.Context, ev nostr.Event) error {
 		log.Println("🚫 error importing synced note", ev.ID, ":", err)
 		return err
 	}
-	logInboxImport(&ev)
 	if s.advance != nil {
 		s.advance(ev.CreatedAt)
 	}
-	if c.notify && s.notifier != nil {
-		s.notifier.maybeNotify(&ev, c.recipient)
+	// logInboxImport gated on c.notify so self-tagged events don't light up
+	// the relay-activity red dot — same reasoning as processInboxEvent.
+	if c.notify {
+		logInboxImport(&ev)
+		if s.notifier != nil {
+			s.notifier.maybeNotify(&ev, c.recipient)
+		}
 	}
 	return nil
 }

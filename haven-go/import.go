@@ -612,12 +612,14 @@ func processInboxEvent(ctx context.Context, ev nostr.RelayEvent, wdbInbox, wdbCh
 		return
 	}
 
-	logInboxImport(ev.Event)
-
 	// Emit a machine-parseable marker so clients can raise a local system
 	// notification for this newly-imported inbox/chat event. Self-filters by
 	// kind; the prose lines above are left intact for the relay-activity dot.
+	// logInboxImport is gated on c.notify (not just c.accept above) so
+	// self-tagged events (e.g. replying to your own note) don't light up the
+	// red dot — they're still imported, just not "activity from someone else".
 	if c.notify {
+		logInboxImport(ev.Event)
 		if notifier != nil {
 			notifier.maybeNotify(ev.Event, c.recipient)
 		} else {
