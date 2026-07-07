@@ -1622,6 +1622,11 @@ private struct IdentityStepView: View {
                 ConfigService.shared.config.nip46SignerPubkey = info.signerPubkey
                 ConfigService.shared.config.nip46RelayURL = info.relayURL
                 ConfigService.shared.config.nip46Secret = info.secret
+                // Also store the full original URI: a bunker:// URI can list multiple
+                // relay= params, but parseBunkerURI/nip46RelayURL only ever keep the
+                // first one. connect() prefers nip46BunkerURI (the untruncated string)
+                // when present, so reconnects still have every relay to fall back to.
+                ConfigService.shared.config.nip46BunkerURI = bunkerURI
                 ConfigService.shared.config.signingMode = "nip46"
                 ConfigService.shared.save()
 
@@ -1651,6 +1656,7 @@ private struct IdentityStepView: View {
         ConfigService.shared.config.nip46SignerPubkey = ""
         ConfigService.shared.config.nip46RelayURL = ""
         ConfigService.shared.config.nip46Secret = ""
+        ConfigService.shared.config.nip46BunkerURI = ""
     }
 }
 
