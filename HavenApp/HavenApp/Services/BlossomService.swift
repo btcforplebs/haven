@@ -282,49 +282,22 @@ class BlossomService: @unchecked Sendable {
 
         logger.info("Found \(mirrors.count) configured Blossom mirrors: \(mirrors)")
 
+        guard !mirrors.isEmpty else {
+            logger.error("No Blossom mirrors configured — cannot post without accessible mirror URL")
+            return nil
+        }
+
         // Step 3: Upload to external mirrors concurrently using standard BUD-02 protocol
-        var mirrorURLs: [URL] = []
+        var mirrorURLs = await mirrorUploadPass(source: source, sha256: sha256, contentType: contentType, mirrors: mirrors, progress: progress)
 
-        if !mirrors.isEmpty {
-            logger.debug("Attempting to mirror to: \(mirrors.description)")
-            let results = await withTaskGroup(of: (String, URL?).self) { group in
-                for (index, mirrorURL) in mirrors.enumerated() {
-                    logger.debug("Processing mirror: '\(mirrorURL)' (length: \(mirrorURL.count))")
-                    group.addTask {
-                        // Only report progress for the first remote mirror to avoid progress jitter
-                        let progressHandler = (index == 0) ? progress : nil
-                        let parsed = URL(string: mirrorURL)
-                        let useLocalSession = parsed.map { self.isLocalhost($0) } ?? false
-
-                        // BUD-06: Preflight check — skip mirror if server rejects
-                        let accepted = await self.preflightCheck(
-                            url: mirrorURL, sha256: sha256,
-                            contentLength: source.byteCount, contentType: contentType,
-                            useLocalhostSession: useLocalSession
-                        )
-                        guard accepted else {
-                            self.logger.info("BUD-06: Skipping mirror \(mirrorURL) — preflight rejected")
-                            return (mirrorURL, nil)
-                        }
-
-                        let result = await self.uploadToServer(source: source, url: mirrorURL, sha256: sha256, contentType: contentType, useLocalhostSession: useLocalSession, progress: progressHandler)
-                        return (mirrorURL, result)
-                    }
-                }
-
-                var successfulMirrors: [URL] = []
-                for await (mirrorURL, result) in group {
-                    if let url = result {
-                        self.logger.info("Mirror upload succeeded for \(mirrorURL): \(url.absoluteString)")
-                        successfulMirrors.append(url)
-                    } else {
-                        self.logger.warning("Mirror upload failed for \(mirrorURL)")
-                    }
-                }
-                return successfulMirrors
-            }
-
-            mirrorURLs = results
+        // A sleeping mirror host (e.g. the Mac relay over LAN/Tailscale) is often
+        // woken *by* the first pass's connection attempts (wake-on-network) but
+        // isn't up fast enough to serve it. Wait and retry the whole pass once
+        // before failing the post.
+        if mirrorURLs.isEmpty {
+            logger.warning("All Blossom mirrors failed — retrying once in 10s in case a sleeping host is still waking")
+            try? await Task.sleep(nanoseconds: 10_000_000_000)
+            mirrorURLs = await mirrorUploadPass(source: source, sha256: sha256, contentType: contentType, mirrors: mirrors, progress: progress)
         }
 
         // Return first successful external mirror
@@ -336,6 +309,68 @@ class BlossomService: @unchecked Sendable {
         // FAIL if no mirrors succeeded
         logger.error("All Blossom mirror uploads failed — cannot post without accessible mirror URL")
         return nil
+    }
+
+    /// One concurrent BUD-02 upload pass over all configured mirrors.
+    /// Returns the URLs of every mirror that accepted the blob.
+    private func mirrorUploadPass(source: UploadSource, sha256: String, contentType: String, mirrors: [String], progress: ((Double) -> Void)?) async -> [URL] {
+        logger.debug("Attempting to mirror to: \(mirrors.description)")
+        return await withTaskGroup(of: (String, URL?).self) { group in
+            for (index, mirrorURL) in mirrors.enumerated() {
+                group.addTask {
+                    // Only report progress for the first remote mirror to avoid progress jitter
+                    let progressHandler = (index == 0) ? progress : nil
+                    let parsed = URL(string: mirrorURL)
+                    let useLocalSession = parsed.map { self.isLocalhost($0) } ?? false
+
+                    // BUD-06: Preflight check — skip mirror if server rejects
+                    let accepted = await self.preflightCheck(
+                        url: mirrorURL, sha256: sha256,
+                        contentLength: source.byteCount, contentType: contentType,
+                        useLocalhostSession: useLocalSession
+                    )
+                    guard accepted else {
+                        self.logger.info("BUD-06: Skipping mirror \(mirrorURL) — preflight rejected")
+                        return (mirrorURL, nil)
+                    }
+
+                    let result = await self.uploadToServer(source: source, url: mirrorURL, sha256: sha256, contentType: contentType, useLocalhostSession: useLocalSession, progress: progressHandler)
+                    return (mirrorURL, result)
+                }
+            }
+
+            var successfulMirrors: [URL] = []
+            for await (mirrorURL, result) in group {
+                if let url = result {
+                    self.logger.info("Mirror upload succeeded for \(mirrorURL): \(url.absoluteString)")
+                    successfulMirrors.append(url)
+                } else {
+                    self.logger.warning("Mirror upload failed for \(mirrorURL)")
+                }
+            }
+            return successfulMirrors
+        }
+    }
+
+    /// Fire a cheap unauthenticated HEAD at every configured mirror so sleeping
+    /// hosts (notably a Mac relay woken via wake-on-network / the Bonjour sleep
+    /// proxy) start waking as soon as the composer opens, instead of during the
+    /// post itself. Responses are ignored — this is connection warming only.
+    func prewarmMirrors() async {
+        let mirrors = await MainActor.run { configService.config.activeBlossomMirrors }
+        guard !mirrors.isEmpty else { return }
+        await withTaskGroup(of: Void.self) { group in
+            for mirror in mirrors {
+                guard let url = URL(string: mirror) else { continue }
+                group.addTask {
+                    var request = URLRequest(url: url)
+                    request.httpMethod = "HEAD"
+                    request.timeoutInterval = 20
+                    let session = self.isLocalhost(url) ? self.localhostSession : self.remoteSession
+                    _ = try? await session.data(for: request)
+                }
+            }
+        }
     }
 
     /// Upload media to a specific Blossom server with retry logic
@@ -516,6 +551,13 @@ class BlossomService: @unchecked Sendable {
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode == 200 {
                     logger.debug("BUD-06: Preflight OK for \(url)")
+                    return true
+                }
+                // 404/405 mean the server simply doesn't implement HEAD /upload
+                // (BUD-06 is optional) — proceed with the real upload rather than
+                // permanently skipping the mirror.
+                if httpResponse.statusCode == 404 || httpResponse.statusCode == 405 {
+                    logger.debug("BUD-06: \(url) does not implement HEAD /upload — proceeding without preflight")
                     return true
                 }
                 let reason = httpResponse.value(forHTTPHeaderField: "X-Reason") ?? "none"

@@ -277,6 +277,9 @@ struct ComposeView: View {
                 Button("Keep Editing", role: .cancel) { }
             }
             .onAppear {
+                // Start waking sleeping mirror hosts (e.g. the Mac relay) now,
+                // so they're reachable by the time the user hits Post.
+                Task { await blossomService.prewarmMirrors() }
                 if !initialContent.isEmpty {
                     content = convertNostrToMentions(initialContent)
                 }

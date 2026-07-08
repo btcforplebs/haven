@@ -64,6 +64,18 @@ class ConfigStore @Inject constructor(
             appSupportDir = context.filesDir.absolutePath,
         )
 
+        // Drop former default mirrors that no longer exist (kylezien is NXDOMAIN,
+        // satellite's CDN is dead — verified 2026-07). Configs written by old
+        // builds may still carry them; they fail every upload and add timeout
+        // latency to every post.
+        val defunctMirrorHosts = listOf("blossom.kylezien.com", "cdn.satellite.earth")
+        val liveMirrors = loaded.blossomMirrors.filterNot { mirror ->
+            defunctMirrorHosts.any { mirror.contains(it, ignoreCase = true) }
+        }
+        if (liveMirrors.size != loaded.blossomMirrors.size) {
+            loaded = loaded.copy(blossomMirrors = liveMirrors)
+        }
+
         // Multi-account migration: seed the owner's signing mode so
         // activeSigningMode() is stable for legacy single-owner configs. The
         // owner is synthesized by allAccountNpubs(), so it is NOT added to

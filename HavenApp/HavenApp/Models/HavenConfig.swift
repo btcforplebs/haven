@@ -119,6 +119,17 @@ struct HavenConfig: Codable, Equatable {
     var blossomMirrors: [String] = []
     var autoMirrorMedia: Bool = false
 
+    /// Former default mirrors that no longer exist (kylezien is NXDOMAIN,
+    /// satellite's CDN is dead — verified 2026-07). Configs written by old
+    /// builds may still carry them; they fail every upload and add timeout
+    /// latency to every post, so they are dropped on config load.
+    static let defunctMirrorHosts: Set<String> = ["blossom.kylezien.com", "cdn.satellite.earth"]
+
+    static func isDefunctMirror(_ urlString: String) -> Bool {
+        let lowered = urlString.lowercased()
+        return defunctMirrorHosts.contains { lowered.contains($0) }
+    }
+
     // FIPS Blossom Publishing
     var fipsPublishEnabled: Bool = false
     var fipsAddressSource: String = "detected"  // "detected" | "owner" | "custom"
@@ -343,7 +354,8 @@ struct HavenConfig: Codable, Equatable {
         importOwnerNotesFetchTimeoutSeconds = try container.decodeIfPresent(Int.self, forKey: .importOwnerNotesFetchTimeoutSeconds) ?? defaults.importOwnerNotesFetchTimeoutSeconds
         importTaggedNotesFetchTimeoutSeconds = try container.decodeIfPresent(Int.self, forKey: .importTaggedNotesFetchTimeoutSeconds) ?? defaults.importTaggedNotesFetchTimeoutSeconds
 
-        blossomMirrors = try container.decodeIfPresent([String].self, forKey: .blossomMirrors) ?? defaults.blossomMirrors
+        blossomMirrors = (try container.decodeIfPresent([String].self, forKey: .blossomMirrors) ?? defaults.blossomMirrors)
+            .filter { !HavenConfig.isDefunctMirror($0) }
         autoMirrorMedia = try container.decodeIfPresent(Bool.self, forKey: .autoMirrorMedia) ?? defaults.autoMirrorMedia
 
         fipsPublishEnabled = try container.decodeIfPresent(Bool.self, forKey: .fipsPublishEnabled) ?? defaults.fipsPublishEnabled

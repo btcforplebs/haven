@@ -256,7 +256,8 @@ class MediaGalleryViewModel @Inject constructor(
                 notificationManager.updateUploadProgress(uploadId, 0.3f)
 
                 val resultUrl = withContext(Dispatchers.IO) {
-                    blossomService.uploadAndMirror(tempFile!!, sha256, contentType)
+                    // Vault save: local storage counts as success even if mirrors are down.
+                    blossomService.uploadAndMirror(tempFile!!, sha256, contentType, allowLocalFallback = true)
                 }
 
                 notificationManager.updateUploadProgress(uploadId, 1.0f)

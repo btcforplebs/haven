@@ -69,12 +69,34 @@ class BlossomService @Inject constructor(
     /**
      * Upload to local relay, then mirror to external servers.
      * @return External URL from first successful mirror, or null.
+     * @param allowLocalFallback when true, a successful local-relay save counts as
+     *   success and the LOCAL url is returned if every external mirror fails —
+     *   for save-to-vault flows (gallery/share-sheet) where the blob just needs
+     *   to be stored. Composers (notes/DMs) must leave this false: a URL embedded
+     *   in a published event must be reachable by other clients, and a localhost
+     *   URL silently masks the mirror failure.
      */
     suspend fun uploadAndMirror(
         data: ByteArray,
         sha256: String,
         contentType: String,
         onProgress: ((Float) -> Unit)? = null,
+        allowLocalFallback: Boolean = false,
+    ): String? = uploadAndMirror(UploadSource.Data(data), sha256, contentType, allowLocalFallback)
+
+    suspend fun uploadAndMirror(
+        fileURL: File,
+        sha256: String,
+        contentType: String,
+        onProgress: ((Float) -> Unit)? = null,
+        allowLocalFallback: Boolean = false,
+    ): String? = uploadAndMirror(UploadSource.FileSource(fileURL), sha256, contentType, allowLocalFallback)
+
+    private suspend fun uploadAndMirror(
+        source: UploadSource,
+        sha256: String,
+        contentType: String,
+        allowLocalFallback: Boolean,
     ): String? = withContext(Dispatchers.IO) {
         // Sign the BUD-02 auth event ONCE and reuse it for the local relay and
         // every mirror. The event is server-agnostic (no "u" tag), so one
@@ -88,74 +110,94 @@ class BlossomService @Inject constructor(
         }
 
         val localUrl = localBlossomURL()
-        val localOk = if (localUrl != null) saveToLocalRelay(data, sha256, contentType, authHeader) else false
+        val localOk = when {
+            localUrl == null -> false
+            source is UploadSource.Data -> saveToLocalRelay(source.data, sha256, contentType, authHeader)
+            else -> saveToLocalRelay((source as UploadSource.FileSource).file, sha256, contentType, authHeader)
+        }
+        if (!localOk) Log.w(TAG, "Local relay upload failed for ${sha256.take(8)} — continuing with mirrors")
+
+        // Local-relay URL, only ever returned for save-to-vault flows.
+        val localFallback = if (allowLocalFallback && localOk && localUrl != null) "$localUrl/$sha256" else null
 
         val mirrors = configStore.config.value.activeBlossomMirrors
-        if (mirrors.isEmpty()) return@withContext if (localOk) "$localUrl/$sha256" else null
-
-        val firstExternalUrl = java.util.concurrent.atomic.AtomicReference<String?>(null)
-        val jobs = mirrors.map { mirrorUrl ->
-            async {
-                try {
-                    val url = uploadToServer(
-                        source = UploadSource.Data(data),
-                        serverUrl = mirrorUrl,
-                        sha256 = sha256,
-                        contentType = contentType,
-                        authHeader = authHeader,
-                    )
-                    firstExternalUrl.compareAndSet(null, url)
-                    url
-                } catch (e: Exception) {
-                    Log.w(TAG, "Mirror to $mirrorUrl failed: ${e.message}")
-                    null
-                }
+        if (mirrors.isEmpty()) {
+            if (localFallback == null) {
+                Log.e(TAG, "No Blossom mirrors configured — refusing to embed a localhost media URL")
             }
+            return@withContext localFallback
         }
-        jobs.awaitAll()
-        firstExternalUrl.get() ?: if (localOk) "$localUrl/$sha256" else null
+
+        var external = mirrorUploadPass(source, mirrors, sha256, contentType, authHeader)
+
+        // A sleeping mirror host (e.g. the Mac relay over LAN/Tailscale) is often
+        // woken *by* the first pass's connection attempts (wake-on-network) but
+        // isn't up fast enough to serve it. Wait and retry the whole pass once
+        // before failing the post.
+        if (external == null) {
+            Log.w(TAG, "All Blossom mirrors failed — retrying once in 10s in case a sleeping host is still waking")
+            delay(10_000)
+            external = mirrorUploadPass(source, mirrors, sha256, contentType, authHeader)
+        }
+
+        if (external == null) {
+            Log.e(TAG, "All Blossom mirror uploads failed for ${sha256.take(8)}")
+            return@withContext localFallback
+        }
+        external
     }
 
-    suspend fun uploadAndMirror(
-        fileURL: File,
+    /** One concurrent upload pass over all mirrors; returns the first mirror URL that accepted the blob. */
+    private suspend fun mirrorUploadPass(
+        source: UploadSource,
+        mirrors: List<String>,
         sha256: String,
         contentType: String,
-        onProgress: ((Float) -> Unit)? = null,
-    ): String? = withContext(Dispatchers.IO) {
-        // Sign the BUD-02 auth event ONCE and reuse it (see the ByteArray overload).
-        val authHeader = createAuthHeader("upload", sha256)
-        if (authHeader.isEmpty()) {
-            Log.e(TAG, "Upload aborted: could not create Blossom auth event (signer unavailable)")
-            return@withContext null
-        }
-
-        val localUrl = localBlossomURL()
-        val localOk = if (localUrl != null) saveToLocalRelay(fileURL, sha256, contentType, authHeader) else false
-
-        val mirrors = configStore.config.value.activeBlossomMirrors
-        if (mirrors.isEmpty()) return@withContext if (localOk) "$localUrl/$sha256" else null
-
+        authHeader: String,
+    ): String? = coroutineScope {
         val firstExternalUrl = java.util.concurrent.atomic.AtomicReference<String?>(null)
         val jobs = mirrors.map { mirrorUrl ->
             async {
                 try {
                     val url = uploadToServer(
-                        source = UploadSource.FileSource(fileURL),
+                        source = source,
                         serverUrl = mirrorUrl,
                         sha256 = sha256,
                         contentType = contentType,
                         authHeader = authHeader,
                     )
                     firstExternalUrl.compareAndSet(null, url)
-                    url
                 } catch (e: Exception) {
                     Log.w(TAG, "Mirror to $mirrorUrl failed: ${e.message}")
-                    null
                 }
             }
         }
         jobs.awaitAll()
-        firstExternalUrl.get() ?: if (localOk) "$localUrl/$sha256" else null
+        firstExternalUrl.get()
+    }
+
+    /**
+     * Fire a cheap unauthenticated HEAD at every configured mirror so sleeping
+     * hosts (notably a Mac relay woken by wake-on-network) start waking as soon
+     * as the composer opens, instead of during the post itself. Fire-and-forget;
+     * responses are ignored — this is connection warming only.
+     */
+    fun prewarmMirrors() {
+        val mirrors = configStore.config.value.activeBlossomMirrors
+        if (mirrors.isEmpty()) return
+        scope.launch {
+            mirrors.forEach { mirror ->
+                launch {
+                    try {
+                        val client = if (isLocalhost(mirror)) localClient else remoteClient
+                        val request = Request.Builder().url(mirror).head().build()
+                        client.newCall(request).execute().close()
+                    } catch (_: Exception) {
+                        // Warming only — failures are expected while a host wakes.
+                    }
+                }
+            }
+        }
     }
 
     // ══════════════════════════════════════════════════════════════════

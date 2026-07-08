@@ -208,6 +208,10 @@ class ComposeNoteViewModel @Inject constructor(
     fun deleteDraft(id: String) = draftService.deleteDraft(id)
 
     init {
+        // Start waking sleeping mirror hosts (e.g. the Mac relay) now, so
+        // they're reachable by the time the user hits Post.
+        blossomService.prewarmMirrors()
+
         // Restore content from a resumed draft
         if (resumeDraftId != null) {
             val draft = draftService.findDraft(resumeDraftId)
