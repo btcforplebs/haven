@@ -6,7 +6,6 @@ class NotificationService: UNNotificationServiceExtension {
     private var bestAttemptContent: UNMutableNotificationContent?
 
     private static let fallbackRelays = [
-        "wss://relay.damus.io",
         "wss://relay.primal.net",
         "wss://nos.lol"
     ]

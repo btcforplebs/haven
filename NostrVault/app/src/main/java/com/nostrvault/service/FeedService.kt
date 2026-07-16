@@ -784,7 +784,7 @@ class FeedService @Inject constructor(
             if (config.activeFeedRelays.isEmpty() &&
                 config.activeBlastrRelays.isEmpty() &&
                 config.inboxRelays.isNullOrEmpty()) {
-                add("wss://relay.damus.io")
+                add()
                 add("wss://relay.primal.net")
                 add("wss://nos.lol")
             }

@@ -488,7 +488,7 @@ class DMService: ObservableObject {
 
         var relays = ConfigService.shared.config.activeBlastrRelays
         if relays.isEmpty {
-            relays = ["wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"]
+            relays = ["wss://relay.primal.net", "wss://nos.lol"]
         }
 
         // Include own DM relays so we can discover sent messages from other devices
@@ -1146,7 +1146,7 @@ class DMService: ObservableObject {
 
         // Fallback: use common relays where most users have inbox
         let fallbackRelays = ConfigService.shared.config.activeBlastrRelays.isEmpty
-            ? ["wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"]
+            ? ["wss://relay.primal.net", "wss://nos.lol"]
             : ConfigService.shared.config.activeBlastrRelays
         print("⚠️ No relay list for \(pubkey.prefix(8)), using fallback relays")
         return fallbackRelays

@@ -1511,7 +1511,6 @@ class DashboardViewModel @Inject constructor(
             urls.addAll(feedRelays)
         } else {
             urls.addAll(listOf(
-                "wss://relay.damus.io",
                 "wss://relay.primal.net",
                 "wss://nos.lol",
             ))

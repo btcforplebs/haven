@@ -120,7 +120,7 @@ struct EventBroadcastSheet: View {
                 .tracking(0.5)
 
             let blastrRelays = configService.config.activeBlastrRelays.isEmpty
-                ? ["wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"]
+                ? ["wss://relay.primal.net", "wss://nos.lol"]
                 : configService.config.activeBlastrRelays
 
             VStack(alignment: .leading, spacing: 6) {
@@ -272,7 +272,7 @@ struct EventBroadcastSheet: View {
         failedRelays.removeAll()
 
         let relays = configService.config.activeBlastrRelays.isEmpty
-            ? ["wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"]
+            ? ["wss://relay.primal.net", "wss://nos.lol"]
             : configService.config.activeBlastrRelays
         pendingRelays = Set(relays)
         let totalCount = relays.count

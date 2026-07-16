@@ -260,7 +260,6 @@ data class HavenConfig(
     val importStartDate: String = "2023-01-01",
     val importSeedRelaysFile: String = "relays_import.json",
     val importSeedRelays: List<String> = listOf(
-        "wss://relay.damus.io",
         "wss://relay.primal.net",
         "wss://nos.lol",
         "wss://nostr.mom",
@@ -280,7 +279,6 @@ data class HavenConfig(
     // Blastr
     val blastrRelaysFile: String = "relays_blastr.json",
     val blastrRelays: List<String> = listOf(
-        "wss://relay.damus.io",
         "wss://relay.primal.net",
         "wss://nos.lol",
         "wss://nostr.mom",
@@ -293,7 +291,6 @@ data class HavenConfig(
     // Android, so tagged notes on relays not in importSeedRelays (e.g.
     // nos.lol) never reached the inbox. Mirrors iOS HavenConfig.dmRelays.
     val dmRelays: List<String> = listOf(
-        "wss://relay.damus.io",
         "wss://relay.primal.net",
         "wss://nos.lol",
         "wss://relay.btcforplebs.com",
@@ -301,7 +298,6 @@ data class HavenConfig(
 
     // Relay URLs
     val inboxRelays: List<String>? = listOf(
-        "wss://relay.damus.io",
         "wss://relay.primal.net",
         "wss://nos.lol",
         "wss://nostr.mom",
@@ -309,7 +305,6 @@ data class HavenConfig(
         "wss://nostr-pub.wellorder.net",
     ),
     val feedRelays: List<String>? = listOf(
-        "wss://relay.damus.io",
         "wss://relay.primal.net",
         "wss://nos.lol",
         "wss://nostr.mom",
@@ -428,7 +423,6 @@ data class HavenConfig(
     /** Active inbox/feed relays (user-configured or defaults). */
     val activeInboxRelays: List<String>
         get() = inboxRelays ?: listOf(
-            "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
             "wss://nostr.mom",
@@ -452,7 +446,6 @@ data class HavenConfig(
         get() {
             val relays = blastrRelays.ifEmpty {
                 listOf(
-                    "wss://relay.damus.io",
                     "wss://relay.primal.net",
                     "wss://nos.lol",
                     "wss://nostr.mom",

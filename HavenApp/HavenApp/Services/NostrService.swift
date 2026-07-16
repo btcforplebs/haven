@@ -218,7 +218,7 @@ class NostrService: ObservableObject {
         // Use blastr relays or defaults if empty
         var relays = ConfigService.shared.config.activeBlastrRelays
         if relays.isEmpty {
-            relays = ["wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"]
+            relays = ["wss://relay.primal.net", "wss://nos.lol"]
         }
 
         #if DEBUG
@@ -323,7 +323,7 @@ class NostrService: ObservableObject {
         // Use blastr relays or defaults if empty
         var relays = ConfigService.shared.config.activeBlastrRelays
         if relays.isEmpty {
-            relays = ["wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"]
+            relays = ["wss://relay.primal.net", "wss://nos.lol"]
         }
 
         // Include cached outbox (write) relays for this user — their kind 10002/10050
@@ -1146,7 +1146,7 @@ class NostrService: ObservableObject {
 
         var relays = ConfigService.shared.config.activeBlastrRelays
         if relays.isEmpty {
-            relays = ["wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol"]
+            relays = ["wss://relay.primal.net", "wss://nos.lol"]
         }
 
         for urlStr in relays {

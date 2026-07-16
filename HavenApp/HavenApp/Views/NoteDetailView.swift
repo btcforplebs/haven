@@ -817,7 +817,6 @@ struct NoteDetailView: View {
         // Try local relay AND external relays to find replies
         var relayURLs: [URL] = [configService.config.nostrURL].compactMap { URL(string: $0) }
         let externalStrs = configService.config.activeFeedRelays.isEmpty ? [
-            "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
         ] : configService.config.activeFeedRelays
@@ -976,7 +975,6 @@ struct NoteDetailView: View {
     private func fetchRepliesForNote(_ noteId: String) {
         var relayURLs: [URL] = [configService.config.nostrURL].compactMap { URL(string: $0) }
         let externalStrs = configService.config.activeFeedRelays.isEmpty ? [
-            "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
         ] : configService.config.activeFeedRelays
@@ -1058,7 +1056,6 @@ struct NoteDetailView: View {
 
         var relayURLs: [URL] = [configService.config.nostrURL].compactMap { URL(string: $0) }
         let externalStrs = configService.config.activeFeedRelays.isEmpty ? [
-            "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
         ] : configService.config.activeFeedRelays
@@ -1126,7 +1123,6 @@ struct NoteDetailView: View {
 
         var relayURLs: [URL] = [configService.config.nostrURL].compactMap { URL(string: $0) }
         let externalStrs = configService.config.activeFeedRelays.isEmpty ? [
-            "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
         ] : configService.config.activeFeedRelays
@@ -1371,7 +1367,6 @@ struct NoteDetailView: View {
 
         var relayURLs: [URL] = [configService.config.nostrURL].compactMap { URL(string: $0) }
         let externalStrs = configService.config.activeFeedRelays.isEmpty ? [
-            "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
         ] : configService.config.activeFeedRelays
@@ -2249,7 +2244,7 @@ struct NoteDetailViewWrapper: View {
             filter = ["ids": [hexId], "limit": 1]
         }
 
-        let relays = [configService.config.nostrURL, "wss://relay.damus.io", "wss://relay.primal.net"].compactMap { URL(string: $0) }
+        let relays = [configService.config.nostrURL, "wss://relay.primal.net"].compactMap { URL(string: $0) }
         guard !relays.isEmpty else { return }
 
         for url in relays {

@@ -1312,7 +1312,6 @@ class NostrService @Inject constructor(
         // Never publish an empty list — fall back to public defaults.
         if (relays.isEmpty()) {
             relays = listOf(
-                "wss://relay.damus.io",
                 "wss://relay.primal.net",
                 "wss://nos.lol",
                 "wss://relay.btcforplebs.com",
@@ -1519,7 +1518,7 @@ class NostrService @Inject constructor(
         val relays = buildList {
             config.nostrURL?.let { add(it) }
             val feed = config.activeFeedRelays.ifEmpty {
-                listOf("wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol")
+                listOf("wss://relay.primal.net", "wss://nos.lol")
             }
             addAll(feed.take(3))
             // NIP-65 outbox model: we're fetching events FROM this user, so query
@@ -1833,8 +1832,8 @@ class NostrService @Inject constructor(
             if (config.activeFeedRelays.isEmpty() &&
                 config.activeBlastrRelays.isEmpty() &&
                 config.inboxRelays.isNullOrEmpty()) {
-                add("wss://relay.damus.io")
                 add("wss://relay.primal.net")
+                add("wss://nos.lol")
             }
         }.distinct().take(8)
         if (relayUrls.isEmpty()) { onEose(emptyList()); return }

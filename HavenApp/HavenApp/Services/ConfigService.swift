@@ -303,7 +303,6 @@ class ConfigService: ObservableObject {
         // Create relays_import.json
         let importRelays = """
         [
-            "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
             "wss://nostr.mom",
@@ -317,7 +316,6 @@ class ConfigService: ObservableObject {
         // Create relays_blastr.json
         let blastrRelays = """
         [
-            "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
             "wss://nostr.mom",

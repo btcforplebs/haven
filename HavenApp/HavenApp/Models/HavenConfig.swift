@@ -109,7 +109,6 @@ struct HavenConfig: Codable, Equatable {
     var importStartDate: String = "2023-01-01"
     var importSeedRelaysFile: String = "relays_import.json"
     var importSeedRelays: [String] = [
-        "wss://relay.damus.io",
         "wss://relay.primal.net",
         "wss://nos.lol",
         "wss://nostr.mom",
@@ -142,7 +141,6 @@ struct HavenConfig: Codable, Equatable {
     // Blastr
     var blastrRelaysFile: String = "relays_blastr.json"
     var blastrRelays: [String] = [
-        "wss://relay.damus.io",
         "wss://relay.primal.net",
         "wss://nos.lol",
         "wss://nostr.mom",
@@ -152,7 +150,6 @@ struct HavenConfig: Codable, Equatable {
     
     // Feed Reading
     var feedRelays: [String] = [
-        "wss://relay.damus.io",
         "wss://relay.primal.net",
         "wss://nos.lol",
         "wss://nostr.mom",
@@ -162,7 +159,6 @@ struct HavenConfig: Codable, Equatable {
 
     // NIP-17: DM Relays (kind 10050)
     var dmRelays: [String] = [
-        "wss://relay.damus.io",
         "wss://relay.primal.net",
         "wss://nos.lol",
         "wss://relay.btcforplebs.com"

@@ -283,7 +283,6 @@ struct FollowingBackupSettingsView: View {
         }
         let feedRelays = ConfigService.shared.config.activeFeedRelays
         let externalStrs = feedRelays.isEmpty ? [
-            "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
         ] : feedRelays

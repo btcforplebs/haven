@@ -115,7 +115,6 @@ extension VaultView {
         var urls = [configService.config.nostrURL].compactMap { URL(string: $0) }
         // Also try external relays for notes not on the local relay
         let externalStrs = configService.config.activeFeedRelays.isEmpty ? [
-            "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
         ] : configService.config.activeFeedRelays
@@ -168,7 +167,6 @@ extension VaultView {
 
         var urls = [configService.config.nostrURL].compactMap { URL(string: $0) }
         let externalStrs = configService.config.activeFeedRelays.isEmpty ? [
-            "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
         ] : configService.config.activeFeedRelays

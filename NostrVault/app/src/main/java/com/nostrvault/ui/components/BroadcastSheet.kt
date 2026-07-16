@@ -40,7 +40,6 @@ import kotlinx.serialization.json.putJsonArray
 
 /** Default blastr relays when none are configured (mirrors iOS). */
 private val DEFAULT_BLASTR_RELAYS = listOf(
-    "wss://relay.damus.io",
     "wss://relay.primal.net",
     "wss://nos.lol",
 )

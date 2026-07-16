@@ -146,7 +146,6 @@ class SetupWizardViewModel @Inject constructor(
     // Relays
     private val _wizardRelays = MutableStateFlow(
         listOf(
-            "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
             "wss://nostr.mom",

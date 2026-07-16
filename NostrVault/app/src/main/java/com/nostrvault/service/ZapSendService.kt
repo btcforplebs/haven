@@ -91,7 +91,7 @@ class ZapSendService @Inject constructor(
             val relayList = buildList {
                 config.nostrURL?.let { add(it) }
                 val external = config.activeFeedRelays.ifEmpty {
-                    listOf("wss://relay.damus.io", "wss://relay.primal.net", "wss://nos.lol")
+                    listOf("wss://relay.primal.net", "wss://nos.lol")
                 }
                 addAll(external)
             }.distinct()

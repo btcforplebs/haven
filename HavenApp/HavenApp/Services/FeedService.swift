@@ -294,7 +294,6 @@ class FeedService: ObservableObject {
     private var externalRelayURLs: [URL] {
         let configured = ConfigService.shared.config.activeFeedRelays
         let strs = configured.isEmpty ? [
-            "wss://relay.damus.io",
             "wss://relay.primal.net",
             "wss://nos.lol",
         ] : configured
