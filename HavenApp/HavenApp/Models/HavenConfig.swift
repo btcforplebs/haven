@@ -99,7 +99,11 @@ struct HavenConfig: Codable, Equatable {
     var inboxRelayName: String = "Nostr Vault Inbox"
     var inboxRelayDescription: String = "Personal inbox relay"
     var inboxRelayIcon: String = ""
-    var inboxPullIntervalSeconds: Int = 60
+    // Drives BOTH Go sync loops (inbox catch-up AND feed sync); each round
+    // materializes the full windowed local set per store. 60s pinned the CPU
+    // once the DBs grew past what a round could reconcile inside the tick —
+    // live subscriptions cover real-time delivery, this only heals gaps.
+    var inboxPullIntervalSeconds: Int = 900
     
     // Import
     var importStartDate: String = "2023-01-01"
@@ -346,7 +350,12 @@ struct HavenConfig: Codable, Equatable {
         inboxRelayName = try container.decodeIfPresent(String.self, forKey: .inboxRelayName) ?? defaults.inboxRelayName
         inboxRelayDescription = try container.decodeIfPresent(String.self, forKey: .inboxRelayDescription) ?? defaults.inboxRelayDescription
         inboxRelayIcon = try container.decodeIfPresent(String.self, forKey: .inboxRelayIcon) ?? defaults.inboxRelayIcon
-        inboxPullIntervalSeconds = try container.decodeIfPresent(Int.self, forKey: .inboxPullIntervalSeconds) ?? defaults.inboxPullIntervalSeconds
+        // Clamp persisted configs that still carry the old 60s default — no
+        // UI exposes this value, so anything below 5 min is a legacy save.
+        inboxPullIntervalSeconds = max(
+            try container.decodeIfPresent(Int.self, forKey: .inboxPullIntervalSeconds) ?? defaults.inboxPullIntervalSeconds,
+            300
+        )
         
         importStartDate = try container.decodeIfPresent(String.self, forKey: .importStartDate) ?? defaults.importStartDate
         importSeedRelaysFile = try container.decodeIfPresent(String.self, forKey: .importSeedRelaysFile) ?? defaults.importSeedRelaysFile

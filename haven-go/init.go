@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"os"
+	"regexp"
 	"runtime"
+	"strings"
 	"sync"
 	"text/template"
 	"time"
@@ -85,7 +88,7 @@ func newBadgerBackend(path string) DBBackend {
 	// Bound the negentropy vector size explicitly: the library default is 16M
 	// events, which a NEG-OPEN with a broad filter could try to materialize in
 	// memory — far too much on a phone.
-	maxNeg := 200_000
+	maxNeg := 100_000
 	if runtime.GOOS == "android" || runtime.GOOS == "ios" {
 		maxNeg = 50_000
 	}
@@ -93,10 +96,12 @@ func newBadgerBackend(path string) DBBackend {
 		Path:               path,
 		MaxLimitNegentropy: maxNeg,
 		BadgerOptionsModifier: func(opts badgerdb.Options) badgerdb.Options {
-			if runtime.GOOS == "android" {
-				// Android shares ~3-4 GB RAM with the JVM. With 5 databases
-				// running, every MB counts. These settings target ~20-26 MB per DB
-				// (vs ~60-80 MB server defaults):
+			switch runtime.GOOS {
+			case "android", "ios":
+				// Phones share RAM with the JVM (Android) or live under strict
+				// jetsam limits (iOS). With 6 databases running, every MB
+				// counts. These settings target ~20-26 MB per DB (vs ~60-80 MB
+				// server defaults):
 				//   - 16 MiB vlog files (vs 2 GB default)
 				//   - 2 memtables (vs 5): allows 1 flush in background without stalling writes
 				//   - Fewer L0 tables: reduces open file handles and mmap
@@ -114,9 +119,24 @@ func newBadgerBackend(path string) DBBackend {
 					WithBlockCacheSize(4 << 20).      // 4 MiB per DB (20 MiB total across 5 DBs)
 					WithIndexCacheSize(2 << 20).      // 2 MiB per DB (10 MiB total across 5 DBs)
 					WithValueThreshold(1 << 10)       // 1 KB: inline small values
+			default:
+				// macOS / desktop: the server defaults are far too hungry for a
+				// menu-bar app — each memtable arena is a 64 MiB up-front
+				// allocation and the block-cache budget is 256 MiB, per DB,
+				// across 6 DBs. Desktop can afford more than a phone but not
+				// server sizing.
+				return opts.
+					WithMemTableSize(16 << 20).       // 16 MiB (default 64 MiB, allocated up-front per DB)
+					WithValueLogFileSize(1 << 26).    // 64 MiB (default ~1 GiB, mmap'd)
+					WithNumMemtables(2).              // default 5; allows 1 background flush
+					WithNumLevelZeroTables(2).        // default 5
+					WithNumLevelZeroTablesStall(4).   // default 15
+					WithNumCompactors(2).             // default 4, minimum 2
+					WithCompression(badgeropts.None). // disable compression (saves CPU)
+					WithBlockCacheSize(32 << 20).     // 32 MiB per DB (default 256 MiB)
+					WithIndexCacheSize(8 << 20).      // 8 MiB per DB (default unbounded shared with heap)
+					WithValueThreshold(1 << 10)       // 1 KB: inline small values
 			}
-			// iOS / macOS / desktop: only limit vlog size for iOS mmap safety
-			return opts.WithValueLogFileSize(1 << 26) // 64 MiB
 		},
 	}
 }
@@ -476,12 +496,26 @@ func initRelays(ctx context.Context) error {
 	blossomServer.Store = blossom.EventStoreBlobIndexWrapper{Store: blossomDB, ServiceURL: blossomServer.ServiceURL}
 	blossomServer.StoreBlob = append(blossomServer.StoreBlob, func(ctx context.Context, sha256 string, ext string, body []byte) error {
 		slog.Debug("storing blob", "sha256", sha256, "ext", ext)
-		file, err := fs.Create(config.BlossomPath + sha256)
+		// Write to a temp file and rename into place: an interrupted write must
+		// never leave a truncated blob sitting at the final hash-named path,
+		// where it would shadow the healthy remote copy on every client forever.
+		finalPath := config.BlossomPath + sha256
+		tmpPath := finalPath + ".tmp"
+		file, err := fs.Create(tmpPath)
 		if err != nil {
 			return err
 		}
-		defer file.Close()
 		if _, err := io.Copy(file, bytes.NewReader(body)); err != nil {
+			file.Close()
+			_ = fs.Remove(tmpPath)
+			return err
+		}
+		if err := file.Close(); err != nil {
+			_ = fs.Remove(tmpPath)
+			return err
+		}
+		if err := fs.Rename(tmpPath, finalPath); err != nil {
+			_ = fs.Remove(tmpPath)
 			return err
 		}
 		return nil
@@ -639,6 +673,59 @@ func initRelays(ctx context.Context) error {
 
 // Shared helper functions used by both main.go and cshared.go
 
+var blossomBlobPathRe = regexp.MustCompile(`^/([a-fA-F0-9]{64})(?:\.([a-zA-Z0-9]+))?$`)
+
+// Go's mime package only knows these from OS mime.types files, which don't
+// exist inside the iOS/Android app sandboxes — so map media extensions explicitly.
+var blossomExtTypes = map[string]string{
+	"mov":  "video/quicktime",
+	"mp4":  "video/mp4",
+	"m4v":  "video/mp4",
+	"webm": "video/webm",
+	"mp3":  "audio/mpeg",
+	"m4a":  "audio/mp4",
+	"wav":  "audio/wav",
+	"gif":  "image/gif",
+	"jpg":  "image/jpeg",
+	"jpeg": "image/jpeg",
+	"png":  "image/png",
+	"webp": "image/webp",
+	"avif": "image/avif",
+}
+
+// blossomContentType resolves a Content-Type for a blob that Go's sniffer
+// can't: MOV/MP4 aren't in http.DetectContentType's table, so without this
+// every video blob whose stored MIME is missing/octet-stream gets served as
+// application/octet-stream — which confuses clients that classify by MIME.
+func blossomContentType(hash string, ext string) string {
+	if ext != "" {
+		lower := strings.ToLower(ext)
+		if ct, ok := blossomExtTypes[lower]; ok {
+			return ct
+		}
+		if ct := mime.TypeByExtension("." + lower); ct != "" {
+			return ct
+		}
+	}
+	file, err := fs.Open(config.BlossomPath + hash)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	head := make([]byte, 12)
+	if n, _ := io.ReadFull(file, head); n < 12 {
+		return ""
+	}
+	// ISO-BMFF container: [size][ftyp][major brand]
+	if bytes.Equal(head[4:8], []byte("ftyp")) {
+		if bytes.Equal(head[8:12], []byte("qt  ")) {
+			return "video/quicktime"
+		}
+		return "video/mp4"
+	}
+	return ""
+}
+
 func dynamicRelayHandler(w http.ResponseWriter, r *http.Request) {
 	var relay *khatru.Relay
 	relayType := r.URL.Path
@@ -656,6 +743,16 @@ func dynamicRelayHandler(w http.ResponseWriter, r *http.Request) {
 		relay = outboxRelay
 	default:
 		relay = outboxRelay
+	}
+
+	// Blob requests: pre-set the Content-Type so http.ServeContent doesn't
+	// fall back to sniffing (which reports MOV/MP4 as application/octet-stream).
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		if m := blossomBlobPathRe.FindStringSubmatch(r.URL.Path); m != nil {
+			if ct := blossomContentType(m[1], m[2]); ct != "" {
+				w.Header().Set("Content-Type", ct)
+			}
+		}
 	}
 
 	relay.ServeHTTP(w, r)

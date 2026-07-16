@@ -164,6 +164,138 @@ func TestInboxNegStorePublish(t *testing.T) {
 	}
 }
 
+// TestInboxNegStoreTempRejectStubs verifies the in-memory temp-reject cache:
+// a WoT-rejected event is not tombstoned (stays re-fetchable across restarts)
+// but IS folded into the negentropy vector as a stub for this process run, so
+// the remote stops re-offering it — the fix for the per-minute 100% CPU loop.
+func TestInboxNegStoreTempRejectStubs(t *testing.T) {
+	owner := hexid('0')
+	setupSyncConfig(owner)
+	wot.MarkReady(wot.NewCycle(), stubWot{allow: false}) // reject everything
+
+	ctx := context.Background()
+	inbox := newTestStore(t)
+	chat := newTestStore(t)
+	tombs := newTestTombs(t)
+	rejects := &tempRejects{}
+	s := &inboxNegStore{
+		inbox: inbox, chat: chat, tombs: tombs, rejects: rejects,
+		notifier: &batchNotifier{},
+		advance:  func(nostr.Timestamp) {},
+	}
+
+	now := nostr.Now()
+	reply := nostr.Event{
+		ID: hexid('a'), PubKey: hexid('1'), Kind: nostr.KindTextNote,
+		CreatedAt: now, Tags: nostr.Tags{{"p", owner}},
+	}
+	if err := s.Publish(ctx, reply); err != nil {
+		t.Fatal(err)
+	}
+	// Not tombstoned (WoT membership can change) and not stored.
+	if tombs.Has(reply.ID) {
+		t.Fatal("WoT reject must not be tombstoned")
+	}
+	if got, _ := inbox.QuerySync(ctx, nostr.Filter{IDs: []string{reply.ID}}); len(got) != 0 {
+		t.Fatal("WoT-rejected event was stored")
+	}
+
+	// But QuerySync now lists it as a vector stub so it isn't re-offered.
+	stubbed := func() bool {
+		evs, err := s.QuerySync(ctx, nostr.Filter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, ev := range evs {
+			if ev.ID == reply.ID {
+				return true
+			}
+		}
+		return false
+	}
+	if !stubbed() {
+		t.Fatal("temp-rejected event missing from negentropy vector")
+	}
+
+	// A time-bounded query excludes stubs outside the window.
+	old := now - nostr.Timestamp(3600)
+	future := now - nostr.Timestamp(1800)
+	if evs, _ := s.QuerySync(ctx, nostr.Filter{Since: &old, Until: &future}); func() bool {
+		for _, ev := range evs {
+			if ev.ID == reply.ID {
+				return true
+			}
+		}
+		return false
+	}() {
+		t.Fatal("stub leaked outside the filter's time bounds")
+	}
+
+	// Once the WoT admits the author and the event is accepted for real, the
+	// stub is dropped so QuerySync doesn't double-list it (DB + stub).
+	wot.MarkReady(wot.NewCycle(), stubWot{allow: true})
+	if err := s.Publish(ctx, reply); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := inbox.QuerySync(ctx, nostr.Filter{IDs: []string{reply.ID}}); len(got) != 1 {
+		t.Fatal("event not imported after WoT admitted its author")
+	}
+	if _, ok := rejects.m.Load(reply.ID); ok {
+		t.Fatal("temp-reject stub not cleared after acceptance")
+	}
+}
+
+// TestTempRejectsPrune verifies the cache is bounded: entries older than the
+// prune cutoff are dropped so the map can't grow without limit over the
+// process lifetime, while in-window entries survive.
+func TestTempRejectsPrune(t *testing.T) {
+	r := &tempRejects{}
+	now := nostr.Now()
+	stale := hexid('1')
+	fresh := hexid('2')
+	r.add(stale, now-nostr.Timestamp(100), hexid('9'))
+	r.add(fresh, now, hexid('9'))
+
+	r.prune(now - nostr.Timestamp(50)) // cutoff between the two
+
+	if _, ok := r.m.Load(stale); ok {
+		t.Fatal("stale entry survived prune")
+	}
+	if _, ok := r.m.Load(fresh); !ok {
+		t.Fatal("fresh entry wrongly pruned")
+	}
+
+	// nil receiver is a no-op, not a panic.
+	var nilR *tempRejects
+	nilR.prune(now)
+	nilR.add(stale, now, hexid('9'))
+	nilR.reevaluate(func(string) bool { return true })
+	if evs := nilR.appendStubs(nil, nostr.Filter{}); len(evs) != 0 {
+		t.Fatal("nil tempRejects should yield no stubs")
+	}
+}
+
+// TestTempRejectsReevaluate verifies a cached reject is re-offered (stub
+// dropped) once its author passes the admit predicate, and kept otherwise —
+// the mechanism that self-heals a WoT admit without a per-round re-download.
+func TestTempRejectsReevaluate(t *testing.T) {
+	r := &tempRejects{}
+	now := nostr.Now()
+	admitted := hexid('1')
+	stillOut := hexid('2')
+	r.add(hexid('a'), now, admitted)
+	r.add(hexid('b'), now, stillOut)
+
+	r.reevaluate(func(pk string) bool { return pk == admitted })
+
+	if _, ok := r.m.Load(hexid('a')); ok {
+		t.Fatal("admitted author's stub not dropped")
+	}
+	if _, ok := r.m.Load(hexid('b')); !ok {
+		t.Fatal("still-rejected author's stub wrongly dropped")
+	}
+}
+
 func TestOutboxNegStoreUpFilter(t *testing.T) {
 	owner := hexid('0')
 	setupSyncConfig(owner)

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/barrydeen/haven/internal/negsync"
 	"github.com/barrydeen/haven/internal/tombstones"
 	"github.com/fiatjaf/eventstore"
 	"github.com/nbd-wtf/go-nostr"
@@ -74,6 +75,27 @@ func markNegentropyUnsupported(url string) {
 	negCaps.Store(nostr.NormalizeURL(url), negCap{supported: false, checkedAt: time.Now()})
 }
 
+// ─── Per-relay upload memo ──────────────────────────────────────────────────
+//
+// Some relays acknowledge an EVENT with OK but never serve it back (silent
+// policy drops, retention pruning), so their negentropy vector reports the
+// same events missing on every round and a Both-direction sync re-uploads the
+// identical set forever — 233 events/round to relay.nos.social in the field.
+// Remember successful publishes per relay for the process lifetime and never
+// re-send them. Growth is bounded by the sync window's event count per relay.
+
+var negUploaded sync.Map // normalized relay URL → *sync.Map (event ID → struct{})
+
+// uploadMemoFor returns the Sync option wiring url's upload memo.
+func uploadMemoFor(url string) negsync.Option {
+	v, _ := negUploaded.LoadOrStore(nostr.NormalizeURL(url), &sync.Map{})
+	m := v.(*sync.Map)
+	return negsync.WithUploadMemo(
+		func(id string) bool { _, sent := m.Load(id); return sent },
+		func(id string) { m.Store(id, struct{}{}) },
+	)
+}
+
 // ─── Catch-up notification batching ─────────────────────────────────────────
 
 // batchNotifier throttles 🔔NOTIFY markers during catch-up sync so a backlog
@@ -129,11 +151,116 @@ func (n *batchNotifier) flush() {
 // re-downloaded, and (c) route Publish through the same accept/reject rules
 // as the live subscription, recording rejects as new tombstones.
 
+// ─── In-memory temporary-rejection stub cache ──────────────────────────────
+//
+// WoT / blacklist rejections are deliberately NOT tombstoned: membership
+// changes, so a reply rejected by a fresh instance's half-built WoT must stay
+// re-fetchable. But if such a reject is simply dropped, the negentropy vector
+// never lists it as a have, so every reconciliation round re-downloads the
+// same non-WoT backlog and re-rejects it — a per-minute 100% CPU / bandwidth
+// loop. tempRejects folds those IDs into the local vector like tombstones, but
+// only in memory. Each entry also records the author so reevaluate() can drop
+// stubs when the WoT/blacklist admits that author mid-process (the WoT is
+// re-computed on a 24h ticker, not just at restart), restoring the
+// "transient rejects stay re-fetchable when membership changes" guarantee.
+// Stubs never leave the vector (QueryEvents can't find them), so cached IDs
+// are never uploaded.
+type rejectEntry struct {
+	ts     nostr.Timestamp // event created_at — vector key and prune bound
+	pubkey string          // author — re-checked against the WoT each round
+}
+
+type tempRejects struct {
+	m sync.Map // event ID → rejectEntry
+}
+
+func (t *tempRejects) add(id string, ts nostr.Timestamp, pubkey string) {
+	if t == nil {
+		return
+	}
+	t.m.Store(id, rejectEntry{ts: ts, pubkey: pubkey})
+}
+
+// reevaluate drops the stub for any cached reject whose author now passes the
+// author-level accept gates (in WoT and not blacklisted), so the next
+// negentropy round re-offers and re-imports it. Called once per catch-up round
+// with the live WoT/blacklist state. Without this a reply from an author who
+// entered the WoT after the reject stayed hidden until process restart — the
+// negentropy stub made it a permanent "have" that nothing ever re-fetched.
+func (t *tempRejects) reevaluate(admit func(pubkey string) bool) {
+	if t == nil {
+		return
+	}
+	t.m.Range(func(k, v any) bool {
+		if admit(v.(rejectEntry).pubkey) {
+			t.m.Delete(k)
+		}
+		return true
+	})
+}
+
+// remove drops an ID once it has been accepted for real (e.g. after the WoT
+// admitted its author within the same process run) so QuerySync doesn't list
+// the same event both from the DB and as a stub.
+func (t *tempRejects) remove(id string) {
+	if t == nil {
+		return
+	}
+	t.m.Delete(id)
+}
+
+// prune drops cached rejections older than cutoff. Called once per sync round
+// with the negentropy window's lower bound: an event older than the window is
+// never offered by the remote, so its stub can never be needed. Without this
+// the map grows without bound for the process's lifetime — a slow memory leak
+// and, since appendStubs ranges the whole map per QuerySync, a creeping CPU
+// cost in the very path this cache exists to keep cheap. sync.Map permits
+// Delete during Range.
+func (t *tempRejects) prune(cutoff nostr.Timestamp) {
+	if t == nil {
+		return
+	}
+	t.m.Range(func(k, v any) bool {
+		if v.(rejectEntry).ts < cutoff {
+			t.m.Delete(k)
+		}
+		return true
+	})
+}
+
+// appendStubs adds a minimal {ID, CreatedAt} stub for each cached rejection
+// inside the filter's time bounds, mirroring appendTombstoneStubs.
+func (t *tempRejects) appendStubs(evs []*nostr.Event, f nostr.Filter) []*nostr.Event {
+	if t == nil {
+		return evs
+	}
+	var since, until nostr.Timestamp
+	if f.Since != nil {
+		since = *f.Since
+	}
+	if f.Until != nil {
+		until = *f.Until
+	}
+	t.m.Range(func(k, v any) bool {
+		ts := v.(rejectEntry).ts
+		if since != 0 && ts < since {
+			return true
+		}
+		if until != 0 && ts > until {
+			return true
+		}
+		evs = append(evs, &nostr.Event{ID: k.(string), CreatedAt: ts})
+		return true
+	})
+	return evs
+}
+
 // inboxNegStore adapts the inbox+chat DBs for Down-direction tagged-event sync.
 type inboxNegStore struct {
 	inbox    eventstore.RelayWrapper
 	chat     eventstore.RelayWrapper
 	tombs    *tombstones.Set
+	rejects  *tempRejects
 	notifier *batchNotifier
 	advance  func(nostr.Timestamp)
 }
@@ -150,6 +277,7 @@ func (s *inboxNegStore) QuerySync(ctx context.Context, f nostr.Filter) ([]*nostr
 	}
 	evs = append(evs, chatEvs...)
 	evs = appendTombstoneStubs(evs, s.tombs, f)
+	evs = s.rejects.appendStubs(evs, f)
 	return evs, nil
 }
 
@@ -168,6 +296,11 @@ func (s *inboxNegStore) Publish(ctx context.Context, ev nostr.Event) error {
 		if c.reason.permanent() {
 			return s.tombs.Add(ev.ID, ev.CreatedAt)
 		}
+		// Transient reject: don't persist it, but remember it (with the author)
+		// in memory for this process run so the negentropy vector lists it as a
+		// have and the remote stops re-offering it every round (the 100% CPU
+		// loop). reevaluate() drops it again if the author is later admitted.
+		s.rejects.add(ev.ID, ev.CreatedAt, ev.PubKey)
 		return nil
 	}
 	dst := s.inbox
@@ -175,12 +308,16 @@ func (s *inboxNegStore) Publish(ctx context.Context, ev nostr.Event) error {
 		dst = s.chat
 	}
 	if isDuplicate(ctx, dst, &ev) {
+		s.rejects.remove(ev.ID) // already stored; clear any stale stub
 		return nil
 	}
 	if err := dst.Publish(ctx, ev); err != nil {
 		log.Println("🚫 error importing synced note", ev.ID, ":", err)
-		return err
+		return err // keep the stub (if any): a failed store must not re-loop
 	}
+	// Stored for real — now safe to drop the stub so QuerySync doesn't list this
+	// event both from the DB and from the cache (a duplicate vector entry).
+	s.rejects.remove(ev.ID)
 	if s.advance != nil {
 		s.advance(ev.CreatedAt)
 	}

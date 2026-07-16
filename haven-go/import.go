@@ -24,6 +24,13 @@ import (
 
 const layout = "2006-01-02"
 
+// giftWrapBackdateSlack is how far behind the watermark a NIP-59 gift wrap can
+// legitimately land: the spec randomizes created_at up to 2 days into the past.
+// The inbox fallback (non-NIP-77) catch-up floors its `since` here so backdated
+// DMs aren't filtered out by the relay and silently missed. Bounded (2 days),
+// so it never reintroduces an expanding-window pull. Plus a minute of overlap.
+const giftWrapBackdateSlack = 2*24*time.Hour + time.Minute
+
 // ensureImportRelays checks connectivity to all import seed relays.
 // Returns false if ALL relays are unreachable (caller should abort).
 // NOTE: never calls os.Exit — in C-shared / iOS embedded mode that would
@@ -300,10 +307,16 @@ func subscribeInboxAndChat(ctx context.Context) {
 	// this (notifier=nil ⇒ notify immediately).
 	notifier := &batchNotifier{}
 
+	// In-memory record of WoT/blacklist rejects, folded into the negentropy
+	// vector so they aren't re-downloaded every round. Not persisted: a restart
+	// clears it exactly when the WoT is rebuilt and rejects deserve re-checking.
+	rejects := &tempRejects{}
+
 	inboxStore := &inboxNegStore{
 		inbox:    wdbInbox,
 		chat:     wdbChat,
 		tombs:    tombs,
+		rejects:  rejects,
 		notifier: notifier,
 		advance:  func(ts nostr.Timestamp) { advance(&lastSeen, ts) },
 	}
@@ -318,6 +331,11 @@ func subscribeInboxAndChat(ctx context.Context) {
 	// path for relays without NIP-77.
 	inboxCatchup := func(relayList []string) {
 		since := nostr.Timestamp(lastSeen.Load() - 60) // 60s overlap to avoid boundary misses
+		// Widen to cover backdated gift-wrap DMs on relays without NIP-77 (the
+		// negentropy path already covers them with its wide window).
+		if floor := nostr.Timestamp(time.Now().Add(-giftWrapBackdateSlack).Unix()); floor < since {
+			since = floor
+		}
 		filter := nostr.Filter{
 			Tags:  nostr.TagMap{"p": pTags},
 			Since: &since,
@@ -327,7 +345,7 @@ func subscribeInboxAndChat(ctx context.Context) {
 			if ctx.Err() != nil {
 				return
 			}
-			processInboxEvent(ctx, ev, wdbInbox, wdbChat, notifier)
+			processInboxEvent(ctx, ev, wdbInbox, wdbChat, notifier, rejects)
 			advance(&lastSeen, ev.CreatedAt)
 		}
 	}
@@ -368,45 +386,85 @@ func subscribeInboxAndChat(ctx context.Context) {
 	// the rest for one watermark-based FetchMany pull. Sequential per relay to
 	// keep mobile CPU/battery use flat.
 	runCatchup := func() {
+		// Captured before any fetching so events arriving mid-round aren't
+		// skipped: the fallback queries below re-query from lastSeen-60.
+		roundStart := nostr.Timestamp(time.Now().Unix())
+		// Re-check cached transient rejects against the live WoT/blacklist: an
+		// author admitted since their event was rejected (the WoT is recomputed
+		// on a 24h ticker) gets that event re-offered and imported this round,
+		// instead of staying hidden behind a stub until process restart.
+		rejects.reevaluate(func(pk string) bool {
+			return !isBlacklisted(pk) && wot.GetInstance().Has(ctx, pk)
+		})
 		var fallback []string
 		if config.NegentropySyncEnabled {
 			since := syncSince()
 			inboxFilter := nostr.Filter{Tags: nostr.TagMap{"p": pTags}, Since: &since}
 			ownerFilter := nostr.Filter{Authors: pTags, Since: &since}
-			for _, url := range relays {
-				if ctx.Err() != nil {
-					return
-				}
-				if !relaySupportsNegentropy(ctx, url) {
-					fallback = append(fallback, url)
-					continue
-				}
-				rctx, cancel := context.WithTimeout(ctx, 90*time.Second)
-				stats, err := negsync.Sync(rctx, inboxStore, url, inboxFilter, negsync.Down)
-				if err == nil {
-					markNegentropySupported(url)
-					log.Printf("📥 negentropy inbox sync %s: %d new (local set %d)", url, stats.Downloaded, stats.LocalHave)
-					// Owner sync (Both: heal gaps in both directions) only
-					// against seed relays — DM relays reject public kinds.
-					if isSeedRelay(url) {
-						ostats, oerr := negsync.Sync(rctx, outboxStore, url, ownerFilter, negsync.Both)
-						if oerr == nil {
-							log.Printf("📤 negentropy owner sync %s: %d down / %d up", url, ostats.Downloaded, ostats.Uploaded)
-						} else {
-							slog.Warn("negentropy owner sync failed", "relay", url, "err", oerr)
+			// One vector per store per round, reused across relays: the build
+			// materializes and JSON-decodes the whole windowed local set, which
+			// dwarfs the per-relay reconciliation cost. Events downloaded from
+			// an earlier relay this round aren't in the reused vector for later
+			// ones — they get re-offered and deduped by the store, far cheaper
+			// than a fresh full-store query per relay.
+			inboxVec, ivErr := negsync.BuildVector(ctx, inboxStore, inboxFilter)
+			var ownerVec *negsync.LocalVector
+			if ivErr != nil {
+				slog.Warn("negentropy inbox vector build failed, plain catch-up this round", "err", ivErr)
+				fallback = relays
+			} else {
+				for _, url := range relays {
+					if ctx.Err() != nil {
+						return
+					}
+					if !relaySupportsNegentropy(ctx, url) {
+						fallback = append(fallback, url)
+						continue
+					}
+					rctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+					stats, err := negsync.SyncWithVector(rctx, inboxStore, inboxVec, url, inboxFilter, negsync.Down)
+					if err == nil {
+						markNegentropySupported(url)
+						log.Printf("📥 negentropy inbox sync %s: %d new (local set %d)", url, stats.Downloaded, stats.LocalHave)
+						// Owner sync (Both: heal gaps in both directions) only
+						// against seed relays — DM relays reject public kinds.
+						if isSeedRelay(url) {
+							if ownerVec == nil {
+								var ovErr error
+								ownerVec, ovErr = negsync.BuildVector(rctx, outboxStore, ownerFilter)
+								if ovErr != nil {
+									slog.Warn("negentropy owner vector build failed, skipping owner sync this round", "err", ovErr)
+								}
+							}
+							if ownerVec != nil {
+								ostats, oerr := negsync.SyncWithVector(rctx, outboxStore, ownerVec, url, ownerFilter, negsync.Both, uploadMemoFor(url))
+								if oerr == nil {
+									log.Printf("📤 negentropy owner sync %s: %d down / %d up", url, ostats.Downloaded, ostats.Uploaded)
+								} else {
+									slog.Warn("negentropy owner sync failed", "relay", url, "err", oerr)
+								}
+							}
 						}
 					}
-				}
-				cancel()
-				switch {
-				case err == nil:
-				case errors.Is(err, negsync.ErrUnsupported):
-					log.Println("ℹ️ no NIP-77 support, using plain catch-up for", url)
-					markNegentropyUnsupported(url)
-					fallback = append(fallback, url)
-				default:
-					slog.Warn("negentropy sync failed, plain catch-up this round", "relay", url, "err", err)
-					fallback = append(fallback, url)
+					cancel()
+					switch {
+					case err == nil:
+					case errors.Is(err, negsync.ErrUnsupported):
+						log.Println("ℹ️ no NIP-77 support, using plain catch-up for", url)
+						markNegentropyUnsupported(url)
+						fallback = append(fallback, url)
+					case errors.Is(err, negsync.ErrRefused):
+						// The refusal (e.g. "blocked: too many query results")
+						// is deterministic for this filter — re-probing every
+						// round hammers the relay into rate-limiting us (damus
+						// 503s). Cache like unsupported for the retry TTL.
+						slog.Warn("negentropy sync refused, plain catch-up until retry TTL", "relay", url, "err", err)
+						markNegentropyUnsupported(url)
+						fallback = append(fallback, url)
+					default:
+						slog.Warn("negentropy sync failed, plain catch-up this round", "relay", url, "err", err)
+						fallback = append(fallback, url)
+					}
 				}
 			}
 		} else {
@@ -416,7 +474,26 @@ func subscribeInboxAndChat(ctx context.Context) {
 			inboxCatchup(fallback)
 			ownerCatchup(fallback)
 		}
+		// Advance both watermarks to the start of this round regardless of
+		// whether anything was written. The fallback catch-up queries start from
+		// lastSeen-60; if the watermark only moved when an event was actually
+		// saved (the old behavior), a quiet relay left `since` pinned in the past
+		// and every cycle re-queried an ever-widening historical window —
+		// expanding downloads and 100% CPU. advance() is monotonic, so this only
+		// ever moves the watermarks forward.
+		if ctx.Err() == nil {
+			advance(&lastSeen, roundStart)
+			advance(&lastSeenOwner, roundStart)
+		}
+		// Bound the temp-reject cache to the negentropy window so it can't grow
+		// without limit over the process's lifetime (stubs older than the window
+		// are never offered anyway).
+		rejects.prune(syncSince())
 		notifier.flush()
+		// A round materializes the full windowed local set per relay (the
+		// negentropy vector build); hand the spike back to the OS instead of
+		// letting darwin's lazy reclaim report it as resident until the next GC.
+		debug.FreeOSMemory()
 	}
 
 	// Periodic + on-demand catch-up pull: reconcile anything missed while
@@ -444,6 +521,22 @@ func subscribeInboxAndChat(ctx context.Context) {
 		runCatchup()
 		lastRun = time.Now()
 
+		// A round that runs longer than the tick interval leaves a tick
+		// pending, which would start the next round immediately — and once
+		// the DBs are big enough that every round overruns, the loop
+		// degenerates into back-to-back full-DB scans at 100% CPU with no
+		// idle ever again. Restarting the ticker (after dropping any stale
+		// tick) guarantees a full idle interval between rounds no matter how
+		// long a round takes.
+		restartTicker := func() {
+			select {
+			case <-ticker.C:
+			default:
+			}
+			ticker.Reset(time.Duration(pullEvery) * time.Second)
+		}
+		restartTicker()
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -461,6 +554,7 @@ func subscribeInboxAndChat(ctx context.Context) {
 			}
 			runCatchup()
 			lastRun = time.Now()
+			restartTicker()
 		}
 	})
 
@@ -479,7 +573,7 @@ func subscribeInboxAndChat(ctx context.Context) {
 		sawEvent := false
 		for ev := range pool.SubscribeMany(ctx, relays, filter) {
 			sawEvent = true
-			processInboxEvent(ctx, ev, wdbInbox, wdbChat, nil)
+			processInboxEvent(ctx, ev, wdbInbox, wdbChat, nil, rejects)
 			advance(&lastSeen, ev.CreatedAt)
 		}
 		if ctx.Err() != nil {
@@ -586,7 +680,7 @@ func logInboxImport(ev *nostr.Event) {
 // the live subscription and the periodic catch-up pull. When notifier is nil
 // (live subscription) accepted events notify immediately; otherwise the
 // notifier applies catch-up batch suppression.
-func processInboxEvent(ctx context.Context, ev nostr.RelayEvent, wdbInbox, wdbChat eventstore.RelayWrapper, notifier *batchNotifier) {
+func processInboxEvent(ctx context.Context, ev nostr.RelayEvent, wdbInbox, wdbChat eventstore.RelayWrapper, notifier *batchNotifier, rejects *tempRejects) {
 	relayURL := ""
 	if ev.Relay != nil {
 		relayURL = ev.Relay.URL
@@ -610,6 +704,21 @@ func processInboxEvent(ctx context.Context, ev nostr.RelayEvent, wdbInbox, wdbCh
 	if err := dbToPublish.Publish(ctx, *ev.Event); err != nil {
 		log.Println("🚫 error importing tagged note", ev.ID, ":", "from relay", relayURL, ":", err)
 		return
+	}
+	// If this event had a negentropy temp-reject stub (rejected earlier when its
+	// author was outside the WoT), it's now stored for real — clear the stub so
+	// inboxNegStore.QuerySync doesn't list it twice (DB + stub).
+	rejects.remove(ev.ID)
+
+	// Publish writes straight to the DB; khatru only notifies live REQ
+	// subscriptions for events that arrive over its own websocket. Broadcast
+	// so an open client (the app's Relay tab) sees the import immediately.
+	liveRelay := inboxRelay
+	if c.chat {
+		liveRelay = chatRelay
+	}
+	if liveRelay != nil {
+		liveRelay.BroadcastEvent(ev.Event)
 	}
 
 	// Emit a machine-parseable marker so clients can raise a local system
@@ -717,6 +826,11 @@ func processOwnerEvent(ctx context.Context, ev nostr.RelayEvent, wdbOutbox event
 	if err := wdbOutbox.Publish(ctx, *ev.Event); err != nil {
 		log.Println("🚫 error importing owner event", ev.ID, ":", err)
 		return
+	}
+	// See processInboxEvent: wake live REQ subscriptions, which a direct DB
+	// write bypasses.
+	if outboxRelay != nil {
+		outboxRelay.BroadcastEvent(ev.Event)
 	}
 	slog.Debug("📤 imported owner event", "kind", ev.Kind, "id", ev.ID)
 }

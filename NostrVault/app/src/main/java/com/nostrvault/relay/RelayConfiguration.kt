@@ -254,7 +254,7 @@ data class HavenConfig(
     val inboxRelayName: String = "Nostr Vault Inbox",
     val inboxRelayDescription: String = "Inbox relay",
     val inboxRelayIcon: String = "",
-    val inboxPullIntervalSeconds: Int = 60, // match iOS (was 300 = 5x slower catch-up)
+    val inboxPullIntervalSeconds: Int = 900, // match iOS; sub-5-min rounds treadmill the sync loop (Go clamps ≥300)
 
     // Import
     val importStartDate: String = "2023-01-01",

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"runtime"
 	"runtime/debug"
@@ -81,6 +82,7 @@ type Config struct {
 	FeedSyncEnabled                      bool                `json:"feed_sync_enabled"`
 	FeedSyncWindowDays                   int                 `json:"feed_sync_window_days"`
 	FeedSyncRelays                       []string            `json:"feed_sync_relays"`
+	GoMemLimitMB                         int                 `json:"go_mem_limit_mb"`
 }
 
 const relaySoftware = "https://github.com/barrydeen/haven"
@@ -150,6 +152,7 @@ func loadConfig() Config {
 		FeedSyncEnabled:                      getEnvBool("FEED_SYNC_ENABLED", true),
 		FeedSyncWindowDays:                   getEnvInt("FEED_SYNC_WINDOW_DAYS", 7),
 		FeedSyncRelays:                       getRelayListFromFile(getEnvString("FEED_SYNC_RELAYS_FILE", "")),
+		GoMemLimitMB:                         getEnvInt("GO_MEM_LIMIT_MB", defaultGoMemLimitMB()),
 	}
 
 	// Relay owner is always whitelisted
@@ -157,8 +160,47 @@ func loadConfig() Config {
 		cfg.WhitelistedPubKeys[cfg.OwnerPubKey] = struct{}{}
 	}
 
+	// Clamp the catch-up interval regardless of which host app passed it in:
+	// no UI exposes it, so anything below 5 min is a legacy save (the old 60s
+	// default) — short enough that sync rounds run back-to-back once the DBs
+	// grow, the 100% CPU treadmill. ≤0 means unset; use sites default it.
+	if cfg.InboxPullIntervalSeconds > 0 && cfg.InboxPullIntervalSeconds < 300 {
+		cfg.InboxPullIntervalSeconds = 300
+	}
+
+	applyGoMemLimit(cfg.GoMemLimitMB)
+
 	return cfg
 
+}
+
+// defaultGoMemLimitMB picks a soft Go heap target per platform. The embedded
+// builds share the host app's footprint budget (jetsam on iOS, user-visible
+// Activity Monitor numbers on macOS); a standalone server gets no limit.
+func defaultGoMemLimitMB() int {
+	switch runtime.GOOS {
+	case "ios", "android":
+		return 256
+	case "darwin":
+		// Roomy on purpose: sync rounds legitimately spike (vector builds over
+		// six Badger DBs), and a limit the live heap can approach turns into
+		// back-to-back GC cycles — sustained 100% CPU with no crash.
+		return 1024
+	default:
+		return 0 // server: let GOGC alone govern
+	}
+}
+
+// applyGoMemLimit sets the runtime's soft memory limit (GOMEMLIMIT). Without
+// it, sync/import spikes grow the heap and darwin's lazy page reclaim
+// (MADV_FREE) keeps the peak visible as resident memory indefinitely.
+// 0 or negative disables (resets to the effectively-unlimited default).
+func applyGoMemLimit(mb int) {
+	if mb <= 0 {
+		debug.SetMemoryLimit(math.MaxInt64)
+		return
+	}
+	debug.SetMemoryLimit(int64(mb) << 20)
 }
 
 func getVersion() string {

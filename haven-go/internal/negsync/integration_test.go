@@ -51,11 +51,11 @@ func TestLiveSupportedRelay(t *testing.T) {
 	defer cancel()
 
 	store := &countingStore{}
-	stats, err := Sync(ctx, store, "wss://relay.damus.io", emptyishFilter(), Down)
+	stats, err := Sync(ctx, store, "wss://relay.nos.social", emptyishFilter(), Down)
 	if err != nil {
 		t.Fatalf("expected clean sync against strfry relay, got: %v", err)
 	}
-	t.Logf("damus: downloaded=%d localHave=%d", stats.Downloaded, stats.LocalHave)
+	t.Logf("nos.social: downloaded=%d localHave=%d", stats.Downloaded, stats.LocalHave)
 }
 
 // TestLiveLocalRelay reconciles against a locally running Haven instance

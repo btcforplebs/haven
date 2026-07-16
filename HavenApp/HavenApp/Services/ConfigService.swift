@@ -422,7 +422,9 @@ class ConfigService: ObservableObject {
             case "INBOX_RELAY_NAME": config.inboxRelayName = value
             case "INBOX_RELAY_DESCRIPTION": config.inboxRelayDescription = value
             case "INBOX_RELAY_ICON": config.inboxRelayIcon = value
-            case "INBOX_PULL_INTERVAL_SECONDS": config.inboxPullIntervalSeconds = Int(value) ?? config.inboxPullIntervalSeconds
+            // Clamped like the JSON decode path: sub-5-min values are legacy
+            // saves of the old 60s default (the sync treadmill).
+            case "INBOX_PULL_INTERVAL_SECONDS": config.inboxPullIntervalSeconds = max(Int(value) ?? config.inboxPullIntervalSeconds, 300)
             case "WHITELISTED_NPUBS_FILE": config.whitelistedNpubsFile = value
             case "BLACKLISTED_NPUBS_FILE": config.blacklistedNpubsFile = value
             default: break

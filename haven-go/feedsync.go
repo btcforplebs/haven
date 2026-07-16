@@ -19,6 +19,7 @@ import (
 	"errors"
 	"log"
 	"log/slog"
+	"runtime/debug"
 	"slices"
 	"sync/atomic"
 	"time"
@@ -154,6 +155,9 @@ func syncFeed(ctx context.Context) {
 	}
 
 	runFeedSync := func() {
+		// Captured before any fetching so events arriving mid-round aren't
+		// skipped: the fallback query below re-queries from lastSeenFeed-60.
+		roundStart := nostr.Timestamp(time.Now().Unix())
 		follows := ownerFollowSet(ctx)
 		if len(follows) == 0 {
 			slog.Debug("feed sync: no follow list in outbox yet, skipping round")
@@ -171,27 +175,42 @@ func syncFeed(ctx context.Context) {
 
 		var fallback []string
 		if config.NegentropySyncEnabled {
-			for _, url := range relays {
-				if ctx.Err() != nil {
-					return
-				}
-				if !relaySupportsNegentropy(ctx, url) {
-					fallback = append(fallback, url)
-					continue
-				}
-				rctx, cancel := context.WithTimeout(ctx, 120*time.Second)
-				stats, err := negsync.Sync(rctx, store, url, filter, negsync.Down)
-				cancel()
-				switch {
-				case err == nil:
-					markNegentropySupported(url)
-					log.Printf("📚 negentropy feed sync %s: %d new (local set %d)", url, stats.Downloaded, stats.LocalHave)
-				case errors.Is(err, negsync.ErrUnsupported):
-					markNegentropyUnsupported(url)
-					fallback = append(fallback, url)
-				default:
-					slog.Warn("negentropy feed sync failed, plain catch-up this round", "relay", url, "err", err)
-					fallback = append(fallback, url)
+			// One vector per round, reused across relays — the build
+			// materializes the whole windowed feed cache, which dwarfs the
+			// per-relay reconciliation cost (same rationale as runCatchup).
+			feedVec, fvErr := negsync.BuildVector(ctx, store, filter)
+			if fvErr != nil {
+				slog.Warn("negentropy feed vector build failed, plain catch-up this round", "err", fvErr)
+				fallback = relays
+			} else {
+				for _, url := range relays {
+					if ctx.Err() != nil {
+						return
+					}
+					if !relaySupportsNegentropy(ctx, url) {
+						fallback = append(fallback, url)
+						continue
+					}
+					rctx, cancel := context.WithTimeout(ctx, 120*time.Second)
+					stats, err := negsync.SyncWithVector(rctx, store, feedVec, url, filter, negsync.Down)
+					cancel()
+					switch {
+					case err == nil:
+						markNegentropySupported(url)
+						log.Printf("📚 negentropy feed sync %s: %d new (local set %d)", url, stats.Downloaded, stats.LocalHave)
+					case errors.Is(err, negsync.ErrUnsupported):
+						markNegentropyUnsupported(url)
+						fallback = append(fallback, url)
+					case errors.Is(err, negsync.ErrRefused):
+						// Deterministic per-filter refusal — cache like
+						// unsupported instead of re-probing every round.
+						slog.Warn("negentropy feed sync refused, plain catch-up until retry TTL", "relay", url, "err", err)
+						markNegentropyUnsupported(url)
+						fallback = append(fallback, url)
+					default:
+						slog.Warn("negentropy feed sync failed, plain catch-up this round", "relay", url, "err", err)
+						fallback = append(fallback, url)
+					}
 				}
 			}
 		} else {
@@ -214,6 +233,16 @@ func syncFeed(ctx context.Context) {
 		}
 
 		pruneFeed(ctx, wdbFeed)
+		// Advance the fallback watermark to the start of this round regardless
+		// of whether anything was cached. Otherwise a quiet round leaves
+		// lastSeenFeed pinned in the past and the next fallback pull re-queries
+		// an ever-widening window (expanding downloads, 100% CPU). Monotonic.
+		if ctx.Err() == nil {
+			advance(roundStart)
+		}
+		// Same rationale as runCatchup: the vector build materializes the whole
+		// windowed feed cache per relay; return the spike to the OS promptly.
+		debug.FreeOSMemory()
 	}
 
 	pullEvery := config.InboxPullIntervalSeconds
@@ -234,6 +263,16 @@ func syncFeed(ctx context.Context) {
 
 		ticker := time.NewTicker(time.Duration(pullEvery) * time.Second)
 		defer ticker.Stop()
+		// Same overrun guard as the inbox catch-up loop: a round longer than
+		// the tick interval must not chain straight into the next one, or the
+		// loop pins the CPU with back-to-back full-cache scans forever.
+		restartTicker := func() {
+			select {
+			case <-ticker.C:
+			default:
+			}
+			ticker.Reset(time.Duration(pullEvery) * time.Second)
+		}
 		for {
 			select {
 			case <-ctx.Done():
@@ -251,6 +290,7 @@ func syncFeed(ctx context.Context) {
 			}
 			runFeedSync()
 			lastRun = time.Now()
+			restartTicker()
 		}
 	})
 }

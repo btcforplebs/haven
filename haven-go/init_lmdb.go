@@ -20,7 +20,7 @@ func init() {
 			}
 		}
 		// Bound the negentropy vector size explicitly (library default is 16M).
-		maxNeg := 200_000
+		maxNeg := 100_000
 		if runtime.GOOS == "ios" {
 			maxNeg = 50_000
 		}

@@ -29,6 +29,12 @@ class NetworkSyncService {
     private var injectedEventIds = Set<String>()
     private let maxInjectedIds = 10_000
 
+    /// Events waiting for an injection client that is still connecting.
+    /// Without this, each event in a burst replaced the connecting client
+    /// (dropping the previous event and dialing a fresh socket per event).
+    private var pendingInjections: [String: [[String: Any]]] = [:]
+    private let maxPendingInjections = 1_000
+
     var lastSyncTimestamp: Int64 {
         get { Int64(UserDefaults.standard.integer(forKey: lastSyncKey)) }
         set { UserDefaults.standard.set(Int(newValue), forKey: lastSyncKey) }
@@ -53,6 +59,7 @@ class NetworkSyncService {
         clients.removeAll()
         cancellables.removeAll()
         injectedEventIds.removeAll()
+        pendingInjections.removeAll()
         logger.info("NetworkSyncService stopped")
     }
 
@@ -91,18 +98,34 @@ class NetworkSyncService {
             }
             .store(in: &subs)
 
+        var sawConnecting = false
         client.$connectionState
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] state in
+            .sink { [weak self, weak client] state in
                 guard let self, self.isStarted else { return }
+                // Only the current client for this relay may drive reconnects;
+                // a replaced client's teardown must not redial its successor.
+                guard let client, self.clients[urlStr] === client else { return }
                 switch state {
+                case .connecting:
+                    sawConnecting = true
                 case .connected:
                     self.reconnectAttempts[urlStr] = 0
+                    // A reconnect scheduled during setup would tear down this
+                    // healthy connection when it fires — kill it.
+                    self.reconnectWork[urlStr]?.cancel()
+                    self.reconnectWork[urlStr] = nil
                     self.sendSubscription(to: client, relay: urlStr)
                 case .disconnected, .error:
+                    // @Published replays the initial .disconnected the moment
+                    // the sink subscribes, and connect() emits another during
+                    // its setup teardown. Treating those as failures made
+                    // every successful connect schedule a redial against
+                    // itself — a perpetual ~2s dial/teardown cycle per relay.
+                    // Only a drop after a real connection attempt counts.
+                    guard sawConnecting else { return }
+                    sawConnecting = false
                     self.scheduleReconnect(to: urlStr)
-                default:
-                    break
                 }
             }
             .store(in: &subs)
@@ -140,7 +163,10 @@ class NetworkSyncService {
         reconnectAttempts[urlStr] = attempts + 1
 
         let work = DispatchWorkItem { [weak self] in
-            self?.connect(to: urlStr)
+            guard let self else { return }
+            // The connection may have recovered while this was queued.
+            if let current = self.clients[urlStr], current.connectionState == .connected { return }
+            self.connect(to: urlStr)
         }
         reconnectWork[urlStr] = work
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
@@ -203,16 +229,24 @@ class NetworkSyncService {
 
         guard let url = URL(string: targetURL) else { return }
 
-        // Reuse an existing connected injection client if available, or create one
+        // Reuse an existing injection client when possible: send immediately
+        // if connected, queue if still connecting. Only a dead client
+        // (.disconnected/.error) gets replaced.
         let key = "__inject__\(targetURL)"
-        if let existing = clients[key], existing.connectionState == .connected {
-            let msg: [Any] = ["EVENT", eventDict]
-            if let data = try? JSONSerialization.data(withJSONObject: msg),
-               let str = String(data: data, encoding: .utf8) {
-                existing.send(text: str)
+        if let existing = clients[key] {
+            switch existing.connectionState {
+            case .connected:
+                sendInjection(eventDict, via: existing)
+                return
+            case .connecting:
+                enqueueInjection(eventDict, for: key)
+                return
+            case .disconnected, .error:
+                break
             }
-            return
         }
+
+        enqueueInjection(eventDict, for: key)
 
         let client = WebSocketClient()
         client.isTemporary = false
@@ -221,12 +255,12 @@ class NetworkSyncService {
 
         client.$connectionState
             .receive(on: DispatchQueue.main)
-            .sink { state in
+            .sink { [weak self, weak client] state in
+                guard let self, let client, self.clients[key] === client else { return }
                 if state == .connected {
-                    let msg: [Any] = ["EVENT", eventDict]
-                    if let data = try? JSONSerialization.data(withJSONObject: msg),
-                       let str = String(data: data, encoding: .utf8) {
-                        client.send(text: str)
+                    let pending = self.pendingInjections.removeValue(forKey: key) ?? []
+                    for dict in pending {
+                        self.sendInjection(dict, via: client)
                     }
                 }
             }
@@ -234,6 +268,23 @@ class NetworkSyncService {
 
         cancellables[key] = subs
         client.connect(url: url)
+    }
+
+    private func sendInjection(_ eventDict: [String: Any], via client: WebSocketClient) {
+        let msg: [Any] = ["EVENT", eventDict]
+        if let data = try? JSONSerialization.data(withJSONObject: msg),
+           let str = String(data: data, encoding: .utf8) {
+            client.send(text: str)
+        }
+    }
+
+    private func enqueueInjection(_ eventDict: [String: Any], for key: String) {
+        var queue = pendingInjections[key, default: []]
+        queue.append(eventDict)
+        if queue.count > maxPendingInjections {
+            queue.removeFirst(queue.count - maxPendingInjections)
+        }
+        pendingInjections[key] = queue
     }
 }
 #endif
