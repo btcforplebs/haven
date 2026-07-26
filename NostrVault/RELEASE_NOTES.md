@@ -1,25 +1,10 @@
-# NostrVault v1.2.0 (Build 5) Release Notes
+# NostrVault v1.2.1 (Build 6) Release Notes
 
-This update removes the remote push server entirely — notifications are now generated fully on-device from your own relay — adds Picture-in-Picture video, and fixes a Web of Trust bug that was causing real replies and reactions to go silently missing.
-
-## Key Features
-
-* **No More Push Server**: Every notification — mentions, replies, DMs, zaps, reactions, reposts — is now generated entirely on-device from your own embedded relay. Nothing about who's contacting you, or when, ever passes through a third-party server — not Google's, not ours.
-* **Picture-in-Picture Video**: Full-screen video now supports PiP — swipe home or tap the PiP button and it keeps playing in a floating window. A new unified control rail (play/pause, time, scrubber, mute, PiP) auto-hides while playing.
-* **Catch-Up Summary Notifications**: Coming back to the app after being away now shows one clean "N new notifications" summary instead of a flood of individual pushes.
-
-## Improvements
-
-* **Per-Account Notification Accuracy**: On multi-account setups, notifications now apply the correct account's preferences and open the correct account, instead of guessing from whichever one is currently active.
-* **Blossom Dashboard Backup**: The "Backup" button now actually checks which files are missing from your mirrors and pushes only those, with real progress and an accurate backed-up count.
-* **Settings → About**: Now shows the real app version instead of a stale hardcoded one.
+An important fix for Android 10, 11, 12 and 13: on those versions the relay never actually started. It failed silently and reported itself as offline, with nothing to indicate why.
 
 ## Bug Fixes
 
-* **Web of Trust Getting Stuck**: A stale Web of Trust snapshot could silently reject real replies and reactions as untrusted for days at a time. It now checks its own freshness on launch and refreshes itself in the background when due.
-* **Notifications Missing After Catching Up**: Activity that arrived only through the Mac Relay catch-up sync (rather than live) wasn't triggering notifications at all. Fixed.
-* **Local Relay Becoming Unreachable**: Mac Relay Sync could, in rare conditions, fire repeatedly and overwhelm the local relay badly enough that posting stopped working entirely. Fixed with a cooldown between sync rounds.
-
-## Removed
-
-* Remote push server registration and all associated plumbing
+*   **Relay Never Started on Android 10–13**: The background service asked the system for a service type that only exists on Android 14 and later. On Android 10 through 13 the system rejected that request, the error was caught and turned into a normal-looking "offline" state, and the relay simply never ran. If you are on one of those versions, this is the update that makes the app work at all. Android 14+ was unaffected.
+*   **Stale Values in Dashboard & Feed Settings**: The cache location, cache duration, feed relay list and autoplay toggle were read in a way that never refreshed, so those screens could keep showing outdated settings after you changed them.
+*   **A Single Bad Setting Could Prevent Startup**: If any numeric or true/false value in the relay's configuration was malformed or blank — twenty settings qualified, including the relay port — the app quit during startup with no error and no crash report. Bad values now fall back to their default and record which setting was at fault.
+*   **Release Build Was Broken**: The app had not compiled from a clean checkout since 2026-07-16, after a relay-list cleanup left an incomplete statement behind. Also cleared every remaining compiler warning.

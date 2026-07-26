@@ -1,26 +1,17 @@
-# Haven App v2.6.0 Build 11 (macOS) / v1.1.1 Build 11 (iOS) Release Notes
+# Haven App v2.6.0 Build 14 (macOS) / v2.6.0 Build 14 (iOS) Release Notes
 
-This update removes the remote push server entirely — notifications are now generated fully on-device from your own relay — adds Picture-in-Picture video on iOS and Android, and fixes a Web of Trust bug that was causing real replies and reactions to go silently missing.
-
-## Key Features
-
-*   **No More Push Server**: Every notification — mentions, replies, DMs, zaps, reactions, reposts — is now generated entirely on-device from your own embedded relay. Nothing about who's contacting you, or when, ever passes through a third-party server — not Apple's, not Google's, not ours.
-*   **Picture-in-Picture Video**: Full-screen video now supports PiP on both iOS and Android — swipe home or tap the PiP button and it keeps playing in a floating window. A new unified control rail (play/pause, time, scrubber, mute, PiP) auto-hides while playing.
-*   **Catch-Up Summary Notifications**: Coming back to the app after being away now shows one clean "N new notifications" summary instead of a flood of individual pushes.
+A stability and correctness update. Video failures on iOS no longer disappear into a black rectangle, playing a cached video no longer stalls the interface, the Mac app uses noticeably less memory sitting in the background — and it can finally be installed on a Mac other than the one that built it.
 
 ## Improvements
 
-*   **Per-Account Notification Accuracy**: On multi-account setups, notifications now apply the correct account's preferences and open the correct account, instead of guessing from whichever one is currently active.
-*   **Mac Relay Sync Status**: New status widgets in the Dashboard and Settings show last-sync time with manual Sync Now / Full Resync / Reset controls.
-*   **Message Composer**: Selecting a recipient from search now visibly confirms the selection.
+*   **Lower Background Memory (macOS)**: The relay now returns memory to the system the moment the app goes to the background, instead of waiting for the next sync or import to come around — on an idle relay that could be an hour away. Measured about a quarter lower in steady state.
+*   **Installable on Other Macs**: Every previous macOS build was signed in a way that only allowed it to run on the machine that built it — on any other Mac it was terminated at launch with no explanation and no crash report. Builds are now signed for distribution and run anywhere. A downloaded copy still needs its quarantine flag cleared once until notarization is set up.
+*   **Matching Version Numbers**: The iOS app reported 1.1.1 while macOS reported 2.6.0 at the same build number. Both now read 2.6.0, so you can tell at a glance which build you have.
 
 ## Bug Fixes
 
-*   **Web of Trust Getting Stuck**: A stale Web of Trust snapshot could silently reject real replies and reactions as untrusted for days at a time. It now checks its own freshness on launch and refreshes itself in the background when due.
-*   **Notifications Missing After Catching Up**: Activity that arrived only through the Mac Relay catch-up sync (rather than live) wasn't triggering notifications at all. Fixed.
-*   **Local Relay Becoming Unreachable**: Mac Relay Sync could, in rare conditions, fire repeatedly and overwhelm the local relay badly enough that posting stopped working entirely. Fixed with a cooldown between sync rounds.
-*   **Mac Relay Private/Chat Catch-Up Silently Failing**: These required an authentication step that was never being performed, so catch-up against them always failed quietly. Fixed.
-
-## Removed
-
-*   Remote push server registration and all associated APNs plumbing
+*   **Video Failures Were Invisible**: When every source for a video failed, the feed showed a black rectangle instead of falling back to its thumbnail, full-screen went black, and no error or retry appeared anywhere. Failures are now surfaced, the feed falls back to its thumbnail, and "Try Again" works.
+*   **Stall When Playing Cached Video**: Checking a cached video's integrity meant reading and hashing up to 64 MB on the main thread every time a player was created, which could visibly hitch scrolling. That work now happens in the background.
+*   **Audio Interrupted During Picture-in-Picture**: Scrolling the feed while a video played full-screen or in PiP handed the audio session over to the muted feed player, cutting the audio of the video you were watching.
+*   **Video Stuck Streaming After One Bad Copy**: If a cached video failed to play once, that video streamed from the network for the rest of the session — even after the bad copy was replaced with a good one.
+*   **A Single Bad Setting Could Prevent Startup**: If any numeric or true/false value in the relay's configuration was malformed or blank — twenty settings qualified, including the relay port — the app quit during startup with no error and no crash report. Bad values now fall back to their default and record which setting was at fault.

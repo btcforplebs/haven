@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0 (14) macOS / 2.6.0 (14) iOS / 1.2.1 (6) Android] - 2026-07-26
+
+> **Stability & Correctness**: The Android relay could not start at all on Android 10–13 — it failed silently and reported itself offline with no error. Video playback failures on iOS showed a black rectangle with no message and no way to retry, and playing a cached video could stall the interface. The macOS app uses roughly a quarter less memory sitting in the background, and can finally be installed on a Mac other than the one that built it.
+
+### Changed
+- **iOS Version Now Matches macOS**: The iOS app reported version 1.1.1 while macOS reported 2.6.0 at the same build number. Both now read 2.6.0, so a given build is identifiable across platforms.
+- **Lower macOS Background Memory**: The relay now hands memory back to the operating system as soon as the app goes to the background, rather than waiting for whatever sync or import happens to run next — on an idle relay that could be an hour. Steady-state footprint measured ~24% lower.
+- **macOS Builds Are Distributable**: Every macOS build previously produced was signed in a way that let it run only on the machine that built it; on any other Mac it was terminated at launch with no explanation and no crash report. Builds are now Developer ID signed so they run anywhere. Unless notarized, a downloaded copy still needs its quarantine flag cleared once.
+
+### Fixed
+- **Android Relay Never Started on Android 10–13**: The foreground service declared a type that only exists on Android 14+, so on Android 10 through 13 the system rejected the start request. The error was caught and turned into a normal-looking "offline" state, meaning the relay silently never ran on those versions and nothing indicated why. The service now requests a type the running system actually understands.
+- **Silent Video Failures (iOS)**: When every source for a video failed, the feed showed a black rectangle instead of falling back to its thumbnail, full-screen showed black, and there was no error message or retry anywhere — the state that drove those views was never actually being set. Failures are now reported, the feed falls back to its thumbnail, and "Try Again" works.
+- **Interface Stall When Playing Cached Video (iOS)**: Verifying a cached video's integrity — reading and hashing up to 64 MB — ran on the main thread every time a player was created, so scrolling past cached videos could visibly hitch. That work now happens off the main thread, as it already did on Android.
+- **Video Audio Interrupted While in Picture-in-Picture (iOS)**: Scrolling the feed while a video played full-screen or in PiP handed the audio session to the muted feed player, interrupting the video you were actually watching.
+- **Video Stuck Streaming After One Bad Copy (iOS)**: If a locally cached video failed to play once, that video streamed from the network for the rest of the session even after the bad copy was discarded and a good one downloaded.
+- **Stale Values in Android Dashboard & Feed Settings**: The cache location, cache duration, feed relay list, and autoplay toggle read their values in a way that never refreshed, so those screens could show outdated settings after a change.
+- **A Single Bad Setting Could Prevent Startup**: If any numeric or true/false value in the relay's environment file was malformed or blank — twenty settings qualified, including the relay port — the app terminated during startup with no error, no crash report, and no indication of the cause. Bad values now fall back to their default and log which setting was at fault.
+- **Android Release Build Was Broken**: The Android app had not compiled from a clean checkout since 2026-07-16; a relay-list cleanup left an incomplete statement behind. Also cleared every remaining compiler warning on both platforms.
+
 ## [2.6.0 (11) macOS / 1.1.1 (11) iOS / 1.2.0 (5) Android] - 2026-07-06
 
 > **On-Device Notifications & Picture-in-Picture**: Notifications no longer depend on any remote push server — they're generated entirely on-device from your own relay, with correct per-account attribution on multi-account setups and a consolidated "N new notifications" summary after catching up from being away. Video now supports Picture-in-Picture on iOS and Android. Plus a Web of Trust self-heal fix that was the root cause of silently-dropped replies and reactions.
