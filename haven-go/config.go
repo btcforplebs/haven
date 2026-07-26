@@ -330,11 +330,24 @@ func getEnvString(key string, defaultValue string) string {
 	return defaultValue
 }
 
+// The typed getters below fall back to their default on a malformed value
+// rather than panicking. In the embedded (c-archive) builds there is no
+// separate relay process to lose: an unrecovered panic prints to stderr and
+// exits the whole host app — which, because it is a clean exit rather than a
+// signal, produces no crash report at all. The macOS app was observed dying
+// ~2s after launch with no crash log and never binding its port, from exactly
+// this path. A single stray character in .env must not be able to do that.
+// Same reasoning as the "never calls os.Exit" note in import.go.
+func badEnv(key, value string, err error, fallback any) {
+	log.Printf("⚠️ %s=%q is not valid (%v) — using default %v", key, value, err, fallback)
+}
+
 func getEnvInt(key string, defaultValue int) int {
 	if value, ok := os.LookupEnv(key); ok {
 		intValue, err := strconv.Atoi(value)
 		if err != nil {
-			panic(err)
+			badEnv(key, value, err, defaultValue)
+			return defaultValue
 		}
 		return intValue
 	}
@@ -345,7 +358,8 @@ func getEnvInt64(key string, defaultValue int64) int64 {
 	if value, ok := os.LookupEnv(key); ok {
 		intValue, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			panic(err)
+			badEnv(key, value, err, defaultValue)
+			return defaultValue
 		}
 		return intValue
 	}
@@ -356,7 +370,8 @@ func getEnvBool(key string, defaultValue bool) bool {
 	if value, ok := os.LookupEnv(key); ok {
 		boolValue, err := strconv.ParseBool(value)
 		if err != nil {
-			panic(err)
+			badEnv(key, value, err, defaultValue)
+			return defaultValue
 		}
 		return boolValue
 	}
@@ -367,7 +382,8 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 	if value, ok := os.LookupEnv(key); ok {
 		durationValue, err := time.ParseDuration(value)
 		if err != nil {
-			panic(err)
+			badEnv(key, value, err, defaultValue)
+			return defaultValue
 		}
 		return durationValue
 	}
