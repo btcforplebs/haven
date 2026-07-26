@@ -134,6 +134,13 @@ class RelayProcessManager: ObservableObject {
         guard isUIActive else { return }
         isUIActive = false
         logStore.stopThrottler()
+        // Hand back whatever the last sync/import round left on the Go heap.
+        // Off the main thread on purpose: FreeOSMemory runs a full GC (tens to
+        // hundreds of ms), and blocking cgo calls on the main thread are what
+        // the 0x8BADF00D watchdog kills look like.
+        DispatchQueue.global(qos: .utility).async {
+            TrimMemoryC()
+        }
         #if DEBUG
         print("RelayProcessManager: entering background mode")
         #endif

@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -406,6 +407,19 @@ func RequestRelaySyncC() {
 	// Triggers an immediate inbox + owner catch-up pull in the running relay
 	// (used by the apps' pull-to-refresh). No-op-safe if the relay isn't up.
 	RequestRelaySync()
+}
+
+//export TrimMemoryC
+func TrimMemoryC() {
+	// Called when the host app backgrounds. Sync/import rounds spike the heap,
+	// and darwin's lazy reclaim (MADV_FREE) keeps that peak resident until the
+	// runtime hands the pages back — otherwise only after the next import,
+	// feed sync, or WoT rebuild happens to call FreeOSMemory itself, which on
+	// an idle relay can be an hour away.
+	//
+	// This runs a full GC and returns free spans to the OS, so it is not cheap
+	// (tens to hundreds of ms). Callers must invoke it off the main thread.
+	debug.FreeOSMemory()
 }
 
 //export UpdateBlacklistC
