@@ -6,6 +6,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
@@ -223,6 +224,29 @@ class RelayForegroundService : Service() {
         logStore.startPolling(serviceScope)
     }
 
+    /**
+     * The foreground-service type to start with, matched to what the running
+     * platform actually understands.
+     *
+     * `specialUse` — the type this relay genuinely is — only exists on API 34+.
+     * On 29-33 the manifest parser drops it, leaving the service with no
+     * declared type while [ServiceCompat] still passes the SPECIAL_USE bit;
+     * Android rejects the mismatch with IllegalArgumentException, which the
+     * caller catches and turns into a silent OFFLINE + stopSelf. The relay then
+     * never starts on Android 10-13 and says nothing about it. `dataSync` is
+     * the closest type those releases do understand.
+     *
+     * Below 29 there is no typed startForeground at all; ServiceCompat ignores
+     * the argument, so 0 (NOT_FOREGROUND_SERVICE_TYPE) is correct.
+     */
+    private fun foregroundServiceType(): Int = when {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE ->
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ->
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        else -> 0
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             stopSelf()
@@ -237,7 +261,7 @@ class RelayForegroundService : Service() {
                 this,
                 NOTIFICATION_ID,
                 buildNotification(RelayStatus.BOOTING),
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+                foregroundServiceType(),
             )
         } catch (e: Exception) {
             Log.e(TAG, "startForeground failed: ${e.message}")
