@@ -368,34 +368,21 @@ struct FeedMediaViewer: View {
     }
     
     private func detectType() {
-        let ext = url.pathExtension.lowercased()
-        if SupportedMediaFormats.videoExtensions.contains(ext) {
-            isVideo = true
+        if let kind = MediaKindResolver.cachedKind(for: url) {
+            apply(kind)
             isLoadingType = false
-        } else if ext == "gif" {
-            isGIF = true
-            isLoadingType = false
-        } else if SupportedMediaFormats.imageExtensions.contains(ext) {
-            isVideo = false
-            isGIF = false
-            isLoadingType = false
-        } else if let cached = MediaTypeDetector.shared.getCachedContentType(for: url) {
-            isVideo = MediaTypeDetector.shared.isVideoContentType(cached)
-            isGIF = MediaTypeDetector.shared.isGIFContentType(cached)
-            isLoadingType = false
-        } else {
-            isLoadingType = true
-            MediaTypeDetector.shared.detectContentType(for: url) { detectedType in
-                if let detectedType = detectedType {
-                    self.isVideo = MediaTypeDetector.shared.isVideoContentType(detectedType)
-                    self.isGIF = MediaTypeDetector.shared.isGIFContentType(detectedType)
-                } else {
-                    self.isVideo = false
-                    self.isGIF = false
-                }
-                self.isLoadingType = false
-            }
+            return
         }
+        isLoadingType = true
+        Task { @MainActor in
+            apply(await MediaKindResolver.kind(for: url))
+            isLoadingType = false
+        }
+    }
+
+    private func apply(_ kind: MediaKind) {
+        isVideo = kind == .video
+        isGIF = kind == .gif
     }
     
     private var failureView: some View {
@@ -615,9 +602,10 @@ struct FeedMediaViewer: View {
     /// Preserving the source server's Content-Type is critical for mirroring — it's the only
     /// reliable way to transfer format metadata since the khatru magic library can't detect MP4/MOV.
     private func downloadMedia() async throws -> (Data, String?) {
-        // 1. If it's already a local file URL, load it directly
+        // 1. If it's already a local file URL, load it directly. Map instead of
+        // reading into the heap — mirror/save paths pass whole videos through here.
         if url.isFileURL {
-            return (try Data(contentsOf: url), nil)
+            return (try Data(contentsOf: url, options: .mappedIfSafe), nil)
         }
 
         // 2. Try fetching via MediaCacheService which handles caching & localhost self-signed SSL/TLS issues
@@ -801,8 +789,14 @@ struct MediaViewerPhoto: View {
     private func loadImage() {
         guard image == nil, !loadFailed else { return }
         Task {
-            if let data = await MediaCacheService.shared.fetchData(url: url),
-               let img = PlatformImage(data: data) {
+            guard let data = await MediaCacheService.shared.fetchData(url: url) else {
+                await MainActor.run { self.loadFailed = true }
+                return
+            }
+            // Screen-bounded decode: the pager keeps neighbor pages alive, so
+            // full-resolution originals (50-190 MB decoded) stack up fast.
+            let downsampled = await ImageDownsampler.downsampleToScreen(data: data)
+            if let img = downsampled ?? PlatformImage(data: data) {
                 await MainActor.run { self.image = img }
             } else {
                 await MainActor.run { self.loadFailed = true }

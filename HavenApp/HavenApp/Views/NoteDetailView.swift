@@ -79,9 +79,25 @@ struct NoteDetailView: View {
         return ancestors
     }
 
+    /// All notes visible to this thread view: the live feed, the opened note
+    /// itself, and every fetched ancestor (parentNotes / parentNotesCache).
+    /// Ancestors never enter feedService.notes, so filtering replies against
+    /// feedService.notes alone drops any branch that passes through a parent —
+    /// e.g. focus a grandparent and the parent (plus the reply you came from)
+    /// silently disappears.
+    private var threadPool: [FeedNote] {
+        var seen = Set<String>()
+        var pool: [FeedNote] = []
+        for n in feedService.notes where seen.insert(n.id).inserted { pool.append(n) }
+        if seen.insert(note.id).inserted { pool.append(note) }
+        for n in parentNotes where seen.insert(n.id).inserted { pool.append(n) }
+        for n in feedService.parentNotesCache.values where seen.insert(n.id).inserted { pool.append(n) }
+        return pool
+    }
+
     private var dynamicReplies: [FeedNote] {
         let targetId = (focusedNote.kind == 6 && focusedNote.repostedEventId != nil) ? focusedNote.repostedEventId! : focusedNote.id
-        return feedService.notes.filter { $0.parentEventId == targetId }
+        return threadPool.filter { $0.parentEventId == targetId }
             .sorted(by: { $0.createdAt < $1.createdAt })
     }
 
@@ -693,6 +709,7 @@ struct NoteDetailView: View {
 
     private func repliesSection(proxy: ScrollViewProxy) -> some View {
         let currentReplies = dynamicReplies
+        let pool = threadPool
 
         return VStack(alignment: .leading, spacing: 12) {
             if isLoadingReplies {
@@ -727,7 +744,7 @@ struct NoteDetailView: View {
                 ForEach(currentReplies) { reply in
                     ThreadedReplyNode(
                         reply: reply,
-                        allNotes: feedService.notes,
+                        allNotes: pool,
                         depth: 1,
                         isCompactMode: isCompactView,
                         onReply: { target in

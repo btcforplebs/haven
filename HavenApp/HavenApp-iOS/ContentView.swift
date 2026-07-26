@@ -14,6 +14,7 @@ struct ContentView: View {
     @State private var selectedTab = 0
     @State private var showingDMInbox = false
     @State private var pendingMentionNoteId: IdentifiableString?
+    @State private var isLandscapeLayout = UIScreen.main.bounds.width >= UIScreen.main.bounds.height
 
     init() {
         let appearance = UINavigationBarAppearance()
@@ -36,13 +37,33 @@ struct ContentView: View {
                     // iPad: persistent sidebar in landscape, bottom tab bar in
                     // portrait (where the sidebar collapses and would otherwise
                     // leave no visible navigation).
-                    GeometryReader { geo in
-                        if geo.size.width >= geo.size.height {
+                    //
+                    // The orientation is measured by a keyboard-immune background
+                    // reader, NOT by wrapping the content in a GeometryReader:
+                    // the on-screen keyboard shrinks a keyboard-avoiding reader's
+                    // height, which in full-screen portrait flips width >= height
+                    // to true and swaps the entire layout branch — destroying the
+                    // @State of whichever view is presenting the compose sheet,
+                    // so the sheet dismisses itself the moment its editor focuses.
+                    ZStack {
+                        if isLandscapeLayout {
                             iPadSidebarView(selectedTab: $selectedTab)
                         } else {
                             iPhoneTabView(selectedTab: $selectedTab)
                         }
                     }
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear
+                                .onAppear {
+                                    isLandscapeLayout = geo.size.width >= geo.size.height
+                                }
+                                .onChange(of: geo.size) { _, size in
+                                    isLandscapeLayout = size.width >= size.height
+                                }
+                        }
+                        .ignoresSafeArea(.keyboard)
+                    )
                 } else {
                     iPhoneTabView(selectedTab: $selectedTab)
                 }

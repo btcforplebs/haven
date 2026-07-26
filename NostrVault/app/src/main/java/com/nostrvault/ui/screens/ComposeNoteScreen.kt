@@ -990,7 +990,7 @@ fun ComposeNoteScreen(
                             )
                         } else {
                             Text(
-                                text = "Publish",
+                                text = "Post",
                                 fontWeight = FontWeight.SemiBold,
                                 color = PrimaryText,
                             )
@@ -1134,7 +1134,7 @@ fun ComposeNoteScreen(
                         when {
                             viewModel.isReply -> "Write your reply..."
                             viewModel.isQuote -> "Add your thoughts..."
-                            else -> "What's on your mind?"
+                            else -> "What's happening?"
                         },
                         color = PlaceholderText,
                     )
@@ -1243,15 +1243,6 @@ fun ComposeNoteScreen(
                 }
             }
 
-            Spacer(Modifier.height(12.dp))
-
-            // Character count
-            Text(
-                text = "${content.length} characters",
-                color = TertiaryText,
-                fontSize = 12.sp,
-                modifier = Modifier.align(Alignment.End),
-            )
         }
     }
 

@@ -78,11 +78,9 @@ fun InlineEngagementBar(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     modifier = clickMod,
                 ) {
-                    Icon(
-                        imageVector = NostrVaultIcons.HeartFilled,
-                        contentDescription = null,
-                        tint = LikeRed,
-                        modifier = Modifier.size(10.dp),
+                    Text(
+                        text = reactionEmojiSummary(uniqueReactors.map { it.second }, limit = 2),
+                        fontSize = 10.sp,
                     )
                     OverlappingAvatars(
                         pubkeys = uniqueReactors.map { it.first },

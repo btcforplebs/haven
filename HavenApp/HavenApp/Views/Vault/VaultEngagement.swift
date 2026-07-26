@@ -1,5 +1,47 @@
 import SwiftUI
 
+// MARK: - Reaction Emoji Display
+
+/// Maps raw kind-7 reaction content to a displayable emoji.
+/// "+"/empty is a standard like (heart), "-" a dislike; custom-emoji
+/// shortcodes and plain text fall back to the heart.
+func reactionDisplayEmoji(_ raw: String) -> String {
+    let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    switch trimmed {
+    case "", "+", "+1", "❤", "❤️": return "❤️"
+    case "-", "-1": return "👎"
+    default: break
+    }
+    if let emoji = trimmed.first(where: { $0.isEmojiRenderable }) {
+        return String(emoji)
+    }
+    return "❤️"
+}
+
+/// Unique display emojis for a set of raw reaction contents, in first-seen order.
+func reactionEmojiSummary(_ emojis: [String], limit: Int) -> String {
+    var seen = Set<String>()
+    var result: [String] = []
+    for raw in emojis {
+        let display = reactionDisplayEmoji(raw)
+        if seen.insert(display).inserted {
+            result.append(display)
+            if result.count == limit { break }
+        }
+    }
+    return result.isEmpty ? "❤️" : result.joined()
+}
+
+private extension Character {
+    /// True when the character renders as an emoji glyph (excludes plain digits/text).
+    var isEmojiRenderable: Bool {
+        guard let first = unicodeScalars.first else { return false }
+        return first.properties.isEmojiPresentation
+            || unicodeScalars.contains { $0.properties.isEmojiModifierBase }
+            || (first.properties.isEmoji && unicodeScalars.count > 1)
+    }
+}
+
 // MARK: - LikedByRow
 
 struct LikedByRow: View {
@@ -16,9 +58,8 @@ struct LikedByRow: View {
     var body: some View {
         let unique = uniqueReactors
         HStack(spacing: 6) {
-            Image(systemName: "heart.fill")
-                .font(.appSystem(size: 12, weight: .bold))
-                .foregroundColor(.pink)
+            Text(reactionEmojiSummary(unique.map(\.emoji), limit: 3))
+                .font(.appSystem(size: 12))
 
             HStack(spacing: -6) {
                 ForEach(Array(unique.prefix(5).enumerated()), id: \.offset) { _, reactor in
@@ -34,7 +75,8 @@ struct LikedByRow: View {
             }
             let remaining = unique.count - names.count
 
-            Text(likedByText(names: names, remaining: remaining))
+            let allHearts = unique.allSatisfy { reactionDisplayEmoji($0.emoji) == "❤️" }
+            Text(likedByText(names: names, remaining: remaining, allHearts: allHearts))
                 .font(.appSystem(size: 13, weight: .medium))
                 .foregroundColor(.secondary)
                 .lineLimit(1)
@@ -64,13 +106,13 @@ struct LikedByRow: View {
         }
     }
 
-    private func likedByText(names: [String], remaining: Int) -> String {
+    private func likedByText(names: [String], remaining: Int, allHearts: Bool) -> String {
         if names.isEmpty { return "" }
         var text = names.joined(separator: ", ")
         if remaining > 0 {
             text += " +\(remaining) more"
         }
-        text += " liked"
+        text += allHearts ? " liked" : " reacted"
         return text
     }
 
@@ -115,7 +157,7 @@ struct ReactorsListView: View {
 
                         Spacer()
 
-                        Text(reactor.emoji)
+                        Text(reactionDisplayEmoji(reactor.emoji))
                             .font(.appSystem(size: 20))
 
                         Image(systemName: "chevron.right")
@@ -127,7 +169,7 @@ struct ReactorsListView: View {
                 .padding(.vertical, 4)
             }
             .listStyle(.plain)
-            .navigationTitle("Liked By")
+            .navigationTitle("Reactions")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             #endif

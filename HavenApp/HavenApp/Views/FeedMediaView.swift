@@ -22,15 +22,16 @@ enum FeedMediaType {
 
     /// Classification from a MIME content-type string.
     static func fromContentType(_ contentType: String) -> FeedMediaType {
-        let lower = contentType.lowercased()
-        if lower.contains("image/gif") {
-            return .gif
-        } else if lower.hasPrefix("image/") {
-            return .photo
-        } else if lower.hasPrefix("video/") {
-            return .video
+        FeedMediaType(MediaKindResolver.kind(fromMime: contentType))
+    }
+
+    init(_ kind: MediaKind) {
+        switch kind {
+        case .video: self = .video
+        case .gif: self = .gif
+        case .image: self = .photo
+        case .audio, .unknown: self = .unknown
         }
-        return .unknown
     }
 }
 
@@ -180,27 +181,19 @@ struct FeedMediaView: View {
     // MARK: - Type Detection
 
     private func detectMediaType() {
-        // Fast path: check extension
-        if let type = FeedMediaType.fromExtension(url) {
-            self.mediaType = type
+        // Fast path: extension / MIME hint / detector cache — no network.
+        if let kind = MediaKindResolver.cachedKind(for: url) {
+            self.mediaType = FeedMediaType(kind)
             return
         }
 
-        // Check cached content type
-        if let cached = MediaTypeDetector.shared.getCachedContentType(for: url) {
-            self.mediaType = FeedMediaType.fromContentType(cached)
-            return
-        }
-
-        // Slow path: HTTP HEAD request
+        // Slow path: HTTP HEAD request (+ magic-byte sniff for octet-stream servers)
         guard !isDetecting else { return }
         isDetecting = true
-        MediaTypeDetector.shared.detectContentType(for: url) { detectedType in
-            if let detectedType = detectedType {
-                self.mediaType = FeedMediaType.fromContentType(detectedType)
-            } else {
-                self.mediaType = .photo // Fallback to photo
-            }
+        Task { @MainActor in
+            let kind = await MediaKindResolver.kind(for: url)
+            // Unknown resolves to photo — the historical fallback.
+            self.mediaType = kind == .unknown ? .photo : FeedMediaType(kind)
             self.isDetecting = false
         }
     }

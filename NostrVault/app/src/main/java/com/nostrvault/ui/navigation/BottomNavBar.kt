@@ -50,7 +50,6 @@ import com.nostrvault.ui.theme.LocalNostrVaultColors
 import com.nostrvault.ui.theme.LocalOledMode
 import com.nostrvault.ui.theme.NostrVaultIcons
 import com.nostrvault.ui.theme.SecondaryGroupedBg
-import com.nostrvault.ui.theme.SecondaryText
 
 /**
  * Floating pill-shaped bottom navigation bar matching the iOS tab structure.
@@ -344,7 +343,7 @@ private fun NavTab(
             Icon(
                 imageVector = icon,
                 contentDescription = label,
-                tint = if (selected) selectedColor else SecondaryText,
+                tint = if (selected) selectedColor else Color.White,
                 modifier = Modifier
                     .size(31.dp)
                     .scale(scale),
@@ -363,7 +362,7 @@ private fun NavTab(
             text = label,
             fontSize = 10.sp,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (selected) selectedColor else SecondaryText,
+            color = if (selected) selectedColor else Color.White,
         )
     }
 }
@@ -442,7 +441,7 @@ private fun ProfileTab(
             text = "Profile",
             fontSize = 10.sp,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (selected) selectedColor else SecondaryText,
+            color = if (selected) selectedColor else Color.White,
         )
     }
 }

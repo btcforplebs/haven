@@ -146,10 +146,26 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
     }
 
     func cacheImage(_ image: PlatformImage, for url: URL) {
-        // Estimate cost as width * height * 4 bytes per pixel
-        let size = image.size
-        let cost = Int(size.width * size.height * 4)
-        imageCache.setObject(image, forKey: url as NSURL, cost: cost)
+        imageCache.setObject(image, forKey: url as NSURL, cost: Self.decodedCost(of: image))
+    }
+
+    /// Decoded-bitmap cost in bytes, from real pixel dimensions. NSImage.size
+    /// is in points and honors DPI metadata — a 300-dpi photo under-reports by
+    /// ~17×, which let the 40 MB totalCostLimit admit hundreds of MB of
+    /// decoded bitmaps before evicting anything.
+    static func decodedCost(of image: PlatformImage) -> Int {
+        #if os(macOS)
+        var pixels = 0
+        for rep in image.representations {
+            pixels = max(pixels, rep.pixelsWide * rep.pixelsHigh)
+        }
+        if pixels == 0 {
+            pixels = Int(image.size.width * image.size.height)
+        }
+        return pixels * 4
+        #else
+        return Int(image.size.width * image.scale * image.size.height * image.scale) * 4
+        #endif
     }
 
     private func handleMemoryPressure() {
@@ -274,27 +290,130 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
 
     /// Internal version that resolves file paths even for local relay URLs.
     /// Used for components like AVAsset thumbnail generation which can handle raw files.
+    ///
+    /// Files named by a Blossom content hash are integrity-checked before being
+    /// returned: a truncated/corrupt local copy (e.g. from an interrupted blob
+    /// write) would otherwise shadow a perfectly healthy remote URL forever.
     func internalLocalFileURL(for url: URL) -> URL? {
+        let blobHash = Self.blossomHash(in: url)
+
         // 1. Local relay media-tab URLs may point at files in Blossom by their
         // exact filename, not only by a bare sha256 hash. Resolve those directly
         // so AVFoundation does not have to stream through localhost on iOS.
         if isLocalURL(url), let localBlossomURL = blossomFile(named: url.lastPathComponent) {
+            if let blobHash {
+                return verifiedHashNamedFile(localBlossomURL, expectedHash: blobHash)
+            }
             return localBlossomURL
         }
 
         // 2. Try to find if it's a local Blossom file we already have by hash.
-        let hashValue = self.hash(url: url)
-        if hashValue.count == 64, let localBlossomURL = blossomFile(forHash: hashValue, extensionHint: url.pathExtension) {
-            return localBlossomURL
+        if let blobHash,
+           let localBlossomURL = blossomFile(forHash: blobHash, extensionHint: url.pathExtension),
+           let verified = verifiedHashNamedFile(localBlossomURL, expectedHash: blobHash) {
+            return verified
         }
 
         // 3. Try the general cache
         let path = cachePath(for: url)
         if FileManager.default.fileExists(atPath: path.path) {
+            // Blossom-hash cache entries are keyed (and named) by the blob's
+            // content hash, so they can be verified too. URL-keyed entries can't.
+            if let blobHash {
+                return verifiedHashNamedFile(path, expectedHash: blobHash)
+            }
             return path
         }
 
         return nil
+    }
+
+    // MARK: - Hash-Named File Integrity
+
+    /// Verification verdicts keyed by path+size+mtime — a rewritten file re-verifies.
+    private var integrityVerdicts: [String: Bool] = [:]
+    private let integrityLock = NSLock()
+    /// Files above this size are trusted without hashing; the failed-player remote
+    /// fallback in VideoPlayerCache still heals them if they turn out corrupt.
+    private static let integrityMaxHashBytes: UInt64 = 64 * 1024 * 1024
+
+    /// Extracts a 64-hex Blossom content hash from the URL's last path component, if present.
+    static func blossomHash(in url: URL) -> String? {
+        let last = url.lastPathComponent
+        let pattern = #"^([a-f0-9]{64})(\.[a-z0-9]+)?$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return nil }
+        let ns = last as NSString
+        guard let match = regex.firstMatch(in: last, options: [], range: NSRange(location: 0, length: ns.length)) else { return nil }
+        return ns.substring(with: match.range(at: 1)).lowercased()
+    }
+
+    /// Returns `fileURL` only if its content actually hashes to `expectedHash`
+    /// (memoized per launch). A mismatching file is discarded — deleted from the
+    /// cache, or quarantined with a `.corrupt` suffix in the Blossom store — so
+    /// callers fall through to the healthy remote URL and the copy can heal.
+    private func verifiedHashNamedFile(_ fileURL: URL, expectedHash: String) -> URL? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.resolvingSymlinksInPath().path),
+              let size = (attrs[.size] as? NSNumber)?.uint64Value else { return nil }
+        if size == 0 {
+            discardCorruptFile(fileURL)
+            return nil
+        }
+        if size > Self.integrityMaxHashBytes { return fileURL }
+
+        let mtime = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+        let key = "\(fileURL.path)|\(size)|\(mtime)"
+        integrityLock.lock()
+        let cached = integrityVerdicts[key]
+        integrityLock.unlock()
+        if let cached { return cached ? fileURL : nil }
+
+        guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return nil }
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while autoreleasepool(invoking: {
+            let chunk = handle.readData(ofLength: 1 << 20)
+            guard !chunk.isEmpty else { return false }
+            hasher.update(data: chunk)
+            return true
+        }) {}
+        let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        let ok = digest == expectedHash
+
+        integrityLock.lock()
+        integrityVerdicts[key] = ok
+        integrityLock.unlock()
+
+        if !ok {
+            #if DEBUG
+            print("MediaCacheService: corrupt local copy of \(expectedHash.prefix(8))… (got \(digest.prefix(8))…), discarding")
+            #endif
+            Task { @MainActor in
+                RelayProcessManager.shared.addLog("MediaCache: local copy of blob \(expectedHash.prefix(8))… is corrupt — using remote copy", level: "WARN")
+            }
+            discardCorruptFile(fileURL)
+            return nil
+        }
+        return fileURL
+    }
+
+    /// Drops the disposable cached copy of a URL (used when a local copy failed
+    /// to play so the next fetch re-downloads from the source).
+    func discardCachedCopy(for url: URL) {
+        let path = cachePath(for: url)
+        try? FileManager.default.removeItem(at: path)
+    }
+
+    /// Cache entries are disposable and get deleted; Blossom blobs are relay data,
+    /// so they're quarantined under a `.corrupt` suffix instead — HEAD /<hash>
+    /// stops claiming the blob exists and a later re-mirror can heal it.
+    private func discardCorruptFile(_ fileURL: URL) {
+        if fileURL.path.hasPrefix(blossomDirectory.path) {
+            let quarantined = fileURL.appendingPathExtension("corrupt")
+            try? FileManager.default.removeItem(at: quarantined)
+            try? FileManager.default.moveItem(at: fileURL, to: quarantined)
+        } else {
+            try? FileManager.default.removeItem(at: fileURL)
+        }
     }
 
     private func blossomFile(named filename: String) -> URL? {
@@ -326,7 +445,7 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
             return nil
         }
 
-        return contents.first { $0.lastPathComponent.hasPrefix("\(hash).") }
+        return contents.first { $0.lastPathComponent.hasPrefix("\(hash).") && $0.pathExtension != "corrupt" }
     }
 
     /// Ensures the local file has a proper extension for AVFoundation playback.
@@ -369,7 +488,9 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
             #if DEBUG
             print("MediaCacheService: Failed to create symlink: \(error)")
             #endif
-            return localURL // Fallback to original
+            // Returning the bare extensionless file would make AVFoundation fail
+            // with -11828 "Cannot Open" — let callers fall back to the remote URL.
+            return nil
         }
     }
 
@@ -412,7 +533,7 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
         }
 
         let filename = hash(url: url)
-        if let cachedData = try? Data(contentsOf: cacheDirectory.appendingPathComponent(filename)) {
+        if let cachedData = cachedFileData(at: cacheDirectory.appendingPathComponent(filename)) {
             return cachedData
         }
 
@@ -429,26 +550,80 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
                 #if DEBUG
                 print("MediaCacheService: Starting download for \(filename) (URL: \(url.absoluteString))")
                 #endif
-                // Start the actual download
-                URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
-                    self?.downloadLock.lock()
-                    let waiters = self?.inFlightDownloads[filename] ?? []
-                    self?.inFlightDownloads.removeValue(forKey: filename)
-                    self?.downloadLock.unlock()
-
-                    if let data = data, let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
-                        self?.saveToCache(url: url, data: data)
-                        for waiter in waiters {
-                            waiter.resume(returning: data)
+                // Stream to disk via downloadTask — a dataTask buffers the whole
+                // body in RAM, which for videos means hundreds of MB per fetch.
+                // Run on the bounded downloadQueue (the operation blocks its slot
+                // until the transfer finishes) so a fast scroll through a
+                // video-heavy feed can't stack unbounded concurrent downloads.
+                downloadQueue.addOperation { [weak self] in
+                    guard let self = self else { return }
+                    let semaphore = DispatchSemaphore(value: 0)
+                    var result: Data?
+                    let task = URLSession.shared.downloadTask(with: url) { [weak self] tempURL, response, _ in
+                        defer { semaphore.signal() }
+                        guard let self = self, let tempURL = tempURL,
+                              let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                            return
                         }
-                    } else {
-                        for waiter in waiters {
-                            waiter.resume(returning: nil)
-                        }
+                        // The temp file is deleted when this handler returns, so
+                        // adopt it into the cache here.
+                        result = self.adoptDownloadedFile(tempURL, sourceURL: url)
                     }
-                }.resume()
+                    task.resume()
+                    semaphore.wait()
+
+                    self.downloadLock.lock()
+                    let waiters = self.inFlightDownloads[filename] ?? []
+                    self.inFlightDownloads.removeValue(forKey: filename)
+                    self.downloadLock.unlock()
+                    for waiter in waiters {
+                        waiter.resume(returning: result)
+                    }
+                }
             }
         }
+    }
+
+    /// Moves a completed downloadTask temp file into the cache and returns its
+    /// contents. Mirrors saveToCache's tiny-body guard: likely error pages are
+    /// returned to the caller but never cached.
+    private func adoptDownloadedFile(_ tempURL: URL, sourceURL: URL) -> Data? {
+        let fm = FileManager.default
+        let size = ((try? fm.attributesOfItem(atPath: tempURL.path))?[.size] as? NSNumber)?.intValue ?? 0
+        guard size > 100 else {
+            #if DEBUG
+            print("MediaCacheService: Skipping cache for \(sourceURL.absoluteString) - data too small (\(size) bytes)")
+            #endif
+            return try? Data(contentsOf: tempURL)
+        }
+
+        let path = cachePath(for: sourceURL)
+        do {
+            if fm.fileExists(atPath: path.path) {
+                try fm.removeItem(at: path)
+            }
+            try fm.moveItem(at: tempURL, to: path)
+            #if DEBUG
+            print("MediaCacheService: Cached \(sourceURL.lastPathComponent) to \(path.path)")
+            #endif
+        } catch {
+            Task { @MainActor in RelayProcessManager.shared.addLog("MediaCache: Failed to cache \(sourceURL.lastPathComponent): \(error.localizedDescription)", level: "WARN") }
+            // Must read fully: the temp file vanishes when the completion
+            // handler returns, so a mapped Data would dangle.
+            return try? Data(contentsOf: tempURL)
+        }
+        return cachedFileData(at: path)
+    }
+
+    /// Reads a cache file, memory-mapping large ones so a cached video returns
+    /// file-backed (evictable) pages instead of hundreds of MB of dirty heap.
+    private func cachedFileData(at path: URL) -> Data? {
+        let size = ((try? FileManager.default.attributesOfItem(atPath: path.path))?[.size] as? NSNumber)?.intValue
+        guard let size = size else { return nil }
+        if size > 8 << 20 {
+            return try? Data(contentsOf: path, options: .mappedIfSafe)
+        }
+        return try? Data(contentsOf: path)
     }
 
     // MARK: - Video Thumbnails
@@ -469,8 +644,7 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
             return nil
         }
 
-        let cost = Int(image.size.width * image.size.height * 4)
-        thumbnailMemoryCache.setObject(image, forKey: nsKey, cost: cost)
+        thumbnailMemoryCache.setObject(image, forKey: nsKey, cost: Self.decodedCost(of: image))
         return image
     }
 
@@ -538,8 +712,7 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
 
         // 3. Persist + broadcast
         if let image = image {
-            let cost = Int(image.size.width * image.size.height * 4)
-            thumbnailMemoryCache.setObject(image, forKey: key as NSString, cost: cost)
+            thumbnailMemoryCache.setObject(image, forKey: key as NSString, cost: Self.decodedCost(of: image))
             saveThumbnailToDisk(image, key: key)
         }
 
@@ -557,23 +730,52 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
 
     /// Performs the actual AVFoundation work. Runs on the throttled thumbnail queue.
     private func renderThumbnail(url: URL, mimeType: String?) async -> PlatformImage? {
-        // Prefer a local file (Blossom or cache) over hitting HTTPS. AVAssetImageGenerator
-        // is far more reliable on a real file than on a remote URL — especially with self-signed certs.
-        let playableURL: URL = {
-            if let prepared = self.preparePlayableURL(for: url, extensionHint: mimeType) {
-                return prepared
+        // Walk the same source ladder playback uses (verified local file →
+        // remote with known/sniffed MIME → remote container guesses), so a
+        // corrupt local copy or a mislabeling server can't kill thumbnails.
+        let candidates = VideoPlaybackService.shared.resolveCandidates(for: url, mimeHint: mimeType)
+        for candidate in candidates {
+            #if DEBUG
+            print("MediaCacheService: renderThumbnail url=\(url.absoluteString) trying=\(candidate.label)")
+            #endif
+            if let image = await extractFrame(from: candidate.assetURL, options: candidate.assetOptions, sourceURL: url) {
+                return image
             }
-            if let local = self.internalLocalFileURL(for: url) {
-                return local
+        }
+
+        // Last resort: if the local file has no extension and we somehow used the wrong one,
+        // try one more symlink with a different extension permutation.
+        if let local = self.internalLocalFileURL(for: url), local.pathExtension.isEmpty {
+            for alt in ["mp4", "mov", "m4v", "webm"] {
+                if let symlink = self.makeOneOffSymlink(for: local, extension: alt) {
+                    let altAsset = AVURLAsset(url: symlink)
+                    let altGen = AVAssetImageGenerator(asset: altAsset)
+                    altGen.appliesPreferredTrackTransform = true
+                    altGen.maximumSize = CGSize(width: 600, height: 600)
+                    altGen.requestedTimeToleranceBefore = CMTime(seconds: 5, preferredTimescale: 600)
+                    altGen.requestedTimeToleranceAfter = CMTime(seconds: 5, preferredTimescale: 600)
+                    if let cg = try? altGen.copyCGImage(at: CMTime(seconds: 0.5, preferredTimescale: 600), actualTime: nil) {
+                        #if os(macOS)
+                        return NSImage(cgImage: cg, size: NSZeroSize)
+                        #else
+                        return UIImage(cgImage: cg)
+                        #endif
+                    }
+                }
             }
-            return url
-        }()
+        }
 
         #if DEBUG
-        print("MediaCacheService: renderThumbnail url=\(url.absoluteString) playable=\(playableURL.absoluteString) isFile=\(playableURL.isFileURL)")
+        print("MediaCacheService: Thumbnail generation exhausted all fallbacks for \(url.lastPathComponent)")
         #endif
+        return nil
+    }
 
-        let asset = AVURLAsset(url: playableURL, options: [AVURLAssetPreferPreciseDurationAndTimingKey: false])
+    /// Tries several time points against one asset URL; first extractable frame wins.
+    private func extractFrame(from playableURL: URL, options: [String: Any] = [:], sourceURL: URL) async -> PlatformImage? {
+        var assetOptions: [String: Any] = options
+        assetOptions[AVURLAssetPreferPreciseDurationAndTimingKey] = false
+        let asset = AVURLAsset(url: playableURL, options: assetOptions)
 
         // Times to try, in order. First reachable keyframe wins.
         var times: [CMTime] = [
@@ -608,37 +810,11 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
                 #endif
             } catch {
                 #if DEBUG
-                print("MediaCacheService: thumb attempt at \(time.seconds)s failed for \(url.lastPathComponent): \(error.localizedDescription)")
+                print("MediaCacheService: thumb attempt at \(time.seconds)s failed for \(sourceURL.lastPathComponent): \(error.localizedDescription)")
                 #endif
                 continue
             }
         }
-
-        // Last resort: if the local file has no extension and we somehow used the wrong one,
-        // try one more symlink with a different extension permutation.
-        if let local = self.internalLocalFileURL(for: url), local.pathExtension.isEmpty {
-            for alt in ["mp4", "mov", "m4v", "webm"] {
-                if let symlink = self.makeOneOffSymlink(for: local, extension: alt) {
-                    let altAsset = AVURLAsset(url: symlink)
-                    let altGen = AVAssetImageGenerator(asset: altAsset)
-                    altGen.appliesPreferredTrackTransform = true
-                    altGen.maximumSize = CGSize(width: 600, height: 600)
-                    altGen.requestedTimeToleranceBefore = CMTime(seconds: 5, preferredTimescale: 600)
-                    altGen.requestedTimeToleranceAfter = CMTime(seconds: 5, preferredTimescale: 600)
-                    if let cg = try? altGen.copyCGImage(at: CMTime(seconds: 0.5, preferredTimescale: 600), actualTime: nil) {
-                        #if os(macOS)
-                        return NSImage(cgImage: cg, size: NSZeroSize)
-                        #else
-                        return UIImage(cgImage: cg)
-                        #endif
-                    }
-                }
-            }
-        }
-
-        #if DEBUG
-        print("MediaCacheService: Thumbnail generation exhausted all fallbacks for \(url.lastPathComponent)")
-        #endif
         return nil
     }
 
@@ -724,15 +900,8 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
         // Optimization: If the URL contains a 64-char Blossom hash, use it directly as the cache key.
         // This aligns with how the Go relay stores files and allows different URLs for the same
         // content (e.g. extensioned vs non-extensioned) to share the cache.
-        let last = url.lastPathComponent
-        // Check if last component is a 64-char hash, possibly with an extension
-        let pattern = #"(^|/)([a-f0-9]{64})(\.[a-z0-9]+)?$"#
-        if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
-            let ns = last as NSString
-            if let match = regex.firstMatch(in: last, options: [], range: NSRange(location: 0, length: ns.length)) {
-                // Return just the hash part
-                return ns.substring(with: match.range(at: 2)).lowercased()
-            }
+        if let blobHash = Self.blossomHash(in: url) {
+            return blobHash
         }
 
         let inputData = Data(url.absoluteString.utf8)

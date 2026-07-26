@@ -18,6 +18,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -356,28 +358,43 @@ private fun MessageBubble(
     profiles: Map<String, FeedProfile> = emptyMap(),
 ) {
     val colors = LocalNostrVaultColors.current
+    val oled = LocalOledMode.current
     val timeFormat = remember { SimpleDateFormat("h:mm a", Locale.getDefault()) }
 
-    Column(
-        horizontalAlignment = if (isFromMe) Alignment.End else Alignment.Start,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Surface(
-            color = if (isFromMe) colors.primary.copy(alpha = 0.15f) else SecondaryGroupedBg,
-            shape = RoundedCornerShape(
-                topStart = 16.dp,
-                topEnd = 16.dp,
-                bottomStart = if (isFromMe) 16.dp else 4.dp,
-                bottomEnd = if (isFromMe) 4.dp else 16.dp,
-            ),
-            modifier = Modifier.widthIn(max = 280.dp),
+    // iOS DMThreadView bubbles: own = solid primary→primaryDark gradient with
+    // white text, others = dark gray; 75% max width, radius 18 with a 6dp tail.
+    val bubbleShape = RoundedCornerShape(
+        topStart = 18.dp,
+        topEnd = 18.dp,
+        bottomStart = if (isFromMe) 18.dp else 6.dp,
+        bottomEnd = if (isFromMe) 6.dp else 18.dp,
+    )
+    val otherBubbleColor = if (oled) Color(0xFF14141A) else Color(0xFF292933)
+
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val maxBubbleWidth = maxWidth * 0.75f
+        Column(
+            horizontalAlignment = if (isFromMe) Alignment.End else Alignment.Start,
+            modifier = Modifier.fillMaxWidth(),
         ) {
-            Column(modifier = Modifier.padding(12.dp)) {
+            Column(
+                modifier = Modifier
+                    .widthIn(max = maxBubbleWidth)
+                    .background(
+                        brush = if (isFromMe) {
+                            Brush.linearGradient(listOf(colors.primary, colors.primaryDark))
+                        } else {
+                            Brush.linearGradient(listOf(otherBubbleColor, otherBubbleColor))
+                        },
+                        shape = bubbleShape,
+                    )
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+            ) {
                 Text(
                     text = remember(message.content, profiles) {
                         NostrMentions.toPlainText(message.content, profiles)
                     },
-                    color = PrimaryText,
+                    color = Color.White,
                     fontSize = 15.sp,
                     lineHeight = 20.sp,
                 )
@@ -401,13 +418,13 @@ private fun MessageBubble(
                         )
                     }
                 }
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = timeFormat.format(Date(message.timestamp * 1000)),
-                    color = TertiaryText,
-                    fontSize = 11.sp,
-                )
             }
+            Spacer(Modifier.height(3.dp))
+            Text(
+                text = timeFormat.format(Date(message.timestamp * 1000)),
+                color = SecondaryText.copy(alpha = 0.7f),
+                fontSize = 11.sp,
+            )
         }
     }
 }

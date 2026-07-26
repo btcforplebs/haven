@@ -38,9 +38,9 @@ extension VaultView {
             counts[event.kind, default: 0] += 1
         }
 
-        // Notes: kinds 1, 30023
-        let noteCount = (counts[1] ?? 0) + (counts[30023] ?? 0)
-        let baselineNotes = (notificationBaseline[1] ?? 0) + (notificationBaseline[30023] ?? 0)
+        // Notes: kinds 1, 6, 30023
+        let noteCount = (counts[1] ?? 0) + (counts[6] ?? 0) + (counts[30023] ?? 0)
+        let baselineNotes = (notificationBaseline[1] ?? 0) + (notificationBaseline[6] ?? 0) + (notificationBaseline[30023] ?? 0)
         if noteCount > baselineNotes && viewMode != .notes {
             withAnimation(.easeInOut(duration: 0.3)) { hasNewNotes = true }
         }
@@ -66,6 +66,7 @@ extension VaultView {
                 withAnimation(.easeInOut(duration: 0.2)) { hasNewNotes = false }
             }
             notificationBaseline[1] = events.filter { $0.kind == 1 }.count
+            notificationBaseline[6] = events.filter { $0.kind == 6 }.count
             notificationBaseline[30023] = events.filter { $0.kind == 30023 }.count
         case .likes:
             if hasNewLikes {
@@ -393,9 +394,9 @@ extension VaultView {
                     }
                 }
             } else if currentMode == .notes {
-                // MARK: - Notes Mode (Kinds: 1, 30023)
+                // MARK: - Notes Mode (Kinds: 1, 6, 30023)
                 let filtered = currentEvents.filter { event in
-                    let validKinds = [1, 30023]
+                    let validKinds = [1, 6, 30023]
                     if !validKinds.contains(event.kind) { return false }
 
                     if blacklist.contains(event.pubkey) { return false }

@@ -708,8 +708,12 @@ class DMService @Inject constructor(
                     fireAndForgetPublish(recipientEvent, relayUrl)
                 }
 
-                // Publish self copy to own DM relays
-                val ownRelays = nostrService.dmRelayLists.value[ownHexPubkey] ?: emptyList()
+                // Publish self copy to own DM relays. Use the same fallback-aware
+                // resolver as the recipient path (kind 10050 → 10002 → fetch-and-wait
+                // → blastr); a bare dmRelayLists lookup returns empty when our own DM
+                // relay list isn't cached yet, stranding the self-copy on the local
+                // relay so our OTHER devices never see the message we sent.
+                val ownRelays = fetchRecipientDMRelays(ownHexPubkey)
                 for (relayUrl in ownRelays) {
                     fireAndForgetPublish(selfEvent, relayUrl)
                 }
@@ -764,6 +768,16 @@ class DMService @Inject constructor(
                 // Fire-and-forget to recipient's relays
                 val recipientRelays = fetchRecipientDMRelays(recipientHexPubkey)
                 for (relayUrl in recipientRelays) {
+                    fireAndForgetPublish(eventJson, relayUrl)
+                }
+
+                // Also publish to our OWN relays so other devices on this account can
+                // fetch the message we just sent. A kind-4 event carries no self-copy,
+                // so without this the sent message is stranded on the local relay.
+                val ownHexPubkey = nostrService.activeHexPubkey
+                val ownRelays = fetchRecipientDMRelays(ownHexPubkey)
+                for (relayUrl in ownRelays) {
+                    if (relayUrl in recipientRelays) continue
                     fireAndForgetPublish(eventJson, relayUrl)
                 }
             } catch (e: Exception) {

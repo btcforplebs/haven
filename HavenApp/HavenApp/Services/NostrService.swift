@@ -20,6 +20,10 @@ class NostrService: ObservableObject {
     /// the main contributor to the ~310 MB resident set that made the app the #1 jetsam
     /// target. The newest this many are kept in full; older ones drop off the list.
     private static let maxLongFormEvents = 500
+    /// Cap on media items harvested from events for the gallery tab. Unlike `events`
+    /// this list was never trimmed, so it grew for the process lifetime — and each
+    /// item carries a copy of its source event's full tag list.
+    private static let maxNoteMedia = 4_000
 
     // Aggregated status
     @Published var connectionStatus: String = "Disconnected"
@@ -1864,6 +1868,10 @@ class NostrService: ObservableObject {
                 kept += 1
                 return kept <= Self.maxLongFormEvents
             }
+        }
+        if noteMedia.count > Self.maxNoteMedia {
+            noteMedia.sort(by: { $0.dateAdded > $1.dateAdded })
+            noteMedia = Array(noteMedia.prefix(Self.maxNoteMedia))
         }
         eventUpdateSubject.send()
     }

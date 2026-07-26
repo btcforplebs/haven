@@ -11,7 +11,7 @@ struct DraftPickerView: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Group {
                 if draftService.isLoading && filteredDrafts.isEmpty {
                     VStack(spacing: 16) {

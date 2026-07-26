@@ -42,6 +42,9 @@ class MediaCacheService @Inject constructor(
         private const val TTL_DAYS = 30
         private const val MAX_DOWNLOAD_BYTES = 50L * 1024 * 1024 // 50 MB hard ceiling per download
         private const val DISK_CACHE_MAX_BYTES = 256L * 1024 * 1024 // 256 MB on-disk cap
+        private const val NOT_FOUND_MAX_AGE_MS = 7L * 24 * 3600 * 1000 // 404 flags expire after 7 days (iOS parity)
+        // Files above this size are trusted without hashing.
+        private const val INTEGRITY_MAX_HASH_BYTES = 64L * 1024 * 1024
     }
 
     // ── Caches ────────────────────────────────────────────────────────
@@ -94,7 +97,10 @@ class MediaCacheService @Inject constructor(
 
     // ── 404 Tracking ──────────────────────────────────────────────────
 
-    private val notFoundURLs = ConcurrentHashMap.newKeySet<String>()
+    // URL → epoch-millis the 404 was observed. Entries expire after
+    // NOT_FOUND_MAX_AGE_MS and are cleared by any successful fetch, so a blob
+    // that 404'd once (e.g. mid-upload) doesn't stay flagged forever.
+    private val notFoundURLs = ConcurrentHashMap<String, Long>()
     private val prefs by lazy {
         context.getSharedPreferences("media_cache_404", Context.MODE_PRIVATE)
     }
@@ -107,9 +113,23 @@ class MediaCacheService @Inject constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
-        // Load persisted 404s
-        val saved = prefs.getStringSet("not_found_urls", emptySet()) ?: emptySet()
-        notFoundURLs.addAll(saved)
+        // Load persisted 404s (dated format), migrating the legacy undated set.
+        val cutoff = System.currentTimeMillis() - NOT_FOUND_MAX_AGE_MS
+        val savedDated = prefs.getString("not_found_urls_dated", null)
+        if (savedDated != null) {
+            runCatching {
+                val json = org.json.JSONObject(savedDated)
+                for (key in json.keys()) {
+                    val ts = json.optLong(key)
+                    if (ts > cutoff) notFoundURLs[key] = ts
+                }
+            }
+        } else {
+            // Legacy format had no dates — stamp with now so entries age out normally.
+            val now = System.currentTimeMillis()
+            prefs.getStringSet("not_found_urls", emptySet())?.forEach { notFoundURLs[it] = now }
+        }
+        persistNotFound()
 
         // Disk eviction is otherwise never triggered — run it on startup so the
         // on-disk cache can't grow without bound (TTL sweep + byte-size cap).
@@ -141,6 +161,12 @@ class MediaCacheService @Inject constructor(
                     Log.w(TAG, "Aborting oversized media body mid-stream at $total bytes")
                     return null
                 }
+            }
+            // A body shorter than the advertised Content-Length is a truncated
+            // transfer — caching it would poison every future local read.
+            if (it.contentLength() >= 0 && total != it.contentLength()) {
+                Log.w(TAG, "Rejecting truncated media body: $total of ${it.contentLength()} bytes")
+                return null
             }
             sink.readByteArray()
         }
@@ -183,16 +209,31 @@ class MediaCacheService @Inject constructor(
     // 404 Tracking
     // ══════════════════════════════════════════════════════════════════
 
-    fun isKnown404(url: String): Boolean = notFoundURLs.contains(url)
+    fun isKnown404(url: String): Boolean {
+        val ts = notFoundURLs[url] ?: return false
+        if (System.currentTimeMillis() - ts > NOT_FOUND_MAX_AGE_MS) {
+            unmarkNotFound(url)
+            return false
+        }
+        return true
+    }
 
     fun markNotFound(url: String) {
-        notFoundURLs.add(url)
-        prefs.edit().putStringSet("not_found_urls", notFoundURLs.toSet()).apply()
+        notFoundURLs[url] = System.currentTimeMillis()
+        persistNotFound()
     }
 
     fun unmarkNotFound(url: String) {
-        notFoundURLs.remove(url)
-        prefs.edit().putStringSet("not_found_urls", notFoundURLs.toSet()).apply()
+        if (notFoundURLs.remove(url) != null) persistNotFound()
+    }
+
+    private fun persistNotFound() {
+        val json = org.json.JSONObject()
+        notFoundURLs.forEach { (url, ts) -> json.put(url, ts) }
+        prefs.edit()
+            .putString("not_found_urls_dated", json.toString())
+            .remove("not_found_urls")
+            .apply()
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -219,22 +260,92 @@ class MediaCacheService @Inject constructor(
     /**
      * Get local file URL for a remote URL.
      * Returns null for localhost URLs (to preserve MIME types).
+     *
+     * Hash-named files are integrity-checked before being returned: a
+     * truncated/corrupt local copy (e.g. from an interrupted blob write) would
+     * otherwise shadow a perfectly healthy remote URL forever.
      */
     fun localFileUrl(url: String): File? {
         if (isLocalUrl(url)) return null
+        val hash = extractBlossomHash(url)
 
         // Try Blossom directory first
-        blossomDirectory?.let { bDir ->
-            val hash = extractBlossomHash(url)
-            if (hash != null) {
-                val blossomFile = blossomFile(forHash = hash)
-                if (blossomFile != null) return blossomFile
+        if (hash != null) {
+            blossomFile(forHash = hash)?.let { file ->
+                verifiedHashNamedFile(file, hash)?.let { return it }
+                // Corrupt blossom copy quarantined — fall through to the cache.
             }
         }
 
         // Try general cache
         val cached = cachePath(url)
-        return if (cached.exists()) cached else null
+        if (cached.exists()) {
+            // Blossom-hash cache entries are named by the blob's content hash,
+            // so they can be verified too. URL-keyed entries can't.
+            return if (hash != null) verifiedHashNamedFile(cached, hash) else cached
+        }
+        return null
+    }
+
+    // ── Hash-named file integrity ─────────────────────────────────────
+
+    /** Verification verdicts keyed by path|size|mtime — a rewritten file re-verifies. */
+    private val integrityVerdicts = ConcurrentHashMap<String, Boolean>()
+
+    /**
+     * Returns [file] only if its content actually hashes to [expectedHash]
+     * (memoized per launch). A mismatching file is discarded — deleted from the
+     * cache, or quarantined with a `.corrupt` suffix in the Blossom store — so
+     * callers fall through to the healthy remote URL and the copy can heal.
+     */
+    private fun verifiedHashNamedFile(file: File, expectedHash: String): File? {
+        val size = file.length()
+        if (size == 0L) {
+            discardCorruptFile(file)
+            return null
+        }
+        if (size > INTEGRITY_MAX_HASH_BYTES) return file
+
+        val key = "${file.absolutePath}|$size|${file.lastModified()}"
+        integrityVerdicts[key]?.let { return if (it) file else null }
+
+        val digest = MessageDigest.getInstance("SHA-256")
+        runCatching {
+            file.inputStream().use { input ->
+                val buf = ByteArray(1 shl 20)
+                while (true) {
+                    val n = input.read(buf)
+                    if (n == -1) break
+                    digest.update(buf, 0, n)
+                }
+            }
+        }.onFailure { return null }
+        val actual = digest.digest().joinToString("") { "%02x".format(it) }
+        val ok = actual == expectedHash
+        integrityVerdicts[key] = ok
+
+        if (!ok) {
+            Log.w(TAG, "Corrupt local copy of ${expectedHash.take(8)}… (got ${actual.take(8)}…) — using remote")
+            discardCorruptFile(file)
+            return null
+        }
+        return file
+    }
+
+    /**
+     * Cache entries are disposable and get deleted; Blossom blobs are relay data,
+     * so they're quarantined under a `.corrupt` suffix instead — the relay stops
+     * claiming the blob exists and a later re-mirror can heal it.
+     */
+    private fun discardCorruptFile(file: File) {
+        val bDir = blossomDirectory
+        if (bDir != null && file.absolutePath.startsWith(bDir.absolutePath)) {
+            val quarantined = File(file.parentFile, "${file.name}.corrupt")
+            quarantined.delete()
+            file.renameTo(quarantined)
+        } else {
+            file.delete()
+        }
     }
 
     // ══════════════════════════════════════════════════════════════════
@@ -309,6 +420,8 @@ class MediaCacheService @Inject constructor(
                 val data = readBodyCapped(response, MAX_DOWNLOAD_BYTES) ?: return@async null
                 saveToCache(url, data)
                 cacheImage(data, url)
+                // The URL is demonstrably alive — clear any stale 404 flag.
+                unmarkNotFound(url)
                 data
             } catch (e: Exception) {
                 Log.w(TAG, "Download failed for $url: ${e.message}")

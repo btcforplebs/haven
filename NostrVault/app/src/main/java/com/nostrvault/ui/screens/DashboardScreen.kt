@@ -51,6 +51,8 @@ import com.nostrvault.service.ZapValidationService
 import com.nostrvault.ui.components.CustomZapSheet
 import com.nostrvault.ui.components.GlassPill
 import com.nostrvault.ui.components.GlassScaffold
+import com.nostrvault.ui.components.reactionDisplayEmoji
+import com.nostrvault.ui.components.reactionEmojiSummary
 import com.nostrvault.ui.components.ScrollCondenseEffect
 import com.nostrvault.ui.components.SkeletonFeed
 import com.nostrvault.ui.components.VaultNoteCard
@@ -63,6 +65,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
@@ -298,6 +301,18 @@ class DashboardViewModel @Inject constructor(
             }
         }
 
+        // Live fill-in: the relay's importer writes inbound events (replies,
+        // reactions, zaps, reposts) straight to its DBs -- open REQ
+        // subscriptions are never notified. When the log poller spots an
+        // import ("in your inbox" / "in your chat relay"), re-send the
+        // subscriptions so the new events stream in without pull-to-refresh.
+        viewModelScope.launch {
+            RelayForegroundService.inboxActivityTick.drop(1).collectLatest {
+                delay(1_500)  // let the import burst settle; restarts on further activity
+                resendVaultSubscriptions()
+            }
+        }
+
         // Status display: update connection UI text during lifecycle transitions
         viewModelScope.launch {
             RelayForegroundService.relayStatus.collect { status ->
@@ -389,26 +404,14 @@ class DashboardViewModel @Inject constructor(
             return
         }
 
-        val outboxUp = outboxClient?.connectionState?.value == WebSocketClient.ConnectionState.CONNECTED
-        val inboxUp = inboxClient?.connectionState?.value == WebSocketClient.ConnectionState.CONNECTED
+        // Match iOS's incremental refresh on appear: ask the embedded relay to
+        // pull newly tagged events from the network. Any imports it makes then
+        // trigger the inboxActivityTick re-subscribe, so they fill in live.
+        runCatching { com.nostrvault.relay.HavenBridge.requestRelaySync() }
+            .onFailure { Log.w(TAG, "requestRelaySync failed: ${it.message}") }
 
-        if (outboxUp && inboxUp) {
-            // Already connected — re-send subscription to catch up on missed events
-            val authors = buildAuthorSet()
-            val ownerHex = nostrService.activeHexPubkey
-            val config = configStore.config.value
-            val localUrl = config.nostrURL ?: ""
-            val inboxUrl = if (localUrl.isNotEmpty()) "$localUrl/inbox" else ""
-            val macWss = config.macRelayWssURL
-            val macInboxUrl = if (macWss.isNotEmpty()) "$macWss/inbox" else ""
-
-            outboxClient?.let { sendVaultSubscription(it, "vault-outbox", authors, ownerHex, localUrl) }
-            inboxClient?.let { sendVaultSubscription(it, "vault-inbox", authors, ownerHex, inboxUrl) }
-            // Re-pull the Mac relay (source of truth) too so we converge on its data
-            macOutboxClient?.takeIf { it.connectionState.value == WebSocketClient.ConnectionState.CONNECTED }
-                ?.let { sendVaultSubscription(it, "vault-mac-outbox", authors, ownerHex, macWss) }
-            macInboxClient?.takeIf { it.connectionState.value == WebSocketClient.ConnectionState.CONNECTED }
-                ?.let { sendVaultSubscription(it, "vault-mac-inbox", authors, ownerHex, macInboxUrl) }
+        if (resendVaultSubscriptions()) {
+            // Already connected — subscriptions re-sent to catch up on missed events
         } else if (outboxClient != null) {
             // Connection dropped — give auto-reconnect a fresh retry budget
             outboxClient?.resetReconnect()
@@ -609,25 +612,36 @@ class DashboardViewModel @Inject constructor(
         // Reuse live sockets: re-send the since-bounded subscriptions instead of
         // tearing every connection down and replaying the whole window. Only
         // rebuild connections when they're actually gone/dead.
-        val outboxUp = outboxClient?.connectionState?.value == WebSocketClient.ConnectionState.CONNECTED
-        val inboxUp = inboxClient?.connectionState?.value == WebSocketClient.ConnectionState.CONNECTED
-        if (outboxUp && inboxUp) {
-            val authors = buildAuthorSet()
-            val ownerHex = nostrService.activeHexPubkey
-            val config = configStore.config.value
-            val localUrl = "ws://127.0.0.1:${config.relayPort}"
-            val inboxUrl = "$localUrl/inbox"
-            val macWss = config.macRelayWssURL
-
-            outboxClient?.let { sendVaultSubscription(it, "vault-outbox", authors, ownerHex, localUrl) }
-            inboxClient?.let { sendVaultSubscription(it, "vault-inbox", authors, ownerHex, inboxUrl) }
-            macOutboxClient?.takeIf { it.connectionState.value == WebSocketClient.ConnectionState.CONNECTED }
-                ?.let { sendVaultSubscription(it, "vault-mac-outbox", authors, ownerHex, macWss) }
-            macInboxClient?.takeIf { it.connectionState.value == WebSocketClient.ConnectionState.CONNECTED }
-                ?.let { sendVaultSubscription(it, "vault-mac-inbox", authors, ownerHex, "$macWss/inbox") }
-        } else {
+        if (!resendVaultSubscriptions()) {
             connectToLocalRelay()
         }
+    }
+
+    /**
+     * Re-sends the vault subscriptions on live connections so events the relay
+     * imported since the last REQ stream in (the importer writes straight to
+     * its DBs and never notifies open subscriptions). Returns false when the
+     * local connections aren't up — caller decides whether to reconnect.
+     */
+    private fun resendVaultSubscriptions(): Boolean {
+        val outboxUp = outboxClient?.connectionState?.value == WebSocketClient.ConnectionState.CONNECTED
+        val inboxUp = inboxClient?.connectionState?.value == WebSocketClient.ConnectionState.CONNECTED
+        if (!outboxUp || !inboxUp) return false
+
+        val authors = buildAuthorSet()
+        val ownerHex = nostrService.activeHexPubkey
+        val config = configStore.config.value
+        val localUrl = "ws://127.0.0.1:${config.relayPort}"
+        val macWss = config.macRelayWssURL
+
+        outboxClient?.let { sendVaultSubscription(it, "vault-outbox", authors, ownerHex, localUrl) }
+        inboxClient?.let { sendVaultSubscription(it, "vault-inbox", authors, ownerHex, "$localUrl/inbox") }
+        // Re-pull the Mac relay (source of truth) too so we converge on its data
+        macOutboxClient?.takeIf { it.connectionState.value == WebSocketClient.ConnectionState.CONNECTED }
+            ?.let { sendVaultSubscription(it, "vault-mac-outbox", authors, ownerHex, macWss) }
+        macInboxClient?.takeIf { it.connectionState.value == WebSocketClient.ConnectionState.CONNECTED }
+            ?.let { sendVaultSubscription(it, "vault-mac-inbox", authors, ownerHex, "$macWss/inbox") }
+        return true
     }
 
     /**
@@ -2061,6 +2075,7 @@ fun DashboardScreen(
             val currentIsLocked by RelayForegroundService.isLocked.collectAsState()
             val currentIsPortConflict by RelayForegroundService.isPortConflict.collectAsState()
             val currentLogs by logStore.logs.collectAsState()
+            val currentConfig by viewModel.configStore.config.collectAsState()
             val context = LocalContext.current
 
             DashboardSheetContent(
@@ -2096,8 +2111,8 @@ fun DashboardScreen(
                 },
                 statsService = viewModel.statsService,
                 ownerPubkey = viewModel.nostrService.ownerHexPubkey,
-                cacheDir = viewModel.configStore.config.value.appSupportDir?.let { "$it/media_cache" },
-                cacheTTLDays = viewModel.configStore.config.value.cacheTTLDays,
+                cacheDir = currentConfig.appSupportDir?.let { "$it/media_cache" },
+                cacheTTLDays = currentConfig.cacheTTLDays,
                 isImporting = viewModel.isImporting.collectAsState().value,
                 importProgress = viewModel.importProgress.collectAsState().value,
                 importStatusMessage = viewModel.importStatusMessage.collectAsState().value,
@@ -2111,7 +2126,7 @@ fun DashboardScreen(
                 showReposts = feedService.showReposts.collectAsState().value,
                 showReplies = feedService.showReplies.collectAsState().value,
                 autoLoadNewNotes = true, // Default; auto-load state lives in FeedViewModel
-                feedRelays = viewModel.configStore.config.value.activeFeedRelays,
+                feedRelays = currentConfig.activeFeedRelays,
                 onToggleReposts = { feedService.setShowReposts(it) },
                 onToggleReplies = { feedService.setShowReplies(it) },
                 onToggleAutoLoad = { /* auto-load managed by FeedViewModel */ },
@@ -2471,11 +2486,9 @@ private fun LikedByRow(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier,
     ) {
-        Icon(
-            imageVector = NostrVaultIcons.HeartFilled,
-            contentDescription = null,
-            tint = LikeRed,
-            modifier = Modifier.size(12.dp),
+        Text(
+            text = reactionEmojiSummary(reactors.map { it.second }, limit = 3),
+            fontSize = 12.sp,
         )
         Spacer(Modifier.width(6.dp))
 
@@ -2498,15 +2511,16 @@ private fun LikedByRow(
         }
         Spacer(Modifier.width(6.dp))
 
-        // "name1, name2 liked"
+        // "name1, name2 liked" (or "reacted" when any reaction isn't a plain heart)
         val names = unique.take(3).map { (pubkey, _) ->
             profiles[pubkey]?.bestName ?: "npub\u2026${pubkey.takeLast(4)}"
         }
         val remaining = unique.size - names.size
+        val allHearts = reactors.all { reactionDisplayEmoji(it.second) == "\u2764\ufe0f" }
         val text = buildString {
             append(names.joinToString(", "))
             if (remaining > 0) append(" +$remaining more")
-            append(" liked")
+            append(if (allHearts) " liked" else " reacted")
         }
         Text(
             text = text,

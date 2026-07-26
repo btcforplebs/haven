@@ -26,7 +26,6 @@ import javax.inject.Inject
 enum class ProfileSection(val displayName: String) {
     NOTES("Notes"),
     MEDIA("Media"),
-    REPOSTS("Reposts"),
     REPLIES("Replies"),
     TAGGED("Tagged"),
 }
@@ -35,7 +34,6 @@ enum class ProfileSection(val displayName: String) {
 data class ProfileCounts(
     val notes: Int = 0,
     val media: Int = 0,
-    val reposts: Int = 0,
     val replies: Int = 0,
     val tagged: Int = 0,
 )
@@ -119,11 +117,10 @@ class ProfileViewModel @Inject constructor(
         _selectedSection,
     ) { notes, tagged, section ->
         when (section) {
-            // Reposts (repostedBy != null) get their own tab — exclude them from
-            // Notes/Media/Replies so each note appears in exactly one section.
-            ProfileSection.NOTES -> notes.filter { !it.isReply && it.repostedBy == null }
+            // Matches iOS ProfileView sections: reposts appear in Notes (no
+            // dedicated Reposts tab), replies in Replies.
+            ProfileSection.NOTES -> notes.filter { !it.isReply }
             ProfileSection.MEDIA -> notes.filter { it.mediaURLs.isNotEmpty() && !it.isReply && it.repostedBy == null }
-            ProfileSection.REPOSTS -> notes.filter { it.repostedBy != null }
             ProfileSection.REPLIES -> notes.filter { it.isReply && it.repostedBy == null }
             ProfileSection.TAGGED -> tagged.filter { it.pubkey != _pubkey.value }
         }
@@ -134,9 +131,8 @@ class ProfileViewModel @Inject constructor(
         _taggedNotes,
     ) { notes, tagged ->
         ProfileCounts(
-            notes = notes.count { !it.isReply && it.repostedBy == null },
+            notes = notes.count { !it.isReply },
             media = notes.count { it.mediaURLs.isNotEmpty() && !it.isReply && it.repostedBy == null },
-            reposts = notes.count { it.repostedBy != null },
             replies = notes.count { it.isReply && it.repostedBy == null },
             tagged = tagged.count { it.pubkey != _pubkey.value },
         )

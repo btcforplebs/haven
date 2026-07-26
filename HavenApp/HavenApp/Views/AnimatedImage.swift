@@ -49,6 +49,25 @@ struct ImageDownsampler {
             #endif
         }.value
     }
+
+    /// Downsamples to the main screen's larger dimension — the most a
+    /// full-screen view can display. Decoding beyond that only burns memory
+    /// (a 48 MP photo is ~190 MB decoded). Returns nil if ImageIO can't read
+    /// the data; callers fall back to a plain decode.
+    static func downsampleToScreen(data: Data) async -> PlatformImage? {
+        #if os(macOS)
+        let dimension: CGFloat = await MainActor.run {
+            let frame = NSScreen.main?.frame
+            return max(frame?.width ?? 1728, frame?.height ?? 1117)
+        }
+        #else
+        let dimension: CGFloat = await MainActor.run {
+            let bounds = UIScreen.main.bounds
+            return max(bounds.width, bounds.height)
+        }
+        #endif
+        return await downsample(data: data, maxDimension: dimension)
+    }
 }
 
 struct AnimatedImageHelper {
@@ -112,7 +131,9 @@ struct AnimatedImage: NSViewRepresentable {
             } else if let targetSize = self.targetSize {
                 image = await ImageDownsampler.downsample(data: data, maxDimension: max(targetSize.width, targetSize.height))
             } else {
-                image = NSImage(data: data)
+                // No explicit target: bound the decode to screen pixels instead
+                // of materializing the full-resolution original.
+                image = await ImageDownsampler.downsampleToScreen(data: data) ?? NSImage(data: data)
             }
 
             guard let image else { return }
@@ -256,7 +277,9 @@ struct AnimatedImage: UIViewRepresentable {
             } else if let targetSize = self.targetSize {
                 image = await ImageDownsampler.downsample(data: data, maxDimension: max(targetSize.width, targetSize.height))
             } else {
-                image = UIImage(data: data)
+                // No explicit target: bound the decode to screen pixels instead
+                // of materializing the full-resolution original.
+                image = await ImageDownsampler.downsampleToScreen(data: data) ?? UIImage(data: data)
             }
 
             guard let image else { return }

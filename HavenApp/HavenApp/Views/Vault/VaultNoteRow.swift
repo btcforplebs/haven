@@ -446,9 +446,8 @@ struct NoteRow: View {
                     showingReactors = true
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: "heart.fill")
-                            .font(.appSystem(size: 10, weight: .bold))
-                            .foregroundColor(.pink)
+                        Text(reactionEmojiSummary(uniqueReactors.map(\.emoji), limit: 2))
+                            .font(.appSystem(size: 10))
 
                         HStack(spacing: -4) {
                             ForEach(Array(uniqueReactors.prefix(3).enumerated()), id: \.offset) { _, reactor in

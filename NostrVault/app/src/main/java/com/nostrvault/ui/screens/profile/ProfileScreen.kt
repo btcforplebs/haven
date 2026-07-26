@@ -21,6 +21,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -601,7 +602,8 @@ private fun IdentityRow(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+// iOS ProfileView.sectionTabBar: uppercase heavy labels + mono counts over a
+// 2dp underline on the selected section.
 @Composable
 private fun ProfileSectionTabs(
     selected: ProfileSection,
@@ -612,31 +614,51 @@ private fun ProfileSectionTabs(
     fun countFor(s: ProfileSection): Int = when (s) {
         ProfileSection.NOTES -> counts.notes
         ProfileSection.MEDIA -> counts.media
-        ProfileSection.REPOSTS -> counts.reposts
         ProfileSection.REPLIES -> counts.replies
         ProfileSection.TAGGED -> counts.tagged
     }
-    TabRow(
-        selectedTabIndex = ProfileSection.entries.indexOf(selected),
-        containerColor = WindowBackground,
-        contentColor = colors.primary,
-        divider = { HorizontalDivider(color = SeparatorColor, thickness = 0.5.dp) },
-    ) {
+    Row(modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 16.dp)) {
         ProfileSection.entries.forEach { section ->
+            val isSelected = section == selected
             val c = countFor(section)
-            Tab(
-                selected = section == selected,
-                onClick = { onSelect(section) },
-                text = {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { onSelect(section) }
+                    .padding(top = 4.dp),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
                     Text(
-                        text = if (c > 0) "${section.displayName} ${shortInt(c)}" else section.displayName,
-                        fontSize = 13.sp,
-                        fontWeight = if (section == selected) FontWeight.SemiBold else FontWeight.Normal,
+                        text = section.displayName.uppercase(),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 0.6.sp,
+                        color = if (isSelected) colors.primary else SecondaryText,
                     )
-                },
-                selectedContentColor = colors.primary,
-                unselectedContentColor = SecondaryText,
-            )
+                    if (c > 0) {
+                        Text(
+                            text = shortInt(c),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            fontFamily = FontFamily.Monospace,
+                            color = SecondaryText,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(2.dp)
+                        .background(if (isSelected) colors.primary else Color.Transparent),
+                )
+            }
         }
     }
 }

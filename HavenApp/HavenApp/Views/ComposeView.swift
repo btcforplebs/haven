@@ -128,7 +128,10 @@ struct ComposeView: View {
             composeContent
                 .frame(minWidth: 500, idealWidth: 500, minHeight: 400, idealHeight: 450)
             #else
-            NavigationView {
+            // NavigationStack, not NavigationView: on iPad (regular width) a
+            // single-root NavigationView renders as a collapsed split view,
+            // leaving the reply sheet blank/squeezed in portrait.
+            NavigationStack {
                 composeContent
             }
             #endif
@@ -1628,7 +1631,7 @@ struct BlossomMediaPickerSheet: View {
     }
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Group {
                 if isLoading && blossomMedia.isEmpty {
                     VStack(spacing: 16) {

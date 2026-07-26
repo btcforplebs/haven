@@ -10,6 +10,7 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import com.nostrvault.MainActivity
 import com.nostrvault.R
 import dagger.hilt.EntryPoint
@@ -143,6 +144,13 @@ class RelayForegroundService : Service() {
         private val _hasNewRelayActivity = MutableStateFlow(false)
         val hasNewRelayActivity: StateFlow<Boolean> = _hasNewRelayActivity.asStateFlow()
 
+        // Monotonic counter alongside the red-dot latch: the relay's importer
+        // writes inbound events straight to its DBs without notifying open REQ
+        // subscriptions, so listeners (DashboardViewModel) use this tick to
+        // re-send their subscriptions and pick the new events up live.
+        private val _inboxActivityTick = MutableStateFlow(0L)
+        val inboxActivityTick: StateFlow<Long> = _inboxActivityTick.asStateFlow()
+
         fun markRelayViewed() {
             _hasNewRelayActivity.value = false
         }
@@ -150,6 +158,7 @@ class RelayForegroundService : Service() {
         /** Light the red dot for an event that arrived from someone else. */
         fun markInboxActivity() {
             _hasNewRelayActivity.value = true
+            _inboxActivityTick.value += 1
         }
 
         /** Update the displayed event-count stat. Does NOT affect the red dot. */
@@ -221,7 +230,11 @@ class RelayForegroundService : Service() {
         }
 
         try {
-            startForeground(
+            // ServiceCompat drops the type argument below API 29, where the
+            // 3-arg Service#startForeground doesn't exist (calling it directly
+            // throws NoSuchMethodError, which the catch below wouldn't catch).
+            ServiceCompat.startForeground(
+                this,
                 NOTIFICATION_ID,
                 buildNotification(RelayStatus.BOOTING),
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,

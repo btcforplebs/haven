@@ -160,10 +160,12 @@ extension PiPManager: AVPictureInPictureControllerDelegate {
 
 // MARK: - VideoPlayerCache
 
+/// LRU storage for the app's live AVPlayers. Construction, MIME resolution,
+/// failure recovery, looping, and audio policy all live in
+/// `VideoPlaybackService` — this class only stores and evicts.
 class VideoPlayerCache: ObservableObject {
     static let shared = VideoPlayerCache()
     private var cache: [URL: AVPlayer] = [:]
-    private var observers: [URL: NSObjectProtocol] = [:]
     private var accessOrder: [URL] = []
     private let limit = 3
     private let lock = NSLock()
@@ -174,87 +176,61 @@ class VideoPlayerCache: ObservableObject {
     /// Evicts all cached players (called on memory pressure).
     func evictAll() {
         lock.lock()
-        defer { lock.unlock() }
-        for (_, player) in cache {
-            player.pause()
-        }
-        for (_, obs) in observers {
-            NotificationCenter.default.removeObserver(obs)
-        }
+        let entries = cache
         cache.removeAll()
-        observers.removeAll()
         accessOrder.removeAll()
+        lock.unlock()
+
+        for (url, player) in entries {
+            player.pause()
+            VideoPlaybackService.shared.invalidateLadder(for: url)
+        }
     }
 
-    func player(for url: URL) -> AVPlayer {
+    /// Returns the cached player (refreshing its LRU position), or nil.
+    func storedPlayer(for url: URL) -> AVPlayer? {
         lock.lock()
         defer { lock.unlock() }
-
-        // Update LRU access order
+        guard let player = cache[url] else { return nil }
         if let index = accessOrder.firstIndex(of: url) {
             accessOrder.remove(at: index)
         }
         accessOrder.append(url)
-
-        if let existing = cache[url] {
-            // Evict broken players so they get recreated with (potentially now-correct) MIME info
-            if existing.currentItem?.status != .failed && existing.currentItem?.error == nil {
-                return existing
-            }
-            #if DEBUG
-            print("VideoPlayerCache: Evicting failed player for \(url.lastPathComponent)")
-            #endif
-            existing.pause()
-            if let obs = observers.removeValue(forKey: url) {
-                NotificationCenter.default.removeObserver(obs)
-            }
-            cache.removeValue(forKey: url)
-        }
-
-        let finalURL = MediaCacheService.shared.preparePlayableURL(for: url) ?? url
-
-        var assetOptions: [String: Any] = [:]
-        if finalURL.pathExtension.isEmpty {
-            let mimeType = MediaTypeDetector.shared.getCachedContentType(for: url) ?? "video/mp4"
-            assetOptions[AVURLAssetOverrideMIMETypeKey] = mimeType
-        }
-
-        let asset = AVURLAsset(url: finalURL, options: assetOptions)
-        let playerItem = AVPlayerItem(asset: asset)
-        let player = AVPlayer(playerItem: playerItem)
-        player.isMuted = true
-
-        // Configure audio session to mix with background music since player starts muted
-        AudioSessionManager.shared.enableMixingWithOthers()
-
-        // Auto-looping logic
-        let observer = NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime,
-            object: playerItem,
-            queue: .main
-        ) { [weak player] _ in
-            player?.seek(to: .zero)
-            player?.play()
-        }
-
-        cache[url] = player
-        observers[url] = observer
-
-        // Evict oldest if limit exceeded — but never the full-screen/PiP video,
-        // which must keep playing while feed cells create players underneath it
-        if cache.count > limit {
-            if let oldest = accessOrder.first(where: { $0 != activeFullScreenURL }) {
-                accessOrder.removeAll { $0 == oldest }
-                if let oldPlayer = cache.removeValue(forKey: oldest) {
-                    oldPlayer.pause()
-                }
-                if let oldObserver = observers.removeValue(forKey: oldest) {
-                    NotificationCenter.default.removeObserver(oldObserver)
-                }
-            }
-        }
-
         return player
+    }
+
+    /// Stores a newly built player, evicting the LRU entry when over the limit —
+    /// but never the full-screen/PiP video, which must keep playing while feed
+    /// cells create players underneath it.
+    func store(_ player: AVPlayer, for url: URL) {
+        var evicted: (URL, AVPlayer)?
+
+        lock.lock()
+        cache[url] = player
+        accessOrder.removeAll { $0 == url }
+        accessOrder.append(url)
+        if cache.count > limit,
+           let oldest = accessOrder.first(where: { $0 != activeFullScreenURL && $0 != url }) {
+            accessOrder.removeAll { $0 == oldest }
+            if let oldPlayer = cache.removeValue(forKey: oldest) {
+                evicted = (oldest, oldPlayer)
+            }
+        }
+        lock.unlock()
+
+        if let (oldURL, oldPlayer) = evicted {
+            oldPlayer.pause()
+            VideoPlaybackService.shared.invalidateLadder(for: oldURL)
+        }
+    }
+
+    /// Removes one player (its ladder is invalidated by the service).
+    func removePlayer(for url: URL) {
+        lock.lock()
+        let player = cache.removeValue(forKey: url)
+        accessOrder.removeAll { $0 == url }
+        lock.unlock()
+        player?.pause()
     }
 }
 
@@ -264,15 +240,14 @@ struct VideoPlayerView: View {
     /// AVFoundation can't infer the container format without it, so playback fails silently.
     var mimeType: String? = nil
     @State private var player: AVPlayer?
-    @State private var loadError: String? = nil
+    @ObservedObject private var failures = VideoPlaybackFailures.shared
 
     @State private var viewSize: CGSize = .zero
-    
+
     var body: some View {
         GeometryReader { geo in
             ZStack {
-                if let _ = loadError {
-                    // ... error view ...
+                if failures.hasFailed(url) {
                     errorContent
                 } else if let player = player {
                     NativeVideoPlayer(player: player)
@@ -307,28 +282,7 @@ struct VideoPlayerView: View {
             player = nil
         }
     }
-    
-    private var errorContent: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.appSystem(size: 40))
-                .foregroundColor(.orange)
-            Text("Failed to load video")
-                .font(.appHeadline)
-            Text(loadError ?? "Unknown error")
-                .font(.appCaption)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal)
-            
-            Button("Try Again") {
-                loadError = nil
-                setupPlayer()
-            }
-            .buttonStyle(.bordered)
-        }
-    }
-    
+
     private var loadingContent: some View {
         VStack(spacing: 20) {
             ProgressView()
@@ -336,98 +290,46 @@ struct VideoPlayerView: View {
                 .foregroundColor(.secondary)
         }
     }
-    
-    private func setupPlayer() {
-        Task {
-            // For extensionless remote URLs (e.g. Blossom hashes), detect content type first
-            var detectedMIME: String? = mimeType
-            if url.pathExtension.isEmpty && !url.isFileURL {
-                detectedMIME = await MediaTypeDetector.shared.detectContentTypeAsync(for: url) ?? mimeType
-                #if DEBUG
-                if let detected = detectedMIME {
-                    print("VideoPlayerView: Detected MIME type '\(detected)' for \(url.lastPathComponent)")
-                } else {
-                    print("VideoPlayerView: Failed to detect MIME type for \(url.lastPathComponent), will use fallback")
-                }
-                #endif
-            }
 
-            await MainActor.run {
-                setupPlayerWithMIME(detectedMIME)
-            }
+    private var errorContent: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.appSystem(size: 40))
+                .foregroundColor(.orange)
+            Text("Failed to load video")
+                .font(.appHeadline)
+            Text("Every source for this video failed to play.")
+                .font(.appCaption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+
+            Button("Try Again") { retry() }
+                .buttonStyle(.bordered)
         }
     }
 
-    private func setupPlayerWithMIME(_ detectedMIME: String?) {
-        // Use the new helper to get a guaranteed playable URL (with extension)
-        let finalURL = MediaCacheService.shared.preparePlayableURL(for: url, extensionHint: detectedMIME) ?? url
+    /// Drops the dead player and its ladder so the next attempt rebuilds from
+    /// scratch — the network (or a healed local copy) may work now.
+    private func retry() {
+        player?.pause()
+        player = nil
+        VideoPlayerCache.shared.removePlayer(for: url)
+        VideoPlaybackService.shared.invalidateLadder(for: url)
+        VideoPlaybackFailures.shared.clear(url)
+        setupPlayer()
+    }
 
-        // Safety check for local files
-        if finalURL.isFileURL {
-            // Start by checking the file at the path (resolving symlinks if needed)
-            let actualPath = finalURL.resolvingSymlinksInPath().path
-
-            if !FileManager.default.fileExists(atPath: actualPath) {
-                #if DEBUG
-                print("VideoPlayerView: Local file missing at \(actualPath)")
-                #endif
-                loadError = "Local file not found."
-                return
-            }
-
-            if let attr = try? FileManager.default.attributesOfItem(atPath: actualPath),
-               let size = attr[.size] as? UInt64, size < 200 {
-                #if DEBUG
-                print("VideoPlayerView: File too small (\(size) bytes)")
-                #endif
-                loadError = "Video file is invalid or too small."
-                return
-            }
+    private func setupPlayer() {
+        guard player == nil else { return }
+        Task { @MainActor in
+            // The service resolves MIME (HEAD + magic-byte sniff), picks the
+            // source (verified local file vs remote), and recovers from item
+            // failures internally — nothing to decide here.
+            self.player = await VideoPlaybackService.shared.preparedPlayer(
+                for: url, mimeHint: mimeType, intent: .standalone
+            )
         }
-
-        // Strict Constraint Safety:
-        // AVPlayerViewController (AppKit backend) throws constraint exceptions if initialized
-        // with near-zero frames. We must ensure we are ready.
-        if viewSize.width < 100 || viewSize.height < 100 {
-            #if DEBUG
-            print("VideoPlayerView: Skipping setup - view too small (\(viewSize))")
-            #endif
-            return
-        }
-
-        #if DEBUG
-        print("VideoPlayerView: Setting up player for \(finalURL.lastPathComponent)")
-        #endif
-
-        // For extensionless remote URLs (e.g. Blossom hashes), AVFoundation can't infer the
-        // content type from the URL alone. We must provide an explicit MIME type hint via
-        // AVURLAssetOverrideMIMETypeKey so AVPlayer knows how to demux the stream.
-        var assetOptions: [String: Any] = [:]
-        if finalURL.pathExtension.isEmpty {
-            // Prefer detected MIME, then caller-supplied mime, then the detector cache, fall back to video/mp4
-            let resolved = detectedMIME
-                ?? mimeType
-                ?? MediaTypeDetector.shared.getCachedContentType(for: url)
-                ?? "video/mp4"
-            assetOptions[AVURLAssetOverrideMIMETypeKey] = resolved
-            #if DEBUG
-            print("VideoPlayerView: Using MIME override '\(resolved)' for extensionless URL")
-            #endif
-        }
-
-        let asset = AVURLAsset(url: finalURL, options: assetOptions)
-        let playerItem = AVPlayerItem(asset: asset)
-
-        // Initialize immediately - removing the async delay which caused race conditions
-        let newPlayer = AVPlayer(playerItem: playerItem)
-        self.player = newPlayer
-
-        // Watch for failures
-        NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime,
-            object: playerItem,
-            queue: .main
-        ) { _ in }
     }
 }
 
@@ -557,7 +459,7 @@ struct InlineFeedVideoPlayer: View {
     @State private var player: AVPlayer?
     @State private var isMuted: Bool = true
     @State private var isPlaying: Bool = false
-    @State private var loadError: String? = nil
+    @ObservedObject private var failures = VideoPlaybackFailures.shared
     @State private var thumbnail: PlatformImage? = nil
     @State private var loopObserver: NSObjectProtocol? = nil
     @State private var isReadyToPlay: Bool = false
@@ -568,7 +470,7 @@ struct InlineFeedVideoPlayer: View {
             ZStack {
                 Color.platformTertiaryGroupedBackground
 
-                if let _ = loadError {
+                if failures.hasFailed(url) {
                     // Show thumbnail with play overlay on error
                     if let thumb = thumbnail {
                         Image(platformImage: thumb)
@@ -672,12 +574,9 @@ struct InlineFeedVideoPlayer: View {
                         }
                         deferredSetup = work
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
-                    } else {
-                        // Ensure audio session is configured for mixing when resuming muted playback
-                        if isMuted {
-                            AudioSessionManager.shared.enableMixingWithOthers()
-                        }
-                        player?.play()
+                    } else if let player {
+                        VideoPlaybackService.shared.setMuted(isMuted, on: player)
+                        player.play()
                         isPlaying = true
                     }
                 }
@@ -691,7 +590,9 @@ struct InlineFeedVideoPlayer: View {
                     isReadyToPlay = false
                     // Restore mixing mode when video leaves screen (in case it was unmuted)
                     if !isMuted {
-                        AudioSessionManager.shared.enableMixingWithOthers()
+                        if let player {
+                            VideoPlaybackService.shared.setMuted(true, on: player)
+                        }
                         isMuted = true
                     }
                 }
@@ -701,13 +602,8 @@ struct InlineFeedVideoPlayer: View {
 
     private func toggleMute() {
         isMuted.toggle()
-        player?.isMuted = isMuted
-
-        // Update audio session based on mute state
-        if isMuted {
-            AudioSessionManager.shared.enableMixingWithOthers()
-        } else {
-            AudioSessionManager.shared.enablePlayback()
+        if let player {
+            VideoPlaybackService.shared.setMuted(isMuted, on: player)
         }
     }
 
@@ -728,31 +624,15 @@ struct InlineFeedVideoPlayer: View {
     }
 
     private func setupPlayer() {
-        // For extensionless remote URLs, detect content type first to ensure proper playback
-        if url.pathExtension.isEmpty && !url.isFileURL {
-            Task {
-                _ = await MediaTypeDetector.shared.detectContentTypeAsync(for: url)
-                await MainActor.run {
-                    initializePlayer()
-                }
-            }
-        } else {
-            initializePlayer()
+        Task { @MainActor in
+            // The service resolves source + MIME, applies inline (muted, mixing)
+            // policy, and recovers from item failures internally.
+            let cachedPlayer = await VideoPlaybackService.shared.preparedPlayer(for: url, intent: .inline)
+            cachedPlayer.isMuted = isMuted
+            self.player = cachedPlayer
+            cachedPlayer.play()
+            isPlaying = true
         }
-    }
-
-    private func initializePlayer() {
-        // Configure audio session before initializing player
-        // Since videos start muted by default, enable mixing with background music
-        if isMuted {
-            AudioSessionManager.shared.enableMixingWithOthers()
-        }
-
-        let cachedPlayer = VideoPlayerCache.shared.player(for: url)
-        cachedPlayer.isMuted = isMuted
-        self.player = cachedPlayer
-        cachedPlayer.play()
-        isPlaying = true
     }
 }
 
@@ -1009,7 +889,7 @@ struct FullScreenVideoPlayer: View {
     var onPiPStart: (() -> Void)? = nil
 
     @State private var player: AVPlayer?
-    @State private var loadError: String? = nil
+    @ObservedObject private var failures = VideoPlaybackFailures.shared
     @State private var showControls: Bool = true
     @State private var hideControlsWork: DispatchWorkItem? = nil
     #if os(iOS)
@@ -1020,7 +900,7 @@ struct FullScreenVideoPlayer: View {
         ZStack {
             Color.black
 
-            if let _ = loadError {
+            if failures.hasFailed(url) {
                 VStack(spacing: 16) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .font(.appSystem(size: 40))
@@ -1075,8 +955,6 @@ struct FullScreenVideoPlayer: View {
             }
             #endif
             VideoPlayerCache.shared.activeFullScreenURL = url
-            // Configure audio session to take over playback for unmuted full-screen video
-            AudioSessionManager.shared.enablePlayback()
             #if os(iOS)
             PiPManager.shared.onPiPWillStart = { onPiPStart?() }
             #endif
@@ -1128,27 +1006,14 @@ struct FullScreenVideoPlayer: View {
     }
 
     private func setupPlayer() {
-        // For extensionless remote URLs, detect content type first
-        if url.pathExtension.isEmpty && !url.isFileURL {
-            Task {
-                _ = await MediaTypeDetector.shared.detectContentTypeAsync(for: url)
-                await MainActor.run {
-                    initializePlayer()
-                }
-            }
-        } else {
-            initializePlayer()
+        Task { @MainActor in
+            // The service resolves source + MIME, applies full-screen (unmuted,
+            // audio takeover) policy, and recovers from item failures internally.
+            let cachedPlayer = await VideoPlaybackService.shared.preparedPlayer(
+                for: url, mimeHint: mimeType, intent: .fullScreen
+            )
+            self.player = cachedPlayer
+            cachedPlayer.play()
         }
-    }
-
-    private func initializePlayer() {
-        // Ensure audio session is ready for unmuted playback (ignores hardware mute switch)
-        AudioSessionManager.shared.enablePlayback()
-
-        let cachedPlayer = VideoPlayerCache.shared.player(for: url)
-        cachedPlayer.isMuted = false
-        cachedPlayer.volume = 1.0 // Ensure player volume is at maximum
-        self.player = cachedPlayer
-        cachedPlayer.play()
     }
 }

@@ -1,5 +1,6 @@
 package com.nostrvault.ui.screens.dm
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -21,11 +22,11 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import coil.compose.AsyncImage
 import com.nostrvault.data.model.FeedProfile
 import com.nostrvault.service.DMConversation
 import com.nostrvault.service.DMService
 import com.nostrvault.service.NostrService
+import com.nostrvault.ui.components.AvatarImage
 import com.nostrvault.ui.components.GlassPill
 import com.nostrvault.ui.components.GlassScaffold
 import com.nostrvault.ui.theme.*
@@ -244,6 +245,8 @@ private fun ConversationRow(
     profile: FeedProfile?,
     onClick: () -> Unit,
 ) {
+    val colors = LocalNostrVaultColors.current
+    val hasUnread = conversation.unreadCount > 0
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -251,14 +254,26 @@ private fun ConversationRow(
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
-        AsyncImage(
-            model = profile?.pictureURL,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(48.dp)
-                .clip(CircleShape),
-        )
+        // iOS DMInboxView row: 52pt avatar with the unread dot punched into
+        // its top-right corner; count capsule only past one unread.
+        Box {
+            AvatarImage(
+                url = profile?.pictureURL,
+                pubkey = conversation.id,
+                size = 52.dp,
+                displayName = profile?.bestName,
+            )
+            if (hasUnread) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(14.dp)
+                        .background(WindowBackground, CircleShape)
+                        .padding(2.dp)
+                        .background(colors.primary, CircleShape),
+                )
+            }
+        }
 
         Spacer(Modifier.width(12.dp))
 
@@ -270,15 +285,15 @@ private fun ConversationRow(
                 Text(
                     text = profile?.bestName ?: conversation.id.take(8) + "...",
                     color = PrimaryText,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 15.sp,
+                    fontWeight = if (hasUnread) FontWeight.Bold else FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
                 Text(
                     text = formatRelativeTime((conversation.lastMessage?.timestamp ?: 0L) * 1000),
-                    color = TertiaryText,
+                    color = if (hasUnread) colors.primary else TertiaryText,
                     fontSize = 12.sp,
                 )
             }
@@ -288,17 +303,17 @@ private fun ConversationRow(
             Text(
                 text = conversation.lastMessage?.content ?: "",
                 color = SecondaryText,
-                fontSize = 14.sp,
+                fontSize = 13.sp,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }
 
-        // Unread badge
-        if (conversation.unreadCount > 0) {
+        // Unread count capsule (only when more than one unread, like iOS)
+        if (conversation.unreadCount > 1) {
             Spacer(Modifier.width(8.dp))
             Badge(
-                containerColor = LocalNostrVaultColors.current.primary,
+                containerColor = colors.primary,
                 contentColor = PrimaryText,
             ) {
                 Text(

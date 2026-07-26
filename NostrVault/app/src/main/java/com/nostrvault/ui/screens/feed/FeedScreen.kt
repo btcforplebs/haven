@@ -31,10 +31,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -303,13 +306,47 @@ fun FeedScreen(
                 enter = scaleIn(animationSpec = fabSpring, initialScale = 0.5f) + fadeIn(fabSpring),
                 exit = scaleOut(animationSpec = fabSpring, targetScale = 0.5f) + fadeOut(fabSpring),
             ) {
-                FloatingActionButton(
+                // iOS-style gradient "Post" capsule (FeedView compose FAB)
+                val colors = LocalNostrVaultColors.current
+                Surface(
                     onClick = onCompose,
-                    modifier = Modifier.padding(bottom = 88.dp),
-                    containerColor = LocalNostrVaultColors.current.primary,
-                    contentColor = PrimaryText,
+                    shape = RoundedCornerShape(50),
+                    color = Color.Transparent,
+                    modifier = Modifier
+                        .padding(bottom = 88.dp)
+                        .shadow(
+                            elevation = 8.dp,
+                            shape = RoundedCornerShape(50),
+                            ambientColor = colors.primary.copy(alpha = 0.35f),
+                            spotColor = colors.primary.copy(alpha = 0.35f),
+                        ),
                 ) {
-                    Icon(NostrVaultIcons.Create, contentDescription = "Compose")
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier
+                            .background(
+                                Brush.linearGradient(
+                                    listOf(colors.primary, colors.primaryLight),
+                                ),
+                                RoundedCornerShape(50),
+                            )
+                            .height(48.dp)
+                            .padding(horizontal = 18.dp),
+                    ) {
+                        Icon(
+                            NostrVaultIcons.Create,
+                            contentDescription = "Compose",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Text(
+                            text = "Post",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                        )
+                    }
                 }
             }
         },
@@ -333,7 +370,7 @@ fun FeedScreen(
                 // Shimmer skeleton loading
                 SkeletonFeed(count = 5)
             } else if (notes.isEmpty()) {
-                EmptyFeedPlaceholder(feedMode)
+                EmptyFeedPlaceholder(feedMode, onRefresh = viewModel::refresh)
             } else {
                 LazyColumn(
                     state = listState,
@@ -577,11 +614,12 @@ fun FeedScreen(
 
     // Feed config sheet (matches iOS feed dashboard)
     if (showFeedConfig) {
+        val feedConfig by viewModel.configStoreRef.config.collectAsState()
         com.nostrvault.ui.screens.dashboard.FeedConfigSheet(
             showReposts = showReposts,
             showReplies = showReplies,
             autoLoadNewNotes = autoLoad,
-            feedRelays = viewModel.configStoreRef.config.value.activeFeedRelays,
+            feedRelays = feedConfig.activeFeedRelays,
             onToggleReposts = { viewModel.toggleShowReposts() },
             onToggleReplies = { viewModel.toggleShowReplies() },
             onToggleAutoLoad = { viewModel.toggleAutoLoad() },
@@ -947,31 +985,87 @@ private fun FeedTopBar(
 
 // ── Empty state ──────────────────────────────────────────────────
 
+// iOS FeedView empty state: thin gradient icon, bold title, monospaced
+// subtitle, and a full-width gradient "Refresh Feed" button.
 @Composable
-private fun EmptyFeedPlaceholder(mode: FeedMode) {
+private fun EmptyFeedPlaceholder(mode: FeedMode, onRefresh: (() -> Unit)? = null) {
+    val colors = LocalNostrVaultColors.current
+    val gradient = Brush.linearGradient(listOf(colors.primary, colors.primaryLight))
     Box(
         contentAlignment = Alignment.Center,
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 24.dp),
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(
-                imageVector = NostrVaultIcons.Feed,
+                imageVector = when (mode) {
+                    FeedMode.FOLLOWING -> NostrVaultIcons.PersonAdd
+                    FeedMode.DISCOVERY -> NostrVaultIcons.GlobeOutline
+                    FeedMode.GLOBAL -> NostrVaultIcons.Globe
+                    FeedMode.POPULAR -> NostrVaultIcons.BarChart
+                    FeedMode.MEDIA -> NostrVaultIcons.Media
+                },
                 contentDescription = null,
-                tint = TertiaryText,
-                modifier = Modifier.size(48.dp),
+                tint = colors.primaryLight,
+                modifier = Modifier.size(56.dp),
+            )
+            Spacer(Modifier.height(16.dp))
+            Text(
+                text = when (mode) {
+                    FeedMode.FOLLOWING -> "No Following Feed"
+                    FeedMode.DISCOVERY -> "Discovering Notes"
+                    FeedMode.GLOBAL -> "No Global Notes Yet"
+                    FeedMode.POPULAR -> "No Popular Notes Yet"
+                    FeedMode.MEDIA -> "No Media Found"
+                },
+                color = PrimaryText,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 0.2.sp,
             )
             Spacer(Modifier.height(12.dp))
             Text(
                 text = when (mode) {
-                    FeedMode.FOLLOWING -> "No notes yet"
-                    FeedMode.DISCOVERY -> "Discovering notes..."
-                    FeedMode.GLOBAL -> "Loading global feed..."
-                    FeedMode.POPULAR -> "Loading popular notes..."
-                    FeedMode.MEDIA -> "No media found"
+                    FeedMode.FOLLOWING -> "Follow npubs on Nostr to see their posts here"
+                    FeedMode.DISCOVERY -> "Analyzing your extended network..."
+                    FeedMode.GLOBAL -> "Waiting for notes from your feed relays"
+                    FeedMode.POPULAR -> "Waiting for engagement data to arrive"
+                    FeedMode.MEDIA -> "Photos and videos from your feed show up here"
                 },
                 color = SecondaryText,
-                fontSize = 16.sp,
+                fontSize = 13.sp,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = 0.3.sp,
+                textAlign = TextAlign.Center,
             )
+            if (onRefresh != null) {
+                Spacer(Modifier.height(40.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(gradient, RoundedCornerShape(10.dp))
+                        .clickable(onClick = onRefresh)
+                        .padding(vertical = 14.dp),
+                ) {
+                    Spacer(Modifier.weight(1f))
+                    Icon(
+                        imageVector = NostrVaultIcons.Refresh,
+                        contentDescription = null,
+                        tint = Color.Black,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Text(
+                        text = "Refresh Feed",
+                        color = Color.Black,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Spacer(Modifier.weight(1f))
+                }
+            }
         }
     }
 }

@@ -63,37 +63,24 @@ struct MediaItemRenderer: View {
             return
         }
 
-        let ext = mediaItem.url.pathExtension.lowercased()
-        if SupportedMediaFormats.videoExtensions.contains(ext) {
-            resolvedType = .video
-        } else if SupportedMediaFormats.imageOrGifExtensions.contains(ext) {
-            resolvedType = .image
-        } else if SupportedMediaFormats.audioExtensions.contains(ext) {
-            resolvedType = .audio
-        } else if let cached = MediaTypeDetector.shared.getCachedContentType(for: mediaItem.url) {
-            if MediaTypeDetector.shared.isVideoContentType(cached) {
-                resolvedType = .video
-            } else if MediaTypeDetector.shared.isImageContentType(cached) {
-                resolvedType = .image
-            } else {
-                resolvedType = .unknown
-            }
-        } else {
-            isLoadingType = true
-            MediaTypeDetector.shared.detectContentType(for: mediaItem.url) { detectedType in
-                isLoadingType = false
-                if let detectedType = detectedType {
-                    if MediaTypeDetector.shared.isVideoContentType(detectedType) {
-                        resolvedType = .video
-                    } else if MediaTypeDetector.shared.isImageContentType(detectedType) {
-                        resolvedType = .image
-                    } else {
-                        resolvedType = .unknown
-                    }
-                } else {
-                    resolvedType = .unknown
-                }
-            }
+        if let kind = MediaKindResolver.cachedKind(for: mediaItem.url, mimeHint: mediaItem.mimeType) {
+            resolvedType = Self.mediaType(from: kind)
+            return
+        }
+        isLoadingType = true
+        Task { @MainActor in
+            let kind = await MediaKindResolver.kind(for: mediaItem.url, mimeHint: mediaItem.mimeType)
+            resolvedType = Self.mediaType(from: kind)
+            isLoadingType = false
+        }
+    }
+
+    private static func mediaType(from kind: MediaKind) -> MediaItem.MediaType {
+        switch kind {
+        case .video: return .video
+        case .image, .gif: return .image
+        case .audio: return .audio
+        case .unknown: return .unknown
         }
     }
 }

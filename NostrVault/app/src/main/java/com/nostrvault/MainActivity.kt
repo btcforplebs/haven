@@ -33,6 +33,7 @@ import com.nostrvault.ui.components.FullScreenMediaHost
 import com.nostrvault.ui.components.VideoPiPBridge
 import com.nostrvault.ui.navigation.NostrVaultNavHost
 import com.nostrvault.ui.notification.NotificationManager
+import com.nostrvault.ui.theme.AppTheme
 import com.nostrvault.ui.theme.NostrVaultTheme
 import com.nostrvault.ui.theme.WindowBackground
 import androidx.fragment.app.FragmentActivity
@@ -87,7 +88,12 @@ class MainActivity : FragmentActivity() {
                 }
             }
 
-            NostrVaultTheme(zapsOnlyMode = config.zapsOnlyMode) {
+            NostrVaultTheme(
+                appTheme = AppTheme.fromKey(config.themeColor),
+                textSizeScale = config.textSizeScale,
+                oledMode = config.oledMode,
+                zapsOnlyMode = config.zapsOnlyMode,
+            ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = WindowBackground,

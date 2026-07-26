@@ -31,6 +31,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -223,7 +224,7 @@ fun NoteCard(
                             text = profile?.bestName ?: note.pubkey.take(8) + "...",
                             color = PrimaryText,
                             fontWeight = FontWeight.SemiBold,
-                            fontSize = 15.sp,
+                            fontSize = 14.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f, fill = false),
@@ -239,12 +240,17 @@ fun NoteCard(
                                 modifier = Modifier.size(14.dp),
                             )
                         }
+
+                        Spacer(Modifier.weight(1f))
+
+                        Text(
+                            text = formatTimestamp(note.createdAt.time / 1000),
+                            color = SecondaryText,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            letterSpacing = 0.2.sp,
+                        )
                     }
-                    Text(
-                        text = formatTimestamp(note.createdAt.time / 1000),
-                        color = SecondaryText,
-                        fontSize = 13.sp,
-                    )
                 }
 
                 // More menu
@@ -291,6 +297,8 @@ fun NoteCard(
                     content = note.content,
                     profiles = profiles,
                     mediaURLs = note.mediaURLs.toSet(),
+                    fontSize = 17.sp,
+                    lineHeight = 24.sp,
                     onProfileClick = onProfileClick,
                     onNoteClick = onNoteClick,
                     onPlainTextClick = { onNoteClick(note.id) },
@@ -388,7 +396,7 @@ private fun EngagementBar(
     modifier: Modifier = Modifier,
 ) {
     Row(
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier.fillMaxWidth(),
     ) {
