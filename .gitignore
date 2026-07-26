@@ -45,3 +45,7 @@ HavenApp/HavenApp/Services/BUD-14.code-workspace
 
 # Claude Code local state (worktrees, memory, jobs)
 .claude/
+
+# Release tooling
+dist/
+.release.env
