@@ -126,20 +126,21 @@ func newBadgerBackend(path string) DBBackend {
 				// across 6 DBs. Desktop can afford more than a phone but not
 				// server sizing.
 				return opts.
-					// 8 MiB, matching mobile. The arena is allocated up-front
-					// per DB and the WAL is mmap'd at 2x it, so at 16 MiB the
-					// six DBs claimed ~192 MiB before serving a single request
-					// — measured as a 282 MB boot peak against a 130 MB steady
-					// footprint. A 24/7 background relay writes in a trickle;
-					// the larger arena only pays off during bulk imports, which
-					// are occasional and already flush-bound.
-					WithMemTableSize(8 << 20).        // 8 MiB (default 64 MiB, allocated up-front per DB)
+					// DO NOT SHRINK on an existing database. Badger sizes the
+					// skiplist arena from MemTableSize and replays each existing
+					// .mem WAL into it at open; a WAL written under a larger
+					// setting overflows the smaller arena and trips
+					// y.AssertTruef("Arena too small") inside Open — the relay
+					// dies mid-DB-load with no recoverable error. Lowering this
+					// 16→8 MiB shipped in b12 and bricked a populated relay on
+					// first launch (boots, opens private/chat/outbox, dies
+					// before inbox). Raising it is safe; lowering needs a
+					// migration that flushes every memtable first.
+					WithMemTableSize(16 << 20).       // 16 MiB (default 64 MiB, allocated up-front per DB)
 					WithValueLogFileSize(1 << 26).    // 64 MiB (default ~1 GiB, mmap'd)
 					WithNumMemtables(2).              // default 5; allows 1 background flush
-					// Smaller memtables flush more often, so keep more L0
-					// headroom than mobile or imports would hit write stalls.
 					WithNumLevelZeroTables(2).        // default 5
-					WithNumLevelZeroTablesStall(6).   // default 15
+					WithNumLevelZeroTablesStall(4).   // default 15
 					WithNumCompactors(2).             // default 4, minimum 2
 					WithCompression(badgeropts.None). // disable compression (saves CPU)
 					WithBlockCacheSize(32 << 20).     // 32 MiB per DB (default 256 MiB)
