@@ -17,6 +17,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GO_SRC_DIR="${SCRIPT_DIR}/../haven-go"
 OUTPUT_BASE="${SCRIPT_DIR}/app/src/main/jniLibs"
+JNI_BRIDGE_SRC="${SCRIPT_DIR}/app/src/main/java/com/nostrvault/relay/HavenBridgeJNI.c"
 
 # Android NDK auto-detection
 if [ -z "${ANDROID_NDK_HOME:-}" ]; then
@@ -55,16 +56,43 @@ NDK_BIN="${NDK_TOOLCHAIN}/${NDK_HOST}/bin"
 # API level (minSdk 26 = Android 8.0)
 API_LEVEL=26
 
-# ABI -> (GOARCH, CC triple) mapping
-declare -A ABI_MAP
-ABI_MAP[arm64-v8a]="arm64:aarch64-linux-android${API_LEVEL}-clang"
-ABI_MAP[armeabi-v7a]="arm:armv7a-linux-androideabi${API_LEVEL}-clang"
-ABI_MAP[x86_64]="amd64:x86_64-linux-android${API_LEVEL}-clang"
+# ABI -> (GOARCH, CC triple) mapping.
+#
+# Deliberately NOT an associative array: macOS ships bash 3.2, which has no
+# `declare -A`, so this script aborted at parse time with
+# "declare: -A: invalid option" whenever it was invoked directly — including
+# from release_all.sh, which meant the Android stage of a release never ran.
+# It only appeared to work because `just android-build` cross-compiles inline
+# and never calls this file.
+ALL_ABIS="arm64-v8a armeabi-v7a x86_64"
+
+# Accepts the jniLibs ABI names and the GOARCH-style shorthands the usage text
+# above advertises. release_all.sh passes "arm64", which the old lookup rejected
+# outright — so even once the parse error was fixed the Android stage still
+# failed on its own documented invocation.
+normalize_abi() {
+    case "$1" in
+        arm64|arm64-v8a)      echo "arm64-v8a" ;;
+        arm|armeabi-v7a)      echo "armeabi-v7a" ;;
+        amd64|x86_64)         echo "x86_64" ;;
+        *)                    echo "" ;;
+    esac
+}
+
+abi_map() { # abi_map <abi> -> "goarch:cc-triple", empty if unknown
+    case "$(normalize_abi "$1")" in
+        arm64-v8a)   echo "arm64:aarch64-linux-android${API_LEVEL}-clang" ;;
+        armeabi-v7a) echo "arm:armv7a-linux-androideabi${API_LEVEL}-clang" ;;
+        x86_64)      echo "amd64:x86_64-linux-android${API_LEVEL}-clang" ;;
+        *)           echo "" ;;
+    esac
+}
 
 build_abi() {
-    local abi="$1"
-    local goarch="${ABI_MAP[$abi]%%:*}"
-    local cc="${ABI_MAP[$abi]##*:}"
+    local abi; abi="$(normalize_abi "$1")"
+    local spec; spec="$(abi_map "$abi")"
+    local goarch="${spec%%:*}"
+    local cc="${spec##*:}"
     local output_dir="${OUTPUT_BASE}/${abi}"
     local output_file="${output_dir}/libhaven.so"
 
@@ -79,17 +107,30 @@ build_abi() {
         GO_CMD="go1.24.4"
     fi
 
-    CGO_ENABLED=1 \
-    GOOS=android \
-    GOARCH="${goarch}" \
-    CC="${NDK_BIN}/${cc}" \
-    ${GO_CMD} build \
-        -buildmode=c-shared \
-        -tags cshared \
-        -trimpath \
-        -ldflags="-s -w" \
-        -o "${output_file}" \
-        "${GO_SRC_DIR}"
+    # CGO has to compile the JNI bridge into the .so, so it must sit inside the
+    # Go module for the duration of the build. The justfile did this; this
+    # script did not, so anything it produced would have lacked every JNI entry
+    # point the app calls. Removed again afterwards, including on failure.
+    cp "${JNI_BRIDGE_SRC}" "${GO_SRC_DIR}/HavenBridgeJNI.c"
+    trap 'rm -f "${GO_SRC_DIR}/HavenBridgeJNI.c"' RETURN
+
+    # Build from inside the module. Passing the source dir as a package path
+    # while cwd is NostrVault/ makes Go look for a main module here and fail
+    # with "cannot find main module" — the justfile's inline build always cd'd
+    # in first, which is why that path worked and this script never did.
+    ( cd "${GO_SRC_DIR}" && \
+      CGO_ENABLED=1 \
+      GOOS=android \
+      GOARCH="${goarch}" \
+      CC="${NDK_BIN}/${cc}" \
+      CGO_CFLAGS="-DMDB_USE_ROBUST=0" \
+      ${GO_CMD} build \
+          -buildmode=c-shared \
+          -tags cshared \
+          -trimpath \
+          -ldflags="-s -w" \
+          -o "${output_file}" \
+          . )
 
     # Remove the generated .h file (we define our own JNI bridge)
     rm -f "${output_dir}/libhaven.h"
@@ -101,7 +142,7 @@ build_abi() {
 
 clean() {
     echo "Cleaning built .so files..."
-    for abi in "${!ABI_MAP[@]}"; do
+    for abi in $ALL_ABIS; do
         rm -f "${OUTPUT_BASE}/${abi}/libhaven.so"
         rm -f "${OUTPUT_BASE}/${abi}/libhaven.h"
     done
@@ -116,8 +157,8 @@ fi
 
 if [ -n "${1:-}" ]; then
     # Build specific ABI
-    if [ -z "${ABI_MAP[${1}]:-}" ]; then
-        echo "ERROR: Unknown ABI '${1}'. Valid: ${!ABI_MAP[*]}"
+    if [ -z "$(abi_map "${1}")" ]; then
+        echo "ERROR: Unknown ABI '${1}'. Valid: ${ALL_ABIS}"
         exit 1
     fi
     build_abi "$1"
