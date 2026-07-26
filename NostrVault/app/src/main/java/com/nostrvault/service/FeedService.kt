@@ -592,7 +592,7 @@ class FeedService @Inject constructor(
                     if (resumed) return
                     resumed = true
                     graceJob?.cancel()
-                    cont.resume(best) {}
+                    cont.resume(best) { _, _, _ -> }
                 }
             }
 
@@ -784,7 +784,6 @@ class FeedService @Inject constructor(
             if (config.activeFeedRelays.isEmpty() &&
                 config.activeBlastrRelays.isEmpty() &&
                 config.inboxRelays.isNullOrEmpty()) {
-                add()
                 add("wss://relay.primal.net")
                 add("wss://nos.lol")
             }

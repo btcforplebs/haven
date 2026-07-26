@@ -20,8 +20,15 @@
     <!-- Boot receiver (auto-start relay) -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- Camera (QR scanning, profile photos) -->
+    <!-- Camera (QR scanning, profile photos) — optional so the app still
+         installs on camera-less devices (ChromeOS, some tablets). -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature
+        android:name="android.hardware.camera"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera.autofocus"
+        android:required="false" />
 
     <!-- NIP-55: Query Amber signer app for intent resolution -->
     <queries>

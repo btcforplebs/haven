@@ -592,7 +592,7 @@ fun NostrVaultNavHost(
                 MediaViewerScreen(
                     initialIndex = index,
                     onBack = { navController.popBackStack() },
-                    autoplayVideos = configStore.config.value.autoplayVideos,
+                    autoplayVideos = config.autoplayVideos,
                 )
             }
         }

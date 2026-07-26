@@ -792,14 +792,14 @@ class SetupWizardViewModel @Inject constructor(
 
     // ── Initial Follows ───────────────────────────────────────────
 
+    private val starterPackJson = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+
     private fun loadStarterPacks() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val inputStream = appContext.resources.openRawResource(R.raw.starter_packs)
                 val json = inputStream.bufferedReader().use { it.readText() }
-                val packs = kotlinx.serialization.json.Json {
-                    ignoreUnknownKeys = true
-                }.decodeFromString<StarterPacksData>(json)
+                val packs = starterPackJson.decodeFromString<StarterPacksData>(json)
                 _starterPacks.value = packs
             } catch (e: Exception) {
                 android.util.Log.e("SetupWizard", "Failed to load starter packs", e)

@@ -15,6 +15,7 @@ import com.nostrvault.service.ScrollPosition
 import com.nostrvault.service.ZapSendService
 import com.nostrvault.ui.notification.NotificationManager
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
@@ -45,6 +46,7 @@ class FeedViewModel @Inject constructor(
     // single insertion recomposed the whole visible feed per-profile while
     // scrolling. Sample so bursts coalesce to ~3/sec; mentions/avatars still
     // resolve within a frame or two. profileFor() below still reads the live map.
+    @OptIn(FlowPreview::class)
     val profiles: StateFlow<Map<String, FeedProfile>> = nostrService.profiles
         .sample(300L) // coalesce profile bursts to ~3/sec while scrolling
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), nostrService.profiles.value)

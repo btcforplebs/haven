@@ -1763,7 +1763,9 @@ class FeedService: ObservableObject {
             c.messageSubject
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] msg in
-                    guard !completed, let self = self else { return }
+                    // self is only a liveness check here — bail once the
+                    // service is gone rather than keep draining the socket.
+                    guard !completed, self != nil else { return }
                     guard let data = msg.data(using: .utf8),
                           let json = try? JSONSerialization.jsonObject(with: data) as? [Any],
                           let type = json[0] as? String else { return }
@@ -2040,7 +2042,7 @@ class FeedService: ObservableObject {
         Task { [weak self] in
             guard let self = self else { return }
             guard let event = await NostrService.shared.signEventAsync(kind: 3, content: self.contactListContent, tags: self.contactListPTags) else { return }
-            await self.recordOwnContactList(event: event)
+            self.recordOwnContactList(event: event)
             NostrService.shared.postEvent(event)
         }
     }
@@ -2070,7 +2072,7 @@ class FeedService: ObservableObject {
         Task { [weak self] in
             guard let self = self else { return }
             guard let event = await NostrService.shared.signEventAsync(kind: 3, content: self.contactListContent, tags: self.contactListPTags) else { return }
-            await self.recordOwnContactList(event: event)
+            self.recordOwnContactList(event: event)
             NostrService.shared.postEvent(event)
         }
     }

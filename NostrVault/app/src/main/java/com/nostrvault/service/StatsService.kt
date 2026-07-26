@@ -181,7 +181,7 @@ class StatsService @Inject constructor(
 
                                     if (pendingKinds.isEmpty() && completed.compareAndSet(false, true)) {
                                         client.disconnect()
-                                        cont.resume(results.toMap()) {}
+                                        cont.resume(results.toMap()) { _, _, _ -> }
                                     }
                                 }
                             }
@@ -204,7 +204,7 @@ class StatsService @Inject constructor(
                 delay(10_000)
                 if (completed.compareAndSet(false, true)) {
                     client.disconnect()
-                    cont.resume(results.toMap()) {}
+                    cont.resume(results.toMap()) { _, _, _ -> }
                 }
             }
 

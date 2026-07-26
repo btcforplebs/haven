@@ -9,6 +9,7 @@
         <item name="android:statusBarColor">#FF141419</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowLightNavigationBar">false</item>
+        <!-- windowLightNavigationBar is API 27+ and already defaults to false,
+             so it's omitted rather than split into a values-v27 variant. -->
     </style>
 </resources>
