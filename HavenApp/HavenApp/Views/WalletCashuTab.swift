@@ -7,10 +7,42 @@ struct WalletCashuTab: View {
     @ObservedObject private var cashuService = CashuService.shared
 
     // Mode pickers
-    enum BridgeMode: String, CaseIterable, Identifiable { case fund = "Fund", cashOut = "Cash Out"; var id: String { rawValue } }
-    enum TokenMode: String, CaseIterable, Identifiable { case send = "Send", receive = "Receive"; var id: String { rawValue } }
-    @State private var bridgeMode: BridgeMode = .fund
-    @State private var tokenMode: TokenMode = .send
+    /// The tab is organised by what you're trying to do, not by which protocol
+    /// does it. It used to be two cards split by rail — a "Lightning Bridge"
+    /// with Fund/Cash Out, and "Ecash Tokens" with Send/Receive — so you had to
+    /// know the plumbing before you could find the action. "Cash Out" was also
+    /// simply wrong: nothing cashes out, it pays a Lightning invoice using ecash.
+    enum MoneyDirection: String, CaseIterable, Identifiable {
+        case add = "Add sats"
+        case send = "Send sats"
+        var id: String { rawValue }
+    }
+
+    /// Which rail carries it. Secondary to the direction, and labelled by what
+    /// it does rather than by protocol name.
+    enum MoneyRail: String, CaseIterable, Identifiable {
+        case lightning, token
+        var id: String { rawValue }
+
+        func label(for direction: MoneyDirection) -> String {
+            switch (direction, self) {
+            case (.add, .lightning):  return "From Lightning"
+            case (.add, .token):      return "Paste a token"
+            case (.send, .lightning): return "Pay an invoice"
+            case (.send, .token):     return "Create a token"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .lightning: return "bolt.fill"
+            case .token: return "banknote.fill"
+            }
+        }
+    }
+
+    @State private var direction: MoneyDirection = .add
+    @State private var rail: MoneyRail = .lightning
 
     // Balance
     @State private var isLoadingBalance = false
@@ -82,8 +114,8 @@ struct WalletCashuTab: View {
                             ))
                     }
                     mintInfoCard
-                    bridgeCard
-                    tokenCard
+                    moveMoneyCard
+                    unclaimedTokensCard
                     bearerInstrumentsCard
                 }
                 Spacer(minLength: 20)
@@ -103,6 +135,10 @@ struct WalletCashuTab: View {
                     if cashuService.balanceSats == 0 && cashuService.proofs.isEmpty {
                         await restoreFromRelays()
                     }
+
+                    // Move any token someone has since claimed out of the
+                    // unclaimed list before it's shown as reclaimable.
+                    await cashuService.refreshSentTokenStates()
 
                     let recovered = await cashuService.recoverPendingQuotes()
                     if recovered > 0 {
@@ -308,30 +344,38 @@ struct WalletCashuTab: View {
 
     // MARK: - Lightning Bridge Card
 
-    private var bridgeCard: some View {
-        VStack(spacing: 12) {
-            HStack {
-                Image(systemName: "bolt.horizontal.fill")
-                    .font(.appSystem(size: 14, weight: .semibold))
-                    .foregroundColor(.yellow)
-                Text("LIGHTNING BRIDGE")
-                    .font(.appSystem(size: 12, weight: .bold))
-                    .foregroundColor(.secondary)
-                Spacer()
-            }
-
-            Picker("", selection: $bridgeMode) {
-                ForEach(BridgeMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
+    private var moveMoneyCard: some View {
+        VStack(spacing: 14) {
+            // Primary choice: what you want to do.
+            Picker("", selection: $direction) {
+                ForEach(MoneyDirection.allCases) { d in
+                    Text(d.rawValue).tag(d)
                 }
             }
             .pickerStyle(.segmented)
 
-            if bridgeMode == .fund {
-                fundContent
-            } else {
-                cashOutContent
+            // Secondary choice: how it travels. Labelled by outcome, so the
+            // rail never has to be understood in the abstract.
+            Picker("", selection: $rail) {
+                ForEach(MoneyRail.allCases) { r in
+                    Label(r.label(for: direction), systemImage: r.icon).tag(r)
+                }
             }
+            .pickerStyle(.segmented)
+
+            Group {
+                switch (direction, rail) {
+                case (.add, .lightning):  fundContent
+                case (.add, .token):      receiveContent
+                case (.send, .lightning): cashOutContent
+                case (.send, .token):     sendContent
+                }
+            }
+
+            Text(railExplainer)
+                .font(.appCaption)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(16)
         .background(Color.platformControlBackground.opacity(0.6))
@@ -341,7 +385,22 @@ struct WalletCashuTab: View {
                 .stroke(Color.platformSeparator.opacity(0.4), lineWidth: 1)
         )
         .padding(.horizontal, 16)
-        .animation(.easeInOut(duration: 0.2), value: bridgeMode)
+        .animation(.easeInOut(duration: 0.2), value: direction)
+        .animation(.easeInOut(duration: 0.2), value: rail)
+    }
+
+    /// One plain sentence per combination — the thing the old layout never said.
+    private var railExplainer: String {
+        switch (direction, rail) {
+        case (.add, .lightning):
+            return "Creates a Lightning invoice. Pay it from any wallet and the sats arrive here as ecash."
+        case (.add, .token):
+            return "Paste an ecash token someone gave you to add it to your balance."
+        case (.send, .lightning):
+            return "Pays a Lightning invoice using your ecash balance. The mint settles it over Lightning."
+        case (.send, .token):
+            return "Creates a token string. Anyone holding it can claim it, so treat it like cash — your balance drops as soon as it's created."
+        }
     }
 
     // MARK: - Fund Content (Lightning → Ecash)
@@ -569,40 +628,96 @@ struct WalletCashuTab: View {
 
     // MARK: - Ecash Token Card
 
-    private var tokenCard: some View {
-        VStack(spacing: 12) {
-            HStack {
-                Image(systemName: "banknote.fill")
-                    .font(.appSystem(size: 14, weight: .semibold))
-                    .foregroundColor(Self.ecashBrown)
-                Text("ECASH TOKENS")
-                    .font(.appSystem(size: 12, weight: .bold))
-                    .foregroundColor(.secondary)
-                Spacer()
-            }
+    // MARK: - Unclaimed Tokens
 
-            Picker("", selection: $tokenMode) {
-                ForEach(TokenMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
+    /// Tokens this wallet created that nobody has claimed yet.
+    ///
+    /// The sats left the balance the moment each was created, so until someone
+    /// redeems it the string here is the only thing that can claim them. Without
+    /// this list, losing the string stranded the money.
+    private var unclaimedTokensCard: some View {
+        let outstanding = cashuService.sentTokens.filter { !$0.isClaimed }
+        return Group {
+            if !outstanding.isEmpty {
+                VStack(spacing: 12) {
+                    HStack {
+                        Image(systemName: "clock.badge.exclamationmark")
+                            .font(.appSystem(size: 14, weight: .semibold))
+                            .foregroundColor(.orange)
+                        Text("UNCLAIMED TOKENS")
+                            .font(.appSystem(size: 12, weight: .bold))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text("\(formatSats(outstanding.reduce(0) { $0 + $1.amountSats })) sats")
+                            .font(.appSystem(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.orange)
+                    }
+
+                    Text("These are already out of your balance. Anyone holding the string can claim one — reclaim it to take the sats back.")
+                        .font(.appCaption)
+                        .foregroundColor(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    ForEach(outstanding) { sent in
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                Text("\(formatSats(sent.amountSats)) sats")
+                                    .font(.appSystem(size: 14, weight: .semibold, design: .monospaced))
+                                Spacer()
+                                Text(sent.createdAt, style: .relative)
+                                    .font(.appCaption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            if let memo = sent.memo, !memo.isEmpty {
+                                Text(memo)
+                                    .font(.appCaption)
+                                    .foregroundColor(.secondary)
+                            }
+                            HStack(spacing: 8) {
+                                Button {
+                                    copyToClipboard(sent.token)
+                                } label: {
+                                    Label("Copy", systemImage: "doc.on.doc")
+                                        .font(.appSystem(size: 12, weight: .semibold))
+                                }
+                                .buttonStyle(.bordered)
+
+                                Button {
+                                    reclaimToken(sent)
+                                } label: {
+                                    Label("Reclaim", systemImage: "arrow.uturn.backward")
+                                        .font(.appSystem(size: 12, weight: .semibold))
+                                }
+                                .buttonStyle(.bordered)
+                                .tint(.orange)
+
+                                Spacer()
+
+                                Button {
+                                    cashuService.forgetSentToken(sent)
+                                } label: {
+                                    Text("Forget")
+                                        .font(.appSystem(size: 12))
+                                        .foregroundColor(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(10)
+                        .background(Color.platformTertiaryGroupedBackground)
+                        .cornerRadius(8)
+                    }
                 }
-            }
-            .pickerStyle(.segmented)
-
-            if tokenMode == .send {
-                sendContent
-            } else {
-                receiveContent
+                .padding(16)
+                .background(Color.platformControlBackground.opacity(0.6))
+                .cornerRadius(12)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.orange.opacity(0.35), lineWidth: 1)
+                )
+                .padding(.horizontal, 16)
             }
         }
-        .padding(16)
-        .background(Color.platformControlBackground.opacity(0.6))
-        .cornerRadius(12)
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.platformSeparator.opacity(0.4), lineWidth: 1)
-        )
-        .padding(.horizontal, 16)
-        .animation(.easeInOut(duration: 0.2), value: tokenMode)
     }
 
     // MARK: - Send Token Content
@@ -714,7 +829,7 @@ struct WalletCashuTab: View {
                 Image(systemName: "doc.text.fill")
                     .font(.appSystem(size: 14, weight: .semibold))
                     .foregroundColor(Self.ecashBrown)
-                Text("BEARER INSTRUMENTS")
+                Text("PROOFS BACKED UP ON YOUR RELAY")
                     .font(.appSystem(size: 12, weight: .bold))
                     .foregroundColor(.secondary)
                 Spacer()
@@ -1060,6 +1175,25 @@ struct WalletCashuTab: View {
     }
 
     // MARK: - Helpers
+
+    private func copyToClipboard(_ value: String) {
+        PlatformClipboard.copy(value)
+    }
+
+    /// Pulls an unclaimed token back into the balance. `receiveToken` swaps for
+    /// fresh proofs, so any copy of the string someone else kept dies with it.
+    private func reclaimToken(_ sent: SentEcashToken) {
+        Task {
+            do {
+                try await cashuService.reclaimSentToken(sent)
+                refreshBalance()
+            } catch {
+                // Already claimed by someone else is the expected failure here —
+                // refresh so it moves out of the unclaimed list on its own.
+                await cashuService.refreshSentTokenStates()
+            }
+        }
+    }
 
     private func formatSats(_ sats: UInt64) -> String {
         let formatter = NumberFormatter()

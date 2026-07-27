@@ -246,6 +246,25 @@ struct NIP60HistoryEntry: Codable {
 
 // MARK: - Local Wallet State (cache)
 
+/// A token this wallet created and handed out.
+///
+/// Creating a token removes its proofs from the wallet immediately — the
+/// balance drops at creation, not when someone claims it. Previously the
+/// encoded string was returned and then forgotten, so losing it before anyone
+/// claimed it stranded those sats: still valid at the mint, but nothing left
+/// that could claim them. Keeping the string here makes that recoverable.
+struct SentEcashToken: Codable, Identifiable, Equatable {
+    let id: String            // uuid, local only
+    let token: String         // the encoded cashuA… string
+    let amountSats: UInt64
+    let memo: String?
+    let createdAt: Date
+    /// Set once the mint reports these proofs spent — i.e. somebody claimed it.
+    var claimedAt: Date?
+
+    var isClaimed: Bool { claimedAt != nil }
+}
+
 struct CashuWalletState: Codable {
     var proofs: [CashuProof]
     var keysets: [String: CashuKeyset]
@@ -254,10 +273,11 @@ struct CashuWalletState: Codable {
     var tokenEventIds: [String: String]  // proofId -> nostr event id (for deletion)
     var lastSyncTimestamp: Int64
     var pendingMintQuotes: [PendingMintQuote]
+    var sentTokens: [SentEcashToken]
 
     init(proofs: [CashuProof], keysets: [String: CashuKeyset], activeKeysetId: String,
          mintURL: String, tokenEventIds: [String: String], lastSyncTimestamp: Int64,
-         pendingMintQuotes: [PendingMintQuote] = []) {
+         pendingMintQuotes: [PendingMintQuote] = [], sentTokens: [SentEcashToken] = []) {
         self.proofs = proofs
         self.keysets = keysets
         self.activeKeysetId = activeKeysetId
@@ -265,6 +285,7 @@ struct CashuWalletState: Codable {
         self.tokenEventIds = tokenEventIds
         self.lastSyncTimestamp = lastSyncTimestamp
         self.pendingMintQuotes = pendingMintQuotes
+        self.sentTokens = sentTokens
     }
 
     init(from decoder: Decoder) throws {
@@ -276,6 +297,7 @@ struct CashuWalletState: Codable {
         tokenEventIds = try container.decode([String: String].self, forKey: .tokenEventIds)
         lastSyncTimestamp = try container.decode(Int64.self, forKey: .lastSyncTimestamp)
         pendingMintQuotes = try container.decodeIfPresent([PendingMintQuote].self, forKey: .pendingMintQuotes) ?? []
+        sentTokens = try container.decodeIfPresent([SentEcashToken].self, forKey: .sentTokens) ?? []
     }
 }
 

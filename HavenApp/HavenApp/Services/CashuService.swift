@@ -23,6 +23,8 @@ class CashuService: ObservableObject {
     private var mintURL: URL? = nil
     private var tokenEventIds: [String: String] = [:]  // proofId -> nostr event id
     private var pendingMintQuotes: [PendingMintQuote] = []
+    /// Tokens created by this wallet and not yet known to be claimed.
+    @Published private(set) var sentTokens: [SentEcashToken] = []
     private var isRecovering = false
     private var cancellables = Set<AnyCancellable>()
 
@@ -352,12 +354,83 @@ class CashuService: ObservableObject {
             }
         }
 
+        let token = encodeToken(proofs: sendProofs, memo: memo)
+
+        // Retain the string. The proofs left the wallet above, so this is now
+        // the only thing that can claim them — dropping it on the floor (crash,
+        // cleared clipboard, sheet dismissed) would strand the sats.
+        sentTokens.insert(
+            SentEcashToken(
+                id: UUID().uuidString,
+                token: token,
+                amountSats: amountSats,
+                memo: memo,
+                createdAt: Date(),
+                claimedAt: nil
+            ),
+            at: 0
+        )
+
         recalculateBalance()
         saveState()
 
-        let token = encodeToken(proofs: sendProofs, memo: memo)
         publishHistoryEvent(direction: "out", amount: amountSats, memo: memo ?? "Send ecash token")
         return token
+    }
+
+    /// NUT-07 state check for arbitrary secrets (not just ones we still hold).
+    /// True when every secret is SPENT, i.e. the whole token has been claimed.
+    private func proofSecretsAreSpent(_ secrets: [String]) async throws -> Bool {
+        guard !secrets.isEmpty else { return false }
+        let ys = try secrets.map { secret -> String in
+            guard let secretData = Data(hexString: secret) else {
+                throw CashuCryptoError.invalidPointData
+            }
+            return try Self.hashToCurve(secret: secretData).hexString
+        }
+        let request = CheckStateRequest(Ys: ys)
+        let response: CheckStateResponse = try await mintAPIRequest(method: "POST", path: "/v1/checkstate", body: request)
+        guard !response.states.isEmpty else { return false }
+        return response.states.allSatisfy { $0.state == "SPENT" }
+    }
+
+    // MARK: - Sent token lifecycle
+
+    /// Asks the mint which of our outstanding tokens have been claimed.
+    ///
+    /// A token's proofs are spent the moment anybody redeems it, so "spent at
+    /// the mint" is exactly "somebody claimed this".
+    func refreshSentTokenStates() async {
+        let outstanding = sentTokens.filter { !$0.isClaimed }
+        guard !outstanding.isEmpty else { return }
+
+        for sent in outstanding {
+            guard let (tokenProofs, _) = try? decodeToken(sent.token) else { continue }
+            let secrets = tokenProofs.map(\.secret)
+            guard let spent = try? await proofSecretsAreSpent(secrets), spent else { continue }
+            if let idx = sentTokens.firstIndex(where: { $0.id == sent.id }) {
+                sentTokens[idx].claimedAt = Date()
+            }
+        }
+        saveState()
+    }
+
+    /// Pulls an unclaimed token back into the wallet.
+    ///
+    /// Just a redeem of our own token — `receiveToken` swaps for fresh proofs,
+    /// which also invalidates the old string so a copy someone else kept can no
+    /// longer be claimed.
+    func reclaimSentToken(_ sent: SentEcashToken) async throws {
+        try await receiveToken(tokenString: sent.token)
+        sentTokens.removeAll { $0.id == sent.id }
+        saveState()
+    }
+
+    /// Forgets a token without touching the money — for ones already claimed,
+    /// or that the user knowingly gave away and doesn't want listed.
+    func forgetSentToken(_ sent: SentEcashToken) {
+        sentTokens.removeAll { $0.id == sent.id }
+        saveState()
     }
 
     func receiveToken(tokenString: String) async throws {
@@ -958,6 +1031,7 @@ class CashuService: ObservableObject {
         activeKeysetId = state.activeKeysetId
         tokenEventIds = state.tokenEventIds
         pendingMintQuotes = state.pendingMintQuotes
+        sentTokens = state.sentTokens
         if !state.mintURL.isEmpty {
             mintURL = URL(string: state.mintURL)
         }
@@ -972,7 +1046,8 @@ class CashuService: ObservableObject {
             mintURL: mintURL?.absoluteString ?? "",
             tokenEventIds: tokenEventIds,
             lastSyncTimestamp: Int64(Date().timeIntervalSince1970),
-            pendingMintQuotes: pendingMintQuotes
+            pendingMintQuotes: pendingMintQuotes,
+            sentTokens: sentTokens
         )
         do {
             let data = try JSONEncoder().encode(state)
