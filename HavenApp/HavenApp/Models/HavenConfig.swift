@@ -35,7 +35,10 @@ struct HavenConfig: Codable, Equatable {
     var themeColor: String = "orange"
     var autoLoadNewPosts: Bool = false
     var showReposts: Bool = true
-    var useOLED: Bool = false
+    /// OLED black is the only appearance now — the Appearance toggle that drove
+    /// this is gone. Kept as a stored property so existing configs still decode;
+    /// the decoder forces it true regardless of what was saved.
+    var useOLED: Bool = true
     var textSizeScale: Double = 1.0
     var useFeedCompactMode: Bool = true // Legacy global default; per-feed overrides live in feedCompactModes
     var feedCompactModes: [String: Bool] = [:] // Per-feed compact-mode overrides, keyed by FeedMode.rawValue
@@ -290,12 +293,17 @@ struct HavenConfig: Codable, Equatable {
         nwcURI = try container.decodeIfPresent(String.self, forKey: .nwcURI) ?? defaults.nwcURI
         macRelayURL = try container.decodeIfPresent(String.self, forKey: .macRelayURL) ?? defaults.macRelayURL
         defaultZapAmount = try container.decodeIfPresent(Int.self, forKey: .defaultZapAmount) ?? defaults.defaultZapAmount
-        themeColor = try container.decodeIfPresent(String.self, forKey: .themeColor) ?? defaults.themeColor
+        // Retired themes (purple/blue/green/pink/slate) resolve to orange rather
+        // than being carried forward as an unrenderable key.
+        let savedTheme = try container.decodeIfPresent(String.self, forKey: .themeColor) ?? defaults.themeColor
+        themeColor = AppTheme(rawValue: savedTheme)?.rawValue ?? AppTheme.orange.rawValue
         autoLoadNewPosts = try container.decodeIfPresent(Bool.self, forKey: .autoLoadNewPosts) ?? defaults.autoLoadNewPosts
         showReposts = try container.decodeIfPresent(Bool.self, forKey: .showReposts) ?? defaults.showReposts
         showBitcoinWallet = try container.decodeIfPresent(Bool.self, forKey: .showBitcoinWallet) ?? defaults.showBitcoinWallet
         cashuMintURL = try container.decodeIfPresent(String.self, forKey: .cashuMintURL) ?? defaults.cashuMintURL
-        useOLED = try container.decodeIfPresent(Bool.self, forKey: .useOLED) ?? defaults.useOLED
+        // Ignore any saved value: OLED is the only appearance, so an install
+        // that had it switched off must not come back looking like the old theme.
+        useOLED = true
         textSizeScale = try container.decodeIfPresent(Double.self, forKey: .textSizeScale) ?? defaults.textSizeScale
         useFeedCompactMode = try container.decodeIfPresent(Bool.self, forKey: .useFeedCompactMode) ?? defaults.useFeedCompactMode
         feedCompactModes = try container.decodeIfPresent([String: Bool].self, forKey: .feedCompactModes) ?? defaults.feedCompactModes

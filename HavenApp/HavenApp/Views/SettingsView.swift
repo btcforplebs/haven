@@ -2814,17 +2814,8 @@ struct AppearanceSettingsView: View {
 
     var body: some View {
         Form {
-            Section {
-                #if os(macOS)
-                macOSGrid
-                #else
-                iOSList
-                #endif
-            } header: {
-                Text("Accent Theme")
-            } footer: {
-                Text("Choose an accent color for the Nostr Vault interface. This will change the primary color and gradients across the application.")
-            }
+            // Accent Theme picker removed — the app ships a single appearance
+            // (OLED black with the orange accent), so there is nothing to choose.
 
             Section {
                 VStack(alignment: .leading, spacing: 8) {
@@ -2857,18 +2848,9 @@ struct AppearanceSettingsView: View {
                 Text("Adjust the size of text across the app — feeds, note details, profiles, DM inbox, message threads, and compose editors.")
             }
 
-            Section {
-                Toggle(isOn: $configService.config.useOLED) {
-                    Label("OLED Dark Theme", systemImage: "moon.stars.fill")
-                }
-                .onChange(of: configService.config.useOLED) { _, _ in
-                    configService.save()
-                }
-            } header: {
-                Text("Dark Mode Options")
-            } footer: {
-                Text("Use pure black backgrounds to save power on OLED screens.")
-            }
+            // OLED black is the app's only appearance now, so there is nothing
+            // left to toggle here — the section was removed along with the
+            // colour-theme picker below.
 
             #if os(iOS)
             Section {
@@ -2965,104 +2947,10 @@ struct AppearanceSettingsView: View {
     }
     #endif
 
-    #if os(macOS)
-    private var macOSGrid: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 16)], spacing: 16) {
-            ForEach(AppTheme.allCases) { theme in
-                ThemeCard(theme: theme, isSelected: configService.config.themeColor == theme.rawValue) {
-                    configService.config.themeColor = theme.rawValue
-                    configService.save()
-                }
-            }
-        }
-        .padding(.vertical, 8)
-    }
-    #endif
     
-    private var iOSList: some View {
-        ForEach(AppTheme.allCases) { theme in
-            Button(action: {
-                configService.config.themeColor = theme.rawValue
-                configService.save()
-            }) {
-                HStack {
-                    Circle()
-                        .fill(LinearGradient(
-                            colors: [theme.primaryColor, theme.lightColor],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ))
-                        .frame(width: 24, height: 24)
-                        .overlay(Circle().stroke(Color.primary.opacity(0.1), lineWidth: 1))
-                    
-                    Text(theme.displayName)
-                        .foregroundColor(.primary)
-                    
-                    Spacer()
-                    
-                    if configService.config.themeColor == theme.rawValue {
-                        Image(systemName: "checkmark.circle.fill")
-                            .foregroundColor(theme.primaryColor)
-                    }
-                }
-            }
-            .buttonStyle(.plain)
-        }
-    }
 }
  
 #if os(macOS)
-struct ThemeCard: View {
-    let theme: AppTheme
-    let isSelected: Bool
-    let action: () -> Void
-    @State private var isHovered = false
-    
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(LinearGradient(
-                            colors: [theme.primaryColor, theme.lightColor],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        ))
-                        .frame(width: 48, height: 48)
-                        .overlay(Circle().stroke(Color.white.opacity(0.2), lineWidth: 1))
-                        .shadow(color: theme.primaryColor.opacity(isSelected ? 0.4 : 0.1), radius: 6, x: 0, y: 3)
-                    
-                    if isSelected {
-                        Image(systemName: "checkmark")
-                            .font(.appSystem(size: 14, weight: .bold))
-                            .foregroundColor(.white)
-                    }
-                }
-                
-                Text(theme.displayName)
-                    .font(.appSubheadline)
-                    .fontWeight(isSelected ? .bold : .regular)
-                    .foregroundColor(.primary)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 16)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(isSelected ? Color.primary.opacity(0.05) : Color.clear)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(isSelected ? theme.primaryColor : Color.gray.opacity(0.2), lineWidth: isSelected ? 2 : 1)
-            )
-            .scaleEffect(isHovered ? 1.02 : 1.0)
-            .animation(.easeInOut(duration: 0.15), value: isHovered)
-        }
-        .buttonStyle(.plain)
-        .onHover { hovering in
-            isHovered = hovering
-        }
-    }
-}
 #endif
 
 #if os(macOS)

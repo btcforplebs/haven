@@ -30,7 +30,9 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /**
- * Appearance settings: theme color, text size, OLED mode.
+ * Appearance settings: text size, reaction emoji, zaps-only, tab bar animation.
+ * The theme-colour picker and OLED toggle were removed — the app has one
+ * appearance: OLED black with the orange accent.
  */
 
 @HiltViewModel
@@ -40,14 +42,10 @@ class AppearanceViewModel @Inject constructor(
     private val feedService: FeedService,
 ) : ViewModel() {
 
-    private val _selectedTheme = MutableStateFlow(AppTheme.DEFAULT)
-    val selectedTheme = _selectedTheme.asStateFlow()
 
     private val _textScale = MutableStateFlow(1.0f)
     val textScale = _textScale.asStateFlow()
 
-    private val _oledMode = MutableStateFlow(false)
-    val oledMode = _oledMode.asStateFlow()
 
     private val _defaultEmoji = MutableStateFlow("+")
     val defaultEmoji = _defaultEmoji.asStateFlow()
@@ -60,32 +58,17 @@ class AppearanceViewModel @Inject constructor(
 
     init {
         val config = configStore.config.value
-        _selectedTheme.value = AppTheme.fromKey(config.themeColor)
         _textScale.value = config.textSizeScale
-        _oledMode.value = config.oledMode
         _defaultEmoji.value = config.defaultReactionEmoji
         _zapsOnly.value = config.zapsOnlyMode
         _disableTabBarAnimation.value = config.disableTabBarAnimation
     }
 
-    fun selectTheme(theme: AppTheme) {
-        _selectedTheme.value = theme
-        viewModelScope.launch {
-            configStore.update { it.copy(themeColor = theme.key) }
-        }
-    }
 
     fun setTextScale(scale: Float) {
         _textScale.value = scale
         viewModelScope.launch {
             configStore.update { it.copy(textSizeScale = scale) }
-        }
-    }
-
-    fun toggleOled(enabled: Boolean) {
-        _oledMode.value = enabled
-        viewModelScope.launch {
-            configStore.update { it.copy(oledMode = enabled) }
         }
     }
 
@@ -123,9 +106,7 @@ fun AppearanceSettingsScreen(
     onBack: () -> Unit,
     viewModel: AppearanceViewModel = hiltViewModel(),
 ) {
-    val selectedTheme by viewModel.selectedTheme.collectAsState()
     val textScale by viewModel.textScale.collectAsState()
-    val oledMode by viewModel.oledMode.collectAsState()
     val defaultEmoji by viewModel.defaultEmoji.collectAsState()
     val zapsOnly by viewModel.zapsOnly.collectAsState()
     val disableTabBarAnimation by viewModel.disableTabBarAnimation.collectAsState()
@@ -155,29 +136,8 @@ fun AppearanceSettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
         ) {
-            // Theme color picker
-            Text(
-                text = "Theme Color",
-                color = PrimaryText,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Spacer(Modifier.height(12.dp))
-
-            Row(
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                AppTheme.entries.forEach { theme ->
-                    ThemeColorDot(
-                        theme = theme,
-                        isSelected = theme == selectedTheme,
-                        onClick = { viewModel.selectTheme(theme) },
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(32.dp))
+            // Theme colour picker removed — the app ships a single
+            // appearance (OLED black with the orange accent).
 
             // Text size
             Text(
@@ -218,35 +178,7 @@ fun AppearanceSettingsScreen(
 
             Spacer(Modifier.height(32.dp))
 
-            // OLED mode
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "OLED Black Mode",
-                        color = PrimaryText,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(
-                        text = "Deeper blacks for AMOLED displays",
-                        color = SecondaryText,
-                        fontSize = 13.sp,
-                    )
-                }
-                Switch(
-                    checked = oledMode,
-                    onCheckedChange = viewModel::toggleOled,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = PrimaryText,
-                        checkedTrackColor = LocalNostrVaultColors.current.primary,
-                    ),
-                )
-            }
-
-            Spacer(Modifier.height(32.dp))
+            // OLED toggle removed — OLED black is the only appearance now.
 
             // Disable tab bar animation
             Row(
@@ -371,42 +303,3 @@ fun AppearanceSettingsScreen(
     }
 }
 
-@Composable
-private fun ThemeColorDot(
-    theme: AppTheme,
-    isSelected: Boolean,
-    onClick: () -> Unit,
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.clickable(onClick = onClick),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .background(theme.colors.primary)
-                .then(
-                    if (isSelected) Modifier.border(3.dp, PrimaryText, CircleShape)
-                    else Modifier
-                ),
-        ) {
-            if (isSelected) {
-                Icon(
-                    imageVector = NostrVaultIcons.Check,
-                    contentDescription = null,
-                    tint = PrimaryText,
-                    modifier = Modifier
-                        .size(18.dp)
-                        .align(Alignment.Center),
-                )
-            }
-        }
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = theme.displayName.split(" ").first(),
-            color = if (isSelected) PrimaryText else TertiaryText,
-            fontSize = 10.sp,
-        )
-    }
-}

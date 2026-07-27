@@ -89,9 +89,13 @@ class MainActivity : FragmentActivity() {
             }
 
             NostrVaultTheme(
+                // One appearance: OLED black with the orange accent. fromKey
+                // maps any retired theme key to the orange default, and oledMode
+                // ignores what was saved so an install that had it switched off
+                // doesn't come back looking like the old theme.
                 appTheme = AppTheme.fromKey(config.themeColor),
                 textSizeScale = config.textSizeScale,
-                oledMode = config.oledMode,
+                oledMode = true,
                 zapsOnlyMode = config.zapsOnlyMode,
             ) {
                 Surface(

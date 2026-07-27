@@ -338,7 +338,8 @@ data class HavenConfig(
     // Appearance
     val themeColor: String = "orange",
     val textSizeScale: Float = 1.0f,
-    val oledMode: Boolean = false,
+    /** OLED black is the only appearance now; the Appearance toggle is gone. */
+    val oledMode: Boolean = true,
     val useFeedCompactMode: Boolean = true,
     val feedCompactModes: Map<String, Boolean> = emptyMap(),
     val noteDetailCompactView: Boolean = false,

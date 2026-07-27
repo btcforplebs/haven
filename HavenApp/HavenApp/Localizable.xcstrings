@@ -454,6 +454,9 @@
     "Deleted" : {
 
     },
+    "Deleted drafts are removed from your relay and can't be recovered." : {
+
+    },
     "Deleting..." : {
 
     },
@@ -709,6 +712,9 @@
 
     },
     "Events will be signed with the locally stored private key." : {
+
+    },
+    "Every source for this video failed to play." : {
 
     },
     "Export" : {

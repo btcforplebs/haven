@@ -18,41 +18,19 @@ data class NostrVaultColorScheme(
     val primaryPale: Color,
 )
 
+/**
+ * The app has exactly one appearance: OLED black with the orange accent.
+ *
+ * This was a six-way colour picker (purple/blue/green/orange/pink/slate) paired
+ * with an OLED toggle. Both are gone. The enum survives only so `themeColor`
+ * keeps resolving — a config saved under any retired key falls through
+ * [fromKey] to [DEFAULT], so old installs migrate silently.
+ */
 enum class AppTheme(
     val key: String,
     val displayName: String,
     val colors: NostrVaultColorScheme,
 ) {
-    HAVEN_PURPLE(
-        key = "purple",
-        displayName = "Haven Purple",
-        colors = NostrVaultColorScheme(
-            primary = Color(0xFF6B2D8F),
-            primaryLight = Color(0xFF8A4DB0),
-            primaryDark = Color(0xFF542370),
-            primaryPale = Color(0xFF6B2D8F).copy(alpha = 0.10f),
-        ),
-    ),
-    OCEAN_BLUE(
-        key = "blue",
-        displayName = "Ocean Blue",
-        colors = NostrVaultColorScheme(
-            primary = Color(0xFF1773BD),
-            primaryLight = Color(0xFF3394E0),
-            primaryDark = Color(0xFF0D528C),
-            primaryPale = Color(0xFF1773BD).copy(alpha = 0.10f),
-        ),
-    ),
-    EMERALD_GREEN(
-        key = "green",
-        displayName = "Emerald Green",
-        colors = NostrVaultColorScheme(
-            primary = Color(0xFF219469),
-            primaryLight = Color(0xFF38BA87),
-            primaryDark = Color(0xFF146B4A),
-            primaryPale = Color(0xFF219469).copy(alpha = 0.10f),
-        ),
-    ),
     SUNSET_ORANGE(
         key = "orange",
         displayName = "Sunset Orange",
@@ -63,29 +41,9 @@ enum class AppTheme(
             primaryPale = Color(0xFFE67326).copy(alpha = 0.10f),
         ),
     ),
-    ROSE_PINK(
-        key = "pink",
-        displayName = "Rose Pink",
-        colors = NostrVaultColorScheme(
-            primary = Color(0xFFE03870),
-            primaryLight = Color(0xFFF25994),
-            primaryDark = Color(0xFFAE214F),
-            primaryPale = Color(0xFFE03870).copy(alpha = 0.10f),
-        ),
-    ),
-    MONOCHROME_SLATE(
-        key = "slate",
-        displayName = "Monochrome Slate",
-        colors = NostrVaultColorScheme(
-            primary = Color(0xFF73808C),
-            primaryLight = Color(0xFF94A1AE),
-            primaryDark = Color(0xFF525E69),
-            primaryPale = Color(0xFF73808C).copy(alpha = 0.10f),
-        ),
-    );
+    ;
 
     companion object {
-        /** Default theme if none is configured. Matches iOS default (orange). */
         val DEFAULT = SUNSET_ORANGE
 
         fun fromKey(key: String): AppTheme =
