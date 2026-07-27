@@ -221,7 +221,14 @@ struct NoteRow: View {
         .cornerRadius(10)
         .overlay(
             RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.havenPurple.opacity(0.15), lineWidth: 0.5)
+                // Matches the feed's compact row and the note-detail parent card.
+                // This was pinned to the non-OLED values while every other post
+                // surface doubled its accent outline against black, leaving the
+                // Relay tab visibly fainter than the rest of the app.
+                .stroke(
+                    Color.havenPurple.opacity(configService.config.useOLED ? 0.30 : 0.15),
+                    lineWidth: configService.config.useOLED ? 1.0 : 0.5
+                )
         )
         .contentShape(Rectangle())
     }
@@ -355,7 +362,11 @@ struct NoteRow: View {
         .cornerRadius(12)
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.havenPurple.opacity(0.12), lineWidth: 0.8)
+                // Matches the feed's expanded note card (non-reply weight).
+                .stroke(
+                    Color.havenPurple.opacity(configService.config.useOLED ? 0.30 : 0.12),
+                    lineWidth: configService.config.useOLED ? 1.5 : 0.8
+                )
         )
         .contentShape(RoundedRectangle(cornerRadius: 12))
         #if os(iOS)

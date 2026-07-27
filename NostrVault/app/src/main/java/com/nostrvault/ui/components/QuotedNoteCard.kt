@@ -45,7 +45,12 @@ fun QuotedNoteCard(
     Surface(
         shape = RoundedCornerShape(8.dp),
         color = TertiaryGroupedBg,
-        border = BorderStroke(0.5.dp, colors.primary.copy(alpha = 0.12f)),
+        border = BorderStroke(
+            // Embedded in a note, so it tracks NoteCard's OLED bump
+            // rather than sitting fainter than the card it lives inside.
+            if (LocalOledMode.current) 0.8.dp else 0.5.dp,
+            colors.primary.copy(alpha = if (LocalOledMode.current) 0.18f else 0.12f),
+        ),
         modifier = modifier
             .fillMaxWidth()
             .clickable { onClick(note.id) },
@@ -137,7 +142,12 @@ fun QuotedNotePlaceholder(
     Surface(
         shape = RoundedCornerShape(8.dp),
         color = TertiaryGroupedBg,
-        border = BorderStroke(0.5.dp, colors.primary.copy(alpha = 0.12f)),
+        border = BorderStroke(
+            // Embedded in a note, so it tracks NoteCard's OLED bump
+            // rather than sitting fainter than the card it lives inside.
+            if (LocalOledMode.current) 0.8.dp else 0.5.dp,
+            colors.primary.copy(alpha = if (LocalOledMode.current) 0.18f else 0.12f),
+        ),
         modifier = modifier
             .fillMaxWidth()
             .clickable { onClick(identifier) },

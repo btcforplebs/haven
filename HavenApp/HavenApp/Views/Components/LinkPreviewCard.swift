@@ -74,7 +74,13 @@ struct LinkPreviewCard: View {
             .cornerRadius(8)
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color.havenPurple.opacity(0.15), lineWidth: 1)
+                    // Embedded in a note, so it tracks QuotedNoteView — its
+                    // direct peer — rather than sitting fainter than the card
+                    // it lives inside.
+                    .stroke(
+                        Color.havenPurple.opacity(ConfigService.shared.config.useOLED ? 0.30 : 0.15),
+                        lineWidth: ConfigService.shared.config.useOLED ? 1.2 : 1
+                    )
             )
         }
         .buttonStyle(.plain)

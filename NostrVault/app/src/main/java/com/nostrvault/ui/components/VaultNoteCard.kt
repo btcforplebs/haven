@@ -1,6 +1,8 @@
 package com.nostrvault.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -55,13 +57,24 @@ fun VaultNoteCard(
     // Zaps Only mode strips reactions from the inline engagement bar entirely.
     val effectiveReactors = if (LocalZapsOnlyMode.current) emptyList() else reactors
 
-    // iOS: background is SecondaryGroupedBg + havenPurple.opacity(0.015)
-    // border is havenPurple.opacity(0.15) at 0.5 (compact) or 0.12 at 0.8 (expanded)
+    // Relay-tab cards had no border at all — only a background — while feed
+    // cards carried the accent outline, so posts looked different depending on
+    // which tab you were on. Matches NoteCard's treatment, including its OLED
+    // bump (the outline has to work harder against true black).
+    val isOled = LocalOledMode.current
+    val cardShape = RoundedCornerShape(if (isCompact) 10.dp else 12.dp)
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(if (isCompact) 10.dp else 12.dp))
+            .clip(cardShape)
             .background(SecondaryGroupedBg)
+            .border(
+                BorderStroke(
+                    if (isOled) 1.dp else 0.8.dp,
+                    colors.primary.copy(alpha = if (isOled) 0.18f else 0.12f),
+                ),
+                cardShape,
+            )
             .clickable { onNoteClick(note.id) },
     ) {
         if (isCompact) {
