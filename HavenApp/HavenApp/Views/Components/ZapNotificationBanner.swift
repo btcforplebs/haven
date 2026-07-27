@@ -447,7 +447,8 @@ struct PostActionNotificationBanner: View {
                     actionType: actionType,
                     timeRemaining: manager.timeRemaining,
                     onUndo: { manager.cancel() },
-                    onEdit: actionType.canEdit ? { manager.requestEdit() } : nil
+                    onEdit: actionType.canEdit ? { manager.requestEdit() } : nil,
+                    onDismiss: { manager.dismissBanner() }
                 )
                 .transition(.asymmetric(
                     insertion: .move(edge: .top).combined(with: .opacity),
@@ -467,8 +468,16 @@ struct PostActionPill: View {
     let timeRemaining: Double
     let onUndo: () -> Void
     let onEdit: (() -> Void)?
+    /// Swipe up to get the pill out of the way. The action is NOT cancelled —
+    /// it finishes on schedule in the background.
+    var onDismiss: (() -> Void)? = nil
 
     private let totalTime = PendingPostManager.ActionType.countdownDuration
+
+    /// Follows the finger on the way up so the gesture feels attached.
+    @State private var dragOffset: CGFloat = 0
+
+    private static let dismissThreshold: CGFloat = -32
 
     var body: some View {
         HStack(spacing: 10) {
@@ -515,7 +524,30 @@ struct PostActionPill: View {
         )
         .foregroundColor(.white)
         .buttonStyle(.plain)
+        .offset(y: dragOffset)
+        .opacity(onDismiss == nil ? 1 : 1 - Double(min(1, abs(dragOffset) / 80)) * 0.6)
+        // .gesture (not .highPriorityGesture) so Undo/Edit taps still win —
+        // SwiftUI routes the tap to the buttons and the drag here.
+        .gesture(
+            DragGesture(minimumDistance: 8)
+                .onChanged { value in
+                    guard onDismiss != nil else { return }
+                    // Upward only; a downward pull shouldn't detach the pill.
+                    dragOffset = min(0, value.translation.height)
+                }
+                .onEnded { value in
+                    guard let onDismiss else { return }
+                    if value.translation.height < Self.dismissThreshold {
+                        onDismiss()
+                    }
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        dragOffset = 0
+                    }
+                }
+        )
         .accessibilityLabel("\(actionType.label) in \(max(1, Int(ceil(timeRemaining)))) seconds")
+        .accessibilityHint(onDismiss == nil ? "" : "Swipe up to hide. The \(actionType.label.lowercased()) still completes.")
+        .accessibilityAction(named: "Hide") { onDismiss?() }
     }
 }
 

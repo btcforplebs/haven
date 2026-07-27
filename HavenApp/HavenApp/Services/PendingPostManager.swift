@@ -201,6 +201,18 @@ class PendingPostManager: ObservableObject {
         bannerNoteId = nil
     }
 
+    /// Hides the countdown banner without touching the pending action — the
+    /// swipe-up gesture on the pill. The countdown Task, its background-task
+    /// assertion, and the eventual broadcast all continue untouched; the user is
+    /// saying "I'm not going to undo this, stop covering my screen", which is
+    /// the opposite of `cancel()`.
+    func dismissBanner() {
+        guard isShowing else { return }
+        withAnimation(.easeOut(duration: 0.25)) {
+            isShowing = false
+        }
+    }
+
     func requestEdit() {
         let content = pendingContent
         let replyTo = pendingReplyTo

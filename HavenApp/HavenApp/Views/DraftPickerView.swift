@@ -6,8 +6,41 @@ struct DraftPickerView: View {
     let onDelete: (Draft) -> Void
     @Environment(\.dismiss) var dismiss
 
+    /// Selection mode is driven by plain state rather than SwiftUI's EditMode so
+    /// the same code path works on macOS, where EditMode doesn't exist.
+    @State private var isSelecting = false
+    @State private var selectedIDs: Set<String> = []
+    @State private var confirmingBulkDelete = false
+
     private var filteredDrafts: [Draft] {
         draftService.draftsForActiveAccount
+    }
+
+    private var selectedDrafts: [Draft] {
+        filteredDrafts.filter { selectedIDs.contains($0.id) }
+    }
+
+    private func toggleSelection(_ draft: Draft) {
+        if selectedIDs.contains(draft.id) {
+            selectedIDs.remove(draft.id)
+        } else {
+            selectedIDs.insert(draft.id)
+        }
+    }
+
+    private func exitSelection() {
+        isSelecting = false
+        selectedIDs.removeAll()
+    }
+
+    private func deleteSelected() {
+        // Snapshot first: onDelete mutates the service's published list, so
+        // iterating selectedDrafts directly would walk a collection being
+        // rebuilt underneath us.
+        for draft in selectedDrafts {
+            onDelete(draft)
+        }
+        exitSelection()
     }
 
     var body: some View {
@@ -37,9 +70,20 @@ struct DraftPickerView: View {
                     List {
                         ForEach(filteredDrafts) { draft in
                             Button {
-                                onSelect(draft)
-                                dismiss()
+                                if isSelecting {
+                                    toggleSelection(draft)
+                                } else {
+                                    onSelect(draft)
+                                    dismiss()
+                                }
                             } label: {
+                                HStack(spacing: 12) {
+                                if isSelecting {
+                                    Image(systemName: selectedIDs.contains(draft.id) ? "checkmark.circle.fill" : "circle")
+                                        .font(.appSystem(size: 20))
+                                        .foregroundColor(selectedIDs.contains(draft.id) ? .havenPurple : .secondary.opacity(0.5))
+                                        .transition(.opacity)
+                                }
                                 VStack(alignment: .leading, spacing: 4) {
                                     if draft.isReply {
                                         Label("Reply", systemImage: "arrowshape.turn.up.left")
@@ -64,13 +108,20 @@ struct DraftPickerView: View {
                                         .font(.appCaption2)
                                         .foregroundColor(.secondary)
                                 }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                }
                                 .padding(.vertical, 4)
+                                .contentShape(Rectangle())
                             }
+                            // Swipe-to-delete stays available outside selection
+                            // mode; inside it the swipe would fight the tap.
                             .swipeActions(edge: .trailing) {
-                                Button(role: .destructive) {
-                                    onDelete(draft)
-                                } label: {
-                                    Label("Delete", systemImage: "trash")
+                                if !isSelecting {
+                                    Button(role: .destructive) {
+                                        onDelete(draft)
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
                                 }
                             }
                         }
@@ -89,8 +140,61 @@ struct DraftPickerView: View {
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    if isSelecting {
+                        Button("Done") { exitSelection() }
+                    } else {
+                        Button("Cancel") { dismiss() }
+                    }
                 }
+                ToolbarItem(placement: .primaryAction) {
+                    if !filteredDrafts.isEmpty {
+                        if isSelecting {
+                            Button {
+                                if selectedIDs.count == filteredDrafts.count {
+                                    selectedIDs.removeAll()
+                                } else {
+                                    selectedIDs = Set(filteredDrafts.map(\.id))
+                                }
+                            } label: {
+                                Text(selectedIDs.count == filteredDrafts.count ? "Deselect All" : "Select All")
+                            }
+                        } else {
+                            Button("Select") { isSelecting = true }
+                        }
+                    }
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                if isSelecting {
+                    HStack {
+                        Text(selectedIDs.isEmpty
+                             ? "Select drafts to delete"
+                             : "\(selectedIDs.count) selected")
+                            .font(.appSystem(size: 13, weight: .medium))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Button(role: .destructive) {
+                            confirmingBulkDelete = true
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                                .font(.appSystem(size: 14, weight: .semibold))
+                        }
+                        .disabled(selectedIDs.isEmpty)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .background(.ultraThinMaterial)
+                }
+            }
+            .confirmationDialog(
+                selectedIDs.count == 1 ? "Delete this draft?" : "Delete \(selectedIDs.count) drafts?",
+                isPresented: $confirmingBulkDelete,
+                titleVisibility: .visible
+            ) {
+                Button("Delete", role: .destructive) { deleteSelected() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Deleted drafts are removed from your relay and can't be recovered.")
             }
         }
         .onAppear {

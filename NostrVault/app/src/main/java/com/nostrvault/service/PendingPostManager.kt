@@ -92,6 +92,16 @@ class PendingPostManager @Inject constructor() {
         startCountdown(ActionType.DELETE, onDelete)
     }
 
+    /**
+     * Hides the countdown banner without touching the pending action — the
+     * swipe gesture on the banner. The countdown job and the publish that
+     * follows it keep running; this is the opposite of [cancel].
+     */
+    fun dismissBanner() {
+        if (!_isShowing.value) return
+        _isShowing.value = false
+    }
+
     fun cancel() {
         countdownJob?.cancel()
         countdownJob = null

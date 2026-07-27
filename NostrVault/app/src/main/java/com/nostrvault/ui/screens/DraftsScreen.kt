@@ -35,6 +35,11 @@ class DraftsViewModel @Inject constructor(
     fun deleteDraft(draftId: String) {
         draftService.deleteDraft(draftId)
     }
+
+    /** Snapshot the ids first — deleting mutates the flow this list came from. */
+    fun deleteDrafts(draftIds: Collection<String>) {
+        draftIds.toList().forEach { draftService.deleteDraft(it) }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -45,20 +50,99 @@ fun DraftsScreen(
     viewModel: DraftsViewModel = hiltViewModel(),
 ) {
     val drafts by viewModel.drafts.collectAsState()
+    val themeColors = LocalNostrVaultColors.current
+
+    var isSelecting by remember { mutableStateOf(false) }
+    val selectedIds = remember { mutableStateListOf<String>() }
+    var confirmingBulkDelete by remember { mutableStateOf(false) }
+
+    fun exitSelection() {
+        isSelecting = false
+        selectedIds.clear()
+    }
+
+    // Drafts can disappear underneath us (deleted here, or edited elsewhere and
+    // re-saved), so drop selections that no longer exist rather than trying to
+    // delete ids that are already gone.
+    LaunchedEffect(drafts) {
+        val live = drafts.map { it.id }.toSet()
+        selectedIds.retainAll { it in live }
+        if (isSelecting && drafts.isEmpty()) exitSelection()
+    }
+
+    if (confirmingBulkDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmingBulkDelete = false },
+            title = {
+                Text(
+                    if (selectedIds.size == 1) "Delete this draft?"
+                    else "Delete ${selectedIds.size} drafts?",
+                    fontWeight = FontWeight.Bold,
+                )
+            },
+            text = { Text("Deleted drafts are removed from your relay and can't be recovered.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.deleteDrafts(selectedIds)
+                    confirmingBulkDelete = false
+                    exitSelection()
+                }) { Text("Delete", color = ErrorRed, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmingBulkDelete = false }) { Text("Cancel") }
+            },
+            containerColor = WindowBackground,
+        )
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Drafts", fontWeight = FontWeight.Bold) },
+                title = {
+                    Text(
+                        if (isSelecting) {
+                            if (selectedIds.isEmpty()) "Select drafts" else "${selectedIds.size} selected"
+                        } else "Drafts",
+                        fontWeight = FontWeight.Bold,
+                    )
+                },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(NostrVaultIcons.Back, contentDescription = "Back")
+                    IconButton(onClick = { if (isSelecting) exitSelection() else onBack() }) {
+                        Icon(NostrVaultIcons.Back, contentDescription = if (isSelecting) "Done" else "Back")
+                    }
+                },
+                actions = {
+                    if (drafts.isNotEmpty()) {
+                        if (isSelecting) {
+                            TextButton(onClick = {
+                                if (selectedIds.size == drafts.size) selectedIds.clear()
+                                else {
+                                    selectedIds.clear()
+                                    selectedIds.addAll(drafts.map { it.id })
+                                }
+                            }) {
+                                Text(if (selectedIds.size == drafts.size) "None" else "All")
+                            }
+                            IconButton(
+                                onClick = { confirmingBulkDelete = true },
+                                enabled = selectedIds.isNotEmpty(),
+                            ) {
+                                Icon(
+                                    NostrVaultIcons.Delete,
+                                    contentDescription = "Delete selected",
+                                    tint = if (selectedIds.isEmpty()) SecondaryText.copy(alpha = 0.4f) else ErrorRed,
+                                )
+                            }
+                        } else {
+                            TextButton(onClick = { isSelecting = true }) { Text("Select") }
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = WindowBackground,
                     titleContentColor = PrimaryText,
                     navigationIconContentColor = PrimaryText,
+                    actionIconContentColor = PrimaryText,
                 ),
             )
         },
@@ -103,6 +187,36 @@ fun DraftsScreen(
                     items = drafts,
                     key = { it.id },
                 ) { draft ->
+                    val isChecked = draft.id in selectedIds
+                    val toggle = {
+                        if (isChecked) selectedIds.remove(draft.id) else selectedIds.add(draft.id)
+                        Unit
+                    }
+
+                    if (isSelecting) {
+                        // No swipe-to-dismiss while selecting — the horizontal
+                        // drag would fight the tap-to-toggle and delete a draft
+                        // the user was only trying to check.
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.fillMaxWidth().clickable { toggle() },
+                        ) {
+                            Checkbox(
+                                checked = isChecked,
+                                onCheckedChange = { toggle() },
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = themeColors.primary,
+                                    uncheckedColor = SecondaryText,
+                                ),
+                            )
+                            Box(modifier = Modifier.weight(1f)) {
+                                DraftCard(draft = draft, onClick = toggle)
+                            }
+                        }
+                        return@items
+                    }
+
                     val dismissState = rememberSwipeToDismissBoxState(
                         confirmValueChange = { value ->
                             if (value != SwipeToDismissBoxValue.Settled) {

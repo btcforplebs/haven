@@ -191,14 +191,14 @@ extension VaultView {
             } else {
                 LazyVStack(spacing: 12) {
                     ForEach(displayLikedNotes) { event in
+                        // Reactions render inside the card's engagement bar, below
+                        // the post — same as the Notes filter. They used to sit in a
+                        // separate row above the card here, so the same information
+                        // appeared on opposite sides of the post depending on which
+                        // filter you were looking at.
+                        let rowReactors = likesFilter != .myLikes ? reactionMap[event.id] : nil
+                        let rowReactionDate = likesFilter != .myLikes ? latestReactionDates[event.id] : nil
                         VStack(alignment: .leading, spacing: 0) {
-                            // Show who liked this post (all incoming reaction modes)
-                            if likesFilter != .myLikes, let reactors = reactionMap[event.id], !reactors.isEmpty {
-                                LikedByRow(reactors: reactors, latestDate: latestReactionDates[event.id])
-                                    .padding(.horizontal, 16)
-                                    .padding(.bottom, 6)
-                            }
-
                             #if os(iOS)
                             NavigationLink(destination: NoteDetailView(note: FeedNote(
                                 id: event.id,
@@ -208,7 +208,7 @@ extension VaultView {
                                 tags: event.tags,
                                 kind: event.kind
                             ))) {
-                                NoteRow(event: event, truncate: true, layoutMode: noteLayoutMode)
+                                NoteRow(event: event, truncate: true, layoutMode: noteLayoutMode, reactors: rowReactors, latestReactionDate: rowReactionDate)
                                     .padding(.horizontal, 16)
                                     .onAppear {
                                         if event.id == displayLikedNotes.last?.id {
@@ -218,7 +218,7 @@ extension VaultView {
                             }
                             .buttonStyle(.plain)
                             #else
-                            NoteRow(event: event, truncate: true, layoutMode: noteLayoutMode)
+                            NoteRow(event: event, truncate: true, layoutMode: noteLayoutMode, reactors: rowReactors, latestReactionDate: rowReactionDate)
                                 .padding(.horizontal, 16)
                                 .onAppear {
                                     if event.id == displayLikedNotes.last?.id {
@@ -303,13 +303,10 @@ extension VaultView {
             } else {
                 LazyVStack(spacing: 12) {
                     ForEach(displayZappedNotes) { event in
+                        // Same unification as the Likes filter — zaps belong in the
+                        // card's engagement bar under the post, not in a row above it.
+                        let rowZappers = zapsFilter != .myZaps ? zapMap[event.id] : nil
                         VStack(alignment: .leading, spacing: 0) {
-                            if zapsFilter != .myZaps, let zappers = zapMap[event.id], !zappers.isEmpty {
-                                ZappedByRow(zappers: zappers)
-                                    .padding(.horizontal, 16)
-                                    .padding(.bottom, 6)
-                            }
-
                             #if os(iOS)
                             NavigationLink(destination: NoteDetailView(note: FeedNote(
                                 id: event.id,
@@ -319,7 +316,7 @@ extension VaultView {
                                 tags: event.tags,
                                 kind: event.kind
                             ))) {
-                                NoteRow(event: event, truncate: true, layoutMode: noteLayoutMode)
+                                NoteRow(event: event, truncate: true, layoutMode: noteLayoutMode, zappers: rowZappers)
                                     .padding(.horizontal, 16)
                                     .onAppear {
                                         if event.id == displayZappedNotes.last?.id {
@@ -329,7 +326,7 @@ extension VaultView {
                             }
                             .buttonStyle(.plain)
                             #else
-                            NoteRow(event: event, truncate: true, layoutMode: noteLayoutMode)
+                            NoteRow(event: event, truncate: true, layoutMode: noteLayoutMode, zappers: rowZappers)
                                 .padding(.horizontal, 16)
                                 .onAppear {
                                     if event.id == displayZappedNotes.last?.id {
