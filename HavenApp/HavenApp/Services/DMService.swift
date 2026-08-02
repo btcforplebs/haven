@@ -90,6 +90,13 @@ class DMService: ObservableObject {
     private var loadedAccountPubkey: String = ""
     private var switchGeneration: UInt64 = 0 // incremented on each account switch to invalidate stale callbacks
 
+    // Watch-only (local signing with no usable key) can neither decrypt NIP-04
+    // DMs nor sign NIP-42 AUTH. Without gating, a catch-up batch logs one
+    // identical "no key" error per DM and every AUTH challenge logs a failure.
+    // These latch the notice to once per incapable streak; reset on account switch.
+    private var warnedNIP04Unavailable = false
+    private var warnedAuthUnavailable = false
+
     /// Tracks event IDs already injected into the local relay to prevent duplicate writes.
     private var injectedDmIds = Set<String>()
     private let maxInjectedDmIds = 5_000
@@ -282,6 +289,35 @@ class DMService: ObservableObject {
                 throw NSError(domain: "DMService", code: -1, userInfo: [NSLocalizedDescriptionKey: "No private key credential stored for active account \(activeNpub.prefix(8))"])
             }
         }
+    }
+
+    /// Whether inbound NIP-04 DMs can be decrypted for the active account.
+    /// Mirrors getActivePrivateKey()'s branching but only checks that key
+    /// material is *present* — it never decrypts (no scrypt), so it is cheap to
+    /// call per event. NIP-46 decrypts via the bunker; local mode needs a key.
+    private func canDecryptNIP04() -> Bool {
+        let config = ConfigService.shared.config
+        if config.activeSigningMode() == "nip46" { return true }
+        let activeNpub = config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
+        let signingAsOwner = activeNpub.isEmpty || activeNpub == config.ownerNpub
+        if signingAsOwner {
+            if !config.ownerNcryptsec.isEmpty {
+                return NIP49Service.getPasswordFromKeychain() != nil
+            }
+            return !(config.ownerHexKey ?? "").isEmpty
+        }
+        return ConfigService.shared.hasCredential(forNpub: activeNpub)
+    }
+
+    /// Whether the owner account can sign (NIP-42 AUTH always signs as owner).
+    /// Presence-only, like canDecryptNIP04(); NIP-46 defers to the bunker.
+    private func canSignAsOwner() -> Bool {
+        let config = ConfigService.shared.config
+        if config.activeSigningMode() == "nip46" { return true }
+        if !config.ownerNcryptsec.isEmpty {
+            return NIP49Service.getPasswordFromKeychain() != nil
+        }
+        return !(config.ownerHexKey ?? "").isEmpty
     }
 
     func sendDM(content: String, to recipientHexPubkey: String, useNIP04: Bool = false) async throws {
@@ -830,6 +866,17 @@ class DMService: ObservableObject {
     private func handleAuthChallenge(_ challenge: String) {
         guard let client = inboxClient else { return }
 
+        // Watch-only: no owner key to sign NIP-42 AUTH. Skip the attempt (the
+        // chat relay simply stays unauthenticated — nothing to read there anyway)
+        // and warn once instead of logging a signing failure per AUTH challenge.
+        guard canSignAsOwner() else {
+            if !warnedAuthUnavailable {
+                warnedAuthUnavailable = true
+                print("ℹ️ Watch-only: cannot sign NIP-42 AUTH (no owner key) — chat relay left unauthenticated")
+            }
+            return
+        }
+
         // The relay tag must match the relay's ServiceURL (its public-facing URL),
         // NOT the localhost connection URL. Khatru validates the relay tag against
         // "wss://" + config.RelayURL + "/chat", so we must use the same value here.
@@ -891,6 +938,17 @@ class DMService: ObservableObject {
     private func handleIncomingNIP04(_ event: NostrEvent) {
         guard event.kind == 4 else { return }
         guard !seenGiftWrapIds.contains(event.id) else { return }
+
+        // Watch-only: no key to decrypt NIP-04. Skip WITHOUT marking the event
+        // seen (so a later unlock/reconnect can still process it) and warn once,
+        // rather than logging a "no key" failure per DM across a catch-up batch.
+        guard canDecryptNIP04() else {
+            if !warnedNIP04Unavailable {
+                warnedNIP04Unavailable = true
+                print("ℹ️ Watch-only: NIP-04 DM decryption unavailable (no signing key) — skipping inbound DMs")
+            }
+            return
+        }
 
         seenGiftWrapIds.insert(event.id)
         trimSeenGiftWrapIdsIfNeeded()
@@ -1067,6 +1125,11 @@ class DMService: ObservableObject {
 
         // Increment generation to invalidate all in-flight async callbacks
         switchGeneration &+= 1
+
+        // The new account may have signing capability the previous one lacked
+        // (or vice-versa) — let the watch-only notices fire once again.
+        warnedNIP04Unavailable = false
+        warnedAuthUnavailable = false
 
         // Disconnect any in-flight external relay clients immediately
         for client in externalClients {
