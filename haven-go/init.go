@@ -84,6 +84,23 @@ type DBBackend interface {
 // On Android (cshared builds), it remains nil and we fall back to Badger.
 var lmdbFactory func(path string) DBBackend
 
+// quietBadgerLogger wraps Badger's logger to drop the once-a-minute cache-size
+// warnings. The block/index caches are intentionally kept small here (see the
+// BadgerOptionsModifier below) to fit a menu-bar app, so the "might be too
+// small" warning and its companion "Cache life expectancy" histogram — emitted
+// every 60s per DB by (*badger.DB).monitorCache — are expected noise, not
+// actionable. Every other Badger log line (real warnings, errors, info) passes
+// through untouched.
+type quietBadgerLogger struct{ badgerdb.Logger }
+
+func (l quietBadgerLogger) Warningf(format string, args ...interface{}) {
+	if strings.Contains(format, "might be too small") ||
+		strings.Contains(format, "Cache life expectancy") {
+		return
+	}
+	l.Logger.Warningf(format, args...)
+}
+
 func newBadgerBackend(path string) DBBackend {
 	// Bound the negentropy vector size explicitly: the library default is 16M
 	// events, which a NEG-OPEN with a broad filter could try to materialize in
@@ -96,6 +113,9 @@ func newBadgerBackend(path string) DBBackend {
 		Path:               path,
 		MaxLimitNegentropy: maxNeg,
 		BadgerOptionsModifier: func(opts badgerdb.Options) badgerdb.Options {
+			// Silence Badger's every-60s cache-size warnings; the small caches
+			// below are deliberate. Wraps whatever logger Badger defaulted to.
+			opts = opts.WithLogger(quietBadgerLogger{opts.Logger})
 			switch runtime.GOOS {
 			case "android", "ios":
 				// Phones share RAM with the JVM (Android) or live under strict
