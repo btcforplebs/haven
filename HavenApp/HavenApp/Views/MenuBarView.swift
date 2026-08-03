@@ -885,6 +885,39 @@ struct MenuBarView: View {
         .onReceive(NotificationCenter.default.publisher(for: .havenOpenSettings)) { _ in
             selectedTab = .settings
         }
+        // In the compact menu-bar dropdown, Feed and Settings have no room to
+        // render — they show dead "open the full window" placeholders. Every
+        // way to reach them (tab button, ⌘-shortcut, context menu, notification)
+        // funnels through selectedTab, so intercept it in one place: send
+        // Settings to the native Settings window and Feed to the pop-out, then
+        // revert the selection so the dropdown never parks on a placeholder.
+        // Opening that surface steals focus and dismisses the popover, so the
+        // revert is invisible. The pop-out (a full window) renders these tabs
+        // inline and is exempt.
+        .onChange(of: selectedTab) { oldTab, newTab in
+            guard !isPoppedOut else { return }
+            switch newTab {
+            case .settings:
+                openSettings()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                selectedTab = oldTab
+            case .feed:
+                openWindow(id: "viewer-window")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    NSApp.activate(ignoringOtherApps: true)
+                    NotificationCenter.default.post(name: .havenOpenFeed, object: nil)
+                }
+                selectedTab = oldTab
+            default:
+                break
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .havenOpenFeed)) { _ in
+            // Only the pop-out switches to Feed; the dropdown redirected here.
+            if isPoppedOut { selectedTab = .feed }
+        }
         // MARK: - Keyboard Shortcuts
         .background {
             Group {
@@ -919,6 +952,10 @@ struct MenuBarView: View {
     }
     
     private func startInactivityTimer() {
+        // The pop-out is a full window — silently resetting its tab after idle
+        // would discard the user's navigation. Only the ephemeral menu-bar
+        // dropdown should snap back to the dashboard.
+        guard !isPoppedOut else { return }
         inactivityTask?.cancel()
         inactivityTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 60_000_000_000)
