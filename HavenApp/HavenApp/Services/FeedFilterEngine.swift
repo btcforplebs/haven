@@ -27,7 +27,7 @@ enum FeedFilterEngine {
         blocked: Set<String>,
         showReposts: Bool,
         showReplies: Bool,
-        followedPubkeys: [String],
+        followedPubkeys: Set<String>,
         wotPubkeys: Set<String>,
         popularFilter: PopularFilter,
         popularNoteScores: [String: Double],

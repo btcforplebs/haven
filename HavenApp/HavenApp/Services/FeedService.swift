@@ -31,7 +31,13 @@ class FeedService: ObservableObject {
     /// O(1) lookup index for notes by ID. Maintained alongside `notes` mutations.
     private(set) var noteIndex: [String: FeedNote] = [:]
     @Published var parentNotesCache: [String: FeedNote] = [:]
-    @Published var followedPubkeys: [String] = []
+    @Published var followedPubkeys: [String] = [] {
+        didSet { followedPubkeysSet = Set(followedPubkeys) }
+    }
+    /// O(1)-membership mirror of `followedPubkeys`, kept in sync via didSet so the
+    /// hot paths (feed filter, per-row resolve) use Set.contains instead of an
+    /// O(follows) Array.contains scan per note/row.
+    private(set) var followedPubkeysSet: Set<String> = []
     @Published var extendedNetworkPubkeys: [String] = []
     /// When the extended network was last computed. Used to skip re-fetching within 1 hour.
     private var extendedNetworkComputedAt: Date?
@@ -103,7 +109,7 @@ class FeedService: ObservableObject {
             blocked: blocked,
             showReposts: ConfigService.shared.config.showReposts,
             showReplies: ConfigService.shared.config.showReplies,
-            followedPubkeys: followedPubkeys,
+            followedPubkeys: followedPubkeysSet,
             wotPubkeys: wotPubkeys,
             popularFilter: popularFilter,
             popularNoteScores: popularNoteScores,
@@ -123,17 +129,22 @@ class FeedService: ObservableObject {
             parentIsNextNote = FeedFilterEngine.computeParentIsNext(filteredNotes: newFiltered)
         }
 
-        let newMedia = FeedFilterEngine.filterMediaNotes(
-            notes: notes,
-            blocked: blocked,
-            wotPubkeys: wotPubkeys,
-            isGlobalMedia: feedMode == .media && mediaFeedMode == .global,
-            throttledPubkeys: throttled
-        )
+        // The media grid is the only reader of filteredMediaNotes, so skip this
+        // O(n log n) filter+sort entirely in the other feed modes. switchMode()
+        // recomputes on entering .media, so it is repopulated when needed.
+        if feedMode == .media {
+            let newMedia = FeedFilterEngine.filterMediaNotes(
+                notes: notes,
+                blocked: blocked,
+                wotPubkeys: wotPubkeys,
+                isGlobalMedia: mediaFeedMode == .global,
+                throttledPubkeys: throttled
+            )
 
-        if newMedia.count != filteredMediaNotes.count ||
-            !zip(newMedia, filteredMediaNotes).allSatisfy({ $0.id == $1.id }) {
-            filteredMediaNotes = newMedia
+            if newMedia.count != filteredMediaNotes.count ||
+                !zip(newMedia, filteredMediaNotes).allSatisfy({ $0.id == $1.id }) {
+                filteredMediaNotes = newMedia
+            }
         }
     }
 

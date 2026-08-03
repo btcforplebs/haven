@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 // MARK: - Data Model
 
@@ -247,9 +248,13 @@ class LinkPreviewService {
     // MARK: - Disk Cache
 
     private func cacheFilePath(for url: URL) -> URL {
-        let hash = url.absoluteString.data(using: .utf8)!
-            .map { String(format: "%02x", $0) }.joined()
-        let filename = String(hash.prefix(64)) // Truncate for filesystem sanity
+        // SHA256 of the FULL URL. The previous scheme hex-encoded the URL and
+        // kept the first 64 hex chars = first 32 URL characters, so any two URLs
+        // sharing a 32-char prefix collided — e.g. every "https://www.youtube.com/
+        // watch?v=…" link (that prefix is exactly 32 chars) mapped to one file and
+        // served another video's preview. A full digest is unique and fixed-length.
+        let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
+        let filename = digest.map { String(format: "%02x", $0) }.joined()
         return cacheDirectory.appendingPathComponent(filename + ".json")
     }
 
