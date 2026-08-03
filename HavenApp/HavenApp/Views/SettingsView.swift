@@ -1056,19 +1056,19 @@ struct AccountDetailView: View {
     }
 
     private func authenticateAndReveal() {
+        // Fail CLOSED: reveal the private key only after a successful device-owner
+        // authentication (Face/Touch ID, or passcode fallback). The previous code
+        // revealed the key with NO authentication when no biometry/passcode was
+        // enrolled or LAContext errored — a fail-open leak of the signing key.
+        // When auth is unavailable, evaluatePolicy calls back success=false, so we
+        // simply don't reveal.
         let context = LAContext()
-        var error: NSError?
-
-        if context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) {
-            context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Authenticate to reveal your private key") { success, _ in
-                DispatchQueue.main.async {
-                    if success {
-                        onRevealKey()
-                    }
+        context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Authenticate to reveal your private key") { success, _ in
+            DispatchQueue.main.async {
+                if success {
+                    onRevealKey()
                 }
             }
-        } else {
-            onRevealKey()
         }
     }
 
