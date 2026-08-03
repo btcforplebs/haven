@@ -70,6 +70,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneWillEnterForeground(_ scene: UIScene) {
+        // Restore UI-active state (log throttler + full log parsing) and let the
+        // Go heap grow again — symmetric with enterBackground() in
+        // sceneDidEnterBackground.
+        RelayProcessManager.shared.enterForeground()
+        NostrService.shared.enterForeground()
+
         // Reconnect NIP-46 remote signer if configured
         if ConfigService.shared.config.activeSigningMode() == "nip46" {
             NIP46Service.shared.connectFromConfig()
@@ -156,6 +162,14 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         // Also schedule a BGProcessingTask so iOS can wake us later
         // (e.g. when plugged in and on Wi-Fi) for a longer relay window.
         AppDelegate.scheduleBackgroundProcessing()
+
+        // Hand the Go relay's heap back to the OS and quiet the log pipeline
+        // before iOS freezes us. A suspended app is frozen at its high-water
+        // resident size and is jetsam's first target; enterBackground() runs
+        // FreeOSMemory off-main, within the ~30s background-task window opened
+        // above. macOS does this on resignActive; iOS never did until now.
+        RelayProcessManager.shared.enterBackground()
+        NostrService.shared.enterBackground()
     }
 
     // MARK: - Helpers
