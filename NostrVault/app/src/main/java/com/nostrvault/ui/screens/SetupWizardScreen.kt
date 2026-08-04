@@ -54,6 +54,7 @@ import com.nostrvault.relay.RelayConfiguration
 import com.nostrvault.service.AmberSignerService
 import com.nostrvault.service.BlossomService
 import com.nostrvault.service.NIP49Service
+import com.nostrvault.service.NostrService
 import com.nostrvault.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -103,6 +104,7 @@ class SetupWizardViewModel @Inject constructor(
     private val credentialStore: CredentialStore,
     private val amberSignerService: AmberSignerService,
     private val blossomService: BlossomService,
+    private val nostrService: NostrService,
     @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
 
@@ -846,6 +848,12 @@ class SetupWizardViewModel @Inject constructor(
     fun completeSetup(onComplete: () -> Unit) {
         viewModelScope.launch {
             configStore.update { it.copy(hasCompletedSetup = true) }
+
+            // Advertise where to send us DMs. Setup never did this, so a new
+            // account had no kind 10050 at all and was effectively unreachable
+            // over NIP-17 — senders fell through to a guessed relay set and
+            // replies had nowhere defined to go.
+            runCatching { nostrService.republishDMRelayList() }
 
             // Resolve active account hex pubkey (matches iOS refreshActiveAccountHex)
             val npub = configStore.config.value.ownerNpub

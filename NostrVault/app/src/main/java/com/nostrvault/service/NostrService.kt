@@ -47,6 +47,18 @@ class NostrService @Inject constructor(
     private val powPreferences: com.nostrvault.data.local.PowPreferences,
 ) {
     companion object {
+        /**
+         * A loopback address means "this machine". Advertising one, or
+         * publishing someone else's DM to one, sends the event to the *sender's*
+         * own relay — the write succeeds, nothing errors, and the recipient
+         * never sees it.
+         */
+        fun isLoopbackRelay(url: String): Boolean {
+            val u = url.lowercase()
+            return u.contains("127.0.0.1") || u.contains("localhost") ||
+                u.contains("[::1]") || u.contains("0.0.0.0")
+        }
+
         private const val TAG = "NostrService"
         private const val MAX_SEEN_IDS = 50_000
         private const val TRIM_SEEN_IDS = 40_000
@@ -1301,14 +1313,25 @@ class NostrService @Inject constructor(
         event?.let { postEvent(it) }
     }
 
+    /**
+     * Republishes kind 10050 for the owner account.
+     *
+     * Builds shipped a 10050 leading with 127.0.0.1, making those accounts
+     * undeliverable — senders wrote the gift wrap to their own machine. 10050 is
+     * replaceable, so publishing a clean one overwrites the broken one on every
+     * relay holding it, and from then on *any* sender reaches them, including
+     * ones still running the old build.
+     */
+    fun republishDMRelayList() {
+        publishDMRelayList(configStore.config.value.dmRelays)
+    }
+
     fun publishDMRelayList(dmRelays: List<String>) {
         // A kind 10050 is a PUBLIC announcement of where others should deliver
         // DMs to us. The embedded Haven relay lives on 127.0.0.1 and is never
         // reachable by anyone else, so loopback URLs must be stripped — otherwise
         // senders are told to deliver replies to an address they can't reach.
-        var relays = dmRelays.filter {
-            !it.contains("localhost") && !it.contains("127.0.0.1")
-        }
+        var relays = dmRelays.filter { !isLoopbackRelay(it) }
         // Never publish an empty list — fall back to public defaults.
         if (relays.isEmpty()) {
             relays = listOf(

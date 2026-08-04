@@ -2464,15 +2464,12 @@ struct DMSettingsView: View {
     private func publishDMRelayList() {
         var relays = configService.config.dmRelays
 
-        // Always include local relay
-        #if os(macOS)
-        let localRelay = "ws://127.0.0.1:\(configService.config.relayPort)"
-        #else
-        let localRelay = "wss://127.0.0.1:\(configService.config.relayPort)"
-        #endif
-        if !relays.contains(localRelay) {
-            relays.insert(localRelay, at: 0)
-        }
+        // Deliberately NOT including the local relay. This list tells other
+        // people where to deliver our DMs, and our 127.0.0.1 is their own
+        // machine — senders wrote the gift wrap into their own relay and we
+        // received nothing. Our client subscribes to the local relay directly;
+        // it never needed advertising. publishDMRelayList filters loopback too,
+        // so a stale saved list can't reintroduce it.
 
         // Include Mac relay if configured
         if !configService.config.macRelayURL.isEmpty && !relays.contains(configService.config.macRelayURL) {

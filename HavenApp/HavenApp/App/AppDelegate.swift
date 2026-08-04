@@ -41,6 +41,11 @@ class AppDelegate: NSObject, ObservableObject {
                 // Publish NIP-65 relay lists for accounts with the setting enabled
                 try? await Task.sleep(for: .seconds(5))
                 NostrService.shared.publishRelayListsForEnabledAccounts()
+                // Heals accounts whose kind 10050 still advertises
+                // 127.0.0.1 from an older build — replacing it is what
+                // makes them reachable again, including from senders
+                // still running that build.
+                NostrService.shared.republishDMRelayListsForSignableAccounts()
 
                 // Start profile picture prefetch service (runs once per day on Wi-Fi)
                 try? await Task.sleep(for: .seconds(5))

@@ -1175,21 +1175,25 @@ class DMService @Inject constructor(
     }
 
     private suspend fun fetchRecipientDMRelays(pubkey: String): List<String> {
-        // Check cached DM relays first
-        val dmRelays = nostrService.dmRelayLists.value[pubkey]
-        if (!dmRelays.isNullOrEmpty()) return dmRelays
+        // Someone else's advertised 127.0.0.1 is OUR machine, so publishing
+        // there drops their DM into our own relay — the write succeeds and the
+        // message is lost. Older builds advertised exactly that, so such entries
+        // are out there and have to be dropped. Filtering can empty a list;
+        // falling through to the next source is what stops that from silently
+        // delivering nowhere.
+        fun reachable(relays: List<String>?): List<String> =
+            relays.orEmpty().filter { !NostrService.isLoopbackRelay(it) }
 
-        // Check read relays
-        val readRelays = nostrService.relayLists.value[pubkey]
-        if (!readRelays.isNullOrEmpty()) return readRelays.take(3)
+        reachable(nostrService.dmRelayLists.value[pubkey]).let { if (it.isNotEmpty()) return it }
+        reachable(nostrService.relayLists.value[pubkey]).let { if (it.isNotEmpty()) return it.take(3) }
 
         // Trigger fetch and wait briefly
         nostrService.fetchRelayList(pubkey)
         delay(4_000)
 
-        return nostrService.dmRelayLists.value[pubkey]
-            ?: nostrService.relayLists.value[pubkey]?.take(3)
-            ?: configStore.config.value.activeBlastrRelays.take(3)
+        reachable(nostrService.dmRelayLists.value[pubkey]).let { if (it.isNotEmpty()) return it }
+        reachable(nostrService.relayLists.value[pubkey]).let { if (it.isNotEmpty()) return it.take(3) }
+        return reachable(configStore.config.value.activeBlastrRelays).take(3)
     }
 
     private fun fireAndForgetPublish(eventJson: String, relayUrl: String) {

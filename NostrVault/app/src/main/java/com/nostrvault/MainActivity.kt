@@ -85,6 +85,13 @@ class MainActivity : FragmentActivity() {
             LaunchedEffect(config.hasCompletedSetup) {
                 if (config.hasCompletedSetup) {
                     RelayForegroundService.start(this@MainActivity)
+
+                    // Heals accounts whose kind 10050 still advertises 127.0.0.1
+                    // from an older build. 10050 is replaceable, so publishing a
+                    // clean one overwrites the broken event everywhere — which is
+                    // what makes them reachable again, including from senders
+                    // still running that build.
+                    runCatching { nostrService.republishDMRelayList() }
                 }
             }
 

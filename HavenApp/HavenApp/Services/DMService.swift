@@ -1175,16 +1175,35 @@ class DMService: ObservableObject {
     }
 
     private func fetchRecipientDMRelays(_ pubkey: String) async -> [String] {
+        // Someone else's advertised 127.0.0.1 resolves to OUR machine, so
+        // publishing there drops their DM into our own relay — the write
+        // succeeds and the message is simply lost. Older builds advertised
+        // exactly that, so these entries are out there and must be dropped.
+        // Filtering can empty a list; falling through to the next source is
+        // what keeps that from silently sending nowhere.
+        func reachable(_ relays: [String]) -> [String] {
+            relays.filter { !NostrService.isLoopbackRelay($0) }
+        }
+
         // NIP-17: Check kind 10050 (DM relay preferences) first
-        if let dmRelays = NostrService.shared.dmRelayLists[pubkey], !dmRelays.isEmpty {
-            print("📋 Using NIP-17 DM relays for \(pubkey.prefix(8)): \(dmRelays)")
-            return dmRelays
+        if let dmRelays = NostrService.shared.dmRelayLists[pubkey] {
+            let usable = reachable(dmRelays)
+            if !usable.isEmpty {
+                print("📋 Using NIP-17 DM relays for \(pubkey.prefix(8)): \(usable)")
+                return usable
+            }
+            if !dmRelays.isEmpty {
+                print("⚠️ \(pubkey.prefix(8)) advertises only loopback DM relays — falling back")
+            }
         }
 
         // Fallback to kind 10002 (general read relays)
-        if let readRelays = NostrService.shared.relayLists[pubkey], !readRelays.isEmpty {
-            print("📋 Using kind 10002 relay list for \(pubkey.prefix(8)): \(readRelays)")
-            return readRelays
+        if let readRelays = NostrService.shared.relayLists[pubkey] {
+            let usable = reachable(readRelays)
+            if !usable.isEmpty {
+                print("📋 Using kind 10002 relay list for \(pubkey.prefix(8)): \(usable)")
+                return usable
+            }
         }
 
         // Trigger a fetch and wait briefly for results
@@ -1195,15 +1214,21 @@ class DMService: ObservableObject {
             try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
 
             // Check kind 10050 first
-            if let dmRelays = NostrService.shared.dmRelayLists[pubkey], !dmRelays.isEmpty {
-                print("📋 Fetched NIP-17 DM relays for \(pubkey.prefix(8)): \(dmRelays)")
-                return dmRelays
+            if let dmRelays = NostrService.shared.dmRelayLists[pubkey] {
+                let usable = reachable(dmRelays)
+                if !usable.isEmpty {
+                    print("📋 Fetched NIP-17 DM relays for \(pubkey.prefix(8)): \(usable)")
+                    return usable
+                }
             }
 
             // Then check kind 10002
-            if let readRelays = NostrService.shared.relayLists[pubkey], !readRelays.isEmpty {
-                print("📋 Fetched kind 10002 relay list for \(pubkey.prefix(8)): \(readRelays)")
-                return readRelays
+            if let readRelays = NostrService.shared.relayLists[pubkey] {
+                let usable = reachable(readRelays)
+                if !usable.isEmpty {
+                    print("📋 Fetched kind 10002 relay list for \(pubkey.prefix(8)): \(usable)")
+                    return usable
+                }
             }
         }
 

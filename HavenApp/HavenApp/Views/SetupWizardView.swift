@@ -500,6 +500,12 @@ struct SetupWizardView: View {
         configService.save()
         configService.refreshActiveAccountHex()
 
+        // Advertise where to send us DMs. Setup never did this, so a new account
+        // had no kind 10050 at all — anyone messaging them fell through to a
+        // guessed relay set, and replies had nowhere defined to go. Without it a
+        // brand-new user is effectively unreachable over NIP-17.
+        NostrService.shared.republishDMRelayListsForSignableAccounts()
+
         if isIOSDevice {
             PushNotificationService.shared.requestPermissionAndRegister()
         }

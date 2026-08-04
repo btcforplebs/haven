@@ -920,28 +920,81 @@ class NostrService: ObservableObject {
         }
     }
 
+    /// A loopback address means "this machine". Advertising one to the network,
+    /// or publishing someone else's DM to one, sends the event to the *sender's*
+    /// own relay — the write succeeds, nothing errors, and the recipient never
+    /// sees it. Never let one reach a relay list or a publish target.
+    static func isLoopbackRelay(_ urlString: String) -> Bool {
+        guard let host = URL(string: urlString)?.host?.lowercased() else {
+            let lowered = urlString.lowercased()
+            return lowered.contains("127.0.0.1") || lowered.contains("localhost") || lowered.contains("[::1]")
+        }
+        return host == "127.0.0.1" || host == "localhost" || host == "::1" || host == "0.0.0.0"
+    }
+
     /// NIP-17: Publishes a Kind 10050 (DM Relay List) event advertising which relays to send DMs to.
     /// Call whenever relay preferences change or during initial setup.
+    ///
+    /// Loopback entries are stripped: this list tells *other people* where to
+    /// deliver, and our own 127.0.0.1 is meaningless to them. We previously
+    /// inserted it at position 0, so every sender delivered our DMs into their
+    /// own local relay and we received nothing.
     @MainActor
-    func publishDMRelayList(dmRelays: [String]) {
-        guard !dmRelays.isEmpty else {
-            #if DEBUG
-            print("NostrService: No DM relays configured, skipping Kind 10050 publish")
-            #endif
+    func publishDMRelayList(dmRelays: [String], signAsNpub: String? = nil) {
+        let reachable = dmRelays.filter { !Self.isLoopbackRelay($0) }
+        guard !reachable.isEmpty else {
+            print("NostrService: No externally reachable DM relays, skipping Kind 10050 publish")
             return
         }
 
         // Build ["r", relay_url] tags for DM relays
-        let tags = dmRelays.map { ["r", $0] }
+        let tags = reachable.map { ["r", $0] }
 
         Task {
-            if let event = await signEventAsync(kind: 10050, content: "", tags: tags) {
+            if let event = await signEventAsync(kind: 10050, content: "", tags: tags, signAsNpub: signAsNpub) {
                 postEvent(event)
                 #if DEBUG
                 print("NostrService: Published Kind 10050 DM relay list with \(tags.count) relays")
                 #endif
             } else {
                 print("NostrService: Failed to sign Kind 10050 DM relay list")
+            }
+        }
+    }
+
+    /// Republishes kind 10050 for every account that can sign.
+    ///
+    /// Builds shipped a 10050 that led with `wss://127.0.0.1:<port>`, which made
+    /// those accounts undeliverable — senders wrote the gift wrap to their own
+    /// machine. 10050 is a replaceable event, so putting a clean one out
+    /// overwrites the broken one on every relay that holds it, and from then on
+    /// *any* sender reaches them, including ones still running the old build.
+    /// That's why this isn't gated behind the publish-relay-list toggle the way
+    /// kind 10002 is: a broken 10050 silently breaks DMs, so healing it can't be
+    /// opt-in.
+    @MainActor
+    func republishDMRelayListsForSignableAccounts() {
+        let config = ConfigService.shared.config
+        guard !config.isLocal else { return }
+
+        let reachable = config.dmRelays.filter { !Self.isLoopbackRelay($0) }
+        guard !reachable.isEmpty else { return }
+
+        var accounts: [String] = config.whitelistedNpubs
+        if !config.ownerNpub.isEmpty && !accounts.contains(config.ownerNpub) {
+            accounts.insert(config.ownerNpub, at: 0)
+        }
+
+        Task {
+            for npub in accounts {
+                let isOwner = npub == config.ownerNpub
+                let canSign = isOwner
+                    ? (!config.ownerNcryptsec.isEmpty || config.ownerHexKey != nil || ConfigService.shared.hasBunkerConfig(forNpub: npub))
+                    : (ConfigService.shared.hasCredential(forNpub: npub) || ConfigService.shared.hasBunkerConfig(forNpub: npub))
+                guard canSign else { continue }
+
+                publishDMRelayList(dmRelays: reachable, signAsNpub: npub)
+                try? await Task.sleep(nanoseconds: 500_000_000)
             }
         }
     }
