@@ -3,26 +3,43 @@ summary: A Nostr client with a built-in Haven relay and Blossom server
 description: |
   NostrVault is a self-custodial Android Nostr client with your own relay and media server running directly on your device.
 
-  Built on top of the Haven relay, NostrVault runs a full personal relay and Blossom media server locally, so your notes and media are stored on your own phone first and mirrored out to the network on your terms.
+  Most Nostr clients are a window onto someone else's relay. NostrVault is the relay. A full Haven relay runs on your phone, so every note you write and every note you receive is written to storage you own before it goes anywhere else. If every relay you use disappeared tomorrow, your copy would still be on your device.
 
-  Notifications are generated entirely on-device from your own relay — there is no push server, ours or anyone else's, so nothing about who's contacting you or when is ever visible to a third party.
+  HOW IT WORKS
 
-  Features:
-  - Built-in personal Haven relay running on-device (inbox, outbox, chat and private relays)
-  - On-device notifications with no push server involved
-  - Built-in Blossom media server with mirroring to external Blossom servers
-  - Full Nostr client: feeds, threads, profiles, media gallery and search
-  - Picture-in-Picture video playback
-  - Encrypted direct messages (NIP-04 / NIP-17)
-  - Remote signing with NIP-46 and Amber (NIP-55) — your keys never have to leave your signer
-  - Multi-account support with biometric protection
-  - Lightning zaps and an integrated wallet (NWC)
-  - Web of Trust filtering to keep spam out of your relay
+  The app runs a personal relay on-device with five separate stores: an inbox for what people send you, an outbox for what you publish, a chat relay for private messages, a private relay only you can read, and a local feed cache. Your posts are written locally first, then broadcast outward to public relays on your terms. Incoming events are pulled in and kept.
+
+  Because the relay is yours, notifications are generated entirely on-device from your own event stream. There is no push server — not Google's, not ours. Nothing about who contacts you, or when, is visible to a third party.
+
+  A Blossom media server runs alongside it, so images and video you post are hosted from your own device and mirrored to external Blossom servers you choose, instead of being uploaded to someone else's host by default.
+
+  A Web of Trust filter, built from your follow graph, decides what the relay accepts, which keeps spam out of your own storage rather than filtering it after the fact.
+
+  FEATURES
+
+  - Personal Haven relay on-device (inbox, outbox, chat, private, feed cache)
+  - On-device notifications with no push server
+  - Blossom media server with mirroring to external servers
+  - Full client: feeds, threads, profiles, media gallery, NIP-50 search
+  - Encrypted direct messages, both NIP-17 gift-wrapped and legacy NIP-04
+  - Remote signing via NIP-46 and Amber (NIP-55) — your key never enters the app
+  - Multi-account with biometric protection and NIP-49 encrypted key storage
+  - Lightning zaps with receipt validation, and an integrated NWC wallet
+  - Cashu ecash wallet with relay-backed backup (beta)
+  - Picture-in-Picture video
+  - Efficient relay sync using NIP-77 negentropy reconciliation
+
+  SUPPORTED NIPS
+
+  01 basic protocol · 04 legacy encrypted DMs · 05 DNS identifiers · 09 event deletion · 10 threading · 11 relay information · 13 proof of work · 17 private DMs · 18 reposts · 19 bech32 entities · 29 relay-based groups · 40 expiration · 42 relay authentication · 44 versioned encryption · 46 remote signing · 47 wallet connect · 49 encrypted key storage · 50 search · 51 lists · 55 Android signer · 56 reporting · 57 zaps · 59 gift wrap · 60 Cashu wallet · 65 relay list metadata · 70 protected events · 77 negentropy sync · 92 media attachments · 94 file metadata
+
+  Blossom: BUD-01, 02, 03, 04, 06, 14
 
   Your data, your relay, your media — all under your control.
+
 website: https://nostrvault.app
 repository: https://github.com/btcforplebs/nostr-vault
-source_url: https://github.com/btcforplebs/nostr-vault/tree/v2.6.0-b11
+source_url: https://github.com/btcforplebs/nostr-vault/tree/v2.6.0-b14
 tags: [nostr, bitcoin, relay, blossom, lightning]
 release_notes: ./RELEASE_NOTES.md
 images:
@@ -33,4 +50,4 @@ images:
   - screenshots/05_settings.png
 
 release_source:
-  asset_url: https://logen.btcforplebs.com/1acaaf3300ca98457994cc6837213d57d9b708a15b47835406439f5a28899687.apk
+  asset_url: https://logen.btcforplebs.com/b5cdf3969932b974b4241a65b8feb37ad5cb6a0e65154a158663849951550810.apk
