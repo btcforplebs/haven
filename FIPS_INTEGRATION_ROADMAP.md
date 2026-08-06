@@ -90,15 +90,58 @@ default 1280-byte UDP MTU is ~54 fragments; at 1% packet loss that datagram fail
 time. It looks flawless on a LAN and collapses on cellular, and it degrades *silently* rather
 than erroring.
 
-So the working unit is one MTU:
+So the working unit is one MTU. **The arithmetic below is wrong and is kept only to show what
+was corrected** — see the block that follows.
 
 ```
 1280 − 12 (FSP outer) − 16 (AEAD tag) − 6 (inner hdr) − 4 (port hdr) ≈ 1242 bytes usable
 ```
 
-QUIC's floor is 1200 (RFC 9000 anti-amplification; quinn's `min_mtu` will not go lower).
-~42 bytes of margin is too thin to ship, so we raise `transports.udp.mtu` to 1400 via
-`.config()` for ~1362 usable bytes — matching FIPS's own TCP and WebSocket defaults.
+> **Corrected 2026-08-06.** That counts the FSP layer and stops. The send path wraps FSP inside
+> FMP, and fips-core states the total itself — `FIPS_OVERHEAD = 106` (`upper/icmp.rs:60-91`),
+> plus `FSP_PORT_HEADER_SIZE` (4) for service datagrams, so **110 bytes**. The four omitted
+> FMP-layer items are the FMP outer header (16), FMP inner header (5), SessionDatagram body
+> (35 — ttl, path_mtu, src, dst) and the second Poly1305 tag (16): 72 bytes, exactly the
+> 1242 − 1170 gap.
+>
+> The real budget at underlay 1280 is **1170 usable**, which is *below* quinn's 1200 floor.
+> There was never 42 bytes of thin margin; there was a 30-byte deficit. **Every QUIC packet has
+> been fragmenting into two FIPS fragments since the first commit**, including in every green
+> result cited in §5.
+>
+> This cross-checks against nostr-vpn, which derives the same constants independently:
+> 1280 − 106 = 1174, minus their 24-byte cushion for the COORDS warmup tag = 1150, which is
+> their `MESH_TUNNEL_MTU` exactly.
+>
+> **Raising the MTU is not the fix.** §6 now records why: nostr-vpn shipped a raise twice and
+> reverted twice, because `Node::adopt_established_traversal` builds NAT-adopted UDP transports
+> from `UdpConfig::default()` at 1280 regardless, so oversize datagrams die at the socket layer
+> the moment a session is promoted onto a traversed link. 1310 is the minimum underlay for
+> single-fragment QUIC, and it is above the only NAT-safe value we have.
+>
+> Two things hid this. `quic_e2e` runs in-process, where no path MTU is enforced. And the loss
+> injector in `transport/udp_socket.rs` dropped whole QUIC packets *above* FIPS, so it could not
+> observe a lost fragment by construction. The injector now rolls once per fragment, reproducing
+> FIPS's all-or-nothing `(1-p)^n` reassembly; `FIPS_BRIDGE_LOSS_MODE=packet` still reproduces the
+> old numbers for comparison. Measured cost of the second fragment, 4 MiB transfer, one host:
+>
+> | link loss | packet model | fragment model | delta |
+> |---|---|---|---|
+> | 0% | 0.85s | 0.77s | 0.90x |
+> | 1% | 0.85s | 0.81s | 0.96x |
+> | 3% | 0.84s | 1.16s | 1.38x |
+> | 5% | 1.02s | 1.86s | 1.81x |
+> | 10% | 2.29s | 4.96s | 2.16x |
+>
+> The §5 exit gate still passes at 3% (4 MiB in 1.16s ≈ 3.5 MB/s, against a ≥500 KB/s bar), so
+> this is a real cost rather than a blocker — but it is loopback, with no RTT and uniform rather
+> than bursty loss. The numbers are pinned as unit tests in `transport/mtu.rs`, and reproduced by
+> `cargo run --release --bin mtu_budget`.
+>
+> Open, and gating: whether 2-fragment QUIC is acceptable on a real cellular path. That needs two
+> machines. Options if it is not: the `lan` profile (1452 → 1342 usable, single-fragment, clean
+> direct paths only), or §5's stated WebSocket-transport fallback, which sidesteps datagram
+> fragmentation entirely.
 
 ### 2.3 Stream layer: QUIC via quinn
 

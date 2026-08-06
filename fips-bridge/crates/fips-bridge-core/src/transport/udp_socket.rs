@@ -54,6 +54,52 @@ fn configured_loss_permille() -> u32 {
         .unwrap_or(0)
 }
 
+/// Where the synthetic loss is applied.
+///
+/// This distinction is the whole point, and getting it wrong is why the roadmap
+/// §5 loss table reads green at 10% loss while the transport has an unresolved
+/// fragmentation problem.
+///
+/// `Packet` drops the whole QUIC packet before it reaches `send_datagram` — it
+/// sits *above* FIPS, so one drop is one lost QUIC packet no matter how many
+/// fragments FIPS would have split it into. That models a link that loses whole
+/// datagrams, which is not the link we have.
+///
+/// `Fragment` accounts for what FIPS actually does below us. A QUIC packet
+/// larger than the single-fragment budget is split, reassembly is all-or-nothing
+/// with no per-fragment retransmit (`dataplane/direct_transport.rs`), so the
+/// packet survives only if *every* fragment survives: `(1-p)^n`. At the default
+/// 1280 underlay MTU every floor-sized QUIC packet is n=2, so 3% link loss
+/// becomes ~5.9% as quinn sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LossMode {
+    Packet,
+    Fragment,
+}
+
+/// `FIPS_BRIDGE_LOSS_MODE=fragment` to model per-fragment loss.
+///
+/// Defaults to `Fragment`, because that is what the wire does. `packet` is kept
+/// so the older, more optimistic loss-table numbers remain reproducible for
+/// comparison rather than being silently rewritten.
+fn configured_loss_mode() -> LossMode {
+    match std::env::var("FIPS_BRIDGE_LOSS_MODE").ok().as_deref() {
+        Some("packet") => LossMode::Packet,
+        _ => LossMode::Fragment,
+    }
+}
+
+/// Underlay UDP MTU assumed when modelling fragmentation.
+///
+/// Must track whatever `transports.udp.mtu` is actually configured; it is read
+/// from the same env override so a probe run cannot drift from the endpoint.
+fn configured_underlay_mtu() -> u16 {
+    std::env::var("FIPS_BRIDGE_UNDERLAY_MTU")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(super::mtu::DEFAULT_UNDERLAY_UDP_MTU)
+}
+
 #[derive(Debug)]
 pub struct FipsUdpSocket {
     local: SocketAddr,
@@ -62,22 +108,42 @@ pub struct FipsUdpSocket {
     in_rx: StdMutex<mpsc::Receiver<Inbound>>,
     writable: Arc<WritableWaker>,
     loss_permille: u32,
+    loss_mode: LossMode,
+    underlay_mtu: u16,
     rng: AtomicU64,
 }
 
 impl FipsUdpSocket {
     /// xorshift64 — not cryptographic, and does not need to be. It only has to
     /// spread drops out so we aren't losing a periodic pattern.
-    fn should_drop(&self) -> bool {
-        if self.loss_permille == 0 {
-            return false;
-        }
+    fn next_random(&self) -> u64 {
         let mut x = self.rng.load(Ordering::Relaxed);
         x ^= x << 13;
         x ^= x >> 7;
         x ^= x << 17;
         self.rng.store(x, Ordering::Relaxed);
-        (x % 1000) < self.loss_permille as u64
+        x
+    }
+
+    /// Roll once per fragment, not once per QUIC packet.
+    ///
+    /// FIPS reassembly is all-or-nothing, so losing any one fragment loses the
+    /// whole packet. Rolling `n` times reproduces that `(1-p)^n` survival curve
+    /// instead of the flat `1-p` the packet-level injector reports.
+    fn should_drop(&self, payload_len: usize) -> bool {
+        if self.loss_permille == 0 {
+            return false;
+        }
+        let rolls = match self.loss_mode {
+            LossMode::Packet => 1,
+            LossMode::Fragment => super::mtu::fragments_for(payload_len, self.underlay_mtu),
+        };
+        for _ in 0..rolls {
+            if self.next_random() % 1000 < self.loss_permille as u64 {
+                return true;
+            }
+        }
+        false
     }
 }
 
@@ -146,6 +212,8 @@ impl FipsUdpSocket {
             in_rx: StdMutex::new(in_rx),
             writable,
             loss_permille: configured_loss_permille(),
+            loss_mode: configured_loss_mode(),
+            underlay_mtu: configured_underlay_mtu(),
             // Seeded per-socket so the two ends of a test don't drop in lockstep.
             rng: AtomicU64::new(0x2545F4914F6CDD1D ^ (SERVICE_SEED.fetch_add(1, Ordering::Relaxed) as u64).wrapping_mul(0x9E3779B97F4A7C15)),
         })
@@ -169,7 +237,7 @@ impl AsyncUdpSocket for FipsUdpSocket {
             return Ok(());
         };
 
-        if self.should_drop() {
+        if self.should_drop(transmit.contents.len()) {
             // Report success: to QUIC this is indistinguishable from a datagram
             // lost in the network, which is exactly what we're simulating.
             return Ok(());
