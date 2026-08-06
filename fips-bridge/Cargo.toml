@@ -10,7 +10,7 @@ license = "MIT"
 # Pinned exactly. The 0.4.x line publishes multiple times per day and the
 # 0.3 -> 0.4 boundary replaced the entire send/recv model, so an unpinned
 # range would be a live hazard. See fips-bridge/README.md.
-fips-endpoint = "=0.4.45"
+fips-endpoint = "=0.4.53"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "io-util"] }
 anyhow = "1"
 
