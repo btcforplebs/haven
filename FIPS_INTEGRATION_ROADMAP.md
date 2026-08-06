@@ -107,6 +107,28 @@ headline case is video over cellular — bad CC is a permanent quality ceiling, 
 bug); smoltcp (synthesizes IPv6+TCP headers for ~60 bytes/packet of waste, Reno-class CC, no
 multiplexing); application-level chunked ARQ (reinvents CC, useless for bidirectional WSS).
 
+**`fips-tcp` / `fips-tcp-endpoint` 0.2.0 — evaluated 2026-08-06, rejected.** An earlier version
+of this document did not consider it, which was an omission: it is published on crates.io, rides
+FIPS service datagrams exactly as we need, and nostr-vpn runs it in production
+(`crates/nostr-vpn-core/src/fips_control_tcp.rs`, 863 lines, taking nothing but an
+`Arc<FipsEndpoint>`). Adopting it would have deleted `transport/{udp_socket,quic,tls}.rs` and
+made the MTU question moot.
+
+Reading the source settles it against us. `fips-tcp-0.2.0/src/reno.rs` is textbook TCP Reno —
+slow start, AIMD (`cwnd += mss²/cwnd`), fast recovery, `cwnd = mss` on RTO — over an RFC
+6298-style estimator in `rtt.rs`. There is **no SACK** and **no pacing** anywhere in the crate,
+and the default MSS is 1024. That is precisely the "Reno-class CC" we rejected smoltcp for, with
+the additional problem that without selective ack a single loss costs a full recovery cycle
+rather than one retransmit.
+
+For bulk relay traffic that would be fine. For the headline case — video over cellular, where
+loss is bursty and non-congestive — Reno without SACK or pacing collapses the window on signal
+variation that BBR rides through. We keep quinn. The cost is the SPKI-pinning work in this
+section and the tighter MTU budget in §2.2, both of which are accepted deliberately.
+
+This is not a criticism of `fips-tcp`: nostr-vpn uses it to carry control records, not media, and
+Reno is a reasonable choice for that. Revisit if it gains BBR or SACK.
+
 We run **quinn over a custom `AsyncUdpSocket`** backed by FIPS service datagrams. That buys
 ordered reliable multiplexed streams, BBR congestion control, and keepalive. Configure
 `initial_mtu = 1200`, `min_mtu = 1200`, `mtu_discovery_config = None` (FIPS owns PMTU). Use
