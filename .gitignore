@@ -14,10 +14,12 @@
 .DS_Store
 
 # Planning docs
-FIPS_FFI_PLAN.md
-FIPS_INTEGRATION_ROADMAP.md
 RENAME_PLAN.md
 DM_PLAN.md
+
+# FIPS_FFI_PLAN.md and FIPS_INTEGRATION_ROADMAP.md are deliberately tracked:
+# they are the architecture documents for fips-bridge/ and need to version
+# alongside the code they describe.
 
 # Build artifacts
 /HavenApp/SilentPaymentsKit/build/
