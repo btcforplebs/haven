@@ -58,12 +58,23 @@ pub async fn origin_server(listener: TcpListener, blob: Arc<Vec<u8>>) {
                           Upgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
                     )
                     .await;
+                // Echo every post-upgrade message until the client disconnects,
+                // not just one — a held-connection test (pings over minutes)
+                // needs the origin to keep the pipe open, not close after the
+                // first reply.
                 let mut post = [0u8; 256];
-                if let Ok(n) = stream.read(&mut post).await {
-                    let _ = stream.write_all(&post[..n]).await;
+                loop {
+                    let Ok(n) = stream.read(&mut post).await else { return };
+                    if n == 0 {
+                        return;
+                    }
+                    if stream.write_all(&post[..n]).await.is_err() {
+                        return;
+                    }
+                    if stream.flush().await.is_err() {
+                        return;
+                    }
                 }
-                let _ = stream.flush().await;
-                return;
             }
 
             if let Some(range) = lower.split("range: bytes=").nth(1) {
