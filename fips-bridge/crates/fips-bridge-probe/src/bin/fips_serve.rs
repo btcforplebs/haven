@@ -79,13 +79,26 @@ fn load_or_create_nsec(path: &PathBuf) -> Result<String> {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating directory {}", parent.display()))?;
     }
-    std::fs::write(path, &nsec)
-        .with_context(|| format!("writing nsec file {}", path.display()))?;
+    // create_new + mode(0o600) up front closes the write-then-chmod window
+    // (no 0644 gap) and refuses to clobber a file that appeared between the
+    // exists() check above and this write.
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .with_context(|| format!("setting permissions on {}", path.display()))?;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+            .with_context(|| format!("creating nsec file {}", path.display()))?;
+        file.write_all(nsec.as_bytes())
+            .with_context(|| format!("writing nsec file {}", path.display()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, &nsec)
+            .with_context(|| format!("writing nsec file {}", path.display()))?;
     }
     Ok(nsec)
 }
