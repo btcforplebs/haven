@@ -29,7 +29,7 @@ struct YarnGifPickerSheet: View {
             #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
+                    Button("Cancel") { dismiss() }
                 }
             }
         }
@@ -44,7 +44,7 @@ struct YarnGifPickerSheet: View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundColor(.secondary)
-            TextField("Search a quote, e.g. \"that's what she said\"", text: $query)
+            TextField("Search a movie or TV quote", text: $query)
                 .textFieldStyle(.plain)
                 .focused($searchFocused)
                 .onSubmit { runSearch(immediate: true) }
@@ -70,7 +70,7 @@ struct YarnGifPickerSheet: View {
             placeholder(icon: "exclamationmark.triangle", text: errorMessage)
         } else if results.isEmpty {
             if query.trimmingCharacters(in: .whitespaces).isEmpty {
-                placeholder(icon: "film", text: "Search movie and TV quotes from getyarn.io")
+                placeholder(icon: "quote.bubble", text: "Type a line to find a clip")
             } else if !isSearching {
                 placeholder(icon: "magnifyingglass", text: "No clips found for \u{201C}\(query)\u{201D}")
             } else {
@@ -154,26 +154,37 @@ private struct YarnClipCell: View {
     let isSelecting: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ZStack {
-                Color.platformSecondaryGroupedBackground
-                AnimatedImage(url: clip.gifSmallURL, contentMode: .fill, fallbackURL: clip.thumbURL)
-                if isSelecting {
-                    Color.black.opacity(0.4)
-                    ProgressView().tint(.white)
-                }
-            }
-            .aspectRatio(16 / 9, contentMode: .fit)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
+        ZStack(alignment: .bottomLeading) {
+            Color.platformSecondaryGroupedBackground
+            AnimatedImage(url: clip.gifSmallURL, contentMode: .fill, fallbackURL: clip.thumbURL)
+
+            LinearGradient(
+                colors: [.black.opacity(0.85), .black.opacity(0)],
+                startPoint: .bottom,
+                endPoint: .top
+            )
+            .frame(height: 44)
+            .frame(maxHeight: .infinity, alignment: .bottom)
+
             Text(clip.transcript)
-                .font(.appSystem(size: 12, weight: .medium))
+                .font(.appSystem(size: 11, weight: .semibold))
+                .foregroundColor(.white)
                 .lineLimit(2)
-            Text(clip.videoTitle)
-                .font(.appSystem(size: 11))
-                .foregroundColor(.secondary)
-                .lineLimit(1)
+                .multilineTextAlignment(.leading)
+                .shadow(color: .black.opacity(0.5), radius: 1)
+                .padding(.horizontal, 8)
+                .padding(.bottom, 6)
+
+            if isSelecting {
+                Color.black.opacity(0.4)
+                ProgressView().tint(.white)
+            }
         }
+        // Every tile is the same 16:9 shape regardless of caption length,
+        // so the grid stays aligned instead of rows drifting per cell.
+        .aspectRatio(16 / 9, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
         .contentShape(Rectangle())
-        .help(clip.transcript)
+        .help("\(clip.transcript) — \(clip.videoTitle)")
     }
 }
