@@ -1,10 +1,54 @@
 //! Shared helpers for the probe binaries.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use anyhow::{Context, Result};
+use fips_bridge_core::EndpointOptions;
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+
+/// Loads the nsec from `path` if it exists, otherwise generates one and
+/// writes it there (creating parent directories as needed) so the SAME
+/// identity — and therefore the same npub — comes back on the next launch.
+pub fn load_or_create_nsec(path: &PathBuf) -> Result<String> {
+    if path.exists() {
+        let nsec = std::fs::read_to_string(path)
+            .with_context(|| format!("reading nsec file {}", path.display()))?;
+        let nsec = nsec.trim().to_string();
+        anyhow::ensure!(!nsec.is_empty(), "nsec file {} is empty", path.display());
+        return Ok(nsec);
+    }
+
+    let nsec = EndpointOptions::generate_nsec();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating directory {}", parent.display()))?;
+    }
+    // create_new + mode(0o600) up front closes the write-then-chmod window
+    // (no 0644 gap) and refuses to clobber a file that appeared between the
+    // exists() check above and this write.
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+            .with_context(|| format!("creating nsec file {}", path.display()))?;
+        file.write_all(nsec.as_bytes())
+            .with_context(|| format!("writing nsec file {}", path.display()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, &nsec)
+            .with_context(|| format!("writing nsec file {}", path.display()))?;
+    }
+    Ok(nsec)
+}
 
 /// Deterministic non-repeating payload, so truncation or a duplicated block
 /// cannot accidentally produce a matching hash.
