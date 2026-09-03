@@ -24,13 +24,41 @@ pub struct EndpointOptions {
 
 impl EndpointOptions {
     /// A throwaway identity, for tests and probes.
+    ///
+    /// A fresh identity every launch means a peer that knew this endpoint's
+    /// npub cannot find it again after a restart, so this is deliberately not
+    /// what the app uses -- see [`Self::with_identity`].
     pub fn ephemeral(discovery_scope: impl Into<String>) -> Self {
-        let identity = Identity::generate();
+        // Same-host composition stays on here: the in-process e2e probes
+        // pair two endpoints inside one process and rely on it.
+        Self::with_identity(Self::generate_nsec(), discovery_scope).local_rendezvous(true)
+    }
+
+    /// A stable identity supplied by the caller.
+    ///
+    /// `local_rendezvous` is off here on purpose. It binds 127.0.0.1:21211
+    /// exclusively, which collides with a co-installed nostr-vpn, and it is a
+    /// same-host path: leaving it on during an off-LAN test would let a run
+    /// pass for a reason the test is not measuring.
+    pub fn with_identity(nsec: impl Into<String>, discovery_scope: impl Into<String>) -> Self {
         Self {
-            nsec: fips_endpoint::encode_nsec(&identity.keypair().secret_key()),
+            nsec: nsec.into(),
             discovery_scope: discovery_scope.into(),
-            local_rendezvous: true,
+            local_rendezvous: false,
         }
+    }
+
+    /// Generate a fresh nsec, for a caller that wants to persist it itself.
+    pub fn generate_nsec() -> String {
+        let identity = Identity::generate();
+        fips_endpoint::encode_nsec(&identity.keypair().secret_key())
+    }
+
+    /// Enable host-wide loopback composition. See [`Self::with_identity`] for
+    /// why this is not the default.
+    pub fn local_rendezvous(mut self, enabled: bool) -> Self {
+        self.local_rendezvous = enabled;
+        self
     }
 }
 
