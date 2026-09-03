@@ -151,7 +151,7 @@ async fn main() -> Result<()> {
         "full_get",
         ok,
         &format!(
-            "\"status\":{status},\"bytes\":{},\"sha256\":\"{got_sha256}\",\"mib_per_s\":{mib_s:.2}",
+            "\"http_status\":{status},\"bytes\":{},\"sha256\":\"{got_sha256}\",\"mib_per_s\":{mib_s:.2}",
             body.len()
         ),
     );
@@ -163,7 +163,7 @@ async fn main() -> Result<()> {
         failures.push("range GET");
     }
     println!("[2] range GET: status={status} bytes={}", body.len());
-    emit("range_get", ok, &format!("\"status\":{status},\"bytes\":{}", body.len()));
+    emit("range_get", ok, &format!("\"http_status\":{status},\"bytes\":{}", body.len()));
 
     // 3. WebSocket-style upgrade, optionally held with periodic pings,
     //    reconnecting (and counting) on any drop.

@@ -19,6 +19,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use fips_bridge_core::transport::mtu::{fragments_for, DEFAULT_UNDERLAY_UDP_MTU, QUIC_MIN_MTU};
 use fips_bridge_core::{bind_endpoint, EndpointOptions};
 use fips_bridge_probe::load_or_create_nsec;
 use fips_endpoint::{FipsEndpointServiceDatagram, PeerIdentity};
@@ -125,9 +126,12 @@ fn identity_note(nsec_file: &Option<PathBuf>) -> String {
 }
 
 /// Walks the ladder against `npub`, printing the same size/result table as
-/// the in-process probe, then the largest single-fragment payload actually
-/// delivered — the number the two-host gate checks against the 1200-byte
-/// QUIC floor.
+/// the in-process probe, plus a fragments column (fips-bridge-core's own
+/// `fragments_for` at the default 1280 underlay MTU — these probe endpoints
+/// apply no MTU override, so that is what they actually run at). The verdict
+/// keys on the 1200-byte rung itself, never on the largest size delivered:
+/// FIPS reassembles up to 128 fragments with a 2s TTL, so a 32 KB rung can
+/// echo cleanly while the 1200 rung it's supposed to stand in for was lost.
 async fn fetch(npub: String) -> Result<()> {
     let consumer = bind_endpoint(EndpointOptions::with_identity(
         EndpointOptions::generate_nsec(),
@@ -160,38 +164,64 @@ async fn fetch(npub: String) -> Result<()> {
     // Drain the canary echo so it can't be misread as the first rung.
     while recv_one(&receiver, Duration::from_millis(50)).await.is_some() {}
 
-    println!("{:>8}  {:>8}  {}", "size", "result", "note");
-    println!("{:->8}  {:->8}  {:->40}", "", "", "");
+    println!(
+        "{:>8}  {:>8}  {:>5}  {}",
+        "size", "result", "frags", "note"
+    );
+    println!("{:->8}  {:->8}  {:->5}  {:->40}", "", "", "", "");
 
     let mut largest_delivered = 0usize;
+    let mut rung_1200_delivered = false;
     for &size in LADDER {
+        let frags = fragments_for(size, DEFAULT_UNDERLAY_UDP_MTU);
         let payload = vec![0xABu8; size];
         if let Err(e) = consumer.send_datagram(peer.clone(), SERVICE_PORT, SERVICE_PORT, payload).await {
-            println!("{size:>8}  {:>8}  send rejected: {e}", "REJECT");
+            println!("{size:>8}  {:>8}  {frags:>5}  send rejected: {e}", "REJECT");
             continue;
         }
 
-        match recv_one(&receiver, Duration::from_secs(5)).await {
+        let delivered = match recv_one(&receiver, Duration::from_secs(5)).await {
             Some(d) => {
                 let got = d.data.len();
                 if got == size {
-                    largest_delivered = largest_delivered.max(size);
-                    println!("{size:>8}  {:>8}  ", "ok");
+                    let note = if frags > 1 { "reassembled" } else { "" };
+                    println!("{size:>8}  {:>8}  {frags:>5}  {note}", "ok");
+                    true
                 } else {
-                    println!("{size:>8}  {:>8}  SIZE MISMATCH: got {got} bytes", "ok");
+                    println!("{size:>8}  {:>8}  {frags:>5}  SIZE MISMATCH: got {got} bytes", "ok");
+                    false
                 }
             }
-            None => println!("{size:>8}  {:>8}  no echo within 5s", "LOST"),
+            None => {
+                println!("{size:>8}  {:>8}  {frags:>5}  no echo within 5s", "LOST");
+                false
+            }
+        };
+        if delivered {
+            largest_delivered = largest_delivered.max(size);
         }
+        if size == QUIC_MIN_MTU as usize {
+            rung_1200_delivered = delivered;
+        }
+        // A late echo from this rung landing in the next rung's recv window
+        // would misread as that rung's result and shift everything after.
+        while recv_one(&receiver, Duration::from_millis(100)).await.is_some() {}
     }
 
     println!("\n--- results ---");
-    println!("  Largest delivered: {largest_delivered} bytes");
+    println!("  Largest delivered:      {largest_delivered} bytes");
+    println!("  1200-byte rung (QUIC floor): {}", if rung_1200_delivered { "delivered" } else { "LOST" });
     println!("\n--- verdict ---");
-    if largest_delivered >= 1_200 {
-        println!("  PASS: >=1200-byte single-fragment datagrams cross this path.");
+    if rung_1200_delivered {
+        println!("  PASS: the 1200-byte rung was delivered on this path.");
+        println!(
+            "  At the default {DEFAULT_UNDERLAY_UDP_MTU}-byte underlay MTU this is reassembled from \
+             {} fragments (single-fragment needs underlay >= 1310), so this proves reassembled \
+             delivery at 1200, not single-fragment.",
+            fragments_for(QUIC_MIN_MTU as usize, DEFAULT_UNDERLAY_UDP_MTU)
+        );
     } else {
-        println!("  FAIL: could not deliver 1200 bytes single-fragment.");
+        println!("  FAIL: the 1200-byte rung was lost.");
         println!("  quinn cannot run below its 1200-byte floor on this path.");
     }
 
