@@ -12,6 +12,6 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
 fips-bridge-core = { path = "../fips-bridge-core" }
-fips-endpoint.workspace = true
+nvpn-fips-endpoint.workspace = true
 tokio.workspace = true
 anyhow.workspace = true

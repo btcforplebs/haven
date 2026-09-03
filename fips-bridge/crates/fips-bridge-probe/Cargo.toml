@@ -7,7 +7,7 @@ publish = false
 
 [dependencies]
 fips-bridge-core = { path = "../fips-bridge-core" }
-fips-endpoint.workspace = true
+nvpn-fips-endpoint.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
 sha2 = "0.10"

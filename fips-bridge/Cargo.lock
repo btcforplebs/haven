@@ -629,7 +629,7 @@ name = "fips-bridge-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "fips-endpoint",
+ "nvpn-fips-endpoint",
  "quinn",
  "rcgen",
  "rustls",
@@ -643,7 +643,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "fips-bridge-core",
- "fips-endpoint",
+ "nvpn-fips-endpoint",
  "tokio",
 ]
 
@@ -653,73 +653,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "fips-bridge-core",
- "fips-endpoint",
+ "nvpn-fips-endpoint",
  "sha2",
  "tokio",
-]
-
-[[package]]
-name = "fips-core"
-version = "0.4.53"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01294b3aa23edc1a2b770df29a8526f3e1725c1338cfd786616772eec39c8136"
-dependencies = [
- "base64",
- "bluer",
- "dirs",
- "fips-identity",
- "futures",
- "hex",
- "hkdf",
- "libc",
- "mdns-sd",
- "nostr",
- "nostr-sdk",
- "portable-atomic",
- "procfs",
- "rand 0.10.2",
- "ring",
- "rtnetlink",
- "rustables",
- "secp256k1 0.30.0",
- "serde",
- "serde_json",
- "serde_yaml",
- "sha2",
- "simple-dns",
- "socket2",
- "thiserror 2.0.19",
- "tokio",
- "tokio-socks",
- "tokio-tungstenite",
- "tracing",
- "tun",
- "uuid",
- "windows-sys 0.61.2",
- "wintun",
-]
-
-[[package]]
-name = "fips-endpoint"
-version = "0.4.53"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b23535c68d873c53004179ba6b46c086c2993d20fa69c373cf009775afdc724"
-dependencies = [
- "fips-core",
-]
-
-[[package]]
-name = "fips-identity"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6f523b6e13208470a1340f26da6255c653980ce773ee883ffc956a05d15dbcd"
-dependencies = [
- "bech32",
- "hex",
- "rand 0.10.2",
- "secp256k1 0.30.0",
- "sha2",
- "thiserror 2.0.19",
 ]
 
 [[package]]
@@ -1518,6 +1454,72 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "071dfc062690e90b734c0b2273ce72ad0ffa95f0c74596bc250dcfd960262841"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "nvpn-fips-core"
+version = "0.4.72"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66d4c0e529edda6c4c8597f1b9eb45641ad2454bb59819f08ad6c0ef2a0a8d5c"
+dependencies = [
+ "base64",
+ "bluer",
+ "dirs",
+ "futures",
+ "hex",
+ "hkdf",
+ "libc",
+ "mdns-sd",
+ "nostr",
+ "nostr-sdk",
+ "nvpn-fips-identity",
+ "portable-atomic",
+ "procfs",
+ "rand 0.10.2",
+ "ring",
+ "rtnetlink",
+ "rustables",
+ "secp256k1 0.30.0",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sha2",
+ "simple-dns",
+ "socket2",
+ "thiserror 2.0.19",
+ "tokio",
+ "tokio-socks",
+ "tokio-tungstenite",
+ "tracing",
+ "tun",
+ "uuid",
+ "windows-sys 0.61.2",
+ "wintun",
+ "zeroize",
+]
+
+[[package]]
+name = "nvpn-fips-endpoint"
+version = "0.4.72"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87fa2de611e7804a69be6c83a90ee2cd4f87402a166b88a1dac54742a9e62d85"
+dependencies = [
+ "nvpn-fips-core",
+]
+
+[[package]]
+name = "nvpn-fips-identity"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2aa27c3342560d6a3d895d9e2f7f8dbb3a0f3ccf0e6c083ea418d935af134ae8"
+dependencies = [
+ "bech32",
+ "hex",
+ "rand 0.10.2",
+ "secp256k1 0.30.0",
+ "sha2",
+ "thiserror 2.0.19",
+ "zeroize",
 ]
 
 [[package]]
@@ -3084,6 +3086,20 @@ name = "zeroize"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
+dependencies = [
+ "zeroize_derive",
+]
+
+[[package]]
+name = "zeroize_derive"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "zerotrie"

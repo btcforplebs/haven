@@ -6,7 +6,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
-fips-endpoint.workspace = true
+nvpn-fips-endpoint.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
 
