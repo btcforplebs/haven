@@ -157,7 +157,7 @@ private struct YarnClipCell: View {
         VStack(alignment: .leading, spacing: 4) {
             ZStack {
                 Color.platformSecondaryGroupedBackground
-                AnimatedImage(url: clip.gifSmallURL, contentMode: .fill)
+                AnimatedImage(url: clip.gifSmallURL, contentMode: .fill, fallbackURL: clip.thumbURL)
                 if isSelecting {
                     Color.black.opacity(0.4)
                     ProgressView().tint(.white)

@@ -85,6 +85,9 @@ struct AnimatedImage: NSViewRepresentable {
     var contentMode: ContentMode = .fit
     var shouldAnimate: Bool = true
     var targetSize: CGSize? = nil
+    /// Static image to show if `url` fetches successfully but decodes to
+    /// nothing (e.g. a CDN variant that 200s with an empty body).
+    var fallbackURL: URL? = nil
     var onLoad: ((CGSize) -> Void)? = nil
 
     func makeNSView(context: Context) -> AspectFillImageView {
@@ -105,8 +108,10 @@ struct AnimatedImage: NSViewRepresentable {
     }
 
     private func loadAsync(url: URL, into view: AspectFillImageView) {
-        // Check in-memory cache first for instant rendering
-        if let cached = MediaCacheService.shared.cachedImage(for: url) {
+        // Check in-memory cache first for instant rendering. Skipped when animation
+        // is requested: the cache may hold a static first-frame decode left behind
+        // by a non-animating caller (e.g. a grid thumbnail) for the same URL.
+        if self.shouldAnimate == false, let cached = MediaCacheService.shared.cachedImage(for: url) {
             view.image = cached
             onLoad?(cached.size)
             return
@@ -136,7 +141,10 @@ struct AnimatedImage: NSViewRepresentable {
                 image = await ImageDownsampler.downsampleToScreen(data: data) ?? NSImage(data: data)
             }
 
-            guard let image else { return }
+            guard let image else {
+                await self.loadFallback(into: view)
+                return
+            }
 
             // Cache static images and non-animated GIF thumbnails in memory
             if !isGIF || !self.shouldAnimate {
@@ -149,6 +157,16 @@ struct AnimatedImage: NSViewRepresentable {
                 view.image = image
                 self.onLoad?(image.size)
             }
+        }
+    }
+
+    private func loadFallback(into view: AspectFillImageView) async {
+        guard let fallbackURL else { return }
+        guard let data = await MediaCacheService.shared.fetchData(url: fallbackURL) else { return }
+        guard let image = NSImage(data: data) else { return }
+        await MainActor.run {
+            view.image = image
+            self.onLoad?(image.size)
         }
     }
 }
@@ -229,6 +247,9 @@ struct AnimatedImage: UIViewRepresentable {
     var contentMode: ContentMode = .fit
     var shouldAnimate: Bool = true
     var targetSize: CGSize? = nil
+    /// Static image to show if `url` fetches successfully but decodes to
+    /// nothing (e.g. a CDN variant that 200s with an empty body).
+    var fallbackURL: URL? = nil
     var onLoad: ((CGSize) -> Void)? = nil
 
     func makeUIView(context: Context) -> UIImageView {
@@ -248,8 +269,10 @@ struct AnimatedImage: UIViewRepresentable {
     }
 
     private func loadAsync(url: URL, into view: UIImageView) {
-        // Check in-memory cache first for instant rendering
-        if let cached = MediaCacheService.shared.cachedImage(for: url) {
+        // Check in-memory cache first for instant rendering. Skipped when animation
+        // is requested: the cache may hold a static first-frame decode left behind
+        // by a non-animating caller (e.g. a grid thumbnail) for the same URL.
+        if self.shouldAnimate == false, let cached = MediaCacheService.shared.cachedImage(for: url) {
             view.image = cached
             onLoad?(cached.size)
             return
@@ -282,7 +305,10 @@ struct AnimatedImage: UIViewRepresentable {
                 image = await ImageDownsampler.downsampleToScreen(data: data) ?? UIImage(data: data)
             }
 
-            guard let image else { return }
+            guard let image else {
+                await self.loadFallback(into: view)
+                return
+            }
 
             // Cache static images and non-animated GIF thumbnails in memory
             if !isGIF || !self.shouldAnimate {
@@ -295,6 +321,16 @@ struct AnimatedImage: UIViewRepresentable {
                 view.image = image
                 self.onLoad?(image.size)
             }
+        }
+    }
+
+    private func loadFallback(into view: UIImageView) async {
+        guard let fallbackURL else { return }
+        guard let data = await MediaCacheService.shared.fetchData(url: fallbackURL) else { return }
+        guard let image = UIImage(data: data) else { return }
+        await MainActor.run {
+            view.image = image
+            self.onLoad?(image.size)
         }
     }
 
