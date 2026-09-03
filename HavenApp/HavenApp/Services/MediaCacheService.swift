@@ -137,6 +137,19 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
                 self?.evictExpiredFiles(ttlDays: ttlDays)
             }
         }
+
+        // Drop playback/thumbnail symlinks that point into a previous app
+        // container (iOS moves the container on every install and keeps tmp/).
+        // They can never be opened, and left in place they block re-creation.
+        let liveRoot = dbDir
+        DispatchQueue.global(qos: .utility).async {
+            let removed = PlayableLinks.purgeStale(in: FileManager.default.temporaryDirectory, liveRoot: liveRoot)
+            if removed > 0 {
+                Task { @MainActor in
+                    RelayProcessManager.shared.addLog("Media: removed \(removed) stale playable links from a previous install", level: "INFO")
+                }
+            }
+        }
     }
 
     // MARK: - In-Memory Image Cache
@@ -464,30 +477,39 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
         playableLock.lock()
         defer { playableLock.unlock() }
 
-        if let existingInfo = playableURLs[localURL], FileManager.default.fileExists(atPath: existingInfo.path) {
+        // Same-process fast path: a link we made earlier this launch. Verified
+        // with lstat semantics — never trust `fileExists` on a symlink here.
+        if let existingInfo = playableURLs[localURL],
+           case .liveLink(let dest) = PlayableLinks.inspect(existingInfo), dest == localURL.path {
             return existingInfo
         }
 
-        // Create a temp symlink with the resolved extension
         let tempDir = FileManager.default.temporaryDirectory
         let symlinkName = localURL.lastPathComponent + "." + resolvedExt
         let symlinkURL = tempDir.appendingPathComponent(symlinkName)
 
         do {
-            // Remove existing if any
-            if FileManager.default.fileExists(atPath: symlinkURL.path) {
-                try FileManager.default.removeItem(at: symlinkURL)
-            }
-            try FileManager.default.createSymbolicLink(at: symlinkURL, withDestinationURL: localURL)
+            // Replaces a dangling link left behind by a previous app container
+            // (every iOS reinstall moves the container but carries tmp/ along)
+            // instead of failing with EEXIST on it. See PlayableLinks.
+            let outcome = try PlayableLinks.ensureLink(at: symlinkURL, to: localURL)
             playableURLs[localURL] = symlinkURL
             #if DEBUG
-            print("MediaCacheService: Created playable symlink at \(symlinkURL.path)")
+            print("MediaCacheService: playable symlink \(outcome) at \(symlinkURL.path)")
             #endif
+            if outcome == .replaced {
+                Task { @MainActor in
+                    RelayProcessManager.shared.addLog("Media: replaced stale playable link \(symlinkName)", level: "INFO")
+                }
+            }
             return symlinkURL
         } catch {
             #if DEBUG
             print("MediaCacheService: Failed to create symlink: \(error)")
             #endif
+            Task { @MainActor in
+                RelayProcessManager.shared.addLog("Media: playable link failed for \(symlinkName): \(error.localizedDescription)", level: "WARN")
+            }
             // Returning the bare extensionless file would make AVFoundation fail
             // with -11828 "Cannot Open" — let callers fall back to the remote URL.
             return nil
@@ -818,12 +840,16 @@ class MediaCacheService: ObservableObject, @unchecked Sendable {
         return nil
     }
 
+    /// Gives an extensionless blob an alternate container extension for a
+    /// thumbnail retry. Deterministic name (`<blob>.<ext>`) so the link is
+    /// reused across launches and swept by PlayableLinks.purgeStale — the old
+    /// `thumb_<uuid>` scheme leaked one link per attempt, forever.
     private func makeOneOffSymlink(for localURL: URL, extension ext: String) -> URL? {
-        let tempDir = FileManager.default.temporaryDirectory
-        let symlinkURL = tempDir.appendingPathComponent("thumb_\(UUID().uuidString).\(ext)")
+        let linkURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(localURL.lastPathComponent + "." + ext)
         do {
-            try FileManager.default.createSymbolicLink(at: symlinkURL, withDestinationURL: localURL)
-            return symlinkURL
+            try PlayableLinks.ensureLink(at: linkURL, to: localURL)
+            return linkURL
         } catch {
             return nil
         }
