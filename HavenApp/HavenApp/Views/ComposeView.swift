@@ -85,6 +85,8 @@ struct ComposeView: View {
     @State private var autoSaveTask: Task<Void, Never>? = nil
     @State private var lastSavedContent: String = ""
     @State private var showingDraftPicker = false
+    @State private var showingGifPicker = false
+    @State private var isFetchingGif = false
     @State private var showingDiscardConfirm = false
     @StateObject private var draftService = DraftService.shared
 
@@ -317,6 +319,9 @@ struct ComposeView: View {
                     },
                     onAppearLoad: { loadBlossomMedia() }
                 )
+            }
+            .sheet(isPresented: $showingGifPicker) {
+                YarnGifPickerSheet { clip in attachYarnClip(clip) }
             }
             .sheet(isPresented: $showingDraftPicker) {
                 DraftPickerView(
@@ -718,6 +723,25 @@ struct ComposeView: View {
             .buttonStyle(.plain)
             .disabled(attachments.count >= 4)
 
+            Button(action: { showingGifPicker = true }) {
+                Group {
+                    if isFetchingGif {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("GIF")
+                            .font(.appSystem(size: 12, weight: .bold))
+                    }
+                }
+                .frame(width: 22, height: 22)
+                .foregroundColor(attachments.count >= 4 ? purple.opacity(0.3) : purple)
+                .padding(8)
+                .background(purple.opacity(0.1))
+                .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(attachments.count >= 4 || isFetchingGif)
+            .help("Search GIFs from getyarn.io")
+
             Spacer()
             
             if isUploading, let msg = uploadInfoProvider.uploadMessage {
@@ -1013,6 +1037,28 @@ struct ComposeView: View {
         }
     }
     
+    /// Downloads a getyarn.io clip's GIF and adds it as an attachment.
+    private func attachYarnClip(_ clip: YarnClip) {
+        guard attachments.count < 4, !isFetchingGif else { return }
+        isFetchingGif = true
+        Task {
+            do {
+                let data = try await YarnClipService.downloadGIF(uuid: clip.uuid)
+                await MainActor.run {
+                    if attachments.count < 4 {
+                        attachments.append(Attachment(data: data, fileURL: nil, type: .gif))
+                    }
+                    isFetchingGif = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.error = "Could not fetch GIF: \(error.localizedDescription)"
+                    isFetchingGif = false
+                }
+            }
+        }
+    }
+
     private func handlePasteFromClipboard() {
         guard attachments.count < 4 else { return }
 
@@ -1040,8 +1086,15 @@ struct ComposeView: View {
             ))
         } else if let clipboardString = PlatformClipboard.getString() {
             let trimmed = clipboardString.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let url = URL(string: trimmed),
-               (url.scheme == "http" || url.scheme == "https") {
+            if let pasted = URL(string: trimmed),
+               (pasted.scheme == "http" || pasted.scheme == "https") {
+                // A getyarn.io clip link (or its y.yarn.co media) pastes as the clip's GIF.
+                let url: URL
+                if let yarnUUID = YarnClipService.clipUUID(from: pasted) {
+                    url = YarnClipService.mediaURL(uuid: yarnUUID, suffix: "_text_hi.gif")
+                } else {
+                    url = pasted
+                }
                 let ext = url.pathExtension.lowercased()
                 let hasKnownExt = SupportedMediaFormats.allExtensions.contains(ext)
                 // Media URL — download and add as attachment

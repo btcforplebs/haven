@@ -41,6 +41,7 @@
 		1C825DA9B33BBA981AE9C5AA /* NIP04Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7167339BB13F4557E0E0BB77 /* NIP04Service.swift */; };
 		1DE79AF4D129B38A7F8B9AF7 /* RelayActivityBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8D137775BE10F82EECBD000 /* RelayActivityBanner.swift */; };
 		1F0E85CA638E913E0179BA1D /* MediaTypeDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D08ABA7CDBFD26CF0423E33 /* MediaTypeDetector.swift */; };
+		7A11C0DEF1220000000000B1 /* YarnGifPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A11C0DEF1220000000000B3 /* YarnGifPickerSheet.swift */; };
 		1F2A3B4C5D6E7F8A9B0C1D2E /* VaultChangeHandlers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D0E1F2A3B4C5D6E7F8A9B0C /* VaultChangeHandlers.swift */; };
 		1F95FE3EAEC35F682BAF6EDD /* UGCReportingDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2181DC8AEE2B3F8376683F88 /* UGCReportingDialog.swift */; };
 		20909F66629BEC603D2806A0 /* FloatingArrowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C6F73BF6DECD70643354714 /* FloatingArrowController.swift */; };
@@ -162,6 +163,7 @@
 		8B37F6C24433C0BAD2C06A81 /* RetryableAsyncImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = B201E5DCC6B60F417B3AEB84 /* RetryableAsyncImage.swift */; };
 		8C3BD71D4EE345968FB81D1E /* FeedService.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC33568A91E5B5B737A03D1F /* FeedService.swift */; };
 		8C6C5418A73D68D54599A473 /* MediaTypeDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D08ABA7CDBFD26CF0423E33 /* MediaTypeDetector.swift */; };
+		7A11C0DEF1220000000000B2 /* YarnGifPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A11C0DEF1220000000000B3 /* YarnGifPickerSheet.swift */; };
 		8C9D0E1F2A3B4C5D6E7F8A9B /* VaultNetworking.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A7B8C9D0E1F2A3B4C5D6E7F /* VaultNetworking.swift */; };
 		8DAE52B42FDAD53F0099799B /* SleepWakeMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DAE52B32FDAD53F0099799B /* SleepWakeMonitor.swift */; };
 		8DAE52B52FDAD53F0099799B /* SleepWakeMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DAE52B32FDAD53F0099799B /* SleepWakeMonitor.swift */; };
@@ -197,6 +199,7 @@
 		A776D1AE55AE27F05E37227B /* MacRelaySyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F85AD2B0C4772CBF8D0DA51 /* MacRelaySyncService.swift */; };
 		A84C5D6E7F8A9B0C1D2E3F4A /* MediaGalleryViewer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A73B4C5D6E7F8A9B0C1D2E3F /* MediaGalleryViewer.swift */; };
 		A9175BE3300E9CE097E14F26 /* BlossomService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 803F7E83A0267F02449FA666 /* BlossomService.swift */; };
+		7A11C0DEF1220000000000A1 /* YarnClipService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A11C0DEF1220000000000A3 /* YarnClipService.swift */; };
 		A945F90593453AEC2794E43C /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = E7F41B7A5FACA30EA7AE9015 /* Localizable.xcstrings */; };
 		A95D6E7F8A9B0C1D2E3F4A5B /* MediaGalleryViewer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A73B4C5D6E7F8A9B0C1D2E3F /* MediaGalleryViewer.swift */; };
 		AA01BB02CC03DD04EE05FF06 /* VaultEngagement.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A2B3C4D5E6F708192A3B4C5 /* VaultEngagement.swift */; };
@@ -204,6 +207,7 @@
 		AAABCCC974BE94C9B2626D3B /* RelayProcessManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22D8D67DB985CB4EA94E4FAF /* RelayProcessManager.swift */; };
 		AB12CD34EF56AB78CD90EF12 /* CredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12AB34CD56EF78AB90CD12EF /* CredentialStore.swift */; };
 		AB84ADE390F047D2226B293C /* BlossomService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 803F7E83A0267F02449FA666 /* BlossomService.swift */; };
+		7A11C0DEF1220000000000A2 /* YarnClipService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A11C0DEF1220000000000A3 /* YarnClipService.swift */; };
 		AE37789FA8A675627D6EB342 /* NostrService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65D86DC20FC17947852F5719 /* NostrService.swift */; };
 		AEF9AA7E3966D8F97CD9EB41 /* GroupModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0F7E39EC2E804B21B7832AC8 /* GroupModels.swift */; };
 		AF4BFB028BF32397C9E696EF /* HavenApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E687B37FB00F4ED20723DBB /* HavenApp.swift */; };
@@ -407,10 +411,12 @@
 		75ED38A5B67740F711EB5C45 /* PushNotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushNotificationService.swift; sourceTree = "<group>"; };
 		775FD3A0FC8C2289FB4BBFE3 /* DMService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DMService.swift; sourceTree = "<group>"; };
 		7D08ABA7CDBFD26CF0423E33 /* MediaTypeDetector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaTypeDetector.swift; sourceTree = "<group>"; };
+		7A11C0DEF1220000000000B3 /* YarnGifPickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YarnGifPickerSheet.swift; sourceTree = "<group>"; };
 		7D8E9F0A1B2C3D4E5F6A7B8C /* VaultToolbar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultToolbar.swift; sourceTree = "<group>"; };
 		7EADF0099992A209CBBEFFB2 /* PlatformCompat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformCompat.swift; sourceTree = "<group>"; };
 		7EC0F366EF1C957EF41DE12C /* NotificationNames.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationNames.swift; sourceTree = "<group>"; };
 		803F7E83A0267F02449FA666 /* BlossomService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlossomService.swift; sourceTree = "<group>"; };
+		7A11C0DEF1220000000000A3 /* YarnClipService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YarnClipService.swift; sourceTree = "<group>"; };
 		83A89942B12FE776468EDB8C /* PriceService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PriceService.swift; sourceTree = "<group>"; };
 		83D64C528C3BBCD856610AB5 /* ProofOfWorkSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProofOfWorkSettingsView.swift; sourceTree = "<group>"; };
 		848045286D78E78658D43BE3 /* MenuBarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarView.swift; sourceTree = "<group>"; };
@@ -557,6 +563,7 @@
 				D4E5F60718293A4B5C6D7E8F /* MediaGalleryTypes.swift */,
 				3479233DA13D1E79374B68FD /* MediaTabView.swift */,
 				7D08ABA7CDBFD26CF0423E33 /* MediaTypeDetector.swift */,
+				7A11C0DEF1220000000000B3 /* YarnGifPickerSheet.swift */,
 				848045286D78E78658D43BE3 /* MenuBarView.swift */,
 				47E52CADA44AC55958A69E64 /* MessageComposerView.swift */,
 				1E7AB74FB3335BCDF2AA8841 /* NoteDetailView.swift */,
@@ -777,6 +784,7 @@
 			children = (
 				9B16351ED2F5677D2447FC87 /* BlossomMediaCache.swift */,
 				803F7E83A0267F02449FA666 /* BlossomService.swift */,
+				7A11C0DEF1220000000000A3 /* YarnClipService.swift */,
 				181FBA6695959DF3B88E2211 /* CashuService.swift */,
 				1810634848EE1957C7E49DAF /* ConfigService.swift */,
 				12AB34CD56EF78AB90CD12EF /* CredentialStore.swift */,
@@ -1029,6 +1037,7 @@
 				E0A5461B68AE422C1589FC94 /* BlossomMediaCache.swift in Sources */,
 				D20EC272280ECE651610D562 /* BlossomMediaListView.swift in Sources */,
 				AB84ADE390F047D2226B293C /* BlossomService.swift in Sources */,
+				7A11C0DEF1220000000000A2 /* YarnClipService.swift in Sources */,
 				F22FA656E63FA88BF7E97461 /* CachedAsyncImage.swift in Sources */,
 				6C98A64C1944F2053F6E888D /* CashuModels.swift in Sources */,
 				708A80272ADE1E2686142BB1 /* CashuService.swift in Sources */,
@@ -1085,6 +1094,7 @@
 				2F1FD7253CE6BB1663ADC269 /* MediaItem.swift in Sources */,
 				82226E9D704A71764A35BB7D /* MediaTabView.swift in Sources */,
 				1F0E85CA638E913E0179BA1D /* MediaTypeDetector.swift in Sources */,
+				7A11C0DEF1220000000000B1 /* YarnGifPickerSheet.swift in Sources */,
 				7682D9DBB00E467214FB1150 /* MempoolAPIService.swift in Sources */,
 				E50C4B4F8787584FC7E29EA2 /* MenuBarView.swift in Sources */,
 				2967EF7A63FDB4431EB3651A /* MessageComposerView.swift in Sources */,
@@ -1191,6 +1201,7 @@
 				8FEB6F24A3984B98CCF81E56 /* BlossomMediaCache.swift in Sources */,
 				EB9306A10F9E946F899CE34F /* BlossomMediaListView.swift in Sources */,
 				A9175BE3300E9CE097E14F26 /* BlossomService.swift in Sources */,
+				7A11C0DEF1220000000000A1 /* YarnClipService.swift in Sources */,
 				DDF232D616C179F4250BAA90 /* CachedAsyncImage.swift in Sources */,
 				18D631CF52FF1BAC3F2FB31B /* CashuModels.swift in Sources */,
 				8FDC1E4DFD9F936402C7232A /* CashuService.swift in Sources */,
@@ -1244,6 +1255,7 @@
 				C8F9F8DCF05C8D05CBFD37F2 /* MediaItem.swift in Sources */,
 				68F697D47223F3BB082DC65B /* MediaTabView.swift in Sources */,
 				8C6C5418A73D68D54599A473 /* MediaTypeDetector.swift in Sources */,
+				7A11C0DEF1220000000000B2 /* YarnGifPickerSheet.swift in Sources */,
 				F10135C9F1B704EF4CFDCDB7 /* MempoolAPIService.swift in Sources */,
 				D3ED7A3CC129E99735F99CB6 /* MenuBarView.swift in Sources */,
 				5686CC2CCACE6E4F7B59F892 /* MessageComposerView.swift in Sources */,
