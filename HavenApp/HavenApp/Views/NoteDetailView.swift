@@ -2389,12 +2389,17 @@ struct NoteNavigationLink<Label: View>: View {
 
     var body: some View {
         if let selection {
-            Button {
-                selection.select(note)
-            } label: {
-                label()
-            }
-            .buttonStyle(.plain)
+            // A tap gesture, NOT a Button. Note rows embed their own Buttons for
+            // reply/repost/like/zap, and on iOS a Button nested inside another
+            // Button never receives the tap -- the outer one swallows it, so
+            // every action in the row dies. NavigationLink does not have that
+            // problem, which is why the push path can stay a link. This mirrors
+            // what the macOS branch of FeedView already does for the same reason.
+            label()
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    selection.select(note)
+                }
         } else {
             NavigationLink(value: note) {
                 label()
