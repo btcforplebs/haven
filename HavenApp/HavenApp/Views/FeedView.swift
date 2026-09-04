@@ -130,6 +130,8 @@ struct FeedView: View {
     @State private var lastScrollOffset: CGFloat = 0
     @State private var isScrollingDown: Bool = false
     @State private var navigationPath = NavigationPath()
+    /// Non-nil when an iPad split pane owns the note detail column.
+    @Environment(\.noteDetailSelection) private var noteDetailSelection
     /// Debounce work item for auto-loading pending notes so overlapping
     /// onChange triggers don't queue duplicate applyPendingNotes() calls.
     @State private var autoLoadWork: DispatchWorkItem?
@@ -351,14 +353,24 @@ struct FeedView: View {
 
     var body: some View {
         #if os(iOS)
-        NavigationStack(path: $navigationPath) {
+        if noteDetailSelection != nil {
+            // iPad two-pane layout: the enclosing NoteSplitPane owns the detail
+            // column, so the feed must NOT wrap itself in a stack — a private
+            // stack here would swallow selections and push over the list again.
             rootContent
                 .navigationTitle("")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbarBackground(.hidden, for: .navigationBar)
-                .navigationDestination(for: FeedNote.self) { note in
-                    NoteDetailView(note: note)
-                }
+        } else {
+            NavigationStack(path: $navigationPath) {
+                rootContent
+                    .navigationTitle("")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbarBackground(.hidden, for: .navigationBar)
+                    .navigationDestination(for: FeedNote.self) { note in
+                        NoteDetailView(note: note)
+                    }
+            }
         }
         #else
         VStack(spacing: 0) {
@@ -1247,7 +1259,7 @@ struct FeedView: View {
 
                             Group {
                                 if shouldUseNavLink {
-                                    NavigationLink(value: note) {
+                                    NoteNavigationLink(note: note) {
                                         feedNoteRowContent(note: note, profile: profile, rowData: rowData, parentIsNext: parentIsNext, isExpanded: isExpanded)
                                     }
                                     .buttonStyle(.plain)
@@ -1863,7 +1875,7 @@ struct FeedNoteRow: View {
         // Threading View: Parent Note Preview (shows above the current note)
         if showParent, let pId = note.parentEventId {
             if let parent = rowData.parentNote {
-                NavigationLink(value: parent) {
+                NoteNavigationLink(note: parent) {
                     HStack(alignment: .top, spacing: 12) {
                         VStack(spacing: 0) {
                             AvatarView(url: rowData.parentProfile?.pictureURL, pubkey: parent.pubkey)
@@ -2180,7 +2192,7 @@ struct FeedNoteRow: View {
             VStack(spacing: 8) {
                 ForEach(note.quotedEventIds, id: \.self) { quoteId in
                     if let quotedNote = actions.findNote(quoteId) {
-                        NavigationLink(value: quotedNote) {
+                        NoteNavigationLink(note: quotedNote) {
                             QuotedNoteView(note: quotedNote)
                         }
                         .buttonStyle(.plain)

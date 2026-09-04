@@ -113,7 +113,7 @@ extension VaultView {
                         )
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            self.showingNoteId = event.id
+                            self.openNote(event.id)
                         }
                         #endif
                     }
@@ -125,7 +125,7 @@ extension VaultView {
                             self.showingProfilePubkey = id
                             return .handled
                         } else if id.hasPrefix("note1") || id.hasPrefix("nevent1") {
-                            self.showingNoteId = id
+                            self.openNote(id)
                             return .handled
                         }
                     }
@@ -236,7 +236,7 @@ extension VaultView {
                             self.showingProfilePubkey = id
                             return .handled
                         } else if id.hasPrefix("note1") || id.hasPrefix("nevent1") || id.hasPrefix("naddr1") {
-                            self.showingNoteId = id
+                            self.openNote(id)
                             return .handled
                         }
                     }
@@ -344,7 +344,7 @@ extension VaultView {
                             self.showingProfilePubkey = id
                             return .handled
                         } else if id.hasPrefix("note1") || id.hasPrefix("nevent1") || id.hasPrefix("naddr1") {
-                            self.showingNoteId = id
+                            self.openNote(id)
                             return .handled
                         }
                     }
