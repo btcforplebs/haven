@@ -1,0 +1,8 @@
+/target
+
+# Xcode output for the iOS probe harness. Together these are ~170 MB and are
+# fully reproducible from build_fips_ios.sh plus the Rust workspace.
+ios-probe/build/
+ios-probe/DerivedData/
+
+.DS_Store
