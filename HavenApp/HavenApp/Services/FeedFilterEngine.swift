@@ -33,6 +33,19 @@ enum FeedFilterEngine {
         popularNoteScores: [String: Double],
         throttledPubkeys: [String: Int]
     ) -> [FeedNote] {
+        // Articles: long-form only, from the follow set, one event per
+        // `pubkey:d` address. 30023 is a parameterized-replaceable kind, so an
+        // edited article arrives as a second event with the same address and
+        // both would otherwise show as separate rows.
+        if mode == .articles {
+            let longForm = notes.filter { note in
+                if blocked.contains(note.pubkey) { return false }
+                guard note.kind == 30023 else { return false }
+                return followedPubkeys.contains(note.pubkey)
+            }
+            return dedupeAddressable(longForm)
+        }
+
         var filtered = notes.filter { note in
             if blocked.contains(note.pubkey) { return false }
             if note.kind == 6 && !showReposts { return false }
@@ -106,6 +119,26 @@ enum FeedFilterEngine {
         }
 
         return media
+    }
+
+    /// Collapses parameterized-replaceable events to one per `pubkey:d`
+    /// address, keeping the newest, and returns them newest-first. Events with
+    /// no `d` tag fall back to their own id so they are never merged together.
+    static func dedupeAddressable(_ notes: [FeedNote]) -> [FeedNote] {
+        var newestByAddress: [String: FeedNote] = [:]
+        for note in notes {
+            let dTag = note.tags.first { $0.count >= 2 && $0[0] == "d" }?[1]
+            let address = "\(note.kind):\(note.pubkey):\(dTag ?? note.id)"
+            if let existing = newestByAddress[address] {
+                if note.createdAt > existing.createdAt { newestByAddress[address] = note }
+            } else {
+                newestByAddress[address] = note
+            }
+        }
+        return newestByAddress.values.sorted {
+            if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+            return $0.id > $1.id
+        }
     }
 
     /// For each throttled author, keeps only their N most recent posts.

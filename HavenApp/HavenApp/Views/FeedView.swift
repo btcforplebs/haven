@@ -119,6 +119,8 @@ struct FeedView: View {
     @State private var showingNoteId: String?
     @State private var showingProfileKey: IdentifiableString?
     @State private var showingMediaUrl: IdentifiableURL?
+    /// macOS presents the article reader as a sheet; iOS pushes it.
+    @State private var showingArticle: ArticleRoute?
     @State private var selectedGridMediaNoteId: String?
     @State private var isShowingGridMediaViewer = false
     @State private var gridMediaSnapshot: [FeedNote] = []
@@ -156,7 +158,7 @@ struct FeedView: View {
             return stored
         }
         switch feedService.feedMode {
-        case .following:
+        case .following, .articles:
             return false
         case .discovery, .global, .popular, .media:
             return configService.config.useFeedCompactMode
@@ -176,7 +178,9 @@ struct FeedView: View {
         switch feedService.feedMode {
         case .following, .discovery, .global, .popular:
             return true
-        case .media:
+        // Articles and Media are card/grid layouts, not timeline rows —
+        // compact mode has nothing to condense.
+        case .media, .articles:
             return false
         }
     }
@@ -361,6 +365,12 @@ struct FeedView: View {
                 .navigationTitle("")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbarBackground(.hidden, for: .navigationBar)
+                // The article reader is pushed onto the enclosing NoteSplitPane
+                // stack in two-pane mode, so the destination has to be
+                // registered on both branches.
+                .navigationDestination(for: ArticleRoute.self) { route in
+                    ArticleReaderView(note: route.note)
+                }
         } else {
             NavigationStack(path: $navigationPath) {
                 rootContent
@@ -369,6 +379,9 @@ struct FeedView: View {
                     .toolbarBackground(.hidden, for: .navigationBar)
                     .navigationDestination(for: FeedNote.self) { note in
                         NoteDetailView(note: note)
+                    }
+                    .navigationDestination(for: ArticleRoute.self) { route in
+                        ArticleReaderView(note: route.note)
                     }
             }
         }
@@ -539,8 +552,8 @@ struct FeedView: View {
                 // are no cached notes to render. Once a snapshot has been
                 // restored (or notes have streamed in), the background sync
                 // is surfaced via the inline `syncingPill` instead.
-                let showLoadingContacts = (feedService.feedMode == .following || (feedService.feedMode == .media && feedService.mediaFeedMode == .following)) && feedService.isLoadingContacts && feedService.notes.isEmpty
-                let showEmptyState = (feedService.feedMode == .following || (feedService.feedMode == .media && feedService.mediaFeedMode == .following)) && feedService.followedPubkeys.isEmpty && !feedService.isLoadingFeed && !feedService.isLoadingContacts
+                let showLoadingContacts = (feedService.isFollowSetMode || (feedService.feedMode == .media && feedService.mediaFeedMode == .following)) && feedService.isLoadingContacts && feedService.notes.isEmpty
+                let showEmptyState = (feedService.isFollowSetMode || (feedService.feedMode == .media && feedService.mediaFeedMode == .following)) && feedService.followedPubkeys.isEmpty && !feedService.isLoadingFeed && !feedService.isLoadingContacts
 
                 if showLoadingContacts {
                     loadingContactsView
@@ -656,6 +669,11 @@ struct FeedView: View {
         }
         .sheet(item: $showingMediaUrl) { media in
             FeedMediaPager(urls: media.allURLs, selected: media.url, onDismiss: { showingMediaUrl = nil })
+        }
+        .sheet(item: $showingArticle) { route in
+            ArticleReaderView(note: route.note)
+                .environmentObject(nostrService)
+                .frame(minWidth: 520, minHeight: 480)
         }
         .sheet(isPresented: $isShowingGridMediaViewer) {
             ZStack {
@@ -1218,6 +1236,64 @@ struct FeedView: View {
 
     // MARK: - Feed List
 
+    /// Articles feed: long-form events from the follow set, already synced to
+    /// the device's own relay by the normal feed sync, rendered as cards
+    /// instead of as notes.
+    @ViewBuilder
+    private var articleListView: some View {
+        LazyVStack(spacing: 14) {
+            if feedService.isLoadingFeed && feedService.filteredNotes.isEmpty {
+                ForEach(0..<3, id: \.self) { _ in
+                    FeedNoteSkeletonRow()
+                        .padding(.horizontal, 16)
+                }
+            }
+
+            if feedService.filteredNotes.isEmpty && !feedService.isLoadingFeed {
+                emptyArticlesStateView
+            }
+
+            ForEach(feedService.filteredNotes) { note in
+                let card = ArticleCardView(
+                    note: note,
+                    profile: nostrService.profiles[note.pubkey],
+                    onAuthorTap: { pubkey in showingProfileKey = IdentifiableString(id: pubkey) }
+                )
+                .padding(.horizontal, 16)
+
+                #if os(iOS)
+                NavigationLink(value: ArticleRoute(note: note)) { card }
+                    .buttonStyle(.plain)
+                #else
+                card.onTapGesture { showingArticle = ArticleRoute(note: note) }
+                #endif
+            }
+
+            if !feedService.filteredNotes.isEmpty {
+                Color.clear
+                    .frame(height: 1)
+                    .onAppear { feedService.loadMore() }
+            }
+        }
+        .padding(.vertical, 16)
+    }
+
+    private var emptyArticlesStateView: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "doc.richtext")
+                .font(.appSystem(size: 34))
+                .foregroundColor(.havenPurple.opacity(0.7))
+            Text("No articles yet")
+                .font(.appSystem(size: 16, weight: .bold))
+            Text("Long-form posts from people you follow show up here. Nothing to read yet.")
+                .font(.appSystem(size: 13))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 40)
+        .padding(.vertical, 60)
+    }
+
     private var feedList: some View {
         ScrollViewReader { proxy in
             ZStack(alignment: .top) {
@@ -1230,6 +1306,8 @@ struct FeedView: View {
 
                         if feedService.feedMode == .media {
                             mediaGridView
+                        } else if feedService.feedMode == .articles {
+                            articleListView
                         } else {
                             LazyVStack(spacing: 12) {
 
