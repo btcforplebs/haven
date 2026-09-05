@@ -943,6 +943,9 @@ class FeedService: ObservableObject {
         if feedMode == .recipes && mode != .recipes {
             RecipeFeedService.shared.disconnect()
         }
+        if feedMode == .live && mode != .live {
+            LiveFeedService.shared.disconnect()
+        }
         shouldScrollToTopOnLoad = true
         feedMode = mode
         notes.removeAll()
@@ -972,7 +975,10 @@ class FeedService: ObservableObject {
             self?.bgAccumulator.isGlobalMode = isGlobal
         }
 
-        if mode == .recipes {
+        if mode == .live {
+            // Same reasoning as Recipes: LiveFeedService owns this one.
+            LiveFeedService.shared.loadIfNeeded()
+        } else if mode == .recipes {
             // Recipes are served by RecipeFeedService against external relays —
             // the note pipeline has nothing to subscribe to here, and starting
             // it would open follow-set subscriptions nothing will read.
@@ -1083,7 +1089,7 @@ class FeedService: ObservableObject {
         switch feedMode {
         case .following, .discovery, .articles: return true
         case .media: return mediaFeedMode == .following
-        case .global, .popular, .recipes: return false
+        case .global, .popular, .recipes, .live: return false
         }
     }
 
@@ -1109,7 +1115,7 @@ class FeedService: ObservableObject {
         case .following, .articles: return followedPubkeys
         case .media: return mediaFeedMode == .following ? followedPubkeys : []
         case .discovery: return extendedNetworkPubkeys
-        case .global, .popular, .recipes: return []
+        case .global, .popular, .recipes, .live: return []
         }
     }
 
@@ -1331,7 +1337,7 @@ class FeedService: ObservableObject {
             if !extendedNetworkPubkeys.isEmpty {
                 filter["authors"] = extendedNetworkPubkeys
             }
-        case .global, .popular, .media, .recipes:
+        case .global, .popular, .media, .recipes, .live:
             break // No author restriction — search everything
         }
 
