@@ -741,6 +741,19 @@ class AppState: ObservableObject {
 
 // MARK: - Note Split Pane
 
+/// Column widths for [NoteSplitPane]. A separate type because static stored
+/// properties are not allowed in a generic one.
+private enum NoteSplitMetrics {
+    /// Leaves a readable note column on the narrowest iPad in landscape
+    /// (1133pt) once the sidebar has claimed its ~320pt.
+    static let defaultList: Double = 380
+    /// Floors, not preferences: below these a column stops being usable. The
+    /// list floor is about one full note row; the detail floor is roughly the
+    /// width at which a note's text stops wrapping into a readable measure.
+    static let minList: Double = 280
+    static let minDetail: Double = 360
+}
+
 /// iPad two-pane note layout: the scrolling list on the left, the selected note
 /// held open on the right.
 ///
@@ -758,22 +771,73 @@ struct NoteSplitPane<Content: View>: View {
 
     @StateObject private var selection = NoteDetailSelection()
 
-    /// Width of the list column. The sidebar already claims ~320pt, so this is
-    /// sized to leave a readable note column on the narrowest iPad in landscape
-    /// (1133pt) rather than to fill the space evenly.
-    private let listWidth: CGFloat = 380
+    /// Width of the list column, dragged by the reader and remembered across
+    /// launches. The default leaves a readable note column on the narrowest
+    /// iPad in landscape (1133pt) once the sidebar has claimed its ~320pt.
+    @AppStorage("ipad.noteSplit.listWidth") private var listWidth: Double = NoteSplitMetrics.defaultList
+
+    /// Width when the current drag began, so the column tracks the finger
+    /// exactly instead of accelerating away from it (a drag reports total
+    /// translation from its start, not a delta since the last callback).
+    @State private var dragStartWidth: Double?
+
 
     var body: some View {
-        HStack(spacing: 0) {
-            content()
-                .frame(width: listWidth)
-                .environment(\.noteDetailSelection, selection)
+        GeometryReader { geo in
+            // The ceiling depends on the pane's real width, which changes with
+            // rotation, Split View and the sidebar collapsing. Clamping on read
+            // means a width saved on a wide layout can't strand the detail
+            // column off-screen on a narrow one — and it is restored, not
+            // overwritten, when there is room again.
+            let maxListWidth = max(NoteSplitMetrics.minList, geo.size.width - NoteSplitMetrics.minDetail)
+            let width = min(max(listWidth, NoteSplitMetrics.minList), maxListWidth)
 
-            Divider()
+            HStack(spacing: 0) {
+                content()
+                    .frame(width: width)
+                    .environment(\.noteDetailSelection, selection)
 
-            detailColumn
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                resizeHandle(maxListWidth: maxListWidth)
+
+                detailColumn
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            // GeometryReader hands its child the full space but does not force
+            // it to fill: without this the row sizes to its content and the
+            // handle has nothing to span.
+            .frame(width: geo.size.width, height: geo.size.height)
         }
+    }
+
+    /// The draggable divider. A plain `Divider()` is one hairline wide and
+    /// cannot be hit with a finger, so the visible line stays hairline while the
+    /// gesture is attached to 14pt of clear space around it, with a grip so the
+    /// column is discoverably resizable rather than secretly so.
+    private func resizeHandle(maxListWidth: Double) -> some View {
+        ZStack {
+            Color.clear
+            Rectangle()
+                .fill(Color(uiColor: .separator))
+                .frame(width: 1)
+            Capsule()
+                .fill(Color(uiColor: .tertiaryLabel))
+                .frame(width: 4, height: 44)
+        }
+        .frame(width: 14)
+        .frame(maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 1)
+                .onChanged { value in
+                    let start = dragStartWidth ?? listWidth
+                    dragStartWidth = start
+                    listWidth = min(max(start + value.translation.width, NoteSplitMetrics.minList), maxListWidth)
+                }
+                .onEnded { _ in dragStartWidth = nil }
+        )
+        .onTapGesture(count: 2) { listWidth = NoteSplitMetrics.defaultList }
+        .accessibilityLabel("Resize note list")
+        .accessibilityHint("Drag to change the width of the list. Double tap to reset.")
     }
 
     @ViewBuilder
