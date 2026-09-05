@@ -48,6 +48,7 @@
 		19BDF752BAF456473D9AD1D9 /* DMThreadView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A0D442B3835900C7663D934 /* DMThreadView.swift */; };
 		1C825DA9B33BBA981AE9C5AA /* NIP04Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7167339BB13F4557E0E0BB77 /* NIP04Service.swift */; };
 		1D654A11277DD0529E08D4B5 /* VaultNetworking.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48F5705A371573904C7229D4 /* VaultNetworking.swift */; };
+		1DE0D88EB10F64BC56FCF08E /* LockScreenWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E86551C962F13A9A41AB343 /* LockScreenWidget.swift */; };
 		1F0E85CA638E913E0179BA1D /* MediaTypeDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D08ABA7CDBFD26CF0423E33 /* MediaTypeDetector.swift */; };
 		1F823537B9F13B3D4C003E11 /* ContactManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E4EFE6422E6E0A896809308 /* ContactManager.swift */; };
 		1F95FE3EAEC35F682BAF6EDD /* UGCReportingDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2181DC8AEE2B3F8376683F88 /* UGCReportingDialog.swift */; };
@@ -123,6 +124,7 @@
 		5871EF7B3B1A4E58863FD494 /* VaultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABD60255398375B7A8772D93 /* VaultView.swift */; };
 		587441300839972EAF70AF41 /* NIP49Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75ABEDE255E82775CCD37559 /* NIP49Service.swift */; };
 		59965C511D2D8F2DCDA83D3C /* BitcoinSweepDisclaimerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89A56934F313BFA876DC49BA /* BitcoinSweepDisclaimerView.swift */; };
+		5AEA663D4C925CFBB1E13E82 /* MosaicWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 618885CB514523D351B723B4 /* MosaicWidget.swift */; };
 		5BE1C0F1ADE02933CC0A2272 /* BlossomDashboardComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C27B2F22F799426D3D276B3 /* BlossomDashboardComponents.swift */; };
 		5C0AEAD4DE0514BF0CAD6AF3 /* VaultChangeHandlers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 982E5846CE3EB2461F41A4FB /* VaultChangeHandlers.swift */; };
 		5E779E545DA5566174AE5AF6 /* FeedServiceTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A19809A765C51F397B19FD14 /* FeedServiceTypes.swift */; };
@@ -279,6 +281,7 @@
 		D20EC272280ECE651610D562 /* BlossomMediaListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 432CF90E26FEFB48B713C9F9 /* BlossomMediaListView.swift */; };
 		D25C2A65954161799317E919 /* VaultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABD60255398375B7A8772D93 /* VaultView.swift */; };
 		D345A3970B0C13CF6C96F080 /* PriceService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83A89942B12FE776468EDB8C /* PriceService.swift */; };
+		D36B7F9AFD3674E39BF74C2C /* SatsWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = C91351C6982BF9F7DB5EAE92 /* SatsWidget.swift */; };
 		D36E4D6CF073E04B95CB5934 /* ActionButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4757A74E31DFBA866003FD73 /* ActionButton.swift */; };
 		D39D530FAF14B1784E25FE34 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = E7F41B7A5FACA30EA7AE9015 /* Localizable.xcstrings */; };
 		D3ED7A3CC129E99735F99CB6 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 848045286D78E78658D43BE3 /* MenuBarView.swift */; };
@@ -438,6 +441,8 @@
 		5D5FDEA395EFFC23FE419C55 /* NostrVaultWidgetBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NostrVaultWidgetBundle.swift; sourceTree = "<group>"; };
 		5E31B27EC2F18B0F61C3A10A /* IconFilterButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconFilterButton.swift; sourceTree = "<group>"; };
 		5E687B37FB00F4ED20723DBB /* HavenApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HavenApp.swift; sourceTree = "<group>"; };
+		5E86551C962F13A9A41AB343 /* LockScreenWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockScreenWidget.swift; sourceTree = "<group>"; };
+		618885CB514523D351B723B4 /* MosaicWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MosaicWidget.swift; sourceTree = "<group>"; };
 		61CF844AAE65189FFA9CEC7C /* MacRelaySyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacRelaySyncService.swift; sourceTree = "<group>"; };
 		649EE87FE3A42105E4EC17E9 /* haven */ = {isa = PBXFileReference; path = haven; sourceTree = "<group>"; };
 		65D86DC20FC17947852F5719 /* NostrService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NostrService.swift; sourceTree = "<group>"; };
@@ -518,6 +523,7 @@
 		C3D0631CF48FD1659E6F1005 /* NostrEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NostrEvent.swift; sourceTree = "<group>"; };
 		C81B813614AC332D9C184C78 /* FollowingBackupService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FollowingBackupService.swift; sourceTree = "<group>"; };
 		C86A6AE71C1034FAB5E689FE /* DashboardHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardHelpers.swift; sourceTree = "<group>"; };
+		C91351C6982BF9F7DB5EAE92 /* SatsWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SatsWidget.swift; sourceTree = "<group>"; };
 		C9E0F271DFC0731ABBC9E938 /* StarterPack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StarterPack.swift; sourceTree = "<group>"; };
 		CC8C3E65ED03CD249289CAA9 /* PlayableLinks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayableLinks.swift; sourceTree = "<group>"; };
 		D0D02100F9C47D8B2A714FBA /* MediaGalleryViewer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaGalleryViewer.swift; sourceTree = "<group>"; };
@@ -673,10 +679,13 @@
 			isa = PBXGroup;
 			children = (
 				D5F431BCE8C47C98A4642716 /* FeedGlanceWidget.swift */,
+				5E86551C962F13A9A41AB343 /* LockScreenWidget.swift */,
+				618885CB514523D351B723B4 /* MosaicWidget.swift */,
 				5D5FDEA395EFFC23FE419C55 /* NostrVaultWidgetBundle.swift */,
 				A642C6ED1E71C74902E5A113 /* NostrVaultWidgets.entitlements */,
 				2BEA112FAABC73A446279BB0 /* NVWidgetKit.swift */,
 				38F0A09BAA2ED410A3EAD8AB /* QuickActionsWidget.swift */,
+				C91351C6982BF9F7DB5EAE92 /* SatsWidget.swift */,
 				4A42F9EDFFD04EEBA4DDA772 /* VaultPulseWidget.swift */,
 			);
 			path = NostrVaultWidgets;
@@ -1270,11 +1279,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				065C58B5B6B49523C02038DA /* FeedGlanceWidget.swift in Sources */,
+				1DE0D88EB10F64BC56FCF08E /* LockScreenWidget.swift in Sources */,
+				5AEA663D4C925CFBB1E13E82 /* MosaicWidget.swift in Sources */,
 				EC69E7FB15A8D973C111A810 /* NVSharedStore.swift in Sources */,
 				8A8A672CB3CA7E14FE8B7D6B /* NVWidgetKit.swift in Sources */,
 				427F08CD0181205E3529207E /* NVWidgetSnapshot.swift in Sources */,
 				E0AEE7D87B73FF5DA4703EC1 /* NostrVaultWidgetBundle.swift in Sources */,
 				A5B06D91684942B06596203F /* QuickActionsWidget.swift in Sources */,
+				D36B7F9AFD3674E39BF74C2C /* SatsWidget.swift in Sources */,
 				F934BA3FC08EBFD0A2D3BF2B /* VaultPulseWidget.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

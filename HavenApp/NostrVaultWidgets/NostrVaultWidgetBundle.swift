@@ -7,5 +7,8 @@ struct NostrVaultWidgetBundle: WidgetBundle {
         VaultPulseWidget()
         FeedGlanceWidget()
         QuickActionsWidget()
+        SatsWidget()
+        MosaicWidget()
+        LockScreenWidget()
     }
 }
