@@ -185,6 +185,8 @@ final class RecipeFeedService: ObservableObject {
               collected[id] == nil
         else { return }
 
+        if Self.looksLikeTestPost(tags: tags, content: content) { return }
+
         collected[id] = FeedNote(
             id: id,
             pubkey: pubkey,
@@ -194,6 +196,33 @@ final class RecipeFeedService: ObservableObject {
             kind: kind
         )
         publish()
+    }
+
+    /// Client test publishes, not recipes.
+    ///
+    /// Measured against 500 live zapcooking/nostrcooking events on 2026-09-05:
+    /// these two rules drop 20 events, and every one of them is a test post
+    /// ("iOS 2.3 Live Publish 1788113645", "E2E Curry", "ZC PR11 Test Bravo",
+    /// "Ppp"). No plausible real recipe is lost. The eight timestamped ones
+    /// each come from a different pubkey and were the newest events on the
+    /// relay, so they sat at the very top of the grid.
+    ///
+    /// Deliberately narrow. An Ingredients-heading requirement was measured
+    /// too and rejected: it also drops real recipes and the Zap Cooking
+    /// newsletters, 16 events that people would want to see.
+    static func looksLikeTestPost(tags: [[String]], content: String) -> Bool {
+        let title = tags.first { $0.count >= 2 && $0[0] == "title" }?[1] ?? ""
+
+        // A unix timestamp in the title means a machine generated it. Real
+        // recipe names do not carry a 10-digit number starting with 16-19.
+        if title.range(of: "\\b1[6-9][0-9]{8}\\b", options: .regularExpression) != nil {
+            return true
+        }
+
+        // A recipe needs ingredients and directions. Under 30 words is not one;
+        // the shortest real recipe in the sample was 39.
+        let words = content.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
+        return words < 30
     }
 
     private func publish() {
