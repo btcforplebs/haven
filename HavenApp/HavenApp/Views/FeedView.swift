@@ -121,6 +121,7 @@ struct FeedView: View {
     @State private var showingMediaUrl: IdentifiableURL?
     /// macOS presents the article reader as a sheet; iOS pushes it.
     @State private var showingArticle: ArticleRoute?
+    @StateObject private var recipeService = RecipeFeedService.shared
     @State private var selectedGridMediaNoteId: String?
     @State private var isShowingGridMediaViewer = false
     @State private var gridMediaSnapshot: [FeedNote] = []
@@ -156,7 +157,7 @@ struct FeedView: View {
             return stored
         }
         switch feedService.feedMode {
-        case .following, .articles:
+        case .following, .articles, .recipes:
             return false
         case .discovery, .global, .popular, .media:
             return configService.config.useFeedCompactMode
@@ -178,7 +179,7 @@ struct FeedView: View {
             return true
         // Articles and Media are card/grid layouts, not timeline rows —
         // compact mode has nothing to condense.
-        case .media, .articles:
+        case .media, .articles, .recipes:
             return false
         }
     }
@@ -1276,6 +1277,68 @@ struct FeedView: View {
         .padding(.vertical, 60)
     }
 
+    /// Recipes feed: long-form events tagged zapcooking / nostrcooking, pulled
+    /// live from external relays. Recipe authors are strangers, so these are
+    /// deliberately not synced to the owner's own relay — the grid is empty
+    /// without a connection, unlike Articles.
+    ///
+    /// A recipe opens as a sheet rather than a push: the grid appears inside
+    /// three different containers (the iPhone navigation stack, the iPad
+    /// two-pane layout which owns its own stack, and the macOS window), and a
+    /// sheet is the one presentation that behaves the same in all three.
+    @ViewBuilder
+    private var recipeGridView: some View {
+        VStack(spacing: 12) {
+            if !recipeService.categories.isEmpty {
+                RecipeCategoryBar(categories: recipeService.categories, selected: $recipeService.selectedCategory)
+            }
+
+            if recipeService.isLoading && recipeService.visibleRecipes.isEmpty {
+                ProgressView()
+                    .controlSize(.large)
+                    .tint(Color.havenPurple)
+                    .padding(.vertical, 60)
+            } else if recipeService.visibleRecipes.isEmpty {
+                emptyRecipesStateView
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+                    ForEach(recipeService.visibleRecipes) { recipe in
+                        let card = RecipeCardView(note: recipe, profile: nostrService.profiles[recipe.pubkey])
+
+                        card
+                            .contentShape(Rectangle())
+                            .onTapGesture { showingArticle = ArticleRoute(note: recipe) }
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+        .padding(.vertical, 16)
+        .onAppear { recipeService.loadIfNeeded() }
+    }
+
+    private var emptyRecipesStateView: some View {
+        VStack(spacing: 10) {
+            Image(systemName: recipeService.loadFailed ? "wifi.slash" : "fork.knife")
+                .font(.appSystem(size: 34))
+                .foregroundColor(.havenPurple.opacity(0.7))
+            Text(recipeService.loadFailed ? "Could not reach any relay" : "No recipes found")
+                .font(.appSystem(size: 16, weight: .bold))
+            Text(recipeService.loadFailed
+                 ? "Recipes come from other people's relays, so this one needs a connection."
+                 : "Nothing tagged zapcooking or nostrcooking came back.")
+                .font(.appSystem(size: 13))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Try again") { recipeService.refresh() }
+                .buttonStyle(.borderless)
+                .foregroundColor(.havenPurple)
+                .padding(.top, 4)
+        }
+        .padding(.horizontal, 40)
+        .padding(.vertical, 60)
+    }
+
     private var feedList: some View {
         ScrollViewReader { proxy in
             ZStack(alignment: .top) {
@@ -1290,6 +1353,8 @@ struct FeedView: View {
                             mediaGridView
                         } else if feedService.feedMode == .articles {
                             articleListView
+                        } else if feedService.feedMode == .recipes {
+                            recipeGridView
                         } else {
                             LazyVStack(spacing: 12) {
 
