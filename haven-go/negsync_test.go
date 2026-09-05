@@ -3,7 +3,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"strings"
 	"testing"
 	"time"
@@ -404,8 +406,55 @@ func TestBatchNotifierSuppression(t *testing.T) {
 	}
 
 	// flush resets for the next catch-up batch.
-	n.flush()
+	n.flush(true)
 	if n.emitted != 0 || n.suppressed != 0 {
 		t.Fatal("flush did not reset counters")
+	}
+}
+
+// A summary marker claims the user was away. Rounds the user triggered by
+// refreshing must not emit one, or an open app announces "while you were away"
+// as often as once a minute — the bug this gate exists to stop.
+func TestBatchNotifierSummaryOnlyWhenAway(t *testing.T) {
+	owner := hexid('0')
+	setupSyncConfig(owner) // NotifyBatchLimit=2, NotifyMaxAgeHours=24
+
+	var buf bytes.Buffer
+	prev := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(prev)
+
+	now := nostr.Now()
+	fresh := func(id byte) *nostr.Event {
+		return &nostr.Event{ID: hexid(id), PubKey: hexid('1'), Kind: nostr.KindTextNote, CreatedAt: now}
+	}
+	suppressThree := func(n *batchNotifier) {
+		for _, id := range []byte{'a', 'b', 'c', 'd', 'e'} {
+			n.maybeNotify(fresh(id), owner)
+		}
+		if n.suppressed != 3 {
+			t.Fatalf("suppressed=%d, want 3 — test no longer exercises the summary path", n.suppressed)
+		}
+	}
+
+	// User-triggered round: the overflow stays silent.
+	n := &batchNotifier{}
+	suppressThree(n)
+	n.flush(false)
+	if strings.Contains(buf.String(), "type=summary") {
+		t.Fatalf("summary emitted for a user-triggered round: %q", buf.String())
+	}
+
+	// Timer-driven round after an absence: the summary is exactly what the user
+	// wants, so the gate must not have silenced it everywhere.
+	buf.Reset()
+	n = &batchNotifier{}
+	suppressThree(n)
+	n.flush(true)
+	if !strings.Contains(buf.String(), "type=summary") {
+		t.Fatalf("no summary emitted for an away round: %q", buf.String())
+	}
+	if !strings.Contains(buf.String(), "3 more new items") {
+		t.Fatalf("summary lost its count: %q", buf.String())
 	}
 }

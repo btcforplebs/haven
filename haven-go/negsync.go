@@ -102,8 +102,9 @@ func uploadMemoFor(url string) negsync.Option {
 // import (first sync after being offline) doesn't fire hundreds of system
 // notifications. Events older than NOTIFY_MAX_AGE_HOURS never notify; the
 // first NOTIFY_BATCH_LIMIT qualifying events notify normally; the remainder
-// collapse into one type=summary marker emitted by flush(). The live
-// subscription path bypasses this entirely — real-time events always notify.
+// collapse into one type=summary marker emitted by flush(announce=true). The
+// live subscription path bypasses this entirely — real-time events always
+// notify.
 type batchNotifier struct {
 	mu         sync.Mutex
 	emitted    int
@@ -127,15 +128,23 @@ func (n *batchNotifier) maybeNotify(ev *nostr.Event, recipient string) {
 	n.suppressed++
 }
 
-// flush emits a single summary marker for anything suppressed this batch and
-// resets the counters for the next catch-up round. Clients that don't know
-// type=summary ignore the line. No single recipient applies to a suppressed
-// batch (it may span multiple whitelisted accounts), so the field is empty —
-// clients already treat type=summary as account-agnostic.
-func (n *batchNotifier) flush() {
+// flush ends the batch, emitting a single summary marker for anything
+// suppressed this round, and resets the counters for the next one. Clients that
+// don't know type=summary ignore the line. No single recipient applies to a
+// suppressed batch (it may span multiple whitelisted accounts), so the field is
+// empty — clients already treat type=summary as account-agnostic.
+//
+// announce is false for rounds the user asked for (pull-to-refresh, vault
+// refresh). Those are not a return from absence, and because every feed refresh
+// requests one, announcing them fired "N more new items while you were away"
+// as often as once a minute all day — while the app was open and the same
+// events were already scrolling past. Suppression still applies on those
+// rounds: the first NOTIFY_BATCH_LIMIT items notify, the rest stay silent
+// rather than becoming a summary nobody was away for.
+func (n *batchNotifier) flush(announce bool) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	if n.suppressed > 0 {
+	if announce && n.suppressed > 0 {
 		log.Printf("🔔NOTIFY|type=summary|kind=0|author=|id=|recipient=|preview=%d more new items while you were away", n.suppressed)
 	}
 	n.emitted = 0

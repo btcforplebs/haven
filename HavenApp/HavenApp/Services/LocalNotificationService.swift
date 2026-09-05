@@ -130,7 +130,11 @@ final class LocalNotificationService {
             // Zaps Only mode hard-disables reaction notifications regardless of the stored preference.
             case "reaction":       return !ConfigService.shared.config.zapsOnlyMode && prefs.reactions
             case "repost":         return prefs.reposts
-            case "summary":        return true // catch-up backlog count, no per-type pref applies
+            // The catch-up backlog count spans every type, so no per-type
+            // preference governs it — but turning all of them off must still
+            // silence it. It is also meaningless while the app is open: it
+            // announces activity you missed, and you missed nothing.
+            case "summary":        return prefs.wantsAnything && !appInForeground
             default:               return false
             }
         }()

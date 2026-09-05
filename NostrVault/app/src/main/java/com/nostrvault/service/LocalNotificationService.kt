@@ -66,6 +66,9 @@ class LocalNotificationService @Inject constructor(
         private const val MAX_SEEN = 500
     }
 
+    /** True while the app is on screen. Set by MainActivity's onStart/onStop. */
+    @Volatile var appInForeground: Boolean = false
+
     // Dedup guard. The Go relay only logs NOTIFY for genuinely new events (it
     // skips duplicates before publishing), but a service restart could re-emit;
     // this keeps the most recent event ids to be safe.
@@ -167,7 +170,11 @@ class LocalNotificationService @Inject constructor(
             "zap" -> prefs.zaps
             "reaction" -> prefs.reactions
             "repost" -> prefs.reposts
-            "summary" -> true // catch-up backlog count, no per-type pref applies
+            // The catch-up backlog count spans every type, so no per-type
+            // preference governs it — but turning all of them off must still
+            // silence it. It is also meaningless while the app is open: it
+            // announces activity you missed, and you missed nothing.
+            "summary" -> prefs.wantsAnything && !appInForeground
             else -> false
         }
         if (!allowed) {

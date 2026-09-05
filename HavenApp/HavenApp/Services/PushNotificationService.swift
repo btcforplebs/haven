@@ -146,4 +146,12 @@ struct NotificationPreferences: Codable, Equatable {
     var zaps: Bool = true
     var reactions: Bool = false
     var reposts: Bool = false
+
+    /// Whether any notification at all is wanted. The relay's catch-up summary
+    /// ("N more new items while you were away") counts events of every type at
+    /// once, so no single preference governs it — but turning everything off
+    /// has to silence it too, which it previously did not.
+    var wantsAnything: Bool {
+        mentions || replies || dms || zaps || reactions || reposts
+    }
 }

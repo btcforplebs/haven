@@ -548,7 +548,16 @@ data class PushPrefs(
     val zaps: Boolean = true,
     val reactions: Boolean = false,
     val reposts: Boolean = false,
-)
+) {
+    /**
+     * Whether any notification at all is wanted. The relay's catch-up summary
+     * ("N more new items while you were away") counts events of every type at
+     * once, so no single preference governs it — but turning everything off has
+     * to silence it too, which it previously did not.
+     */
+    val wantsAnything: Boolean
+        get() = mentions || replies || dms || zaps || reactions || reposts
+}
 
 /** Config-level joined group (no dependency on service layer). */
 @kotlinx.serialization.Serializable
