@@ -122,6 +122,9 @@ struct FeedView: View {
     /// macOS presents the article reader as a sheet; iOS pushes it.
     @State private var showingArticle: ArticleRoute?
     @StateObject private var recipeService = RecipeFeedService.shared
+    @StateObject private var liveService = LiveFeedService.shared
+    @State private var showingGlobalLiveWarning = false
+    @State private var playingStream: LiveStream?
     @State private var selectedGridMediaNoteId: String?
     @State private var isShowingGridMediaViewer = false
     @State private var gridMediaSnapshot: [FeedNote] = []
@@ -159,7 +162,7 @@ struct FeedView: View {
             return stored
         }
         switch feedService.feedMode {
-        case .following, .articles, .recipes:
+        case .following, .articles, .recipes, .live:
             return false
         case .discovery, .global, .popular, .media:
             return configService.config.useFeedCompactMode
@@ -181,7 +184,7 @@ struct FeedView: View {
             return true
         // Articles and Media are card/grid layouts, not timeline rows —
         // compact mode has nothing to condense.
-        case .media, .articles, .recipes:
+        case .media, .articles, .recipes, .live:
             return false
         }
     }
@@ -213,6 +216,13 @@ struct FeedView: View {
                 }
                 IconFilterButton(icon: "globe", tooltip: "Global", isSelected: recipeService.scope == .global, color: .havenPurple) {
                     showingGlobalRecipeWarning = true
+                }
+            } else if feedService.feedMode == .live {
+                IconFilterButton(icon: liveService.scope == .following ? "person.2.fill" : "person.2", tooltip: "Following", isSelected: liveService.scope == .following, color: .havenPurple) {
+                    liveService.setScope(.following)
+                }
+                IconFilterButton(icon: "globe", tooltip: "Global", isSelected: liveService.scope == .global, color: .havenPurple) {
+                    showingGlobalLiveWarning = true
                 }
             } else if feedService.feedMode == .popular {
                 IconFilterButton(icon: feedService.popularFilter == .follows ? "person.2.fill" : "person.2", tooltip: "Follows", isSelected: feedService.popularFilter == .follows, color: .havenPurple) {
@@ -274,6 +284,13 @@ struct FeedView: View {
                     Label("Following", systemImage: "person.2.fill")
                 }
                 Button { showingGlobalRecipeWarning = true } label: {
+                    Label("Global", systemImage: "globe")
+                }
+            } else if feedService.feedMode == .live {
+                Button { liveService.setScope(.following) } label: {
+                    Label("Following", systemImage: "person.2.fill")
+                }
+                Button { showingGlobalLiveWarning = true } label: {
                     Label("Global", systemImage: "globe")
                 }
             } else if feedService.feedMode == .popular {
@@ -472,6 +489,22 @@ struct FeedView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Recipes from everyone")
+            } else if feedService.feedMode == .live {
+                Button(action: { liveService.setScope(.following) }) {
+                    Image(systemName: liveService.scope == .following ? "person.2.fill" : "person.2")
+                        .font(.appSystem(size: 15, weight: .semibold))
+                        .foregroundColor(liveService.scope == .following ? Color.havenPurple : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Streams from people you follow")
+
+                Button(action: { showingGlobalLiveWarning = true }) {
+                    Image(systemName: "globe")
+                        .font(.appSystem(size: 15, weight: .semibold))
+                        .foregroundColor(liveService.scope == .global ? Color.havenPurple : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Streams from everyone")
             } else if feedService.feedMode == .popular {
                 // My Follows filter
                 Button(action: {
@@ -743,6 +776,21 @@ struct FeedView: View {
             Button(String(localized: "feed.alert.sensitiveContent.cancel"), role: .cancel) {}
         } message: {
             Text(String(localized: "feed.alert.sensitiveContent.message"))
+        }
+        .alert(String(localized: "feed.alert.sensitiveContent.title"), isPresented: $showingGlobalLiveWarning) {
+            Button(String(localized: "feed.alert.sensitiveContent.proceed"), role: .destructive) {
+                liveService.setScope(.global)
+            }
+            Button(String(localized: "feed.alert.sensitiveContent.cancel"), role: .cancel) {}
+        } message: {
+            Text(String(localized: "feed.alert.sensitiveContent.message"))
+        }
+        .sheet(item: $playingStream) { stream in
+            LiveStreamPlayerView(stream: stream, onBlocked: { pubkey in
+                liveService.removeStreams(byHost: pubkey)
+            })
+            .environmentObject(nostrService)
+            .environmentObject(configService)
         }
         .alert(String(localized: "feed.alert.sensitiveContent.title"), isPresented: $showingGlobalRecipeWarning) {
             Button(String(localized: "feed.alert.sensitiveContent.proceed"), role: .destructive) {
@@ -1398,6 +1446,75 @@ struct FeedView: View {
             : "Nothing tagged zapcooking or nostrcooking came back."
     }
 
+    /// Live streams: NIP-53 events that are running *and* carry a URL Apple's
+    /// player can open. Never cached — a stream is only interesting while it is
+    /// live, and a saved one is a gravestone.
+    @ViewBuilder
+    private var liveGridView: some View {
+        VStack(spacing: 12) {
+            if liveService.isLoading && liveService.streams.isEmpty {
+                ProgressView()
+                    .controlSize(.large)
+                    .tint(Color.havenPurple)
+                    .padding(.vertical, 60)
+            } else if liveService.streams.isEmpty {
+                emptyLiveStateView
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 12)], spacing: 12) {
+                    ForEach(liveService.streams) { stream in
+                        LiveStreamCardView(stream: stream, profile: nostrService.profiles[stream.hostPubkey])
+                            .contentShape(Rectangle())
+                            .onTapGesture { playingStream = stream }
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+        .padding(.vertical, 16)
+        .onAppear { liveService.loadIfNeeded() }
+    }
+
+    private var emptyLiveStateView: some View {
+        VStack(spacing: 10) {
+            Image(systemName: liveService.loadFailed ? "wifi.slash" : "dot.radiowaves.left.and.right")
+                .font(.appSystem(size: 34))
+                .foregroundColor(.havenPurple.opacity(0.7))
+            Text(emptyLiveTitle)
+                .font(.appSystem(size: 16, weight: .bold))
+            Text(emptyLiveMessage)
+                .font(.appSystem(size: 13))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+            if liveService.followSetIsEmpty {
+                Button("Show everyone's streams") { showingGlobalLiveWarning = true }
+                    .buttonStyle(.borderless)
+                    .foregroundColor(.havenPurple)
+                    .padding(.top, 4)
+            } else {
+                Button("Try again") { liveService.refresh() }
+                    .buttonStyle(.borderless)
+                    .foregroundColor(.havenPurple)
+                    .padding(.top, 4)
+            }
+        }
+        .padding(.horizontal, 40)
+        .padding(.vertical, 60)
+    }
+
+    private var emptyLiveTitle: String {
+        if liveService.followSetIsEmpty { return "Nobody you follow is live" }
+        return liveService.loadFailed ? "Could not reach any relay" : "Nothing live right now"
+    }
+
+    private var emptyLiveMessage: String {
+        if liveService.followSetIsEmpty {
+            return "Switch to Global to see everyone who is streaming."
+        }
+        return liveService.loadFailed
+            ? "Live streams come from other people's relays, so this one needs a connection."
+            : "Most stream announcements on Nostr are for streams that already ended. Only running ones show here."
+    }
+
     private var feedList: some View {
         ScrollViewReader { proxy in
             ZStack(alignment: .top) {
@@ -1414,6 +1531,8 @@ struct FeedView: View {
                             articleListView
                         } else if feedService.feedMode == .recipes {
                             recipeGridView
+                        } else if feedService.feedMode == .live {
+                            liveGridView
                         } else {
                             LazyVStack(spacing: 12) {
 
