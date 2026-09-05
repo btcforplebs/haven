@@ -93,6 +93,12 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .havenOpenFeed)) { _ in
             selectedTab = 0 // Feed tab
         }
+        .onReceive(NotificationCenter.default.publisher(for: .havenOpenSearch)) { _ in
+            selectedTab = 1 // Search tab
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .havenOpenMedia)) { _ in
+            selectedTab = 3 // Media tab
+        }
         .onReceive(NotificationCenter.default.publisher(for: .havenOpenDMInbox)) { _ in
             selectedTab = 2 // Profile tab
             showingDMInbox = true
