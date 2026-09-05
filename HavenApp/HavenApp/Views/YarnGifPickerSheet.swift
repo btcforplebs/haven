@@ -33,19 +33,14 @@ struct YarnGifPickerSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                header
                 searchField
-                Divider()
                 content
             }
-            .navigationTitle("GIFs")
+            .background(Color.platformSecondaryGroupedBackground)
             #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
+            .navigationBarHidden(true)
             #endif
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
-                }
-            }
         }
         #if os(macOS)
         .frame(minWidth: 520, idealWidth: 640, minHeight: 420, idealHeight: 560)
@@ -54,15 +49,40 @@ struct YarnGifPickerSheet: View {
         .onDisappear { searchTask?.cancel() }
     }
 
+    private var header: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "film.fill")
+                .font(.appSystem(size: 16, weight: .bold))
+                .foregroundColor(.havenPurple)
+
+            Text("GIFs")
+                .font(.appSystem(size: 18, weight: .bold, design: .rounded))
+
+            Spacer()
+
+            Button { dismiss() } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.appSystem(size: 22))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 16)
+        .padding(.bottom, 10)
+    }
+
     private var searchField: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
-                .foregroundColor(.secondary)
+                .font(.appSystem(size: 14, weight: .semibold))
+                .foregroundColor(searchFocused ? .havenPurple : .secondary)
             // Submit only. getyarn.io is a free service with no public API, and
             // an as-you-type search spent a page request plus a fresh grid of
             // preview GIFs on every pause in typing.
             TextField("Search a quote, then press return", text: $query)
                 .textFieldStyle(.plain)
+                .font(.appSystem(size: 15))
                 .focused($searchFocused)
                 .submitLabel(.search)
                 .onSubmit { runSearch() }
@@ -85,59 +105,86 @@ struct YarnGifPickerSheet: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color.platformTertiaryGroupedBackground)
+        .clipShape(Capsule())
+        .overlay(
+            Capsule().stroke(searchFocused ? Color.havenPurple.opacity(0.6) : Color.platformSeparator, lineWidth: searchFocused ? 1.5 : 0.8)
+        )
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
+        .animation(.easeOut(duration: 0.15), value: searchFocused)
     }
 
     @ViewBuilder
     private var content: some View {
         if let errorMessage {
             placeholder(icon: "exclamationmark.triangle", text: errorMessage)
+                .frame(maxHeight: .infinity)
         } else if results.isEmpty {
             if query.trimmingCharacters(in: .whitespaces).isEmpty {
-                placeholder(icon: "film", text: "Search movie and TV quotes from getyarn.io")
+                placeholder(icon: "quote.bubble", text: "Search a movie or TV quote to find a clip")
+                    .frame(maxHeight: .infinity)
             } else if !isSearching {
-                placeholder(icon: "magnifyingglass", text: "No clips found for \u{201C}\(query)\u{201D}")
+                placeholder(icon: "film", text: "No clips found for \u{201C}\(query)\u{201D}")
+                    .frame(maxHeight: .infinity)
             } else {
                 Spacer()
             }
         } else {
             ScrollView {
-                LazyVGrid(columns: columns, spacing: 8) {
+                LazyVGrid(columns: columns, spacing: 10) {
                     ForEach(results.prefix(revealed)) { clip in
                         YarnClipCell(clip: clip, isSelecting: selectingUUID == clip.uuid)
                             .onTapGesture { select(clip) }
                     }
                 }
-                .padding(12)
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
 
                 if isSearching {
                     ProgressView()
                         .controlSize(.small)
+                        .tint(.havenPurple)
+                        .padding(.top, 16)
                         .padding(.bottom, 12)
                 } else if canShowMore {
-                    Button("Show more clips") { showMore() }
-                        .buttonStyle(.plain)
-                        .font(.appSystem(size: 13, weight: .medium))
-                        .foregroundColor(.havenPurple)
-                        .padding(.bottom, 12)
+                    Button {
+                        showMore()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text("Show more clips")
+                            Image(systemName: "chevron.down")
+                        }
+                        .font(.appSystem(size: 13, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 9)
+                        .background(Color.havenPurple)
+                        .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 16)
+                    .padding(.bottom, 12)
                 }
 
                 Text("Clips from getyarn.io")
-                    .font(.caption)
+                    .font(.appCaption2)
                     .foregroundColor(.secondary)
-                    .padding(.bottom, 12)
+                    .padding(.bottom, 14)
             }
         }
     }
 
     private func placeholder(icon: String, text: String) -> some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 14) {
             Spacer()
             Image(systemName: icon)
-                .font(.system(size: 36))
-                .foregroundColor(.secondary)
+                .font(.appSystem(size: 40, weight: .thin))
+                .foregroundColor(.havenPurple.opacity(0.6))
             Text(text)
-                .font(.appSystem(size: 14))
+                .font(.appSystem(size: 14, weight: .medium))
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 32)
@@ -229,26 +276,40 @@ private struct YarnClipCell: View {
     let isSelecting: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ZStack {
-                Color.platformSecondaryGroupedBackground
-                AnimatedImage(url: clip.gifSmallURL, contentMode: .fill, fallbackURL: clip.thumbURL)
-                if isSelecting {
-                    Color.black.opacity(0.4)
-                    ProgressView().tint(.white)
-                }
+        ZStack(alignment: .bottomLeading) {
+            Color.platformTertiaryGroupedBackground
+            AnimatedImage(url: clip.gifSmallURL, contentMode: .fill, fallbackURL: clip.thumbURL)
+
+            LinearGradient(
+                colors: [.clear, .clear, .black.opacity(0.75)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(clip.transcript)
+                    .font(.appSystem(size: 12, weight: .semibold))
+                    .foregroundColor(.white)
+                    .lineLimit(2)
+                Text(clip.videoTitle)
+                    .font(.appSystem(size: 10, weight: .medium))
+                    .foregroundColor(.white.opacity(0.7))
+                    .lineLimit(1)
             }
-            .aspectRatio(16 / 9, contentMode: .fit)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            Text(clip.transcript)
-                .font(.appSystem(size: 12, weight: .medium))
-                .lineLimit(2)
-            Text(clip.videoTitle)
-                .font(.appSystem(size: 11))
-                .foregroundColor(.secondary)
-                .lineLimit(1)
+            .padding(8)
+
+            if isSelecting {
+                Color.black.opacity(0.55)
+                ProgressView().tint(.white)
+            }
         }
-        .contentShape(Rectangle())
+        .aspectRatio(16 / 9, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.platformSeparator, lineWidth: 0.8)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 12))
         .help(clip.transcript)
     }
 }
