@@ -385,7 +385,11 @@ func subscribeInboxAndChat(ctx context.Context) {
 	// runCatchup reconciles each relay via NIP-77 when supported, collecting
 	// the rest for one watermark-based FetchMany pull. Sequential per relay to
 	// keep mobile CPU/battery use flat.
-	runCatchup := func() {
+	//
+	// announce says whether this round may end in a "while you were away"
+	// summary. Only the timer-driven rounds qualify: a round the user triggered
+	// by refreshing is not a return from absence (see batchNotifier.flush).
+	runCatchup := func(announce bool) {
 		// Captured before any fetching so events arriving mid-round aren't
 		// skipped: the fallback queries below re-query from lastSeen-60.
 		roundStart := nostr.Timestamp(time.Now().Unix())
@@ -489,7 +493,7 @@ func subscribeInboxAndChat(ctx context.Context) {
 		// without limit over the process's lifetime (stubs older than the window
 		// are never offered anyway).
 		rejects.prune(syncSince())
-		notifier.flush()
+		notifier.flush(announce)
 		// A round materializes the full windowed local set per relay (the
 		// negentropy vector build); hand the spike back to the OS instead of
 		// letting darwin's lazy reclaim report it as resident until the next GC.
@@ -518,7 +522,9 @@ func subscribeInboxAndChat(ctx context.Context) {
 			return
 		case <-time.After(20 * time.Second):
 		}
-		runCatchup()
+		// The first round after launch genuinely is a catch-up on whatever
+		// arrived while the app was not running, so it may announce.
+		runCatchup(true)
 		lastRun = time.Now()
 
 		// A round that runs longer than the tick interval leaves a tick
@@ -538,6 +544,7 @@ func subscribeInboxAndChat(ctx context.Context) {
 		restartTicker()
 
 		for {
+			announce := true
 			select {
 			case <-ctx.Done():
 				return
@@ -551,8 +558,10 @@ func subscribeInboxAndChat(ctx context.Context) {
 					continue
 				}
 				log.Println("📢 relay sync requested (pull-to-refresh)")
+				// The user is looking at the app right now.
+				announce = false
 			}
-			runCatchup()
+			runCatchup(announce)
 			lastRun = time.Now()
 			restartTicker()
 		}

@@ -26,6 +26,7 @@ import com.nostrvault.relay.RelayForegroundService
 import com.nostrvault.service.AmberResultBridge
 import com.nostrvault.service.DMService
 import com.nostrvault.service.FeedService
+import com.nostrvault.service.LocalNotificationService
 import com.nostrvault.service.MediaUploadManager
 import com.nostrvault.service.NostrService
 import com.nostrvault.service.PendingPostManager
@@ -48,6 +49,7 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var feedService: FeedService
     @Inject lateinit var nostrService: NostrService
     @Inject lateinit var logStore: LogStore
+    @Inject lateinit var localNotificationService: LocalNotificationService
     @Inject lateinit var notificationManager: NotificationManager
     @Inject lateinit var pendingPostManager: PendingPostManager
     @Inject lateinit var mediaUploadManager: MediaUploadManager
@@ -247,6 +249,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onStop() {
         super.onStop()
+        localNotificationService.appInForeground = false
         // Entering PiP pauses but does not stop the activity, so this only runs on a
         // real background transition: snapshot the feed and disconnect WebSockets.
         // The Go relay keeps running via the foreground service.
@@ -257,6 +260,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onStart() {
         super.onStart()
+        localNotificationService.appInForeground = true
         // Restore the snapshot for instant UI, then reconnect in the background.
         if (configStore.config.value.hasCompletedSetup) {
             feedService.resumeFeed()
