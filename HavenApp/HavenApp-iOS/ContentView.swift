@@ -847,12 +847,21 @@ struct NoteSplitPane<Content: View>: View {
             // column push onto its own stack rather than replacing the note the
             // reader is looking at.
             NavigationStack {
-                NoteDetailView(note: note)
+                // A long-form event opens in the reader, not as a note. This is
+                // what makes tapping an Articles card do something on iPad.
+                if note.kind == 30023 {
+                    ArticleReaderView(note: note)
+                        .environmentObject(NostrService.shared)
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbarBackground(.hidden, for: .navigationBar)
+                } else {
+                    NoteDetailView(note: note)
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbarBackground(.hidden, for: .navigationBar)
                     .navigationDestination(for: FeedNote.self) { pushed in
                         NoteDetailView(note: pushed)
                     }
+                }
             }
             .id(note.id)
         } else if let noteId = selection.noteId {

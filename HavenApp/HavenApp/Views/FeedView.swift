@@ -1262,8 +1262,19 @@ struct FeedView: View {
                 .padding(.horizontal, 16)
 
                 #if os(iOS)
-                NavigationLink(value: ArticleRoute(note: note)) { card }
-                    .buttonStyle(.plain)
+                // In the iPad two-pane layout the feed is NOT wrapped in its
+                // own NavigationStack — NoteSplitPane owns the detail column —
+                // so a NavigationLink here has no stack to push onto and the
+                // tap silently does nothing. Route through the selection the
+                // same way note rows do.
+                if let noteDetailSelection {
+                    card
+                        .contentShape(Rectangle())
+                        .onTapGesture { noteDetailSelection.select(note) }
+                } else {
+                    NavigationLink(value: ArticleRoute(note: note)) { card }
+                        .buttonStyle(.plain)
+                }
                 #else
                 card.onTapGesture { showingArticle = ArticleRoute(note: note) }
                 #endif
