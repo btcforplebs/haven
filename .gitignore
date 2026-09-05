@@ -49,3 +49,4 @@ HavenApp/HavenApp/Services/BUD-14.code-workspace
 # Release tooling
 dist/
 .release.env
+/HavenApp/MediaLogicTests/.build/
