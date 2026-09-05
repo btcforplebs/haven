@@ -128,6 +128,8 @@ struct FeedView: View {
     @State private var galleryDragOffset: CGSize = .zero
     @State private var isRefreshing = false
     @State private var showingGlobalMediaWarning = false
+    /// Same warning, raised before Recipes switches to the global set.
+    @State private var showingGlobalRecipeWarning = false
     @State private var isAtTop: Bool = true
     @State private var scrolledNoteID: String?
     @State private var lastScrollOffset: CGFloat = 0
@@ -207,6 +209,13 @@ struct FeedView: View {
                 IconFilterButton(icon: "globe", tooltip: "Global", isSelected: feedService.mediaFeedMode == .global, color: .havenPurple) {
                     showingGlobalMediaWarning = true
                 }
+            } else if feedService.feedMode == .recipes {
+                IconFilterButton(icon: recipeService.scope == .following ? "person.2.fill" : "person.2", tooltip: "Following", isSelected: recipeService.scope == .following, color: .havenPurple) {
+                    recipeService.setScope(.following)
+                }
+                IconFilterButton(icon: "globe", tooltip: "Global", isSelected: recipeService.scope == .global, color: .havenPurple) {
+                    showingGlobalRecipeWarning = true
+                }
             } else if feedService.feedMode == .popular {
                 IconFilterButton(icon: feedService.popularFilter == .follows ? "person.2.fill" : "person.2", tooltip: "Follows", isSelected: feedService.popularFilter == .follows, color: .havenPurple) {
                     feedService.popularFilter = feedService.popularFilter == .follows ? .all : .follows
@@ -260,6 +269,13 @@ struct FeedView: View {
                     Label("Following", systemImage: "person.2.fill")
                 }
                 Button { showingGlobalMediaWarning = true } label: {
+                    Label("Global", systemImage: "globe")
+                }
+            } else if feedService.feedMode == .recipes {
+                Button { recipeService.setScope(.following) } label: {
+                    Label("Following", systemImage: "person.2.fill")
+                }
+                Button { showingGlobalRecipeWarning = true } label: {
                     Label("Global", systemImage: "globe")
                 }
             } else if feedService.feedMode == .popular {
@@ -458,6 +474,22 @@ struct FeedView: View {
                 }
                 .buttonStyle(.plain)
                 .help(String(localized: "feed.help.globalMedia"))
+            } else if feedService.feedMode == .recipes {
+                Button(action: { recipeService.setScope(.following) }) {
+                    Image(systemName: recipeService.scope == .following ? "person.2.fill" : "person.2")
+                        .font(.appSystem(size: 15, weight: .semibold))
+                        .foregroundColor(recipeService.scope == .following ? Color.havenPurple : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Recipes from people you follow")
+
+                Button(action: { showingGlobalRecipeWarning = true }) {
+                    Image(systemName: "globe")
+                        .font(.appSystem(size: 15, weight: .semibold))
+                        .foregroundColor(recipeService.scope == .global ? Color.havenPurple : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Recipes from everyone")
             } else if feedService.feedMode == .popular {
                 // My Follows filter
                 Button(action: {
@@ -725,6 +757,14 @@ struct FeedView: View {
             Button(String(localized: "feed.alert.sensitiveContent.proceed"), role: .destructive) {
                 feedService.mediaFeedMode = .global
                 feedService.refresh()
+            }
+            Button(String(localized: "feed.alert.sensitiveContent.cancel"), role: .cancel) {}
+        } message: {
+            Text(String(localized: "feed.alert.sensitiveContent.message"))
+        }
+        .alert(String(localized: "feed.alert.sensitiveContent.title"), isPresented: $showingGlobalRecipeWarning) {
+            Button(String(localized: "feed.alert.sensitiveContent.proceed"), role: .destructive) {
+                recipeService.setScope(.global)
             }
             Button(String(localized: "feed.alert.sensitiveContent.cancel"), role: .cancel) {}
         } message: {
@@ -1351,21 +1391,40 @@ struct FeedView: View {
             Image(systemName: recipeService.loadFailed ? "wifi.slash" : "fork.knife")
                 .font(.appSystem(size: 34))
                 .foregroundColor(.havenPurple.opacity(0.7))
-            Text(recipeService.loadFailed ? "Could not reach any relay" : "No recipes found")
+            Text(emptyRecipesTitle)
                 .font(.appSystem(size: 16, weight: .bold))
-            Text(recipeService.loadFailed
-                 ? "Recipes come from other people's relays, so this one needs a connection."
-                 : "Nothing tagged zapcooking or nostrcooking came back.")
+            Text(emptyRecipesMessage)
                 .font(.appSystem(size: 13))
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
-            Button("Try again") { recipeService.refresh() }
-                .buttonStyle(.borderless)
-                .foregroundColor(.havenPurple)
-                .padding(.top, 4)
+            if recipeService.followSetIsEmpty {
+                Button("Show everyone's recipes") { showingGlobalRecipeWarning = true }
+                    .buttonStyle(.borderless)
+                    .foregroundColor(.havenPurple)
+                    .padding(.top, 4)
+            } else {
+                Button("Try again") { recipeService.refresh() }
+                    .buttonStyle(.borderless)
+                    .foregroundColor(.havenPurple)
+                    .padding(.top, 4)
+            }
         }
         .padding(.horizontal, 40)
         .padding(.vertical, 60)
+    }
+
+    private var emptyRecipesTitle: String {
+        if recipeService.followSetIsEmpty { return "No recipes from your follows" }
+        return recipeService.loadFailed ? "Could not reach any relay" : "No recipes found"
+    }
+
+    private var emptyRecipesMessage: String {
+        if recipeService.followSetIsEmpty {
+            return "Nobody you follow has posted a recipe. Switch to Global to see everyone's."
+        }
+        return recipeService.loadFailed
+            ? "Recipes come from other people's relays, so this one needs a connection."
+            : "Nothing tagged zapcooking or nostrcooking came back."
     }
 
     private var feedList: some View {

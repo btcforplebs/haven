@@ -8,6 +8,13 @@ import Combine
 /// strangers, so they fall outside the `authors: follows` set the device's own
 /// relay syncs — this feed therefore talks to external relays directly and
 /// keeps its results in memory only. Nothing is written to the owner's relay.
+/// Who a recipe feed draws from. Mirrors the Media tab's Following/Global
+/// split, including the sensitive-content warning before going global.
+enum RecipeScope: String {
+    case following
+    case global
+}
+
 @MainActor
 final class RecipeFeedService: ObservableObject {
     static let shared = RecipeFeedService()
@@ -19,6 +26,12 @@ final class RecipeFeedService: ObservableObject {
     @Published private(set) var loadFailed = false
     /// Selected category chip, or nil for "All".
     @Published var selectedCategory: String?
+    /// Following by default: global recipes are written by strangers and are
+    /// not moderated, so the wider set is opt-in behind a warning.
+    @Published private(set) var scope: RecipeScope = .following
+    /// True when Following is selected and the owner follows nobody who has
+    /// posted a recipe — distinct from "the relays returned nothing".
+    @Published private(set) var followSetIsEmpty = false
 
     /// The `t` tags that mark an event as a recipe.
     static let recipeTopics = ["zapcooking", "nostrcooking"]
@@ -30,6 +43,9 @@ final class RecipeFeedService: ObservableObject {
     private var collected: [String: FeedNote] = [:]
     private var loadTimeout: Timer?
     private var lastLoadedAt: Date?
+    /// The scope the cached results belong to, so switching scope always
+    /// refetches rather than re-showing the other set.
+    private var lastLoadedScope: RecipeScope?
 
     /// Results older than this are refetched when the feed is opened again.
     private static let staleAfter: TimeInterval = 10 * 60
@@ -85,7 +101,17 @@ final class RecipeFeedService: ObservableObject {
     /// Cheap to call from `onAppear`.
     func loadIfNeeded() {
         if isLoading { return }
-        if let lastLoadedAt, Date().timeIntervalSince(lastLoadedAt) < Self.staleAfter, !recipes.isEmpty { return }
+        if let lastLoadedAt, lastLoadedScope == scope,
+           Date().timeIntervalSince(lastLoadedAt) < Self.staleAfter, !recipes.isEmpty { return }
+        refresh()
+    }
+
+    /// Switches scope and reloads. The caller is responsible for showing the
+    /// sensitive-content warning before selecting `.global`.
+    func setScope(_ newScope: RecipeScope) {
+        guard newScope != scope else { return }
+        scope = newScope
+        recipes = []
         refresh()
     }
 
@@ -93,6 +119,7 @@ final class RecipeFeedService: ObservableObject {
         disconnect()
         collected.removeAll()
         loadFailed = false
+        followSetIsEmpty = false
         isLoading = true
 
         let relayURLs = Self.relayURLs
@@ -102,11 +129,22 @@ final class RecipeFeedService: ObservableObject {
             return
         }
 
-        let filter: [String: Any] = [
+        var filter: [String: Any] = [
             "kinds": [30023],
             "#t": Self.recipeTopics,
             "limit": 200
         ]
+        if scope == .following {
+            let follows = FeedService.shared.followedPubkeys
+            guard !follows.isEmpty else {
+                // An `authors: []` REQ matches nothing and would look like a
+                // dead feed. Say what is actually true instead.
+                isLoading = false
+                followSetIsEmpty = true
+                return
+            }
+            filter["authors"] = follows
+        }
         let subId = "recipes-\(UUID().uuidString.prefix(8))"
         let blocked = ConfigService.shared.activeAccountBlockedHexPubkeys
 
@@ -231,6 +269,7 @@ final class RecipeFeedService: ObservableObject {
             isLoading = false
             loadFailed = false
             lastLoadedAt = Date()
+            lastLoadedScope = scope
         }
         // A category can disappear entirely when results change underneath the
         // chip. Validate against every category present, not the capped chip
@@ -244,7 +283,10 @@ final class RecipeFeedService: ObservableObject {
     private func finishLoading() {
         isLoading = false
         loadFailed = recipes.isEmpty
-        if !recipes.isEmpty { lastLoadedAt = Date() }
+        if !recipes.isEmpty {
+            lastLoadedAt = Date()
+            lastLoadedScope = scope
+        }
         disconnect()
     }
 }
