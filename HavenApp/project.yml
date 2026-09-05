@@ -120,6 +120,7 @@ targets:
         excludes:
           - "haven.dylib"
       - path: HavenApp/Views
+      - path: HavenApp/Shared
       - path: HavenApp/Localizable.xcstrings
       - path: Resources/Assets.xcassets
       - path: Resources/haven
@@ -129,6 +130,7 @@ targets:
 
     settings:
       base:
+        CODE_SIGN_ENTITLEMENTS: HavenApp-iOS/HavenApp-iOS.entitlements
         PRODUCT_BUNDLE_IDENTIFIER: com.havenapp.relay
         PRODUCT_NAME: "$(TARGET_NAME)"
         SWIFT_OBJC_BRIDGING_HEADER: HavenApp-iOS/HavenApp-Bridging-Header.h
@@ -152,6 +154,35 @@ targets:
         embed: false
         implicit: true
       - package: SilentPaymentsKit
+      - target: NostrVaultWidgets
+
+  # ── Widget Extension (iOS / iPadOS) ───────────────────────
+  NostrVaultWidgets:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+
+    sources:
+      - path: NostrVaultWidgets
+        excludes:
+          - "Info.plist"
+      # The snapshot model and the keychain-backed store are the only app code
+      # the extension sees. Pulling in Services/ or Views/ would drag the relay,
+      # the database and the whole UI into a process with a hard memory ceiling.
+      - path: HavenApp/Shared
+      - path: Resources/Assets.xcassets
+
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.havenapp.relay.widgets
+        PRODUCT_NAME: "$(TARGET_NAME)"
+        INFOPLIST_FILE: NostrVaultWidgets/Info.plist
+        GENERATE_INFOPLIST_FILE: false
+        CODE_SIGN_ENTITLEMENTS: NostrVaultWidgets/NostrVaultWidgets.entitlements
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CURRENT_PROJECT_VERSION: "7"
+        MARKETING_VERSION: "1.1.1"
+        SKIP_INSTALL: YES
 
 schemes:
   HavenApp:
