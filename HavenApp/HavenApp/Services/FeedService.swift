@@ -940,6 +940,9 @@ class FeedService: ObservableObject {
 
     func switchMode(_ mode: FeedMode) {
         guard mode != feedMode else { return }
+        if feedMode == .recipes && mode != .recipes {
+            RecipeFeedService.shared.disconnect()
+        }
         shouldScrollToTopOnLoad = true
         feedMode = mode
         notes.removeAll()
@@ -969,7 +972,12 @@ class FeedService: ObservableObject {
             self?.bgAccumulator.isGlobalMode = isGlobal
         }
 
-        if mode == .popular {
+        if mode == .recipes {
+            // Recipes are served by RecipeFeedService against external relays —
+            // the note pipeline has nothing to subscribe to here, and starting
+            // it would open follow-set subscriptions nothing will read.
+            RecipeFeedService.shared.loadIfNeeded()
+        } else if mode == .popular {
             loadPopularFeed()
         } else if isGlobal {
             // Global mode doesn't need contacts — subscribe directly
@@ -1075,7 +1083,7 @@ class FeedService: ObservableObject {
         switch feedMode {
         case .following, .discovery, .articles: return true
         case .media: return mediaFeedMode == .following
-        case .global, .popular: return false
+        case .global, .popular, .recipes: return false
         }
     }
 
@@ -1101,7 +1109,7 @@ class FeedService: ObservableObject {
         case .following, .articles: return followedPubkeys
         case .media: return mediaFeedMode == .following ? followedPubkeys : []
         case .discovery: return extendedNetworkPubkeys
-        case .global, .popular: return []
+        case .global, .popular, .recipes: return []
         }
     }
 
@@ -1323,7 +1331,7 @@ class FeedService: ObservableObject {
             if !extendedNetworkPubkeys.isEmpty {
                 filter["authors"] = extendedNetworkPubkeys
             }
-        case .global, .popular, .media:
+        case .global, .popular, .media, .recipes:
             break // No author restriction — search everything
         }
 

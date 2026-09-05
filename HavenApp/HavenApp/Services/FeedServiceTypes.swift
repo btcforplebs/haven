@@ -447,6 +447,7 @@ enum FeedMode: String, CaseIterable {
     case popular = "Popular"
     case media = "Media"
     case articles = "Articles"
+    case recipes = "Recipes"
 }
 
 /// Per-account, in-memory snapshot of the feed state. Captured before switching
