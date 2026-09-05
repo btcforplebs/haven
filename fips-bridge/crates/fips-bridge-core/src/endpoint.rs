@@ -8,7 +8,9 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use fips_endpoint::{FipsEndpoint, Identity};
+use fips_endpoint::{
+    Config, FipsEndpoint, Identity, NostrDiscoveryPolicy, TransportInstances, UdpConfig,
+};
 
 #[derive(Debug, Clone)]
 pub struct EndpointOptions {
@@ -62,21 +64,125 @@ impl EndpointOptions {
     }
 }
 
+/// The endpoint config, built here rather than left to the builder's
+/// `discovery_scope` shortcut.
+///
+/// That shortcut is why `local_rendezvous: false` did nothing. In
+/// nvpn-fips-core 0.4.72, `apply_default_scoped_discovery` (endpoint.rs:185)
+/// runs whenever no transport has been configured, and it sets
+/// `node.discovery.local.enabled = true` unconditionally along with the Nostr
+/// advert and the UDP transport. So every endpoint we bound joined host-wide
+/// loopback rendezvous regardless of the flag, whatever the doc comment on
+/// [`EndpointOptions::with_identity`] promised.
+///
+/// Supplying the config ourselves is what makes the flag real: the shortcut
+/// returns early once `transports` is non-empty, leaving the explicit config in
+/// control. The rest of this function reproduces that profile exactly, so the
+/// only behaviour that changes is the one field.
+fn endpoint_config(options: &EndpointOptions) -> Config {
+    let scope = options.discovery_scope.as_str();
+    let mut config = Config::new();
+
+    config.node.discovery.nostr.enabled = true;
+    config.node.discovery.nostr.advertise = true;
+    config.node.discovery.nostr.policy = NostrDiscoveryPolicy::Open;
+    config.node.discovery.nostr.share_local_candidates = true;
+    config.node.discovery.nostr.app = scope.to_string();
+    config.node.discovery.lan.scope = Some(scope.to_string());
+    config.node.discovery.local.enabled = options.local_rendezvous;
+    config.transports.udp = TransportInstances::Single(UdpConfig {
+        bind_addr: Some("0.0.0.0:0".to_string()),
+        advertise_on_nostr: Some(true),
+        public: Some(false),
+        outbound_only: Some(false),
+        accept_connections: Some(true),
+        ..UdpConfig::default()
+    });
+
+    config
+}
+
 /// Bind an embedded FIPS endpoint.
 ///
 /// `without_system_tun()` is the load-bearing call: it is what makes this
 /// embeddable in a sandboxed Mac app and an App Store iOS app at all, with no
 /// TUN device, no DNS takeover, and no NetworkExtension entitlement.
 pub async fn bind_endpoint(options: EndpointOptions) -> Result<Arc<FipsEndpoint>> {
-    let mut builder = FipsEndpoint::builder()
+    let config = endpoint_config(&options);
+    let endpoint = FipsEndpoint::builder()
+        .config(config)
         .identity_nsec(options.nsec)
         .discovery_scope(options.discovery_scope)
-        .without_system_tun();
+        .without_system_tun()
+        .bind()
+        .await
+        .context("bind FIPS endpoint")?;
+    Ok(Arc::new(endpoint))
+}
 
-    if options.local_rendezvous {
-        builder = builder.local_rendezvous();
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scoped(options: EndpointOptions) -> Config {
+        endpoint_config(&options)
     }
 
-    let endpoint = builder.bind().await.context("bind FIPS endpoint")?;
-    Ok(Arc::new(endpoint))
+    #[test]
+    fn with_identity_does_not_join_host_wide_rendezvous() {
+        // The invariant with_identity's doc comment promises. It was false for
+        // the whole life of that function: the builder shortcut turned local
+        // discovery back on behind it, so an off-LAN run could still pair over
+        // loopback and pass for a reason the test was not measuring.
+        let config = scoped(EndpointOptions::with_identity("nsec-placeholder", "vault-test"));
+        assert!(!config.node.discovery.local.enabled);
+    }
+
+    #[test]
+    fn ephemeral_still_composes_on_one_host() {
+        // The in-process e2e probes pair two endpoints inside one process and
+        // depend on this staying on.
+        let config = scoped(EndpointOptions::ephemeral("vault-test"));
+        assert!(config.node.discovery.local.enabled);
+    }
+
+    #[test]
+    fn the_flag_is_the_only_thing_that_moves() {
+        let off = scoped(EndpointOptions::with_identity("nsec-placeholder", "vault-test"));
+        let on = scoped(
+            EndpointOptions::with_identity("nsec-placeholder", "vault-test")
+                .local_rendezvous(true),
+        );
+        assert!(!off.node.discovery.local.enabled);
+        assert!(on.node.discovery.local.enabled);
+
+        // Nothing else may differ. Config has no PartialEq, and pulling in
+        // serde_json only for a test would move the pinned lock, so compare
+        // Debug output -- it walks every field either way.
+        let mut normalised = off.clone();
+        normalised.node.discovery.local.enabled = true;
+        assert_eq!(format!("{normalised:?}"), format!("{on:?}"));
+    }
+
+    #[test]
+    fn the_scoped_discovery_profile_is_reproduced() {
+        // If this drifts from apply_default_scoped_discovery upstream, we are
+        // no longer binding what the shortcut would have bound, and the reason
+        // for taking the config into our own hands has quietly changed.
+        let config = scoped(EndpointOptions::with_identity("nsec-placeholder", "vault-test"));
+        assert!(config.node.discovery.nostr.enabled);
+        assert!(config.node.discovery.nostr.advertise);
+        assert!(config.node.discovery.nostr.share_local_candidates);
+        assert_eq!(config.node.discovery.nostr.app, "vault-test");
+        assert_eq!(config.node.discovery.lan.scope.as_deref(), Some("vault-test"));
+
+        let TransportInstances::Single(udp) = &config.transports.udp else {
+            panic!("expected exactly one UDP transport instance");
+        };
+        assert_eq!(udp.bind_addr.as_deref(), Some("0.0.0.0:0"));
+        assert_eq!(udp.advertise_on_nostr, Some(true));
+        assert_eq!(udp.public, Some(false));
+        assert_eq!(udp.outbound_only, Some(false));
+        assert_eq!(udp.accept_connections, Some(true));
+    }
 }
