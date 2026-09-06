@@ -280,8 +280,11 @@ private struct YarnClipCell: View {
             Color.platformTertiaryGroupedBackground
             AnimatedImage(url: clip.gifSmallURL, contentMode: .fill, fallbackURL: clip.thumbURL)
 
+            // Ambient darkening across the lower half. Softened from 0.75
+            // because the caption now carries its own scrim; stacking both at
+            // full strength turned the bottom of every cell into a black bar.
             LinearGradient(
-                colors: [.clear, .clear, .black.opacity(0.75)],
+                colors: [.clear, .clear, .black.opacity(0.35)],
                 startPoint: .top,
                 endPoint: .bottom
             )
@@ -293,10 +296,32 @@ private struct YarnClipCell: View {
                     .lineLimit(2)
                 Text(clip.videoTitle)
                     .font(.appSystem(size: 10, weight: .medium))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(.white.opacity(0.82))
                     .lineLimit(1)
             }
             .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // Scrim sized to the caption rather than to the cell. A fraction of
+            // the cell height cannot work here: the grid is adaptive, so a cell
+            // is 84-107pt tall while the caption is a fixed ~45pt, and on the
+            // short end the first line of the transcript lands above any
+            // proportional ramp. Anchoring to the caption keeps white-on-bright
+            // legible at every cell width.
+            .background(alignment: .bottom) {
+                LinearGradient(
+                    stops: [
+                        .init(color: .black.opacity(0), location: 0),
+                        .init(color: .black.opacity(0.70), location: 0.30),
+                        .init(color: .black.opacity(0.90), location: 1)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                // Grow upward so the ramp finishes before the text starts
+                // instead of fading across the first line.
+                .padding(.top, -18)
+                .allowsHitTesting(false)
+            }
 
             if isSelecting {
                 Color.black.opacity(0.55)
@@ -311,5 +336,10 @@ private struct YarnClipCell: View {
         )
         .contentShape(RoundedRectangle(cornerRadius: 12))
         .help(clip.transcript)
+        // The transcript is clamped to two lines and the title to one, so the
+        // rendered text is not the whole caption. Read the full strings out.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("\(clip.transcript), from \(clip.videoTitle)"))
+        .accessibilityAddTraits(.isButton)
     }
 }
