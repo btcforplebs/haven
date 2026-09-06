@@ -37,9 +37,15 @@ enum ContactManager {
             finalPTags.append(["p", ownerHex])
         }
 
-        // Auto-follow whitelisted accounts
+        // Auto-follow whitelisted accounts.
+        //
+        // Checksum-validating rather than Bech32.decode: these p-tags are
+        // published in a signed kind-3 event, so a malformed npub does not fail
+        // quietly here, it becomes part of the user's contact list on relays.
+        // The lenient decoder returns 32 plausible bytes for a typo'd npub and
+        // 3 bytes for one containing a stray "1", and both would go in as-is.
         for npub in whitelistedNpubs {
-            if let hex = Bech32.decode(npub)?.hexString, !existingPubkeys.contains(hex) {
+            if let hex = NpubValidation.hexPubkey(fromNpub: npub), !existingPubkeys.contains(hex) {
                 finalPTags.append(["p", hex])
             }
         }

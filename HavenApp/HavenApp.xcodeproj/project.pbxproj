@@ -55,6 +55,7 @@
 		1DE283F1E6062C16E37DAAD5 /* LongFormContent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42DB00CA3C4EA172D7C76C2A /* LongFormContent.swift */; };
 		1F0E85CA638E913E0179BA1D /* MediaTypeDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D08ABA7CDBFD26CF0423E33 /* MediaTypeDetector.swift */; };
 		1F823537B9F13B3D4C003E11 /* ContactManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E4EFE6422E6E0A896809308 /* ContactManager.swift */; };
+		0C7E56E53DD993BD200DBE14 /* NpubValidation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44198E06E32889EADFCD58DA /* NpubValidation.swift */; };
 		1F95FE3EAEC35F682BAF6EDD /* UGCReportingDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2181DC8AEE2B3F8376683F88 /* UGCReportingDialog.swift */; };
 		204A8F9BC80EEE068D97459E /* FollowingFeedState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4464865603517B64343AFC9 /* FollowingFeedState.swift */; };
 		20909F66629BEC603D2806A0 /* FloatingArrowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C6F73BF6DECD70643354714 /* FloatingArrowController.swift */; };
@@ -347,6 +348,7 @@
 		E314FEFD19BA6CE33B3AEB4D /* WalletCashuTab.swift in Sources */ = {isa = PBXBuildFile; fileRef = E21346EC9370A887C801BCDB /* WalletCashuTab.swift */; };
 		E363C397778EDA4BA29B9B7E /* DraftService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3800D9290BD369F4F26BC5C3 /* DraftService.swift */; };
 		E3E261106E739296E6F290C4 /* ContactManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E4EFE6422E6E0A896809308 /* ContactManager.swift */; };
+		886BE23DD944A5E7B46086AE /* NpubValidation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44198E06E32889EADFCD58DA /* NpubValidation.swift */; };
 		E4DC095F28C9D7FE3BBED27A /* ModeButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA14EC3D2D24B98A94F93B56 /* ModeButton.swift */; };
 		E50C4B4F8787584FC7E29EA2 /* MenuBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 848045286D78E78658D43BE3 /* MenuBarView.swift */; };
 		E6B954A06F5DEC06F4C960AE /* MediaListItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C40BA5C7F1973E84E4C8AA9 /* MediaListItem.swift */; };
@@ -465,6 +467,7 @@
 		4C6F73BF6DECD70643354714 /* FloatingArrowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingArrowController.swift; sourceTree = "<group>"; };
 		4E0FC14B3CEA24424481BBA3 /* MediaGalleryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaGalleryView.swift; sourceTree = "<group>"; };
 		4E4EFE6422E6E0A896809308 /* ContactManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactManager.swift; sourceTree = "<group>"; };
+		44198E06E32889EADFCD58DA /* NpubValidation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NpubValidation.swift; sourceTree = "<group>"; };
 		4F1498D793BB43A6EF6996AF /* VaultNoteRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultNoteRow.swift; sourceTree = "<group>"; };
 		51C29A25C6DBE37CB0202A7F /* LiveFeedService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveFeedService.swift; sourceTree = "<group>"; };
 		51EA54117C5443C0DA93781D /* HavenApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HavenApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -925,6 +928,7 @@
 				181FBA6695959DF3B88E2211 /* CashuService.swift */,
 				1810634848EE1957C7E49DAF /* ConfigService.swift */,
 				4E4EFE6422E6E0A896809308 /* ContactManager.swift */,
+				44198E06E32889EADFCD58DA /* NpubValidation.swift */,
 				F8A73E431CE524CF64925E0D /* CredentialStore.swift */,
 				775FD3A0FC8C2289FB4BBFE3 /* DMService.swift */,
 				3800D9290BD369F4F26BC5C3 /* DraftService.swift */,
@@ -1199,6 +1203,7 @@
 				2F01D696DE1AD2109C69A981 /* ComposeView.swift in Sources */,
 				2B53A7CA9AAD906D7AE89502 /* ConfigService.swift in Sources */,
 				E3E261106E739296E6F290C4 /* ContactManager.swift in Sources */,
+				886BE23DD944A5E7B46086AE /* NpubValidation.swift in Sources */,
 				BA8810E4D83750FF74358B10 /* ContentView.swift in Sources */,
 				47D602C388B2BA74EBA29A05 /* CredentialStore.swift in Sources */,
 				B2889A6B902C69E8612485A8 /* CustomZapSheet.swift in Sources */,
@@ -1399,6 +1404,7 @@
 				0EB42E4E52C93FD4809FB152 /* ComposeView.swift in Sources */,
 				68B9084DB6D148FEFCE2C608 /* ConfigService.swift in Sources */,
 				1F823537B9F13B3D4C003E11 /* ContactManager.swift in Sources */,
+				0C7E56E53DD993BD200DBE14 /* NpubValidation.swift in Sources */,
 				14FE82E63F5A97838F91AAE6 /* CredentialStore.swift in Sources */,
 				07D3B5A3AB257E7D23940245 /* CustomZapSheet.swift in Sources */,
 				52B1CF6FDF93928ECC60D213 /* DMInboxView.swift in Sources */,
