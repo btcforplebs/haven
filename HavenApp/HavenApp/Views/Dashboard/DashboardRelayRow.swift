@@ -46,7 +46,7 @@ struct RelayRow: View {
                         .stroke(copied ? Color.green.opacity(0.6) : Color.havenPurple.opacity(0.3), lineWidth: 1)
                 )
                 .scaleEffect(copied ? 1.05 : 1.0)
-                .animation(.spring(response: 0.25, dampingFraction: 0.65), value: copied)
+                .animation(Motion.pop, value: copied)
 
             Button(action: {
                 #if os(macOS)
@@ -55,9 +55,9 @@ struct RelayRow: View {
                 #else
                 UIPasteboard.general.string = fullURI
                 #endif
-                withAnimation(.easeInOut(duration: 0.2)) { copied = true }
+                withAnimation(Motion.fade) { copied = true }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                    withAnimation(.easeInOut(duration: 0.2)) { copied = false }
+                    withAnimation(Motion.fade) { copied = false }
                 }
             }) {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
@@ -73,7 +73,7 @@ struct RelayRow: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(isHovered ? Color.havenPurple.opacity(0.2) : Color.white.opacity(0.03), lineWidth: 0.5)
         )
-        .animation(.easeInOut(duration: 0.15), value: isHovered)
+        .animation(Motion.control, value: isHovered)
         .onHover { hovering in
             isHovered = hovering
         }

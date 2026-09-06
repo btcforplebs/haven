@@ -154,15 +154,10 @@ struct FloatingArrowView: View {
         .opacity(appeared ? 1.0 : 0.0)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
-            withAnimation(.spring(response: 0.7, dampingFraction: 0.5)) {
-                appeared = true
-            }
-            withAnimation(.easeInOut(duration: 1.1).repeatForever(autoreverses: true)) {
-                floating = true
-            }
-            withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
-                glowPulse = true
-            }
+            withAnimation(Motion.pop) { appeared = true }
+            guard let loop = Motion.ambientPulse else { return }
+            withAnimation(loop) { floating = true }
+            withAnimation(loop) { glowPulse = true }
         }
     }
 }

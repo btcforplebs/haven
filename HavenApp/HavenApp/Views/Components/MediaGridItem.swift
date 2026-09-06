@@ -61,7 +61,7 @@ struct MediaGridItem: View {
             .contentShape(Rectangle())
             .scaleEffect(isHovered ? 1.04 : 1.0)
             .zIndex(isHovered ? 1.0 : 0.0)
-            .animation(.easeInOut(duration: 0.15), value: isHovered)
+            .animation(Motion.control, value: isHovered)
             .onHover { hovering in isHovered = hovering }
             .onTapGesture { onSelect() }
         .contextMenu {

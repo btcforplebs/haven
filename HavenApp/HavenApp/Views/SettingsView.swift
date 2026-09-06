@@ -289,7 +289,7 @@ struct SettingsView: View {
             
             ForEach(items) { item in
                 Button(action: {
-                    withAnimation(.easeInOut(duration: 0.1)) {
+                    withAnimation(Motion.control) {
                         selectedTab = item
                     }
                 }) {

@@ -50,7 +50,7 @@ struct StatsCard: View {
         )
         .shadow(color: color.opacity(isHovered ? 0.18 : 0.0), radius: 8, x: 0, y: 3)
         .scaleEffect(isHovered ? 1.02 : 1.0)
-        .animation(.spring(response: 0.25, dampingFraction: 0.75), value: isHovered)
+        .animation(Motion.control, value: isHovered)
     }
 
     var body: some View {
@@ -63,7 +63,7 @@ struct StatsCard: View {
             }
         }
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) { isHovered = hovering && action != nil }
+            withAnimation(Motion.control) { isHovered = hovering && action != nil }
         }
     }
 }

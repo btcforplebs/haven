@@ -28,7 +28,7 @@ struct IconFilterButton: View {
             }
             .frame(width: 36, height: 36)
             .contentShape(Rectangle())
-            .animation(.easeInOut(duration: 0.15), value: isSelected)
+            .animation(Motion.toggle, value: isSelected)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(tooltip)

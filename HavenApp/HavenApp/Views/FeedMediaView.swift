@@ -226,7 +226,7 @@ private struct FeedPhotoView: View {
                 Image(platformImage: image)
                     .resizable()
                     .aspectRatio(contentMode: isThumbnail ? .fill : .fit)
-                    .transition(.opacity.animation(.easeIn(duration: 0.2)))
+                    .transition(.opacity.animation(Motion.media))
             } else if isLoading {
                 ProgressView()
                     .tint(Color.havenPurple.opacity(0.6))
@@ -261,7 +261,7 @@ private struct FeedPhotoView: View {
                 if let downsampled = await ImageDownsampler.downsample(data: data, maxDimension: maxDimension) {
                     MediaCacheService.shared.cacheImage(downsampled, for: url)
                     await MainActor.run {
-                        withAnimation(.easeIn(duration: 0.2)) {
+                        withAnimation(Motion.media) {
                             self.image = downsampled
                             self.aspectRatio = ratioFor(downsampled)
                         }
@@ -270,7 +270,7 @@ private struct FeedPhotoView: View {
                 } else if let img = PlatformImage(data: data) {
                     MediaCacheService.shared.cacheImage(img, for: url)
                     await MainActor.run {
-                        withAnimation(.easeIn(duration: 0.2)) {
+                        withAnimation(Motion.media) {
                             self.image = img
                             self.aspectRatio = ratioFor(img)
                         }
@@ -314,7 +314,7 @@ private struct FeedGIFView: View {
                 contentMode: isThumbnail ? .fill : .fit,
                 shouldAnimate: !isThumbnail,
                 onLoad: { size in
-                    withAnimation(.easeIn(duration: 0.2)) {
+                    withAnimation(Motion.media) {
                         if size.width > 0 && size.height > 0 {
                             self.aspectRatio = size.width / size.height
                         }
@@ -363,7 +363,7 @@ private struct FeedVideoThumbnailView: View {
                 Image(platformImage: thumb)
                     .resizable()
                     .scaledToFill()
-                    .transition(.opacity.animation(.easeIn(duration: 0.15)))
+                    .transition(.opacity.animation(Motion.media))
             } else if loadFailed {
                 // Couldn't extract a frame without a full download — show a video
                 // glyph rather than spinning forever.

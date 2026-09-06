@@ -96,7 +96,7 @@ struct DMThreadView: View {
 
                         Spacer()
 
-                        Button(action: { withAnimation(.easeInOut(duration: 0.2)) { useNIP04.toggle() } }) {
+                        Button(action: { withAnimation(Motion.toggle) { useNIP04.toggle() } }) {
                             Text("Switch")
                                 .font(.appSystem(size: 11, weight: .medium))
                                 .foregroundColor(.havenPurple)

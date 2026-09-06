@@ -27,10 +27,14 @@ enum WizardColors {
     )
 }
 
+/// Onboarding runs slower than the rest of the app on purpose — it is the one
+/// place the user is being walked through something rather than operating it.
+/// These keep that tempo but route through `Motion.custom`, so the wizard's ~80
+/// animation call sites pick up Reduce Motion without each one being touched.
 enum WizardAnimations {
-    static let springEnter: Animation = .spring(response: 0.6, dampingFraction: 0.8)
-    static let springBounce: Animation = .spring(response: 0.5, dampingFraction: 0.6)
-    static let springGentle: Animation = .spring(response: 0.8, dampingFraction: 0.9)
+    static var springEnter: Animation { Motion.custom(response: 0.6, dampingFraction: 0.8) }
+    static var springBounce: Animation { Motion.custom(response: 0.5, dampingFraction: 0.6) }
+    static var springGentle: Animation { Motion.custom(response: 0.8, dampingFraction: 0.9) }
     static let fadeIn: Animation = .easeOut(duration: 0.4)
     static let staggerDelay: Double = 0.08
 }
@@ -3020,9 +3024,8 @@ private struct CompleteStep: View {
 
             // Button pulse loop
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
-                    buttonPulse = true
-                }
+                guard let loop = Motion.ambientPulse else { return }
+                withAnimation(loop) { buttonPulse = true }
             }
 
             #if os(macOS)

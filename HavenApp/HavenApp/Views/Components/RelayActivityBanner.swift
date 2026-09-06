@@ -28,12 +28,12 @@ final class RelayActivityNotificationManager: ObservableObject {
 
     func show(icon: String, title: String, body: String, color: Color, onTap: @escaping () -> Void) {
         let notification = RelayActivityNotification(icon: icon, title: title, body: body, color: color, onTap: onTap)
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+        withAnimation(Motion.bannerIn) {
             notifications.insert(notification, at: 0)
         }
         // Cap at 3 visible so a burst of activity doesn't fill the screen.
         if notifications.count > 3 {
-            withAnimation(.easeOut(duration: 0.4)) {
+            withAnimation(Motion.bannerOut) {
                 notifications = Array(notifications.prefix(3))
             }
         }
@@ -44,7 +44,7 @@ final class RelayActivityNotificationManager: ObservableObject {
     }
 
     func dismiss(_ id: UUID) {
-        withAnimation(.easeOut(duration: 0.4)) {
+        withAnimation(Motion.bannerOut) {
             notifications.removeAll { $0.id == id }
         }
     }
@@ -61,14 +61,11 @@ struct RelayActivityBanner: View {
                 RelayActivityPill(notification: notification) {
                     manager.dismiss(notification.id)
                 }
-                .transition(.asymmetric(
-                    insertion: .move(edge: .top).combined(with: .opacity),
-                    removal: .opacity.combined(with: .scale(scale: 0.8))
-                ))
+                .transition(Motion.pillTransition)
             }
         }
         .padding(.top, manager.notifications.isEmpty ? 0 : 12)
-        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: manager.notifications.map(\.id))
+        .animation(Motion.bannerIn, value: manager.notifications.map(\.id))
     }
 }
 

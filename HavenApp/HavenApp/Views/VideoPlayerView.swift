@@ -355,7 +355,7 @@ struct VideoScrubber: View {
                 Capsule()
                     .fill(Color.white.opacity(0.85))
                     .frame(width: max(0, geo.size.width * progress), height: isDragging ? 5 : 3)
-                    .animation(.easeOut(duration: 0.15), value: isDragging)
+                    .animation(Motion.control, value: isDragging)
             }
             .frame(maxHeight: .infinity, alignment: .center)
             .contentShape(Rectangle())
@@ -434,9 +434,11 @@ private struct VideoShimmerPlaceholder: View {
                 .foregroundColor(.white.opacity(0.25))
         }
         .onAppear {
-            withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: false)) {
-                phase = 2.0
-            }
+            // No sweep at all under Reduce Motion — leaving `phase` at its
+            // initial value keeps a plain, static placeholder rather than one
+            // frozen partway through a gradient sweep.
+            guard let loop = Motion.ambientPulse else { return }
+            withAnimation(loop) { phase = 2.0 }
         }
     }
 }
@@ -490,7 +492,7 @@ struct InlineFeedVideoPlayer: View {
                                 .allowsHitTesting(false) // Let touches fall through natively for seamless swiping and tapping!
                                 .onReceive(player.publisher(for: \.timeControlStatus)) { status in
                                     if status == .playing {
-                                        withAnimation(.easeOut(duration: 0.3)) {
+                                        withAnimation(Motion.fade) {
                                             isReadyToPlay = true
                                         }
                                     }
@@ -498,7 +500,7 @@ struct InlineFeedVideoPlayer: View {
                                 .onReceive(player.publisher(for: \.status)) { status in
                                     if status == .readyToPlay {
                                         if player.rate > 0 || CMTimeGetSeconds(player.currentTime()) > 0.1 {
-                                            withAnimation(.easeOut(duration: 0.3)) {
+                                            withAnimation(Motion.fade) {
                                                 isReadyToPlay = true
                                             }
                                         }
@@ -611,7 +613,7 @@ struct InlineFeedVideoPlayer: View {
         Task {
             if let thumb = await MediaCacheService.shared.generateThumbnail(for: url) {
                 await MainActor.run {
-                    withAnimation(.easeOut(duration: 0.25)) {
+                    withAnimation(Motion.fade) {
                         self.thumbnail = thumb
                     }
                     let size = thumb.size
@@ -942,7 +944,7 @@ struct FullScreenVideoPlayer: View {
         }
         .contentShape(Rectangle())
         .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.2)) {
+            withAnimation(Motion.fade) {
                 showControls.toggle()
             }
             if showControls { scheduleAutoHide() }
@@ -997,7 +999,7 @@ struct FullScreenVideoPlayer: View {
         hideControlsWork?.cancel()
         let work = DispatchWorkItem {
             guard player?.timeControlStatus == .playing else { return }
-            withAnimation(.easeInOut(duration: 0.25)) {
+            withAnimation(Motion.fade) {
                 showControls = false
             }
         }

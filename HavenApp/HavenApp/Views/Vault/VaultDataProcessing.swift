@@ -42,18 +42,18 @@ extension VaultView {
         let noteCount = (counts[1] ?? 0) + (counts[6] ?? 0) + (counts[30023] ?? 0)
         let baselineNotes = (notificationBaseline[1] ?? 0) + (notificationBaseline[6] ?? 0) + (notificationBaseline[30023] ?? 0)
         if noteCount > baselineNotes && viewMode != .notes {
-            withAnimation(.easeInOut(duration: 0.3)) { hasNewNotes = true }
+            withAnimation(Motion.fade) { hasNewNotes = true }
         }
 
         // Likes: kind 7 — suppressed in Zaps Only mode (likes are hidden from the UI)
         if !configService.config.zapsOnlyMode
             && (counts[7] ?? 0) > (notificationBaseline[7] ?? 0) && viewMode != .likes {
-            withAnimation(.easeInOut(duration: 0.3)) { hasNewLikes = true }
+            withAnimation(Motion.fade) { hasNewLikes = true }
         }
 
         // Zaps: kind 9735
         if (counts[9735] ?? 0) > (notificationBaseline[9735] ?? 0) && viewMode != .zaps {
-            withAnimation(.easeInOut(duration: 0.3)) { hasNewZaps = true }
+            withAnimation(Motion.fade) { hasNewZaps = true }
         }
     }
 
@@ -63,19 +63,19 @@ extension VaultView {
         switch mode {
         case .notes:
             if hasNewNotes {
-                withAnimation(.easeInOut(duration: 0.2)) { hasNewNotes = false }
+                withAnimation(Motion.fade) { hasNewNotes = false }
             }
             notificationBaseline[1] = events.filter { $0.kind == 1 }.count
             notificationBaseline[6] = events.filter { $0.kind == 6 }.count
             notificationBaseline[30023] = events.filter { $0.kind == 30023 }.count
         case .likes:
             if hasNewLikes {
-                withAnimation(.easeInOut(duration: 0.2)) { hasNewLikes = false }
+                withAnimation(Motion.fade) { hasNewLikes = false }
             }
             notificationBaseline[7] = events.filter { $0.kind == 7 }.count
         case .zaps:
             if hasNewZaps {
-                withAnimation(.easeInOut(duration: 0.2)) { hasNewZaps = false }
+                withAnimation(Motion.fade) { hasNewZaps = false }
             }
             notificationBaseline[9735] = events.filter { $0.kind == 9735 }.count
         case .media:

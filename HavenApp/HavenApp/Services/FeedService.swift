@@ -706,7 +706,7 @@ class FeedService: ObservableObject {
         //    Wrapped in withAnimation so SwiftUI cross-fades the content
         //    transition instead of hard-cutting between accounts.
         var restored = false
-        withAnimation(.easeInOut(duration: 0.25)) {
+        withAnimation(Motion.fade) {
             loadedSnapshotNpub = newKey
             restored = restoreSnapshot(forKey: newKey)
             if !restored {

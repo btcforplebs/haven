@@ -309,7 +309,7 @@ struct NoteRow: View {
                         .fixedSize(horizontal: false, vertical: true)
 
                     if truncate && !isExpanded && cleanContent.count > 240 {
-                        Button(action: { withAnimation(.easeInOut(duration: 0.15)) { isExpanded = true } }) {
+                        Button(action: { withAnimation(Motion.panel) { isExpanded = true } }) {
                             Text("Show more")
                                 .font(.appSystem(size: 12, weight: .semibold, design: .monospaced))
                                 .foregroundColor(.havenPurple)
@@ -328,7 +328,7 @@ struct NoteRow: View {
                             ForEach(urls, id: \.absoluteString) { url in
                                 FeedMediaView(url: url, maxHeight: 300, portraitMaxHeight: 400, isThumbnail: false)
                                     .clipShape(RoundedRectangle(cornerRadius: 8))
-                                    .transition(.opacity.animation(.spring(response: 0.25, dampingFraction: 0.75)))
+                                    .transition(.opacity.animation(Motion.media))
                             }
                         }
                         .mediaTabViewStyleCompat()
@@ -645,7 +645,7 @@ struct RepostedNoteView: View {
                         ForEach(urls.prefix(4), id: \.absoluteString) { url in
                             FeedMediaView(url: url, maxHeight: 250, portraitMaxHeight: 350, isThumbnail: false)
                                 .clipShape(RoundedRectangle(cornerRadius: 6))
-                                .transition(.opacity.animation(.spring(response: 0.25, dampingFraction: 0.75)))
+                                .transition(.opacity.animation(Motion.media))
                         }
                     }
                     .mediaTabViewStyleCompat()

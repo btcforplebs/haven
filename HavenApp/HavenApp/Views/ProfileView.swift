@@ -512,7 +512,7 @@ struct ProfileView: View {
                 .transition(.scale(scale: 0.5).combined(with: .opacity))
             }
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: feedService.feedScrollingDown)
+        .animation(Motion.chrome, value: feedService.feedScrollingDown)
         .onReceive(NotificationCenter.default.publisher(for: .composeFromTabBar)) { note in
             guard (note.object as? Int) == 2 else { return }
             showingCompose = true
@@ -990,7 +990,7 @@ struct ProfileView: View {
         HStack(spacing: 0) {
             ForEach(ProfileSection.allCases) { section in
                 Button(action: {
-                    withAnimation(.easeInOut(duration: 0.15)) {
+                    withAnimation(Motion.toggle) {
                         selectedSection = section
                     }
                 }) {
@@ -1140,7 +1140,7 @@ struct ProfileView: View {
             LazyVGrid(columns: columns, spacing: gridSpacing) {
                 ForEach(items) { mediaItem in
                     MediaGridItem(item: mediaItem) {
-                        withAnimation(.easeInOut(duration: 0.2)) {
+                        withAnimation(Motion.fade) {
                             selectedMedia = mediaItem
                         }
                     }
@@ -1173,7 +1173,7 @@ struct ProfileView: View {
             Color.black.opacity(0.9 * max(0, 1.0 - (abs(dragOffset.height) / 300.0)))
                 .edgesIgnoringSafeArea(.all)
                 .onTapGesture {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    withAnimation(Motion.fade) {
                         selectedMedia = nil
                         dragOffset = .zero
                     }
@@ -1215,7 +1215,7 @@ struct ProfileView: View {
                         Spacer()
 
                         Button(action: {
-                            withAnimation(.easeInOut(duration: 0.2)) {
+                            withAnimation(Motion.fade) {
                                 selectedMedia = nil
                                 dragOffset = .zero
                             }
@@ -1244,11 +1244,11 @@ struct ProfileView: View {
                     ForEach(displayMedia) { mediaItem in
                         ViewerViewMediaItem(mediaItem: mediaItem)
                             .tag(mediaItem as MediaItem?)
-                            .transition(.opacity.animation(.spring(response: 0.25, dampingFraction: 0.75)))
+                            .transition(.opacity.animation(Motion.media))
                     }
                 }
                 .mediaTabViewStyleCompat()
-                .animation(.spring(response: 0.25, dampingFraction: 0.75), value: selectedMedia?.id)
+                .animation(Motion.pick, value: selectedMedia?.id)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .offset(y: dragOffset.height)
                 .scaleEffect(max(0.8, 1.0 - (abs(dragOffset.height) / 1000.0)))
@@ -1261,12 +1261,12 @@ struct ProfileView: View {
                         }
                         .onEnded { gesture in
                             if abs(dragOffset.height) > 120 {
-                                withAnimation(.easeOut(duration: 0.2)) {
+                                withAnimation(Motion.dismiss) {
                                     selectedMedia = nil
                                     dragOffset = .zero
                                 }
                             } else {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                                withAnimation(Motion.snapBack) {
                                     dragOffset = .zero
                                 }
                             }
@@ -1358,7 +1358,7 @@ struct ProfileView: View {
                 navigateMedia(direction: 1)
                 return nil
             case 53: // escape
-                withAnimation(.easeInOut(duration: 0.2)) { selectedMedia = nil }
+                withAnimation(Motion.fade) { selectedMedia = nil }
                 return nil
             default:
                 return event
@@ -1379,7 +1379,7 @@ struct ProfileView: View {
               let index = displayMedia.firstIndex(where: { $0.id == current.id }) else { return }
         let newIndex = index + direction
         guard displayMedia.indices.contains(newIndex) else { return }
-        withAnimation(.easeInOut(duration: 0.2)) { selectedMedia = displayMedia[newIndex] }
+        withAnimation(Motion.fade) { selectedMedia = displayMedia[newIndex] }
     }
 
     private var sectionEmptyIcon: String {

@@ -190,7 +190,7 @@ struct UnifiedActionButton: View {
         .buttonStyle(.plain)
         .disabled(isLoading)
         .onHover { hovering in
-            withAnimation(.easeInOut(duration: 0.15)) {
+            withAnimation(Motion.control) {
                 isHovered = hovering
             }
         }

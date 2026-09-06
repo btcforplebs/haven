@@ -110,7 +110,7 @@ class PendingPostManager: ObservableObject {
         bannerNoteId = event.id
         actionType = type
         timeRemaining = ActionType.countdownDuration
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { isShowing = true }
+        withAnimation(Motion.bannerIn) { isShowing = true }
         beginCountdown {
             nostrService.postEvent(event)
             // The note is now broadcasting — safe to drop its draft.
@@ -128,7 +128,7 @@ class PendingPostManager: ObservableObject {
         bannerNoteId = sourceNote.id
         actionType = .repost
         timeRemaining = ActionType.countdownDuration
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { isShowing = true }
+        withAnimation(Motion.bannerIn) { isShowing = true }
 
         // NIP-18: always repost the ORIGINAL event, not a repost wrapper.
         // For kind 6 notes, repostedEventId points to the original kind 1 event
@@ -177,7 +177,7 @@ class PendingPostManager: ObservableObject {
         bannerNoteId = noteId
         actionType = .delete
         timeRemaining = ActionType.countdownDuration
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { isShowing = true }
+        withAnimation(Motion.bannerIn) { isShowing = true }
 
         beginCountdown {
             nostrService.deleteNote(id: noteId)
@@ -194,7 +194,7 @@ class PendingPostManager: ObservableObject {
         }
         pendingEvent = nil
         pendingDraftId = nil
-        withAnimation(.easeOut(duration: 0.4)) {
+        withAnimation(Motion.bannerOut) {
             isShowing = false
             actionType = nil
         }
@@ -208,7 +208,7 @@ class PendingPostManager: ObservableObject {
     /// the opposite of `cancel()`.
     func dismissBanner() {
         guard isShowing else { return }
-        withAnimation(.easeOut(duration: 0.25)) {
+        withAnimation(Motion.bannerOut) {
             isShowing = false
         }
     }
@@ -224,7 +224,7 @@ class PendingPostManager: ObservableObject {
             FeedService.shared.removeNote(id: event.id)
         }
         pendingEvent = nil
-        withAnimation(.easeOut(duration: 0.4)) {
+        withAnimation(Motion.bannerOut) {
             isShowing = false
             actionType = nil
         }
@@ -268,7 +268,7 @@ class PendingPostManager: ObservableObject {
                 self.endBackgroundTaskIfNeeded()
                 return
             }
-            withAnimation(.easeOut(duration: 0.4)) {
+            withAnimation(Motion.bannerOut) {
                 self.isShowing = false
                 self.actionType = nil
             }

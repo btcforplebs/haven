@@ -21,18 +21,18 @@ class ErrorNotificationManager: ObservableObject {
 
     func show(_ message: String, icon: String = "exclamationmark.triangle.fill", style: ErrorNotification.Style = .error) {
         let notification = ErrorNotification(message: message, icon: icon, style: style)
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+        withAnimation(Motion.bannerIn) {
             notifications.insert(notification, at: 0)
         }
         // Cap at 3 visible
         if notifications.count > 3 {
-            withAnimation(.easeOut(duration: 0.4)) {
+            withAnimation(Motion.bannerOut) {
                 notifications = Array(notifications.prefix(3))
             }
         }
         let id = notification.id
         DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
-            withAnimation(.easeOut(duration: 0.4)) {
+            withAnimation(Motion.bannerOut) {
                 self?.notifications.removeAll { $0.id == id }
             }
         }
@@ -48,14 +48,11 @@ struct ErrorNotificationBanner: View {
         VStack(spacing: 6) {
             ForEach(manager.notifications) { notification in
                 ErrorPill(notification: notification)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .top).combined(with: .opacity),
-                        removal: .opacity.combined(with: .scale(scale: 0.8))
-                    ))
+                    .transition(Motion.pillTransition)
             }
         }
         .padding(.top, manager.notifications.isEmpty ? 0 : 12)
-        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: manager.notifications.map(\.id))
+        .animation(Motion.bannerIn, value: manager.notifications.map(\.id))
     }
 }
 

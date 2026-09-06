@@ -417,7 +417,7 @@ extension MediaGalleryView {
                     self.displayMedia.removeAll(where: { normalizedKeyStatic(for: $0.url) == sha256 })
 
                     if selectedMedia?.url == item.url {
-                        withAnimation(.easeInOut(duration: 0.2)) {
+                        withAnimation(Motion.fade) {
                             selectedMedia = nil
                             dragOffset = .zero
                         }
