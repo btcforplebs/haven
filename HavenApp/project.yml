@@ -66,6 +66,10 @@ targets:
       - path: Resources/templates
         type: folder
       - path: HavenApp/App/PrivacyInfo.xcprivacy
+      # Starter packs for the setup wizard. Loaded at runtime with
+      # Bundle.main.url(forResource:), so it has to be in Resources or the
+      # Initial Follows step silently shows nothing.
+      - path: HavenApp/Resources/starter_packs.json
 
     settings:
       base:
@@ -127,6 +131,10 @@ targets:
       - path: Resources/templates
         type: folder
       - path: HavenApp/App/PrivacyInfo.xcprivacy
+      # Starter packs for the setup wizard. Loaded at runtime with
+      # Bundle.main.url(forResource:), so it has to be in Resources or the
+      # Initial Follows step silently shows nothing.
+      - path: HavenApp/Resources/starter_packs.json
 
     settings:
       base:
