@@ -110,6 +110,7 @@
 		484242402584BDA11F3FC4B5 /* ProofOfWorkSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83D64C528C3BBCD856610AB5 /* ProofOfWorkSettingsView.swift */; };
 		489C0CB7897C5D6A6C6EBFD2 /* EngagementTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01EFA5F14E595113B47E8FC2 /* EngagementTracker.swift */; };
 		4980734C45973D0525500813 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = D402A79FB4D7F03B9F67E1D2 /* PrivacyInfo.xcprivacy */; };
+		AA11BB22CC33DD44EE55FF77 /* notification.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = FF11AA22BB33CC44DD55EE66 /* notification.mp3 */; };
 		4B8B584EB02021A488F995CF /* libhaven_ios.a in Frameworks */ = {isa = PBXBuildFile; fileRef = DA8EC80FB31CC3B6EB777D12 /* libhaven_ios.a */; };
 		4C51593200648C9350C77B24 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 915DF9A0796218139DE0703E /* Assets.xcassets */; };
 		4E6FA86296F8D1B4C7144D4D /* DashboardHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = C86A6AE71C1034FAB5E689FE /* DashboardHelpers.swift */; };
@@ -197,6 +198,7 @@
 		83352352A3848FB0FE67A278 /* HavenConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3056CC16711F7E38B7FE86D /* HavenConfig.swift */; };
 		870818EFD99EBF6D0E1F6C30 /* FeedDashboardSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5768CC5EF0D663BD7DBA800 /* FeedDashboardSheet.swift */; };
 		87D56536906D88D1C28BD2E2 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = D402A79FB4D7F03B9F67E1D2 /* PrivacyInfo.xcprivacy */; };
+		BB22CC33DD44EE55FF6600AA /* notification.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = FF11AA22BB33CC44DD55EE66 /* notification.mp3 */; };
 		88FB85A8406DE6D5CB0F0113 /* BlossomDashboardModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41AFE9F84C0F2592990C1224 /* BlossomDashboardModels.swift */; };
 		8A8A672CB3CA7E14FE8B7D6B /* NVWidgetKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BEA112FAABC73A446279BB0 /* NVWidgetKit.swift */; };
 		8ADB489FAB643EBB11BB577E /* WebSocketClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CB15AE080BDC0999543399A /* WebSocketClient.swift */; };
@@ -555,6 +557,7 @@
 		AA20000000000000000001 /* ReferencedNoteRepair.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReferencedNoteRepair.swift; sourceTree = "<group>"; };
 		D0D02100F9C47D8B2A714FBA /* MediaGalleryViewer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaGalleryViewer.swift; sourceTree = "<group>"; };
 		D402A79FB4D7F03B9F67E1D2 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		FF11AA22BB33CC44DD55EE66 /* notification.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; name = notification.mp3; path = HavenApp/notification.mp3; sourceTree = SOURCE_ROOT; };
 		D5EBFDB16A8828F3C12C4343 /* HavenApp-iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "HavenApp-iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		D5F431BCE8C47C98A4642716 /* FeedGlanceWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedGlanceWidget.swift; sourceTree = "<group>"; };
 		D64CEB281CD04B4F50EE9E2E /* YarnGifPickerSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YarnGifPickerSheet.swift; sourceTree = "<group>"; };
@@ -727,6 +730,7 @@
 				A3192A668A74BAFF6F4B60FC /* AppDelegate.swift */,
 				5E687B37FB00F4ED20723DBB /* HavenApp.swift */,
 				D402A79FB4D7F03B9F67E1D2 /* PrivacyInfo.xcprivacy */,
+				FF11AA22BB33CC44DD55EE66 /* notification.mp3 */,
 			);
 			name = App;
 			path = HavenApp/App;
@@ -1076,6 +1080,7 @@
 				9AAB8FFAA8AC7D7BFDDC0E84 /* FeedView.swift.backup in Resources */,
 				D39D530FAF14B1784E25FE34 /* Localizable.xcstrings in Resources */,
 				87D56536906D88D1C28BD2E2 /* PrivacyInfo.xcprivacy in Resources */,
+				BB22CC33DD44EE55FF6600AA /* notification.mp3 in Resources */,
 				18EE26703E5765D972FEE57B /* templates in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1096,6 +1101,7 @@
 				EAC6CC60608D5C9986A6C97D /* FeedView.swift.backup in Resources */,
 				A945F90593453AEC2794E43C /* Localizable.xcstrings in Resources */,
 				4980734C45973D0525500813 /* PrivacyInfo.xcprivacy in Resources */,
+				AA11BB22CC33DD44EE55FF77 /* notification.mp3 in Resources */,
 				423F5321A3A3F1B60E407B0D /* templates in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
