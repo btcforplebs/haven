@@ -286,7 +286,7 @@ struct SearchView: View {
                 .transition(.scale(scale: 0.5).combined(with: .opacity))
             }
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: feedService.feedScrollingDown)
+        .animation(Motion.chrome, value: feedService.feedScrollingDown)
         .toolbar {
             // Left glass pill: result-type filters
             ToolbarItem(placement: .navigationBarLeading) {

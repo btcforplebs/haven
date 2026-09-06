@@ -213,7 +213,7 @@ struct MediaGalleryView: View {
                 .transition(.scale(scale: 0.5).combined(with: .opacity))
             }
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: feedService.feedScrollingDown)
+        .animation(Motion.chrome, value: feedService.feedScrollingDown)
         #else
         GeometryReader { geometry in
             ZStack {
@@ -331,7 +331,7 @@ struct MediaGalleryView: View {
                 .transition(.scale(scale: 0.5).combined(with: .opacity))
             }
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: feedService.feedScrollingDown)
+        .animation(Motion.chrome, value: feedService.feedScrollingDown)
         #endif
     }
 

@@ -121,7 +121,7 @@ struct WalletCashuTab: View {
                 Spacer(minLength: 20)
             }
             .padding(.top, 12)
-            .animation(.spring(response: 0.35, dampingFraction: 0.75), value: showRecoveryBanner)
+            .animation(Motion.bannerIn, value: showRecoveryBanner)
         }
         .sheet(isPresented: $showingCashuInfo) {
             CashuInfoView()
@@ -143,16 +143,16 @@ struct WalletCashuTab: View {
                     let recovered = await cashuService.recoverPendingQuotes()
                     if recovered > 0 {
                         recoveredSats = recovered
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                        withAnimation(Motion.bannerIn) {
                             showRecoveryBanner = true
                             balancePulse = true
                         }
                         try? await Task.sleep(nanoseconds: 500_000_000)
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                        withAnimation(Motion.pop) {
                             balancePulse = false
                         }
                         try? await Task.sleep(nanoseconds: 4_000_000_000)
-                        withAnimation(.easeOut(duration: 0.4)) {
+                        withAnimation(Motion.bannerOut) {
                             showRecoveryBanner = false
                         }
                     }
@@ -255,7 +255,7 @@ struct WalletCashuTab: View {
                         .font(.appSystem(size: 28, weight: .bold, design: .rounded))
                         .foregroundColor(.primary)
                         .scaleEffect(balancePulse ? 1.15 : 1.0)
-                        .animation(.spring(response: 0.3, dampingFraction: 0.5), value: balancePulse)
+                        .animation(Motion.pop, value: balancePulse)
                     Text("sats")
                         .font(.appSystem(size: 14, weight: .medium))
                         .foregroundColor(.secondary)
@@ -287,7 +287,7 @@ struct WalletCashuTab: View {
             RoundedRectangle(cornerRadius: 12)
                 .stroke(balancePulse ? Self.ecashBrown.opacity(0.6) : Color.platformSeparator.opacity(0.4), lineWidth: balancePulse ? 2 : 1)
         )
-        .animation(.easeInOut(duration: 0.3), value: balancePulse)
+        .animation(Motion.fade, value: balancePulse)
         .padding(.horizontal, 16)
     }
 
@@ -385,8 +385,8 @@ struct WalletCashuTab: View {
                 .stroke(Color.platformSeparator.opacity(0.4), lineWidth: 1)
         )
         .padding(.horizontal, 16)
-        .animation(.easeInOut(duration: 0.2), value: direction)
-        .animation(.easeInOut(duration: 0.2), value: rail)
+        .animation(Motion.toggle, value: direction)
+        .animation(Motion.toggle, value: rail)
     }
 
     /// One plain sentence per combination — the thing the old layout never said.
@@ -923,17 +923,17 @@ struct WalletCashuTab: View {
             isRestoringFromRelays = false
             if restored > 0 {
                 recoveredSats = restored
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                withAnimation(Motion.bannerIn) {
                     showRecoveryBanner = true
                     balancePulse = true
                 }
                 Task {
                     try? await Task.sleep(nanoseconds: 500_000_000)
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                    withAnimation(Motion.pop) {
                         balancePulse = false
                     }
                     try? await Task.sleep(nanoseconds: 4_000_000_000)
-                    withAnimation(.easeOut(duration: 0.4)) {
+                    withAnimation(Motion.bannerOut) {
                         showRecoveryBanner = false
                     }
                 }

@@ -42,7 +42,7 @@ struct ActionButton: View {
             )
             .scaleEffect(isHovered ? 1.03 : 1.0)
             .shadow(color: Color.havenPurple.opacity(isHovered ? 0.35 : 0.0), radius: 8, x: 0, y: 4)
-            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isHovered)
+            .animation(Motion.control, value: isHovered)
         }
         .buttonStyle(.plain)
         .onHover { hovering in

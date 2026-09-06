@@ -78,7 +78,7 @@ extension MediaGalleryView {
                             onDeleteEverywhere: { deleteMediaEverywhere(item: $0) },
                             onMirrorComplete: { loadLocalMedia(force: true) }
                         ) {
-                            withAnimation(.easeInOut(duration: 0.2)) { selectedMedia = item }
+                            withAnimation(Motion.pick) { selectedMedia = item }
                         }
                         .onAppear {
                             if item.id == displayMedia.last?.id {
@@ -97,7 +97,7 @@ extension MediaGalleryView {
                             onDeleteEverywhere: { deleteMediaEverywhere(item: $0) },
                             onMirrorComplete: { loadLocalMedia(force: true) }
                         ) {
-                            withAnimation(.easeInOut(duration: 0.2)) { selectedMedia = item }
+                            withAnimation(Motion.pick) { selectedMedia = item }
                         }
                         .onAppear {
                             if item.id == displayMedia.last?.id {

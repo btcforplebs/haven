@@ -32,8 +32,8 @@ struct ModeButton: View {
                     .stroke(isSelected ? .havenPurple.opacity(0.5) : (hasNotification ? accentTint.opacity(0.4) : Color.clear), lineWidth: 0.8)
             )
             .contentShape(Rectangle())
-            .animation(.easeInOut(duration: 0.2), value: isSelected)
-            .animation(.easeInOut(duration: 0.3), value: hasNotification)
+            .animation(Motion.toggle, value: isSelected)
+            .animation(Motion.fade, value: hasNotification)
         }
         .buttonStyle(.plain)
     }

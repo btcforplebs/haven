@@ -547,7 +547,7 @@ struct FeedView: View {
                 }
             }
             .transition(.opacity)
-            .animation(.easeInOut(duration: 0.25), value: configService.activeAccountHexPubkey)
+            .animation(Motion.fade, value: configService.activeAccountHexPubkey)
         }
         #if os(iOS)
         .toolbar {
@@ -656,12 +656,12 @@ struct FeedView: View {
                         if let firstMediaURL = note.mediaURLs.first {
                             FeedMediaViewer(url: firstMediaURL, enableDragDismiss: false, onDismiss: { isShowingGridMediaViewer = false })
                                 .tag(note.id as String?)
-                                .transition(.opacity.animation(.spring(response: 0.25, dampingFraction: 0.75)))
+                                .transition(.opacity.animation(Motion.media))
                         }
                     }
                 }
                 .mediaTabViewStyleCompat()
-                .animation(.spring(response: 0.25, dampingFraction: 0.75), value: selectedGridMediaNoteId)
+                .animation(Motion.pick, value: selectedGridMediaNoteId)
                 .offset(y: galleryDragOffset.height)
                 .scaleEffect(max(0.8, 1.0 - (abs(galleryDragOffset.height) / 1000.0)))
                 .gesture(
@@ -673,12 +673,12 @@ struct FeedView: View {
                         }
                         .onEnded { gesture in
                             if abs(galleryDragOffset.height) > 120 {
-                                withAnimation(.easeOut(duration: 0.2)) {
+                                withAnimation(Motion.dismiss) {
                                     isShowingGridMediaViewer = false
                                     galleryDragOffset = .zero
                                 }
                             } else {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                                withAnimation(Motion.snapBack) {
                                     galleryDragOffset = .zero
                                 }
                             }
@@ -1309,7 +1309,7 @@ struct FeedView: View {
                     if !isLoading && feedService.shouldScrollToTopOnLoad {
                         feedService.shouldScrollToTopOnLoad = false
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                            withAnimation(Motion.scrollJump) {
                                 proxy.scrollTo("top", anchor: .top)
                             }
                         }
@@ -1348,7 +1348,7 @@ struct FeedView: View {
                     Button(action: {
                         feedService.applyPendingNotes()
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                            withAnimation(Motion.scrollJump) {
                                 proxy.scrollTo("top", anchor: .top)
                             }
                         }
@@ -1385,7 +1385,7 @@ struct FeedView: View {
                     navigationPath = NavigationPath()
                 } else if !isAtTop {
                     // At feed root but scrolled down — scroll to top
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                    withAnimation(Motion.scrollJump) {
                         proxy.scrollTo("top", anchor: .top)
                     }
                 } else {
@@ -1395,7 +1395,7 @@ struct FeedView: View {
             }
             .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("ScrollToTop"))) { _ in
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                    withAnimation(Motion.scrollJump) {
                         proxy.scrollTo("top", anchor: .top)
                     }
                 }
@@ -1404,7 +1404,7 @@ struct FeedView: View {
                 // Identity change flips isOwnNote on every row; rebuild fully so
                 // overlapping notes (global/popular feeds) reflect the new account.
                 rebuildRowDataCache()
-                withAnimation(.easeInOut(duration: 0.2)) {
+                withAnimation(Motion.scrollJump) {
                     proxy.scrollTo("top", anchor: .top)
                 }
             }
@@ -1421,7 +1421,7 @@ struct FeedView: View {
                     .allowsHitTesting(false)
             }
         }
-        .animation(.easeInOut(duration: 0.15), value: configService.isSwitchingAccount)
+        .animation(Motion.fade, value: configService.isSwitchingAccount)
         .overlay(alignment: .bottomTrailing) {
             #if os(iOS)
             if !feedService.feedScrollingDown {
@@ -1457,7 +1457,7 @@ struct FeedView: View {
             }
             #endif
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: feedService.feedScrollingDown)
+        .animation(Motion.chrome, value: feedService.feedScrollingDown)
     }
 
     private var mediaGridView: some View {
@@ -2209,7 +2209,7 @@ struct FeedNoteRow: View {
             )
             .accessibilityLabel(rowData.isReposted ? "Reposted" : "Repost")
             .scaleEffect(rowData.isReposted ? 1.2 : 1.0)
-            .animation(.spring(response: 0.3, dampingFraction: 0.45), value: rowData.isReposted)
+            .animation(Motion.pop, value: rowData.isReposted)
 
             actionButton(icon: "quote.closing", action: { onQuote?() })
                 .accessibilityLabel("Quote")
@@ -2222,7 +2222,7 @@ struct FeedNoteRow: View {
                 )
                 .accessibilityLabel(rowData.isLiked ? "Unlike" : "Like")
                 .scaleEffect(rowData.isLiked ? 1.2 : 1.0)
-                .animation(.spring(response: 0.3, dampingFraction: 0.45), value: rowData.isLiked)
+                .animation(Motion.pop, value: rowData.isLiked)
                 .simultaneousGesture(
                     LongPressGesture(minimumDuration: 0.5)
                         .onEnded { _ in
@@ -2254,7 +2254,7 @@ struct FeedNoteRow: View {
                     .background(isZapped ? Color.orange.opacity(0.2) : Color.secondary.opacity(0.1))
                     .clipShape(Capsule())
                     .scaleEffect(isZapped ? 1.2 : 1.0)
-                    .animation(.spring(response: 0.3, dampingFraction: 0.45), value: isZapped)
+                    .animation(Motion.pop, value: isZapped)
                     .contentShape(Capsule())
                     .accessibilityLabel(isZapped ? "Zapped" : "Zap")
                     .accessibilityHint(hasLightning ? "Tap to send sats" : "No lightning address")
@@ -2325,7 +2325,7 @@ struct FeedNoteRow: View {
                 fullLayout
             }
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isExpanded)
+        .animation(Motion.panel, value: isExpanded)
         .onAppear {
             // Fetch referenced notes only when this row becomes visible (lazy).
             if note.isReply, let parentId = note.parentEventId, rowData.parentNote == nil {
@@ -2414,7 +2414,7 @@ struct FeedNoteRow: View {
         if showingUserMenu {
             dismissMenu(expanded: $menuExpanded, showing: $showingUserMenu)
         } else if !rowData.isOwnNote {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+            withAnimation(Motion.panel) {
                 showingUserMenu = true
                 menuExpanded = true
             }
@@ -2427,7 +2427,7 @@ struct FeedNoteRow: View {
         if showingParentUserMenu {
             dismissMenu(expanded: $parentMenuExpanded, showing: $showingParentUserMenu)
         } else {
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.75)) {
+            withAnimation(Motion.panel) {
                 showingParentUserMenu = true
                 parentMenuExpanded = true
             }
@@ -2435,7 +2435,7 @@ struct FeedNoteRow: View {
     }
 
     private func dismissMenu(expanded: Binding<Bool>, showing: Binding<Bool>) {
-        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
+        withAnimation(Motion.panel) {
             expanded.wrappedValue = false
             showing.wrappedValue = false
         }
@@ -2514,7 +2514,7 @@ struct FeedNoteRow: View {
         .scaleEffect(expanded ? 1 : 0.01)
         .opacity(expanded ? 1 : 0)
         .animation(
-            .spring(response: 0.3, dampingFraction: 0.65).delay(Double(index) * 0.06),
+            Motion.staggered(Motion.pop, index: index, step: 0.06),
             value: expanded
         )
     }
@@ -2565,7 +2565,7 @@ struct FeedNoteRow: View {
                     )
                     .frame(maxWidth: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .transition(.opacity.animation(.spring(response: 0.25, dampingFraction: 0.75)))
+                    .transition(.opacity.animation(Motion.media))
                 }
             }
             .mediaTabViewStyleCompat()
@@ -2838,8 +2838,10 @@ struct FeedNoteSkeletonRow: View {
         .cornerRadius(12)
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.platformSeparator.opacity(ConfigService.shared.config.useOLED ? 1.5 : 1.0), lineWidth: ConfigService.shared.config.useOLED ? 1.5 : 0.8))
         .opacity(shimmer ? 0.5 : 1.0)
-        .animation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true), value: shimmer)
-        .onAppear { shimmer = true }
+        .animation(Motion.shimmer, value: shimmer)
+        // Gated, not just un-animated: flipping `shimmer` with a nil animation
+        // would pin the skeleton at 0.5 opacity forever instead of breathing.
+        .onAppear { if Motion.shimmer != nil { shimmer = true } }
     }
 }
 

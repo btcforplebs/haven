@@ -247,7 +247,7 @@ extension MediaGalleryView {
     /// Toggle a single type filter. If all are selected, narrow to just the tapped one.
     /// If only one remains selected, it cannot be deselected.
     func toggleMediaTypeFilter(_ filter: MediaTypeFilter) {
-        withAnimation(.easeInOut(duration: 0.15)) {
+        withAnimation(Motion.toggle) {
             if mediaTypeFilter.count == MediaTypeFilter.allCases.count {
                 mediaTypeFilter = [filter]
             } else if mediaTypeFilter.contains(filter) {
@@ -262,14 +262,14 @@ extension MediaGalleryView {
 
     /// Select all media type filters.
     func selectAllMediaTypes() {
-        withAnimation(.easeInOut(duration: 0.15)) {
+        withAnimation(Motion.toggle) {
             mediaTypeFilter = Set(MediaTypeFilter.allCases)
         }
     }
 
     /// Set the location filter, toggling back to `.all` if the same filter is tapped again.
     func selectLocationFilter(_ filter: MediaLocationFilter) {
-        withAnimation(.easeInOut(duration: 0.15)) {
+        withAnimation(Motion.toggle) {
             if mediaLocationFilter == filter {
                 mediaLocationFilter = .all
             } else {

@@ -380,7 +380,7 @@ struct ComposeView: View {
         )
         .padding(.horizontal, 16)
         .transition(.move(edge: .bottom).combined(with: .opacity))
-        .animation(.spring(response: 0.25, dampingFraction: 0.85), value: mentionResults.count)
+        .animation(Motion.panel, value: mentionResults.count)
     }
 
     /// Called every time `content` changes — finds the @query at the caret, which

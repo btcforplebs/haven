@@ -41,8 +41,8 @@ struct BitcoinSweepDisclaimerView: View {
                 }
             }
         }
-        .animation(.easeInOut(duration: 0.3), value: showSweepFlow)
-        .animation(.easeInOut(duration: 0.3), value: currentStep)
+        .animation(Motion.toggle, value: showSweepFlow)
+        .animation(Motion.toggle, value: currentStep)
         #if os(macOS)
         .frame(minWidth: 500, idealWidth: 550, minHeight: 450, idealHeight: 550)
         #endif

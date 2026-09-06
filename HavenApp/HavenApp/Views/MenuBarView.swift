@@ -311,8 +311,8 @@ struct MenuBarView: View {
                             }
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .animation(.easeInOut(duration: 0.15), value: selectedTab)
-                        .animation(.easeInOut(duration: 0.3), value: activeHex)
+                        .animation(Motion.toggle, value: selectedTab)
+                        .animation(Motion.fade, value: activeHex)
                     }
                 } else {
                     // Original Narrow Layout (Menu Bar dropdown)
@@ -369,9 +369,11 @@ struct MenuBarView: View {
                                                 (relayManager.isRunning ? Color(red: 0.2, green: 0.85, blue: 0.5) : .secondary))
                                             )
                                             .scaleEffect(relayManager.isRunning && !relayManager.isBooting && statusPulse ? 1.08 : 1.0)
-                                            .animation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true), value: statusPulse)
-                                            .onAppear { statusPulse = true }
-                                            .onChange(of: relayManager.isRunning) { _, running in statusPulse = running }
+                                            .animation(Motion.ambientPulse, value: statusPulse)
+                                            .onAppear { statusPulse = Motion.ambientPulse != nil }
+                                            .onChange(of: relayManager.isRunning) { _, running in
+                                                statusPulse = running && Motion.ambientPulse != nil
+                                            }
 
                                         // Tiny status dot overlay
                                         Circle()
@@ -493,8 +495,8 @@ struct MenuBarView: View {
                             }
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .animation(.easeInOut(duration: 0.2), value: selectedTab)
-                        .animation(.easeInOut(duration: 0.3), value: activeHex)
+                        .animation(Motion.toggle, value: selectedTab)
+                        .animation(Motion.fade, value: activeHex)
 
                         Divider()
 

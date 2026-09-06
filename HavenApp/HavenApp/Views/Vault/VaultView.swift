@@ -160,12 +160,12 @@ struct VaultView: View {
                     // Fallback: compact menu with labeled items
                     trailingToolbarMenu
                 }
-                .animation(.easeInOut(duration: 0.15), value: viewMode)
+                .animation(Motion.toggle, value: viewMode)
             }
             #else
             ToolbarItem(placement: .automatic) {
                 trailingToolbarInline
-                    .animation(.easeInOut(duration: 0.15), value: viewMode)
+                    .animation(Motion.toggle, value: viewMode)
             }
             #endif
         }
@@ -266,7 +266,7 @@ struct VaultView: View {
         }
         .onChange(of: configService.config.zapsOnlyMode) { _, newValue in
             if newValue && viewMode == .likes {
-                withAnimation(.easeInOut(duration: 0.15)) { viewMode = .notes }
+                withAnimation(Motion.toggle) { viewMode = .notes }
             }
         }
         .onChange(of: configService.config.activeAccountNpub) { _, _ in
@@ -300,13 +300,13 @@ struct VaultView: View {
         .onReceive(NotificationCenter.default.publisher(for: .havenOpenRelayLikes)) { _ in
             // In Zaps Only mode the Likes tab is hidden — route to Notes instead.
             let target: ViewMode = configService.config.zapsOnlyMode ? .notes : .likes
-            withAnimation(.easeInOut(duration: 0.15)) { viewMode = target }
+            withAnimation(Motion.toggle) { viewMode = target }
         }
         .onReceive(NotificationCenter.default.publisher(for: .havenOpenRelayNotes)) { _ in
-            withAnimation(.easeInOut(duration: 0.15)) { viewMode = .notes }
+            withAnimation(Motion.toggle) { viewMode = .notes }
         }
         .onReceive(NotificationCenter.default.publisher(for: .havenOpenRelayZaps)) { _ in
-            withAnimation(.easeInOut(duration: 0.15)) { viewMode = .zaps }
+            withAnimation(Motion.toggle) { viewMode = .zaps }
         }
         .sheet(item: Binding<IdentifiableString?>(
             get: { showingProfilePubkey.map { IdentifiableString(id: $0) } },
@@ -401,7 +401,7 @@ struct VaultView: View {
                 .transition(.scale(scale: 0.5).combined(with: .opacity))
             }
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: feedService.feedScrollingDown)
+        .animation(Motion.chrome, value: feedService.feedScrollingDown)
         #else
         GeometryReader { geometry in
             ZStack {
@@ -544,7 +544,7 @@ struct VaultView: View {
                 .transition(.scale(scale: 0.5).combined(with: .opacity))
             }
         }
-        .animation(.spring(response: 0.4, dampingFraction: 0.75), value: feedService.feedScrollingDown)
+        .animation(Motion.chrome, value: feedService.feedScrollingDown)
         #endif
     }
 
@@ -682,7 +682,7 @@ struct VaultView: View {
         }
         .onChange(of: configService.config.zapsOnlyMode) { _, newValue in
             if newValue && viewMode == .likes {
-                withAnimation(.easeInOut(duration: 0.15)) { viewMode = .notes }
+                withAnimation(Motion.toggle) { viewMode = .notes }
             }
         }
         .onChange(of: configService.config.activeAccountNpub) { _, _ in
@@ -715,13 +715,13 @@ struct VaultView: View {
         #if os(iOS)
         .onReceive(NotificationCenter.default.publisher(for: .havenOpenRelayLikes)) { _ in
             let target: ViewMode = configService.config.zapsOnlyMode ? .notes : .likes
-            withAnimation(.easeInOut(duration: 0.15)) { viewMode = target }
+            withAnimation(Motion.toggle) { viewMode = target }
         }
         .onReceive(NotificationCenter.default.publisher(for: .havenOpenRelayNotes)) { _ in
-            withAnimation(.easeInOut(duration: 0.15)) { viewMode = .notes }
+            withAnimation(Motion.toggle) { viewMode = .notes }
         }
         .onReceive(NotificationCenter.default.publisher(for: .havenOpenRelayZaps)) { _ in
-            withAnimation(.easeInOut(duration: 0.15)) { viewMode = .zaps }
+            withAnimation(Motion.toggle) { viewMode = .zaps }
         }
         #endif
         .sheet(item: Binding<IdentifiableString?>(

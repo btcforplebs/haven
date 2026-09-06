@@ -328,7 +328,7 @@ struct CopyableRow: View {
 
             Button {
                 copy()
-                withAnimation(.spring(response: 0.2)) { copied = true }
+                withAnimation(Motion.pop) { copied = true }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                     withAnimation { copied = false }
                 }

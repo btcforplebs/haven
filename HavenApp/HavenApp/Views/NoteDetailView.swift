@@ -102,7 +102,7 @@ struct NoteDetailView: View {
     }
 
     private func selectAndScrollToNote(_ targetId: String, proxy: ScrollViewProxy) {
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
+        withAnimation(Motion.scrollJump) {
             focusedNoteId = targetId
             proxy.scrollTo(targetId, anchor: .center)
         }
@@ -151,7 +151,7 @@ struct NoteDetailView: View {
             .onChange(of: isLoadingParents) { _, loading in
                 if !loading {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                        withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                        withAnimation(Motion.scrollJump) {
                             let target = focusedNoteId.isEmpty ? note.id : focusedNoteId
                             proxy.scrollTo(target, anchor: .center)
                         }
@@ -190,7 +190,7 @@ struct NoteDetailView: View {
                         isSelected: isCompactView,
                         color: .havenPurple
                     ) {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                        withAnimation(Motion.panel) {
                             isCompactView.toggle()
                         }
                         configService.config.noteDetailCompactView = isCompactView
@@ -204,7 +204,7 @@ struct NoteDetailView: View {
                         isSelected: expandedEngagement,
                         color: .havenPurple
                     ) {
-                        withAnimation(.easeInOut(duration: 0.25)) {
+                        withAnimation(Motion.panel) {
                             expandedEngagement.toggle()
                         }
                         configService.config.noteDetailExpandedEngagement = expandedEngagement
@@ -355,7 +355,7 @@ struct NoteDetailView: View {
                     ))
             }
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: isCompactView)
+        .animation(Motion.panel, value: isCompactView)
         .id(focusedNote.id)
         .padding(.horizontal, 16)
     }
@@ -558,7 +558,7 @@ struct NoteDetailView: View {
         .shadow(color: Color.havenPurple.opacity(0.35), radius: 8)
         .contentShape(Rectangle())
         .onTapGesture {
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+            withAnimation(Motion.panel) {
                 isCompactView = false
             }
         }
@@ -797,7 +797,7 @@ struct NoteDetailView: View {
                     )
                     .frame(maxWidth: .infinity)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .transition(.opacity.animation(.spring(response: 0.25, dampingFraction: 0.75)))
+                    .transition(.opacity.animation(Motion.media))
                 }
             }
             .mediaTabViewStyleCompat()
@@ -981,7 +981,7 @@ struct NoteDetailView: View {
         }
         pendingReplies.removeAll()
 
-        withAnimation(.easeIn(duration: 0.25)) {
+        withAnimation(Motion.fade) {
             isLoadingReplies = false
         }
     }
@@ -1422,7 +1422,7 @@ struct NoteDetailView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 6) {
                 client.disconnect()
                 if self.isLoadingParents {
-                    withAnimation(.easeIn(duration: 0.25)) {
+                    withAnimation(Motion.fade) {
                         self.isLoadingParents = false
                     }
                 }
@@ -1468,7 +1468,7 @@ struct NoteDetailView: View {
             }
         } else if type == "EOSE" {
             client.disconnect()
-            withAnimation(.easeIn(duration: 0.25)) {
+            withAnimation(Motion.fade) {
                 isLoadingParents = false
             }
         }
@@ -1836,7 +1836,7 @@ struct ThreadedReplyNode: View {
                 if depth >= 3 && !isCompactMode {
                     // Prevent excessive indentation squishing on narrow mobile screens
                     Button {
-                        withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
+                        withAnimation(Motion.scrollJump) {
                             focusedNoteId = reply.id
                             proxy.scrollTo(reply.id, anchor: .center)
                         }
@@ -1964,7 +1964,7 @@ struct ThreadedReplyNode: View {
         .id(reply.id)
         .contentShape(Rectangle())
         .onTapGesture {
-            withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
+            withAnimation(Motion.scrollJump) {
                 focusedNoteId = reply.id
                 proxy.scrollTo(reply.id, anchor: .center)
             }
@@ -2096,7 +2096,7 @@ struct ThreadedReplyNode: View {
         .padding(.leading, indentWidth)
         .contentShape(Rectangle())
         .onTapGesture {
-            withAnimation(.spring(response: 0.45, dampingFraction: 0.8)) {
+            withAnimation(Motion.scrollJump) {
                 focusedNoteId = reply.id
                 proxy.scrollTo(reply.id, anchor: .center)
             }

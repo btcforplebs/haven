@@ -137,7 +137,7 @@ struct LinkPreviewCard: View {
         Task {
             let result = await LinkPreviewService.shared.fetchMetadata(for: url)
             await MainActor.run {
-                withAnimation(.easeIn(duration: 0.15)) {
+                withAnimation(Motion.media) {
                     self.metadata = result
                     self.isLoading = false
                 }

@@ -97,7 +97,7 @@ struct CustomZapSheet: View {
             ForEach(presetAmounts, id: \.sats) { preset in
                 let isSelected = selectedAmount == preset.sats && !isCustomActive
                 Button {
-                    withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                    withAnimation(Motion.pick) {
                         selectedAmount = preset.sats
                         isCustomActive = false
                         customAmountText = ""

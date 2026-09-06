@@ -28,7 +28,7 @@ struct FilterButton: View {
                 RoundedRectangle(cornerRadius: 6)
                     .stroke(isSelected ? color.opacity(0.5) : Color.clear, lineWidth: 0.8)
             )
-            .animation(.easeInOut(duration: 0.15), value: isSelected)
+            .animation(Motion.toggle, value: isSelected)
         }
         .buttonStyle(.plain)
     }

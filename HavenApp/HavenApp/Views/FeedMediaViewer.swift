@@ -138,7 +138,7 @@ struct FeedMediaViewer: View {
                     .onEnded { _ in
                         lastScale = 1.0
                         if scale < 1.0 {
-                            withAnimation(.spring()) {
+                            withAnimation(Motion.snapBack) {
                                 scale = 1.0
                                 offset = .zero
                             }
@@ -168,7 +168,7 @@ struct FeedMediaViewer: View {
                             if abs(value.translation.height) > 100 {
                                 performDismiss()
                             } else {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                withAnimation(Motion.snapBack) {
                                     offset = .zero
                                     lastOffset = .zero
                                 }
@@ -177,7 +177,7 @@ struct FeedMediaViewer: View {
                     }
             )
             .onTapGesture(count: 2) {
-                withAnimation(.spring()) {
+                withAnimation(Motion.snapBack) {
                     if scale > 1.0 {
                         scale = 1.0
                         offset = .zero
@@ -226,11 +226,11 @@ struct FeedMediaViewer: View {
                                     Button(action: {
                                         let link = getMirroredLink()
                                         PlatformClipboard.copy(link)
-                                        withAnimation(.spring()) {
+                                        withAnimation(Motion.pop) {
                                             isCopied = true
                                         }
                                         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                                            withAnimation(.easeInOut(duration: 0.3)) {
+                                            withAnimation(Motion.fade) {
                                                 isCopied = false
                                             }
                                         }
@@ -328,7 +328,7 @@ struct FeedMediaViewer: View {
             }
             .onLongPressGesture {
                 if !isLoadingType && !isMirroring {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    withAnimation(Motion.fade) {
                         isDeleting.toggle()
                     }
                 }
@@ -418,7 +418,7 @@ struct FeedMediaViewer: View {
                 #endif
                 isMirroring = false
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) {
-                    withAnimation(.easeOut(duration: 0.4)) {
+                    withAnimation(Motion.bannerOut) {
                         self.mirrorStatus = nil
                     }
                 }
@@ -439,7 +439,7 @@ struct FeedMediaViewer: View {
                     contentType: contentType
                 )
                 await MainActor.run {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                    withAnimation(Motion.panel) {
                         if saved {
                             mirrorStatus = .success
                             isOnMirror = true
@@ -450,7 +450,7 @@ struct FeedMediaViewer: View {
                 }
             } catch {
                 await MainActor.run {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                    withAnimation(Motion.panel) {
                         mirrorStatus = .failed(error.localizedDescription)
                     }
                 }
@@ -465,7 +465,7 @@ struct FeedMediaViewer: View {
             let sha256 = extractSHA256FromURL()
             guard !sha256.isEmpty else {
                 await MainActor.run {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                    withAnimation(Motion.panel) {
                         deleteStatus = .failed("Could not extract hash from URL")
                         isDeleting = false
                     }
@@ -475,7 +475,7 @@ struct FeedMediaViewer: View {
 
             let success = await blossomService.deleteFromMirrors(sha256: sha256)
             await MainActor.run {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                withAnimation(Motion.panel) {
                     deleteStatus = success ? .success : .failed("Failed to delete from mirrors")
                     isDeleting = false
                     if success {
@@ -483,7 +483,7 @@ struct FeedMediaViewer: View {
                     }
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                    withAnimation(.easeOut(duration: 0.4)) {
+                    withAnimation(Motion.bannerOut) {
                         self.deleteStatus = nil
                     }
                 }
@@ -498,7 +498,7 @@ struct FeedMediaViewer: View {
             let sha256 = extractSHA256FromURL()
             guard !sha256.isEmpty else {
                 await MainActor.run {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                    withAnimation(Motion.panel) {
                         deleteStatus = .failed("Could not extract hash from URL")
                         isDeleting = false
                     }
@@ -510,7 +510,7 @@ struct FeedMediaViewer: View {
             let mirrorsSuccess = await blossomService.deleteFromMirrors(sha256: sha256)
 
             await MainActor.run {
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                withAnimation(Motion.panel) {
                     if localSuccess && mirrorsSuccess {
                         deleteStatus = .success
                         isOnMirror = false
@@ -525,7 +525,7 @@ struct FeedMediaViewer: View {
                     isDeleting = false
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                    withAnimation(.easeOut(duration: 0.4)) {
+                    withAnimation(Motion.bannerOut) {
                         self.deleteStatus = nil
                         self.performDismiss()
                     }

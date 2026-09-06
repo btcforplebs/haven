@@ -103,7 +103,7 @@ extension MediaGalleryView {
             Color.black.opacity(0.9 * max(0, 1.0 - (abs(dragOffset.height) / 300.0)))
                 .edgesIgnoringSafeArea(.all)
                 .onTapGesture {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    withAnimation(Motion.fade) {
                         selectedMedia = nil
                         dragOffset = .zero
                     }
@@ -115,11 +115,11 @@ extension MediaGalleryView {
                         if configService.hasExternalShareURL(for: item.url) {
                             Button(action: {
                                 PlatformClipboard.copy(item.shareURL(with: configService).absoluteString)
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                                withAnimation(Motion.snapBack) {
                                     isCopied = true
                                 }
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                                    withAnimation(.easeInOut(duration: 0.25)) {
+                                    withAnimation(Motion.fade) {
                                         isCopied = false
                                     }
                                 }
@@ -179,7 +179,7 @@ extension MediaGalleryView {
 
                         if let noteId = findNoteId(for: item) {
                             Button(action: {
-                                withAnimation(.easeInOut(duration: 0.2)) {
+                                withAnimation(Motion.fade) {
                                     selectedMedia = nil
                                     dragOffset = .zero
                                 }
@@ -200,7 +200,7 @@ extension MediaGalleryView {
                         Spacer()
 
                         Button(action: {
-                            withAnimation(.easeInOut(duration: 0.2)) {
+                            withAnimation(Motion.fade) {
                                 selectedMedia = nil
                                 dragOffset = .zero
                             }
@@ -235,11 +235,11 @@ extension MediaGalleryView {
                     ForEach(displayMedia) { mediaItem in
                         MediaItemRenderer(mediaItem: mediaItem)
                             .tag(mediaItem as MediaItem?)
-                            .transition(.opacity.animation(.spring(response: 0.25, dampingFraction: 0.75)))
+                            .transition(.opacity.animation(Motion.media))
                     }
                 }
                 .mediaTabViewStyleCompat()
-                .animation(.spring(response: 0.25, dampingFraction: 0.75), value: selectedMedia?.id)
+                .animation(Motion.pick, value: selectedMedia?.id)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .offset(y: dragOffset.height)
                 .scaleEffect(max(0.8, 1.0 - (abs(dragOffset.height) / 1000.0)))
@@ -253,12 +253,12 @@ extension MediaGalleryView {
                         }
                         .onEnded { gesture in
                             if abs(dragOffset.height) > 120 {
-                                withAnimation(.easeOut(duration: 0.2)) {
+                                withAnimation(Motion.dismiss) {
                                     selectedMedia = nil
                                     dragOffset = .zero
                                 }
                             } else {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
+                                withAnimation(Motion.snapBack) {
                                     dragOffset = .zero
                                 }
                             }
@@ -336,7 +336,7 @@ extension MediaGalleryView {
               let index = displayMedia.firstIndex(where: { $0.id == current.id }) else { return }
         let newIndex = index + direction
         guard displayMedia.indices.contains(newIndex) else { return }
-        withAnimation(.easeInOut(duration: 0.2)) { selectedMedia = displayMedia[newIndex] }
+        withAnimation(Motion.fade) { selectedMedia = displayMedia[newIndex] }
     }
 
     // MARK: macOS Key Monitor
@@ -356,7 +356,7 @@ extension MediaGalleryView {
                 navigateMedia(direction: 1)
                 return nil
             case 53: // escape
-                withAnimation(.easeInOut(duration: 0.2)) { selectedMedia = nil }
+                withAnimation(Motion.fade) { selectedMedia = nil }
                 return nil
             default:
                 return event

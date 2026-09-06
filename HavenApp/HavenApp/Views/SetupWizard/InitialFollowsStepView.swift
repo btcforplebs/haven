@@ -45,7 +45,7 @@ struct InitialFollowsStepView: View {
                                 isExpanded: expandedPackId == pack.id,
                                 selectedNpubs: $selectedNpubs,
                                 onToggleExpand: {
-                                    withAnimation(.spring()) {
+                                    withAnimation(Motion.pop) {
                                         expandedPackId = expandedPackId == pack.id ? nil : pack.id
                                     }
                                 }
@@ -163,7 +163,7 @@ private struct PackCard: View {
                                 account: account,
                                 isSelected: selectedNpubs.contains(account.npub),
                                 onToggle: {
-                                    withAnimation(.spring(response: 0.3)) {
+                                    withAnimation(Motion.pop) {
                                         if selectedNpubs.contains(account.npub) {
                                             selectedNpubs.remove(account.npub)
                                         } else {

@@ -8,16 +8,16 @@ extension VaultView {
     var leadingToolbarInline: some View {
         HStack(spacing: 12) {
             IconFilterButton(icon: "doc.text", tooltip: "Notes", isSelected: viewMode == .notes, color: .havenPurple) {
-                withAnimation(.easeInOut(duration: 0.15)) { viewMode = .notes }
+                withAnimation(Motion.toggle) { viewMode = .notes }
             }
             if !configService.config.zapsOnlyMode {
                 IconFilterButton(icon: "heart.fill", tooltip: "Likes", isSelected: viewMode == .likes, color: .havenPurple) {
-                    withAnimation(.easeInOut(duration: 0.15)) { viewMode = .likes }
+                    withAnimation(Motion.toggle) { viewMode = .likes }
                     fetchMissingLikedNotes()
                 }
             }
             IconFilterButton(icon: "bolt.fill", tooltip: "Zaps", isSelected: viewMode == .zaps, color: .havenPurple) {
-                withAnimation(.easeInOut(duration: 0.15)) { viewMode = .zaps }
+                withAnimation(Motion.toggle) { viewMode = .zaps }
             }
         }
     }
@@ -33,7 +33,7 @@ extension VaultView {
                 isSelected: noteLayoutMode == .compact,
                 color: .havenPurple
             ) {
-                withAnimation(.easeInOut(duration: 0.15)) {
+                withAnimation(Motion.toggle) {
                     noteLayoutMode = noteLayoutMode == .compact ? .expanded : .compact
                 }
             }
@@ -63,7 +63,7 @@ extension VaultView {
     var trailingToolbarMenu: some View {
         Menu {
             Button {
-                withAnimation(.easeInOut(duration: 0.15)) {
+                withAnimation(Motion.toggle) {
                     noteLayoutMode = noteLayoutMode == .compact ? .expanded : .compact
                 }
             } label: {
@@ -127,20 +127,20 @@ extension VaultView {
 
     var notesButton: some View {
         ModeButton(title: "Notes", icon: "doc.text", isSelected: viewMode == .notes, hasNotification: hasNewNotes) {
-            withAnimation(.easeInOut(duration: 0.15)) { viewMode = .notes }
+            withAnimation(Motion.toggle) { viewMode = .notes }
         }
     }
 
     var likesButton: some View {
         ModeButton(title: "Likes", icon: "heart.fill", isSelected: viewMode == .likes, hasNotification: hasNewLikes) {
-            withAnimation(.easeInOut(duration: 0.15)) { viewMode = .likes }
+            withAnimation(Motion.toggle) { viewMode = .likes }
             fetchMissingLikedNotes()
         }
     }
 
     var zapsButton: some View {
         ModeButton(title: "Zaps", icon: "bolt.fill", isSelected: viewMode == .zaps, hasNotification: hasNewZaps) {
-            withAnimation(.easeInOut(duration: 0.15)) { viewMode = .zaps }
+            withAnimation(Motion.toggle) { viewMode = .zaps }
         }
     }
 
@@ -170,7 +170,7 @@ extension VaultView {
             icon: "rectangle.compress.vertical",
             isSelected: noteLayoutMode == .compact
         ) {
-            withAnimation(.easeInOut(duration: 0.15)) {
+            withAnimation(Motion.toggle) {
                 noteLayoutMode = noteLayoutMode == .compact ? .expanded : .compact
             }
         }

@@ -222,7 +222,7 @@ struct EmojiPickerView: View {
                             HStack(spacing: 8) {
                                 ForEach(categories) { category in
                                     Button(action: {
-                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                                        withAnimation(Motion.pop) {
                                             selectedCategory = category.name
                                         }
                                     }) {

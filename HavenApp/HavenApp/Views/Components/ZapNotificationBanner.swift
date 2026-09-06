@@ -29,7 +29,7 @@ class ZapNotificationManager: ObservableObject {
             amountSats: amountSats,
             status: .sending
         )
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+        withAnimation(Motion.bannerIn) {
             notifications.insert(notification, at: 0)
         }
         return notification.id
@@ -37,11 +37,11 @@ class ZapNotificationManager: ObservableObject {
 
     func markSuccess(id: UUID) {
         if let idx = notifications.firstIndex(where: { $0.id == id }) {
-            withAnimation(.easeInOut(duration: 0.3)) {
+            withAnimation(Motion.fade) {
                 notifications[idx].status = .success
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-                withAnimation(.easeOut(duration: 0.4)) {
+                withAnimation(Motion.bannerOut) {
                     self?.notifications.removeAll { $0.id == id }
                 }
             }
@@ -50,11 +50,11 @@ class ZapNotificationManager: ObservableObject {
 
     func markFailed(id: UUID, message: String) {
         if let idx = notifications.firstIndex(where: { $0.id == id }) {
-            withAnimation(.easeInOut(duration: 0.3)) {
+            withAnimation(Motion.fade) {
                 notifications[idx].status = .failed(message)
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
-                withAnimation(.easeOut(duration: 0.4)) {
+                withAnimation(Motion.bannerOut) {
                     self?.notifications.removeAll { $0.id == id }
                 }
             }
@@ -77,7 +77,7 @@ class UnlikeNotificationManager: ObservableObject {
         cancel()
         self.onUnlike = onUnlike
         timeRemaining = 3.0
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) { isShowing = true }
+        withAnimation(Motion.bannerIn) { isShowing = true }
         task = Task {
             for _ in 0..<30 {
                 try? await Task.sleep(nanoseconds: 100_000_000)
@@ -88,7 +88,7 @@ class UnlikeNotificationManager: ObservableObject {
             await MainActor.run {
                 self.onUnlike?()
                 self.onUnlike = nil
-                withAnimation(.easeOut(duration: 0.4)) { self.isShowing = false }
+                withAnimation(Motion.bannerOut) { self.isShowing = false }
             }
         }
     }
@@ -97,7 +97,7 @@ class UnlikeNotificationManager: ObservableObject {
         task?.cancel()
         task = nil
         onUnlike = nil
-        withAnimation(.easeOut(duration: 0.4)) { isShowing = false }
+        withAnimation(Motion.bannerOut) { isShowing = false }
     }
 }
 
@@ -113,22 +113,16 @@ struct ZapNotificationBanner: View {
                 UnlikePill(timeRemaining: unlikeManager.timeRemaining) {
                     unlikeManager.cancel()
                 }
-                .transition(.asymmetric(
-                    insertion: .move(edge: .top).combined(with: .opacity),
-                    removal: .opacity.combined(with: .scale(scale: 0.8))
-                ))
+                .transition(Motion.pillTransition)
             }
             ForEach(zapManager.notifications) { notification in
                 ZapPill(notification: notification)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .top).combined(with: .opacity),
-                        removal: .opacity.combined(with: .scale(scale: 0.8))
-                    ))
+                    .transition(Motion.pillTransition)
             }
         }
         .padding(.top, (unlikeManager.isShowing || !zapManager.notifications.isEmpty) ? 12 : 0)
-        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: zapManager.notifications.map(\.id))
-        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: unlikeManager.isShowing)
+        .animation(Motion.bannerIn, value: zapManager.notifications.map(\.id))
+        .animation(Motion.bannerIn, value: unlikeManager.isShowing)
     }
 }
 
@@ -205,9 +199,10 @@ struct ZapPill: View {
                 .font(.appSystem(size: 12, weight: .bold))
                 .opacity(pulseOpacity)
                 .onAppear {
-                    withAnimation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true)) {
-                        pulseOpacity = 0.4
-                    }
+                    // Same reason as the feed skeleton: without the guard the
+                    // bolt would sit dimmed at 0.4 for the whole send.
+                    guard let loop = Motion.ambientPulse else { return }
+                    withAnimation(loop) { pulseOpacity = 0.4 }
                 }
         case .success:
             Image(systemName: "bolt.fill")
@@ -259,7 +254,7 @@ class FollowNotificationManager: ObservableObject {
 
     func add(recipientName: String, kind: FollowNotification.Kind) {
         let notification = FollowNotification(recipientName: recipientName, kind: kind)
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+        withAnimation(Motion.bannerIn) {
             notifications.insert(notification, at: 0)
         }
         let dismissDelay: TimeInterval = {
@@ -268,7 +263,7 @@ class FollowNotificationManager: ObservableObject {
         }()
         let id = notification.id
         DispatchQueue.main.asyncAfter(deadline: .now() + dismissDelay) { [weak self] in
-            withAnimation(.easeOut(duration: 0.4)) {
+            withAnimation(Motion.bannerOut) {
                 self?.notifications.removeAll { $0.id == id }
             }
         }
@@ -284,14 +279,11 @@ struct FollowNotificationBanner: View {
         VStack(spacing: 6) {
             ForEach(manager.notifications) { notification in
                 FollowPill(notification: notification)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .top).combined(with: .opacity),
-                        removal: .opacity.combined(with: .scale(scale: 0.8))
-                    ))
+                    .transition(Motion.pillTransition)
             }
         }
         .padding(.top, manager.notifications.isEmpty ? 0 : 12)
-        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: manager.notifications.map(\.id))
+        .animation(Motion.bannerIn, value: manager.notifications.map(\.id))
     }
 }
 
@@ -375,7 +367,7 @@ class MediaUploadNotificationManager: ObservableObject {
             status: .uploading,
             progress: 0.0
         )
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+        withAnimation(Motion.bannerIn) {
             notifications.insert(notification, at: 0)
         }
         return notification.id
@@ -389,12 +381,12 @@ class MediaUploadNotificationManager: ObservableObject {
 
     func markSuccess(id: UUID) {
         if let idx = notifications.firstIndex(where: { $0.id == id }) {
-            withAnimation(.easeInOut(duration: 0.3)) {
+            withAnimation(Motion.fade) {
                 notifications[idx].status = .success
                 notifications[idx].progress = 1.0
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { [weak self] in
-                withAnimation(.easeOut(duration: 0.4)) {
+                withAnimation(Motion.bannerOut) {
                     self?.notifications.removeAll { $0.id == id }
                 }
             }
@@ -403,11 +395,11 @@ class MediaUploadNotificationManager: ObservableObject {
 
     func markFailed(id: UUID, message: String) {
         if let idx = notifications.firstIndex(where: { $0.id == id }) {
-            withAnimation(.easeInOut(duration: 0.3)) {
+            withAnimation(Motion.fade) {
                 notifications[idx].status = .failed(message)
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self] in
-                withAnimation(.easeOut(duration: 0.4)) {
+                withAnimation(Motion.bannerOut) {
                     self?.notifications.removeAll { $0.id == id }
                 }
             }
@@ -424,14 +416,11 @@ struct MediaUploadNotificationBanner: View {
         VStack(spacing: 6) {
             ForEach(manager.notifications) { notification in
                 UploadPill(notification: notification)
-                    .transition(.asymmetric(
-                        insertion: .move(edge: .top).combined(with: .opacity),
-                        removal: .opacity.combined(with: .scale(scale: 0.8))
-                    ))
+                    .transition(Motion.pillTransition)
             }
         }
         .padding(.top, manager.notifications.isEmpty ? 0 : 12)
-        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: manager.notifications.map(\.id))
+        .animation(Motion.bannerIn, value: manager.notifications.map(\.id))
     }
 }
 
@@ -450,14 +439,11 @@ struct PostActionNotificationBanner: View {
                     onEdit: actionType.canEdit ? { manager.requestEdit() } : nil,
                     onDismiss: { manager.dismissBanner() }
                 )
-                .transition(.asymmetric(
-                    insertion: .move(edge: .top).combined(with: .opacity),
-                    removal: .opacity.combined(with: .scale(scale: 0.8))
-                ))
+                .transition(Motion.pillTransition)
             }
         }
         .padding(.top, manager.isShowing ? 12 : 0)
-        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: manager.isShowing)
+        .animation(Motion.bannerIn, value: manager.isShowing)
     }
 }
 
@@ -540,7 +526,7 @@ struct PostActionPill: View {
                     if value.translation.height < Self.dismissThreshold {
                         onDismiss()
                     }
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    withAnimation(Motion.panel) {
                         dragOffset = 0
                     }
                 }
@@ -650,7 +636,7 @@ class ActionToastManager: ObservableObject {
 
         Task {
             try? await Task.sleep(nanoseconds: 2_500_000_000)
-            withAnimation(.easeOut(duration: 0.3)) {
+            withAnimation(Motion.bannerOut) {
                 notifications.removeAll { $0.id == toast.id }
             }
         }
@@ -680,14 +666,11 @@ struct ActionToastBanner: View {
                         .shadow(color: Color.black.opacity(0.4), radius: 8, x: 0, y: 4)
                 )
                 .foregroundColor(.white)
-                .transition(.asymmetric(
-                    insertion: .move(edge: .top).combined(with: .opacity),
-                    removal: .opacity.combined(with: .scale(scale: 0.8))
-                ))
+                .transition(Motion.pillTransition)
             }
         }
         .padding(.top, manager.notifications.isEmpty ? 0 : 12)
-        .animation(.spring(response: 0.35, dampingFraction: 0.75), value: manager.notifications.map(\.id))
+        .animation(Motion.bannerIn, value: manager.notifications.map(\.id))
     }
 }
 
