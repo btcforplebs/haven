@@ -2055,6 +2055,12 @@ struct FeedNoteRow: View {
     @State private var menuExpanded = false
     @State private var showingParentUserMenu = false
     @State private var parentMenuExpanded = false
+    @State private var repostPulse = false
+    @State private var likePulse = false
+    @State private var zapPulse = false
+    @State private var parentFetchStartedAt: Date? = nil
+    @State private var parentFetchFailed = false
+    @State private var parentSkeletonShimmer = false
 
     var useCompactMode: Bool = false // Whether compact mode is active for this feed type
     var isExpanded: Bool = false // Whether this specific note is expanded
@@ -2302,6 +2308,26 @@ struct FeedNoteRow: View {
                 }
                 .buttonStyle(.plain)
                 .fixedSize(horizontal: false, vertical: true)
+            } else if parentFetchFailed {
+                // The parent never arrived — likely not on any connected relay.
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.appSystem(size: 12, weight: .regular))
+                        .foregroundColor(.secondary)
+                    Text("Could not load original note")
+                        .font(.appSystem(size: 13, weight: .regular))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button("Retry") {
+                        parentFetchFailed = false
+                        parentFetchStartedAt = nil
+                        actions.retryMissingNote(pId)
+                        scheduleParentFetchTimeout(pId)
+                    }
+                    .font(.appSystem(size: 13, weight: .semibold))
+                    .foregroundColor(.havenPurple)
+                }
+                .padding(.vertical, 6)
             } else {
                 // Skeleton while parent is being fetched
                 HStack(alignment: .top, spacing: 12) {
@@ -2331,8 +2357,12 @@ struct FeedNoteRow: View {
                     .padding(.top, 4)
                 }
                 .fixedSize(horizontal: false, vertical: true)
+                .opacity(parentSkeletonShimmer ? 0.5 : 1.0)
+                .animation(Motion.shimmer, value: parentSkeletonShimmer)
                 .onAppear {
+                    if Motion.shimmer != nil { parentSkeletonShimmer = true }
                     actions.fetchMissingNote(pId)
+                    scheduleParentFetchTimeout(pId)
                 }
             }
         }
@@ -2580,11 +2610,14 @@ struct FeedNoteRow: View {
             actionButton(
                 icon: "arrow.2.squarepath",
                 color: rowData.isReposted ? .green : .secondary,
-                action: { actions.repostNote(note) }
+                action: {
+                    actions.repostNote(note)
+                    Motion.firePulse($repostPulse)
+                }
             )
             .accessibilityLabel(rowData.isReposted ? "Reposted" : "Repost")
-            .scaleEffect(rowData.isReposted ? 1.2 : 1.0)
-            .animation(Motion.pop, value: rowData.isReposted)
+            .scaleEffect(repostPulse ? Motion.pulseScale : 1.0)
+            .animation(Motion.pop, value: repostPulse)
 
             actionButton(icon: "quote.closing", action: { onQuote?() })
                 .accessibilityLabel("Quote")
@@ -2596,8 +2629,8 @@ struct FeedNoteRow: View {
                     action: { toggleLike() }
                 )
                 .accessibilityLabel(rowData.isLiked ? "Unlike" : "Like")
-                .scaleEffect(rowData.isLiked ? 1.2 : 1.0)
-                .animation(Motion.pop, value: rowData.isLiked)
+                .scaleEffect(likePulse ? Motion.pulseScale : 1.0)
+                .animation(Motion.pop, value: likePulse)
                 .simultaneousGesture(
                     LongPressGesture(minimumDuration: 0.5)
                         .onEnded { _ in
@@ -2628,8 +2661,8 @@ struct FeedNoteRow: View {
                     .frame(width: 32, height: 32)
                     .background(isZapped ? Color.orange.opacity(0.2) : Color.secondary.opacity(0.1))
                     .clipShape(Capsule())
-                    .scaleEffect(isZapped ? 1.2 : 1.0)
-                    .animation(Motion.pop, value: isZapped)
+                    .scaleEffect(zapPulse ? Motion.pulseScale : 1.0)
+                    .animation(Motion.pop, value: zapPulse)
                     .contentShape(Capsule())
                     .accessibilityLabel(isZapped ? "Zapped" : "Zap")
                     .accessibilityHint(hasLightning ? "Tap to send sats" : "No lightning address")
@@ -2643,7 +2676,10 @@ struct FeedNoteRow: View {
                     }
                     .onTapGesture {
                         if let lud16 = lud16 {
-                            Task { await actions.zapNote(note, lud16, nil) }
+                            Task {
+                                let sent = await actions.zapNote(note, lud16, nil)
+                                if sent { Motion.firePulse($zapPulse) }
+                            }
                             showLightning = true
                         } else {
                             noLightningAddressAlert = true
@@ -2721,7 +2757,10 @@ struct FeedNoteRow: View {
         .sheet(item: $zapSheetContext) { context in
             CustomZapSheet(defaultAmount: context.defaultAmount) { amount in
                 if let lud16 = actions.getLightningAddress(note.pubkey) {
-                    Task { await actions.zapNote(note, lud16, amount) }
+                    Task {
+                        let sent = await actions.zapNote(note, lud16, amount)
+                        if sent { Motion.firePulse($zapPulse) }
+                    }
                     showLightning = true
                 }
             }
@@ -2950,12 +2989,36 @@ struct FeedNoteRow: View {
         }
     }
 
-    /// Toggle like: delegates to the appropriate action closure.
+    /// Arms the terminal failure state for the parent-note skeleton: if the
+    /// parent still hasn't arrived 12s after a fetch was requested, the
+    /// skeleton is replaced with "Could not load original note" and a Retry
+    /// action, instead of breathing forever.
+    ///
+    /// Deliberately does not re-check `rowData.parentNote` before setting the
+    /// flag: `rowData` is a `let`, so this escaping closure would only ever
+    /// see the value captured 12 seconds ago, never an arrival in between.
+    /// Safe because the view always checks `if let parent = rowData.parentNote`
+    /// before `else if parentFetchFailed` — a parent that loaded in the
+    /// meantime renders regardless of this flag. Do not reorder those branches
+    /// without giving this timeout a live way to observe the current note.
+    private func scheduleParentFetchTimeout(_ id: String) {
+        guard parentFetchStartedAt == nil else { return }
+        parentFetchStartedAt = Date()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
+            parentFetchFailed = true
+        }
+    }
+
+    /// Toggle like: delegates to the appropriate action closure. Only the
+    /// liking direction pulses — a pulse is confirmation of the tap that just
+    /// happened, not a description of the resulting state, so it must not
+    /// also fire when a like arrives from backfill or another client.
     private func toggleLike() {
         if rowData.isLiked {
             actions.unlikeNote(note)
         } else {
             actions.likeNote(note)
+            Motion.firePulse($likePulse)
         }
     }
 

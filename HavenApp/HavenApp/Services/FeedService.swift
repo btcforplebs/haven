@@ -1480,11 +1480,12 @@ class FeedService: ObservableObject {
 
     /// Requests a fetch for a note that is missing from the local state.
     /// Used for resolving thread parents. Retries after 30s if the previous attempt failed silently.
-    func fetchMissingNote(id: String) {
+    /// `force` bypasses that throttle, for a user-initiated Retry tap.
+    func fetchMissingNote(id: String, force: Bool = false) {
         guard findNote(id: id) == nil else { return }
         if fetchingNoteIds.contains(id) {
             // Allow retry if the previous attempt was more than 30s ago
-            if let ts = fetchingNoteTimestamps[id], Date().timeIntervalSince(ts) < 30 {
+            if !force, let ts = fetchingNoteTimestamps[id], Date().timeIntervalSince(ts) < 30 {
                 return
             }
             fetchingNoteIds.remove(id)

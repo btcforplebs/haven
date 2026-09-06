@@ -29,7 +29,9 @@ struct FeedActions {
     var repostNote: (FeedNote) -> Void = { _ in }
 
     // Zap
-    var zapNote: (FeedNote, String, Int?) async -> Void = { _, _, _ in }
+    /// Returns whether the payment actually went out, so a caller can gate
+    /// tap-confirmation UI (the pulse) on a real send rather than the tap alone.
+    var zapNote: (FeedNote, String, Int?) async -> Bool = { _, _, _ in false }
     var getLightningAddress: (String) -> String? = { _ in nil }
 
     // Delete
@@ -37,6 +39,9 @@ struct FeedActions {
 
     // Missing content fetching
     var fetchMissingNote: (String) -> Void = { _ in }
+    /// Same as `fetchMissingNote`, but bypasses the 30s retry throttle — for a
+    /// user-initiated Retry tap, not the automatic on-appear fetch.
+    var retryMissingNote: (String) -> Void = { _ in }
     var fetchMissingProfiles: ([String]) -> Void = { _ in }
     var findNote: (String) -> FeedNote? = { _ in nil }
 
@@ -139,10 +144,12 @@ struct FeedActions {
                         feedService.zappedEventIds[note.id] = amountSats
                         feedService.saveInteractionState()
                     }
+                    return true
                 } catch {
                     #if DEBUG
                     print("FeedActions: Zap failed: \(error)")
                     #endif
+                    return false
                 }
             },
             getLightningAddress: { pubkey in
@@ -160,6 +167,7 @@ struct FeedActions {
                 )
             },
             fetchMissingNote: { id in feedService.fetchMissingNote(id: id) },
+            retryMissingNote: { id in feedService.fetchMissingNote(id: id, force: true) },
             fetchMissingProfiles: { pks in nostrService.fetchMissingProfiles(for: pks) },
             findNote: { id in feedService.findNote(id: id) },
             blockUser: { hexPubkey in
