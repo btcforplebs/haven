@@ -29,7 +29,9 @@ struct FeedActions {
     var repostNote: (FeedNote) -> Void = { _ in }
 
     // Zap
-    var zapNote: (FeedNote, String, Int?) async -> Void = { _, _, _ in }
+    /// Returns whether the payment actually went out, so a caller can gate
+    /// tap-confirmation UI (the pulse) on a real send rather than the tap alone.
+    var zapNote: (FeedNote, String, Int?) async -> Bool = { _, _, _ in false }
     var getLightningAddress: (String) -> String? = { _ in nil }
 
     // Delete
@@ -142,10 +144,12 @@ struct FeedActions {
                         feedService.zappedEventIds[note.id] = amountSats
                         feedService.saveInteractionState()
                     }
+                    return true
                 } catch {
                     #if DEBUG
                     print("FeedActions: Zap failed: \(error)")
                     #endif
+                    return false
                 }
             },
             getLightningAddress: { pubkey in

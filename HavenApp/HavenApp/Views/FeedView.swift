@@ -2301,8 +2301,10 @@ struct FeedNoteRow: View {
                     }
                     .onTapGesture {
                         if let lud16 = lud16 {
-                            Task { await actions.zapNote(note, lud16, nil) }
-                            Motion.firePulse($zapPulse)
+                            Task {
+                                let sent = await actions.zapNote(note, lud16, nil)
+                                if sent { Motion.firePulse($zapPulse) }
+                            }
                             showLightning = true
                         } else {
                             noLightningAddressAlert = true
@@ -2380,7 +2382,10 @@ struct FeedNoteRow: View {
         .sheet(item: $zapSheetContext) { context in
             CustomZapSheet(defaultAmount: context.defaultAmount) { amount in
                 if let lud16 = actions.getLightningAddress(note.pubkey) {
-                    Task { await actions.zapNote(note, lud16, amount) }
+                    Task {
+                        let sent = await actions.zapNote(note, lud16, amount)
+                        if sent { Motion.firePulse($zapPulse) }
+                    }
                     showLightning = true
                 }
             }
