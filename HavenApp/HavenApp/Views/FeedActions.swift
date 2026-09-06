@@ -37,6 +37,9 @@ struct FeedActions {
 
     // Missing content fetching
     var fetchMissingNote: (String) -> Void = { _ in }
+    /// Same as `fetchMissingNote`, but bypasses the 30s retry throttle — for a
+    /// user-initiated Retry tap, not the automatic on-appear fetch.
+    var retryMissingNote: (String) -> Void = { _ in }
     var fetchMissingProfiles: ([String]) -> Void = { _ in }
     var findNote: (String) -> FeedNote? = { _ in nil }
 
@@ -160,6 +163,7 @@ struct FeedActions {
                 )
             },
             fetchMissingNote: { id in feedService.fetchMissingNote(id: id) },
+            retryMissingNote: { id in feedService.fetchMissingNote(id: id, force: true) },
             fetchMissingProfiles: { pks in nostrService.fetchMissingProfiles(for: pks) },
             findNote: { id in feedService.findNote(id: id) },
             blockUser: { hexPubkey in

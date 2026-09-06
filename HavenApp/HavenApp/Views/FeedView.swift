@@ -1680,6 +1680,12 @@ struct FeedNoteRow: View {
     @State private var menuExpanded = false
     @State private var showingParentUserMenu = false
     @State private var parentMenuExpanded = false
+    @State private var repostPulse = false
+    @State private var likePulse = false
+    @State private var zapPulse = false
+    @State private var parentFetchStartedAt: Date? = nil
+    @State private var parentFetchFailed = false
+    @State private var parentSkeletonShimmer = false
 
     var useCompactMode: Bool = false // Whether compact mode is active for this feed type
     var isExpanded: Bool = false // Whether this specific note is expanded
@@ -1927,6 +1933,26 @@ struct FeedNoteRow: View {
                 }
                 .buttonStyle(.plain)
                 .fixedSize(horizontal: false, vertical: true)
+            } else if parentFetchFailed {
+                // The parent never arrived — likely not on any connected relay.
+                HStack(spacing: 10) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.appSystem(size: 12, weight: .regular))
+                        .foregroundColor(.secondary)
+                    Text("Could not load original note")
+                        .font(.appSystem(size: 13, weight: .regular))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Button("Retry") {
+                        parentFetchFailed = false
+                        parentFetchStartedAt = nil
+                        actions.retryMissingNote(pId)
+                        scheduleParentFetchTimeout(pId)
+                    }
+                    .font(.appSystem(size: 13, weight: .semibold))
+                    .foregroundColor(.havenPurple)
+                }
+                .padding(.vertical, 6)
             } else {
                 // Skeleton while parent is being fetched
                 HStack(alignment: .top, spacing: 12) {
@@ -1956,8 +1982,12 @@ struct FeedNoteRow: View {
                     .padding(.top, 4)
                 }
                 .fixedSize(horizontal: false, vertical: true)
+                .opacity(parentSkeletonShimmer ? 0.5 : 1.0)
+                .animation(Motion.shimmer, value: parentSkeletonShimmer)
                 .onAppear {
+                    if Motion.shimmer != nil { parentSkeletonShimmer = true }
                     actions.fetchMissingNote(pId)
+                    scheduleParentFetchTimeout(pId)
                 }
             }
         }
@@ -2208,8 +2238,11 @@ struct FeedNoteRow: View {
                 action: { actions.repostNote(note) }
             )
             .accessibilityLabel(rowData.isReposted ? "Reposted" : "Repost")
-            .scaleEffect(rowData.isReposted ? 1.2 : 1.0)
-            .animation(Motion.pop, value: rowData.isReposted)
+            .scaleEffect(repostPulse ? 1.12 : 1.0)
+            .animation(Motion.pop, value: repostPulse)
+            .onChange(of: rowData.isReposted) { _, isReposted in
+                if isReposted { firePulse($repostPulse) }
+            }
 
             actionButton(icon: "quote.closing", action: { onQuote?() })
                 .accessibilityLabel("Quote")
@@ -2221,8 +2254,11 @@ struct FeedNoteRow: View {
                     action: { toggleLike() }
                 )
                 .accessibilityLabel(rowData.isLiked ? "Unlike" : "Like")
-                .scaleEffect(rowData.isLiked ? 1.2 : 1.0)
-                .animation(Motion.pop, value: rowData.isLiked)
+                .scaleEffect(likePulse ? 1.12 : 1.0)
+                .animation(Motion.pop, value: likePulse)
+                .onChange(of: rowData.isLiked) { _, isLiked in
+                    if isLiked { firePulse($likePulse) }
+                }
                 .simultaneousGesture(
                     LongPressGesture(minimumDuration: 0.5)
                         .onEnded { _ in
@@ -2253,8 +2289,11 @@ struct FeedNoteRow: View {
                     .frame(width: 32, height: 32)
                     .background(isZapped ? Color.orange.opacity(0.2) : Color.secondary.opacity(0.1))
                     .clipShape(Capsule())
-                    .scaleEffect(isZapped ? 1.2 : 1.0)
-                    .animation(Motion.pop, value: isZapped)
+                    .scaleEffect(zapPulse ? 1.12 : 1.0)
+                    .animation(Motion.pop, value: zapPulse)
+                    .onChange(of: isZapped) { _, zapped in
+                        if zapped { firePulse($zapPulse) }
+                    }
                     .contentShape(Capsule())
                     .accessibilityLabel(isZapped ? "Zapped" : "Zap")
                     .accessibilityHint(hasLightning ? "Tap to send sats" : "No lightning address")
@@ -2572,6 +2611,31 @@ struct FeedNoteRow: View {
             .frame(height: 400)
             // Add a subtle border or background if desired to distinguish bounds
             // But FeedMediaView already has clipShape and overlay
+        }
+    }
+
+    /// Pop an action icon and settle back to rest — the tap confirmation for
+    /// like / repost / zap. `Motion.pop` drives both halves, so under Reduce
+    /// Motion the pop collapses to nothing rather than a residual scale.
+    private func firePulse(_ flag: Binding<Bool>) {
+        guard !Motion.isReduced else { return }
+        flag.wrappedValue = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+            flag.wrappedValue = false
+        }
+    }
+
+    /// Arms the terminal failure state for the parent-note skeleton: if the
+    /// parent still hasn't arrived 12s after a fetch was requested, the
+    /// skeleton is replaced with "Could not load original note" and a Retry
+    /// action, instead of breathing forever.
+    private func scheduleParentFetchTimeout(_ id: String) {
+        guard parentFetchStartedAt == nil else { return }
+        parentFetchStartedAt = Date()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
+            if rowData.parentNote == nil {
+                parentFetchFailed = true
+            }
         }
     }
 
