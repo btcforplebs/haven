@@ -112,7 +112,7 @@ struct InitialFollowsStepView: View {
         }
         .onAppear {
             appeared = true
-            packsData = StarterPacksData.load()
+            packsData = StarterPacksData.load()?.validated()
         }
     }
 }

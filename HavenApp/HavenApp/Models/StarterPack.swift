@@ -28,6 +28,23 @@ struct RecommendedAccount: Codable, Identifiable {
 }
 
 extension StarterPacksData {
+    /// Drops accounts whose npub is not well-formed, and any pack left empty.
+    ///
+    /// An account with a bad npub cannot be followed — the p-tag it would
+    /// produce is rejected before publication — so offering it in the picker
+    /// only lets someone select a name and get nothing. Two of the shipped
+    /// entries are in that state today.
+    func validated() -> StarterPacksData {
+        let cleaned = packs.compactMap { pack -> StarterPack? in
+            let accounts = pack.accounts.filter {
+                NpubValidation.hexPubkey(fromNpub: $0.npub) != nil
+            }
+            guard !accounts.isEmpty else { return nil }
+            return StarterPack(id: pack.id, name: pack.name, description: pack.description, accounts: accounts)
+        }
+        return StarterPacksData(packs: cleaned)
+    }
+
     static func load() -> StarterPacksData? {
         guard let url = Bundle.main.url(forResource: "starter_packs", withExtension: "json") else {
             print("StarterPacks: Could not find starter_packs.json in bundle")
