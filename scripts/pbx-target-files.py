@@ -8,11 +8,18 @@ PBXFileReference and a group entry while belonging to no Sources or Resources
 phase at all: it then does not build, and a path-set diff sees nothing wrong.
 That is the shape notification.mp3 fails in.
 
+Membership is compared as a multiset, not a set. Two files sharing a basename
+in different directories are two entries, and collapsing them to one hides the
+case where the generator picks up both copies — which is how a duplicate
+InitialFollowsStepView.swift broke the build. Counting keeps the comparison
+indifferent to `path =` spelling without going blind to duplicates.
+
 Usage: pbx-target-files.py <a/project.pbxproj> <b/project.pbxproj>
 Exit:  0 every target builds the same set of files, 1 otherwise.
 """
 import re
 import sys
+from collections import Counter
 
 PHASE = re.compile(
     r"([0-9A-F]{24}) /\* (?:Sources|Resources|Frameworks) \*/ = \{\s*"
@@ -26,15 +33,20 @@ MEMBER = re.compile(r"/\* (.+?) in (?:Sources|Resources|Frameworks) \*/")
 
 
 def target_files(path):
-    """target name -> set of basenames in its Sources/Resources/Frameworks phases."""
+    """target name -> Counter of basenames in its Sources/Resources/Frameworks phases."""
     text = open(path, encoding="utf-8", errors="replace").read()
-    phases = {m.group(1): set(MEMBER.findall(m.group(2))) for m in PHASE.finditer(text)}
+    phases = {
+        m.group(1): Counter(
+            f.rsplit("/", 1)[-1] for f in MEMBER.findall(m.group(2))
+        )
+        for m in PHASE.finditer(text)
+    }
     out = {}
     for m in TARGET.finditer(text):
-        files = set()
+        files = Counter()
         for phase_id in re.findall(r"([0-9A-F]{24}) /\* \w+ \*/", m.group(2)):
-            files |= phases.get(phase_id, set())
-        out[m.group(1).strip()] = {f.rsplit("/", 1)[-1] for f in files}
+            files += phases.get(phase_id, Counter())
+        out[m.group(1).strip()] = files
     return out
 
 
@@ -58,15 +70,17 @@ def main(argv):
             print(f"target {name!r} exists only in the {side} project")
             status = 1
             continue
-        dropped, added = sorted(a[name] - b[name]), sorted(b[name] - a[name])
+        dropped, added = a[name] - b[name], b[name] - a[name]
         if not dropped and not added:
             continue
         status = 1
         print(f"target {name}:")
-        for f in dropped:
-            print(f"  - {f} builds in the committed project, not in the generated one")
-        for f in added:
-            print(f"  + {f} builds in the generated project, not in the committed one")
+        for f, n in sorted(dropped.items()):
+            times = f" ({n} more times)" if n > 1 else ""
+            print(f"  - {f} builds in the committed project, not in the generated one{times}")
+        for f, n in sorted(added.items()):
+            times = f" ({n} more times)" if n > 1 else ""
+            print(f"  + {f} builds in the generated project, not in the committed one{times}")
     return status
 
 
