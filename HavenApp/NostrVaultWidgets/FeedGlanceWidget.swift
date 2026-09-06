@@ -44,21 +44,43 @@ struct FeedGlanceIntent: WidgetConfigurationIntent {
 struct FeedGlanceEntry: TimelineEntry {
     let date: Date
     let snapshot: NVWidgetSnapshot
+    /// Avatar bytes keyed by picture URL, fetched before the body runs.
+    let avatars: [String: Data]
     let config: FeedGlanceIntent
 }
 
 struct FeedGlanceProvider: AppIntentTimelineProvider {
     func placeholder(in context: Context) -> FeedGlanceEntry {
-        FeedGlanceEntry(date: Date(), snapshot: .preview, config: FeedGlanceIntent())
+        FeedGlanceEntry(date: Date(), snapshot: .preview, avatars: [:], config: FeedGlanceIntent())
     }
 
     func snapshot(for configuration: FeedGlanceIntent, in context: Context) async -> FeedGlanceEntry {
-        FeedGlanceEntry(date: Date(), snapshot: NVSharedStore.load() ?? .preview, config: configuration)
+        await entry(for: configuration, fallback: .preview)
     }
 
     func timeline(for configuration: FeedGlanceIntent, in context: Context) async -> Timeline<FeedGlanceEntry> {
-        let entry = FeedGlanceEntry(date: Date(), snapshot: NVSharedStore.load() ?? .empty, config: configuration)
+        let entry = await entry(for: configuration, fallback: .empty)
         return Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(15 * 60)))
+    }
+
+    private func entry(for configuration: FeedGlanceIntent, fallback: NVWidgetSnapshot) async -> FeedGlanceEntry {
+        let snapshot = NVSharedStore.load() ?? fallback
+        let notes = configuration.source == .mentions ? snapshot.mentions : snapshot.feed
+
+        // Avatars have to exist before the body runs: a widget draws in one
+        // static pass, so the AsyncImage this used to use never resolved and
+        // every row fell back to its gradient. Keyed by URL, so two notes from
+        // the same author cost one download.
+        var wanted: [(id: String, url: URL)] = []
+        var seen = Set<String>()
+        for note in notes {
+            guard configuration.showAvatars, let url = note.authorPictureURL,
+                  seen.insert(url.absoluteString).inserted else { continue }
+            wanted.append((url.absoluteString, url))
+        }
+
+        let avatars = await NVTileFetcher.fetch(wanted, maxPixel: 64, limit: 10)
+        return FeedGlanceEntry(date: Date(), snapshot: snapshot, avatars: avatars, config: configuration)
     }
 }
 
@@ -118,6 +140,7 @@ struct FeedGlanceView: View {
                         ForEach(notes.prefix(plan.rows)) { note in
                             NoteRow(note: note,
                                     showAvatar: entry.config.showAvatars,
+                                    avatar: note.authorPictureURL.flatMap { entry.avatars[$0.absoluteString] },
                                     size: Self.textSize,
                                     bodyLines: bodyLines)
                         }
@@ -149,6 +172,9 @@ struct FeedGlanceView: View {
 private struct NoteRow: View {
     let note: NVWidgetSnapshot.Note
     let showAvatar: Bool
+    /// Bytes for this author's picture, or nil when there is no picture, the
+    /// host did not answer, or it is served by the local relay.
+    let avatar: Data?
     /// One size for the whole row. Name, age and body differ by weight and
     /// colour only -- see FeedGlanceView.textSize.
     let size: CGFloat
@@ -157,8 +183,7 @@ private struct NoteRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 7) {
             if showAvatar {
-                Avatar(url: note.authorPictureURL, seed: note.id)
-                    .frame(width: size + 8, height: size + 8)
+                Avatar(data: avatar, seed: note.id, size: size + 8)
             }
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
@@ -180,26 +205,31 @@ private struct NoteRow: View {
     }
 }
 
-/// Avatars are fetched by the widget rather than shipped in the snapshot -- a
-/// keychain item is the wrong place for image bytes. When there is no picture,
-/// the pubkey-derived hue keeps rows visually distinct instead of a row of
+/// Avatars are fetched by the timeline provider rather than shipped in the
+/// snapshot -- a keychain item is the wrong place for image bytes -- and never
+/// by the body, which has no way to finish a download. When there is no
+/// picture, the seeded hue keeps rows visually distinct instead of a column of
 /// identical grey circles.
 private struct Avatar: View {
-    let url: URL?
+    let data: Data?
     let seed: String
+    let size: CGFloat
 
     var body: some View {
         Group {
-            if let url {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    fallback
-                }
+            if let data, let image = UIImage(data: data) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
             } else {
                 fallback
             }
         }
+        // Size first, then clip. A `scaledToFill` image reports the size it
+        // wants, not the size it was offered, so without the frame the row
+        // grows to fit the photo and pushes everything beside it out.
+        .frame(width: size, height: size)
+        .clipped()
         .clipShape(Circle())
     }
 

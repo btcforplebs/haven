@@ -24,22 +24,33 @@ enum NVTileFetcher {
     private static let maxConcurrentFetches = 12
 
     static func fetch(_ tiles: [NVWidgetSnapshot.MediaTile], maxPixel: Int = 160) async -> [String: Data] {
-        let wanted = tiles.filter { isFetchable($0.url) }.prefix(maxConcurrentFetches)
+        await fetch(tiles.map { (id: $0.id, url: $0.url) }, maxPixel: maxPixel)
+    }
+
+    /// The same fetch keyed by whatever the caller wants. Feed Glance keys
+    /// avatars by URL so two notes from one author cost one download.
+    static func fetch(_ items: [(id: String, url: URL)],
+                      maxPixel: Int = 160,
+                      limit: Int = maxConcurrentFetches) async -> [String: Data] {
+        let wanted = items.filter { isFetchable($0.url) }.prefix(limit)
         guard !wanted.isEmpty else { return [:] }
 
-        let config = URLSessionConfiguration.ephemeral
+        // Not an ephemeral session: a widget refreshes on a timer, and the same
+        // avatars come back every time. The shared URL cache turns all but the
+        // first refresh into a disk read.
+        let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = timeout
         config.requestCachePolicy = .returnCacheDataElseLoad
         let session = URLSession(configuration: config)
 
         return await withTaskGroup(of: (String, Data)?.self) { group in
-            for tile in wanted {
+            for item in wanted {
                 group.addTask {
-                    guard let (data, response) = try? await session.data(from: tile.url),
+                    guard let (data, response) = try? await session.data(from: item.url),
                           (response as? HTTPURLResponse)?.statusCode ?? 200 < 400,
                           let shrunk = NVDownsample.tile(from: data, maxPixel: maxPixel)
                     else { return nil }
-                    return (tile.id, shrunk)
+                    return (item.id, shrunk)
                 }
             }
             var out: [String: Data] = [:]
