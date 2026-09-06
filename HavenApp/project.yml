@@ -66,6 +66,11 @@ targets:
       - path: Resources/templates
         type: folder
       - path: HavenApp/App/PrivacyInfo.xcprivacy
+      # The notification sound. Listed explicitly because `sources` here names
+      # individual paths — a loose file next to them is invisible to the
+      # generator, and regenerating silently drops it from Resources. That has
+      # already happened twice.
+      - path: HavenApp/notification.mp3
 
     settings:
       base:
@@ -127,6 +132,11 @@ targets:
       - path: Resources/templates
         type: folder
       - path: HavenApp/App/PrivacyInfo.xcprivacy
+      # The notification sound. Listed explicitly because `sources` here names
+      # individual paths — a loose file next to them is invisible to the
+      # generator, and regenerating silently drops it from Resources. That has
+      # already happened twice.
+      - path: HavenApp/notification.mp3
 
     settings:
       base:
