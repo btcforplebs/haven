@@ -147,13 +147,18 @@ struct MosaicView: View {
             VStack(spacing: 4) {
                 Link(destination: NVDeepLink.media.url) {
                     Tile(tile: hero, data: entry.images[hero.id], corner: corner)
-                        .frame(maxWidth: .infinity)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
                 if tiles.count > 1, family != .systemSmall {
                     HStack(spacing: 4) {
                         ForEach(tiles.dropFirst()) { tile in
                             Link(destination: NVDeepLink.media.url) {
+                                // Equal shares of the row rather than squares:
+                                // six 44pt squares do not fit across a large
+                                // widget, and one that does not fit is one that
+                                // pushes the rest off the edge.
                                 Tile(tile: tile, data: entry.images[tile.id], corner: corner)
+                                    .frame(maxWidth: .infinity)
                             }
                         }
                     }
@@ -165,7 +170,7 @@ struct MosaicView: View {
                 ForEach(tiles) { tile in
                     Link(destination: NVDeepLink.media.url) {
                         Tile(tile: tile, data: entry.images[tile.id], corner: corner)
-                            .aspectRatio(1, contentMode: .fit)
+                            .aspectRatio(1, contentMode: .fill)
                     }
                 }
             }
@@ -190,6 +195,7 @@ struct MosaicView: View {
                 Button(intent: MosaicFilterIntent(filter: option)) {
                     Text(option.label)
                         .font(.system(size: 10, weight: .semibold))
+                        .lineLimit(1)
                         .foregroundStyle(option == entry.filter ? Color.white : .secondary)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
@@ -222,27 +228,39 @@ private struct Tile: View {
     let corner: CGFloat
 
     var body: some View {
-        ZStack {
-            if let data, let image = UIImage(data: data) {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                // No bytes: a blob still on a host we could not reach, or one
-                // trimmed by the handoff budget. A tinted tile keyed to the id
-                // keeps the grid reading as media rather than as a failure.
-                LinearGradient(colors: [hue.opacity(0.65), hue.opacity(0.25)],
-                               startPoint: .topLeading, endPoint: .bottomTrailing)
+        // `Color.clear` is the load-bearing part, not decoration. A
+        // `scaledToFill` image reports back a size *larger* than the one it was
+        // offered, along whichever edge the photo is long, and a ZStack adopts
+        // that oversize. The cell then overflows its grid column, the grid
+        // widens the widget's content, and the filter chips and wand get pushed
+        // off the face. Sizing off an empty colour and hanging the picture in an
+        // overlay pins the layout to the cell; only the drawing overflows, and
+        // `clipped()` takes care of that.
+        Color.clear
+            .overlay {
+                if let data, let image = UIImage(data: data) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    // No bytes: a blob still on a host we could not reach, or one
+                    // trimmed by the handoff budget. A tinted tile keyed to the id
+                    // keeps the grid reading as media rather than as a failure.
+                    LinearGradient(colors: [hue.opacity(0.65), hue.opacity(0.25)],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing)
+                }
             }
-            if tile.kind == .video {
-                Image(systemName: "play.fill")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .shadow(radius: 3)
+            .overlay {
+                if tile.kind == .video {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .shadow(radius: 3)
+                }
             }
-        }
-        .clipped()
-        .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .contentShape(Rectangle())
     }
 
     private var hue: Color {
