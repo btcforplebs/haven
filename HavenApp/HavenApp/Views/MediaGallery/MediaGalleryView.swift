@@ -155,6 +155,7 @@ struct MediaGalleryView: View {
             }
         }
         .modifier(mediaChangeHandlers)
+        .modifier(MagicPasteFromWidget { handlePasteFromClipboard() })
         .modifier(mediaSheetsAndPickers)
     }
 
@@ -272,6 +273,7 @@ struct MediaGalleryView: View {
             }
         }
         .modifier(mediaChangeHandlers)
+        .modifier(MagicPasteFromWidget { handlePasteFromClipboard() })
         .modifier(mediaSheetsAndPickers)
     }
 
@@ -399,6 +401,23 @@ struct MediaGalleryView: View {
                 showingPhotoPicker = false
             }
         )
+    }
+}
+
+// MARK: - Magic Paste from the widget
+
+/// Runs the Media tab's Magic Paste when the Mosaic widget's wand is tapped.
+///
+/// Its own modifier rather than a twelfth `onReceive` on
+/// `MediaGalleryChangeHandlers`: that chain is already at the size where the
+/// Swift type-checker starts refusing the file.
+struct MagicPasteFromWidget: ViewModifier {
+    let paste: () -> Void
+
+    func body(content: Content) -> some View {
+        content.onReceive(NotificationCenter.default.publisher(for: .havenMagicPaste)) { _ in
+            paste()
+        }
     }
 }
 

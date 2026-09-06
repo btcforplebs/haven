@@ -1,4 +1,7 @@
+import AVFoundation
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 import SwiftUI
 import WidgetKit
 
@@ -26,6 +29,7 @@ enum NVWidgetBridge {
         let snapshot = buildSnapshot()
         guard NVSharedStore.save(snapshot) else { return }
         WidgetCenter.shared.reloadAllTimelines()
+        publishThumbnails(for: snapshot.media)
     }
 
     private static func buildSnapshot() -> NVWidgetSnapshot {
@@ -55,21 +59,108 @@ enum NVWidgetBridge {
                 zapsReceived24h: 0,   // no published zap tally to read yet
                 btcPriceUSD: nil      // the app does not fetch a price
             ),
-            // Mosaic is fed from media attached to your own recent notes. The
-            // app has no published list of Blossom blobs to read; when one
-            // exists this should switch to it, since "my media" and "media in
-            // my last 40 notes" are not the same set.
-            media: recent
-                .filter { $0.pubkey == me }
-                .flatMap { n in n.mediaURLs.map { NVWidgetSnapshot.MediaTile(id: n.id + $0.absoluteString, url: $0) } }
-                .prefix(18)
-                .map { $0 },
-            unreadDMCount: DMService.shared.totalUnreadCount,
-            eventsPerHour: hourlyBuckets(recent)
+            media: mediaTiles(recent: recent, me: me),
+            unreadDMCount: DMService.shared.totalUnreadCount
         )
     }
 
     private static let processStart = Date()
+
+    /// Mosaic's tiles, newest first.
+    ///
+    /// Blossom first — those are the blobs actually on your relay, which is what
+    /// the widget claims to show. Media from recent notes fills in behind it, so
+    /// a vault with nothing uploaded yet still draws something rather than an
+    /// empty grid. The two are deduped by URL because your own uploads normally
+    /// appear in both.
+    private static func mediaTiles(recent: [FeedNote], me: String) -> [NVWidgetSnapshot.MediaTile] {
+        var tiles: [NVWidgetSnapshot.MediaTile] = []
+        var seen = Set<String>()
+
+        for item in BlossomMediaCache.shared.items.sorted(by: { $0.dateAdded > $1.dateAdded }) {
+            guard seen.insert(item.url.absoluteString).inserted else { continue }
+            tiles.append(.init(id: item.url.lastPathComponent, url: item.url, kind: kind(of: item)))
+            if tiles.count >= maxTiles { return tiles }
+        }
+
+        for note in recent where note.pubkey == me {
+            for url in note.mediaURLs {
+                guard seen.insert(url.absoluteString).inserted else { continue }
+                // Note media carries no sniffed mime, and the filter chips would
+                // rather show a tile under "All" only than mislabel it.
+                tiles.append(.init(id: note.id + url.absoluteString, url: url, kind: nil))
+                if tiles.count >= maxTiles { return tiles }
+            }
+        }
+        return tiles
+    }
+
+    private static let maxTiles = 18
+
+    /// The gallery's media types collapsed onto the four the widget filters by.
+    /// GIF is its own chip in the Media tab, so it is its own kind here.
+    private static func kind(of item: MediaItem) -> NVMediaKind {
+        if item.isAnimatedGIF { return .gif }
+        switch item.type {
+        case .image: return .image
+        case .video: return .video
+        case .audio, .unknown: return .other
+        }
+    }
+
+    /// Shrinks whatever Blossom holds on disk into tiles the widget can draw
+    /// without a network or a running relay.
+    ///
+    /// Only local files are done here. Remote media (someone else's host) is
+    /// left to the widget's own timeline provider, which does have a network and
+    /// a few seconds to use it — unlike the widget's body, which has neither.
+    private static func publishThumbnails(for tiles: [NVWidgetSnapshot.MediaTile]) {
+        let blossomDir = ConfigService.shared.relayDataDir
+            .appendingPathComponent(ConfigService.shared.config.blossomPath)
+
+        let local: [(id: String, file: URL, kind: NVMediaKind?)] = tiles.compactMap { tile in
+            let file = blossomDir.appendingPathComponent(tile.url.lastPathComponent)
+            return FileManager.default.fileExists(atPath: file.path) ? (tile.id, file, tile.kind) : nil
+        }
+        guard !local.isEmpty else { return }
+
+        Task.detached(priority: .utility) {
+            var encoded: [(id: String, data: Data)] = []
+            for entry in local {
+                let data = entry.kind == .video ? videoPoster(entry.file)
+                                                : NVDownsample.tile(fileURL: entry.file, maxPixel: 160)
+                guard let data else { continue }
+                encoded.append((entry.id, data))
+            }
+
+            let keep = Set(NVThumbnailBudget.fit(encoded.map { ($0.id, $0.data.count) },
+                                                 budget: NVThumbnailStore.budget))
+            var images: [String: Data] = [:]
+            for entry in encoded where keep.contains(entry.id) { images[entry.id] = entry.data }
+            guard !images.isEmpty else { return }
+
+            NVThumbnailStore.save(NVThumbnailBundle(generatedAt: Date(), images: images))
+            await MainActor.run { WidgetCenter.shared.reloadAllTimelines() }
+        }
+    }
+
+    /// First frame of a local video, shrunk to a tile. ImageIO cannot read a
+    /// movie container, so without this every video tile falls back to a tinted
+    /// square and the Video filter looks empty even when it is not.
+    private nonisolated static func videoPoster(_ file: URL) -> Data? {
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: file))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: 320, height: 320)
+        // Half a second in: frame zero is black on a lot of footage.
+        let time = CMTime(seconds: 0.5, preferredTimescale: 600)
+        guard let cgImage = try? generator.copyCGImage(at: time, actualTime: nil) else { return nil }
+
+        let out = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(out, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dest, cgImage, [kCGImageDestinationLossyCompressionQuality: 0.55] as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        return out as Data
+    }
 
     /// A note counts as a mention when it p-tags you and is not your own.
     private static func mentions(_ me: String, _ note: FeedNote) -> Bool {
@@ -93,21 +184,6 @@ enum NVWidgetBridge {
         )
     }
 
-    /// 24 hourly counts of what the feed is holding, oldest first.
-    ///
-    /// This is feed volume, not relay ingest -- the relay's own per-hour
-    /// history is not exposed to the app. It is honest as "how busy has your
-    /// feed been", which is what the sparkline is read as anyway.
-    private static func hourlyBuckets(_ notes: [FeedNote]) -> [Int] {
-        var buckets = [Int](repeating: 0, count: 24)
-        let now = Date()
-        for n in notes {
-            let hoursAgo = Int(now.timeIntervalSince(n.createdAt) / 3_600)
-            guard hoursAgo >= 0, hoursAgo < 24 else { continue }
-            buckets[23 - hoursAgo] += 1
-        }
-        return buckets
-    }
 }
 
 // MARK: - Deep links
@@ -139,6 +215,13 @@ enum NVDeepLinkRouter {
             center.post(name: .havenOpenViewer, object: nil)
         case .media:
             center.post(name: .havenOpenMedia, object: nil)
+        case .mediaPaste:
+            center.post(name: .havenOpenMedia, object: nil)
+            // A beat behind the tab switch: the gallery has to be on screen and
+            // listening before the paste fires, or the tap does nothing.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                center.post(name: .havenMagicPaste, object: nil)
+            }
         case .wallet:
             center.post(name: .havenOpenWallet, object: nil)
         }

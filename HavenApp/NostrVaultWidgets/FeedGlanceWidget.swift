@@ -67,23 +67,26 @@ struct FeedGlanceView: View {
     let entry: FeedGlanceEntry
 
     private var notes: [NVWidgetSnapshot.Note] {
-        let all = entry.config.source == .mentions ? entry.snapshot.mentions : entry.snapshot.feed
-        return Array(all.prefix(rowCount))
+        entry.config.source == .mentions ? entry.snapshot.mentions : entry.snapshot.feed
     }
 
-    /// Row budget per family, halved-ish for compact density. These are tuned to
-    /// fill the box without the last row being clipped -- a clipped final row is
-    /// the single most common way a feed widget looks broken.
-    private var rowCount: Int {
-        let base: Int
-        switch family {
-        case .systemMedium: base = 2
-        case .systemLarge: base = 5
-        case .systemExtraLarge: base = 6
-        default: base = 1
-        }
-        return entry.config.density == .compact ? base + (base >= 5 ? 3 : 1) : base
+    /// One size for everything in this widget -- author, age, body and header.
+    /// Mixing three sizes in a box this small reads as clutter rather than
+    /// hierarchy; weight and colour carry the hierarchy instead.
+    private static let textSize: CGFloat = 12
+    private static let lineHeight: CGFloat = 15
+
+    private var bodyLines: Int { entry.config.density == .compact ? 1 : 2 }
+
+    /// A row is the author line plus the body lines. Measured from the one text
+    /// size above rather than guessed per family, so the fill maths below stays
+    /// true if the size ever changes.
+    private var rowHeight: CGFloat {
+        Self.lineHeight * CGFloat(1 + bodyLines)
     }
+
+    /// Header, its divider, and the padding around them.
+    private static let headerHeight: CGFloat = 26
 
     private var deepLink: URL {
         entry.config.source == .mentions ? NVDeepLink.mentions.url : NVDeepLink.feed.url
@@ -96,17 +99,30 @@ struct FeedGlanceView: View {
             NVEmptyState(icon: entry.config.source == .mentions ? "at" : "person.2.wave.2",
                          message: entry.config.source == .mentions ? "No recent mentions" : "No recent notes")
         } else {
-            VStack(alignment: .leading, spacing: 0) {
-                header
-                Divider().overlay(Color.white.opacity(0.08)).padding(.vertical, 5)
-                VStack(alignment: .leading, spacing: entry.config.density == .compact ? 6 : 10) {
-                    ForEach(notes) { note in
-                        NoteRow(note: note,
-                                showAvatar: entry.config.showAvatars,
-                                compact: entry.config.density == .compact)
+            // The row count comes from the measured height rather than a table
+            // of per-family constants: the families are not the only variable
+            // (density and the accessibility text size move the row height too),
+            // and a fixed count either clips the last row or leaves a hole under
+            // it. See NVFeedLayout, which is unit-tested.
+            GeometryReader { geo in
+                let plan = NVFeedLayout.plan(availableHeight: geo.size.height,
+                                             headerHeight: Self.headerHeight,
+                                             rowHeight: rowHeight,
+                                             minSpacing: 6,
+                                             maxSpacing: 18,
+                                             noteCount: notes.count)
+                VStack(alignment: .leading, spacing: 0) {
+                    header
+                    Divider().overlay(Color.white.opacity(0.08)).padding(.vertical, 5)
+                    VStack(alignment: .leading, spacing: plan.spacing) {
+                        ForEach(notes.prefix(plan.rows)) { note in
+                            NoteRow(note: note,
+                                    showAvatar: entry.config.showAvatars,
+                                    size: Self.textSize,
+                                    bodyLines: bodyLines)
+                        }
                     }
                 }
-                Spacer(minLength: 0)
             }
             .widgetURL(deepLink)
         }
@@ -118,7 +134,7 @@ struct FeedGlanceView: View {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(NV.purple)
             Text(entry.config.source == .mentions ? "Mentions" : "Following")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: Self.textSize, weight: .semibold))
                 .foregroundStyle(.secondary)
             Spacer()
             if entry.snapshot.isStale {
@@ -133,28 +149,31 @@ struct FeedGlanceView: View {
 private struct NoteRow: View {
     let note: NVWidgetSnapshot.Note
     let showAvatar: Bool
-    let compact: Bool
+    /// One size for the whole row. Name, age and body differ by weight and
+    /// colour only -- see FeedGlanceView.textSize.
+    let size: CGFloat
+    let bodyLines: Int
 
     var body: some View {
         HStack(alignment: .top, spacing: 7) {
             if showAvatar {
                 Avatar(url: note.authorPictureURL, seed: note.id)
-                    .frame(width: compact ? 16 : 22, height: compact ? 16 : 22)
+                    .frame(width: size + 8, height: size + 8)
             }
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
                     Text(note.authorName)
-                        .font(.system(size: compact ? 10 : 11, weight: .semibold))
+                        .font(.system(size: size, weight: .semibold))
                         .foregroundStyle(.white)
                         .lineLimit(1)
                     Text(NV.shortAge(note.createdAt))
-                        .font(.system(size: compact ? 9 : 10))
+                        .font(.system(size: size))
                         .foregroundStyle(.secondary)
                 }
                 Text(note.text)
-                    .font(.system(size: compact ? 10 : 12))
+                    .font(.system(size: size))
                     .foregroundStyle(.white.opacity(0.82))
-                    .lineLimit(compact ? 1 : 2)
+                    .lineLimit(bodyLines)
             }
             Spacer(minLength: 0)
         }

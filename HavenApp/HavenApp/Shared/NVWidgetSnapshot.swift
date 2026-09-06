@@ -27,8 +27,6 @@ struct NVWidgetSnapshot: Codable, Equatable {
     var wallet: Wallet
     var media: [MediaTile]
     var unreadDMCount: Int
-    /// Hourly event counts for the last 24h, oldest first. Drives the sparkline.
-    var eventsPerHour: [Int]
 
     static let empty = NVWidgetSnapshot(
         generatedAt: .distantPast,
@@ -37,8 +35,7 @@ struct NVWidgetSnapshot: Codable, Equatable {
         mentions: [],
         wallet: Wallet(cashuSats: nil, lightningSats: nil, zapsReceived24h: 0, btcPriceUSD: nil),
         media: [],
-        unreadDMCount: 0,
-        eventsPerHour: []
+        unreadDMCount: 0
     )
 
     struct Relay: Codable, Equatable {
@@ -78,6 +75,9 @@ struct NVWidgetSnapshot: Codable, Equatable {
     struct MediaTile: Codable, Equatable, Identifiable {
         var id: String
         var url: URL
+        /// Optional so a snapshot written by an older build still decodes: a
+        /// tile with no kind shows under "All" and nowhere narrower.
+        var kind: NVMediaKind?
     }
 }
 
@@ -94,6 +94,9 @@ enum NVDeepLink: String {
     case search
     case relay
     case media
+    /// Media tab with the app's Magic Paste already running. A widget cannot
+    /// read the clipboard itself, so the tap lands here instead.
+    case mediaPaste = "mediapaste"
     case wallet
 
     var url: URL { URL(string: "nostrvault://\(rawValue)")! }

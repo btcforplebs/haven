@@ -4,8 +4,14 @@ import WidgetKit
 
 // MARK: - Mosaic
 //
-// Your Blossom media as a grid. The only widget here that is decorative rather
-// than informational, and the one that most rewards an iPad's extraLarge slot.
+// Your Blossom media as a grid, with the Media tab's filter chips across the
+// top and its Magic Paste on the right.
+//
+// The images are the whole point of this widget, and getting them on screen is
+// the part that is not obvious: a widget draws in a single static pass, so
+// `AsyncImage` here renders its placeholder and never resolves. Tiles arrive as
+// bytes instead — shrunk by the app for anything on this device (NVThumbnails),
+// fetched by the timeline provider for anything remote (NVTileFetcher).
 
 enum MosaicStyle: String, AppEnum {
     case grid, featured
@@ -28,26 +34,65 @@ struct MosaicIntent: WidgetConfigurationIntent {
     var rounded: Bool
 }
 
+/// Sets the filter chip. Runs in the widget process, writes the choice to the
+/// shared prefs item, and asks WidgetKit for a new timeline so the grid redraws
+/// against the new filter.
+struct MosaicFilterIntent: AppIntent {
+    static var title: LocalizedStringResource = "Filter media"
+
+    @Parameter(title: "Filter")
+    var filter: String
+
+    init() {}
+    init(filter: NVMediaFilter) { self.filter = filter.rawValue }
+
+    func perform() async throws -> some IntentResult {
+        let choice = NVMediaFilter(rawValue: filter) ?? .all
+        NVWidgetPrefsStore.save(NVWidgetPrefs(mosaicFilter: choice))
+        WidgetCenter.shared.reloadTimelines(ofKind: "Mosaic")
+        return .result()
+    }
+}
+
 struct MosaicEntry: TimelineEntry {
     let date: Date
     let snapshot: NVWidgetSnapshot
+    let images: [String: Data]
+    let filter: NVMediaFilter
     let config: MosaicIntent
 }
 
 struct MosaicProvider: AppIntentTimelineProvider {
     func placeholder(in context: Context) -> MosaicEntry {
-        MosaicEntry(date: Date(), snapshot: .preview, config: MosaicIntent())
+        MosaicEntry(date: Date(), snapshot: .preview, images: [:], filter: .all, config: MosaicIntent())
     }
 
     func snapshot(for configuration: MosaicIntent, in context: Context) async -> MosaicEntry {
-        MosaicEntry(date: Date(), snapshot: NVSharedStore.load() ?? .preview, config: configuration)
+        await entry(for: configuration, fallback: .preview)
     }
 
     func timeline(for configuration: MosaicIntent, in context: Context) async -> Timeline<MosaicEntry> {
-        let entry = MosaicEntry(date: Date(), snapshot: NVSharedStore.load() ?? .empty, config: configuration)
-        // Media changes less often than relay counters, and every entry costs a
-        // batch of image fetches, so this one refreshes on the hour.
+        let entry = await entry(for: configuration, fallback: .empty)
+        // Media changes far less often than a feed, and every refresh costs a
+        // batch of downloads, so this one runs on the hour.
         return Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(60 * 60)))
+    }
+
+    private func entry(for configuration: MosaicIntent, fallback: NVWidgetSnapshot) async -> MosaicEntry {
+        let snapshot = NVSharedStore.load() ?? fallback
+        let filter = NVWidgetPrefsStore.load().mosaicFilter
+        let tiles = snapshot.media.filter { filter.accepts($0.kind) }
+
+        // Local blobs came across as bytes; anything left is remote and is the
+        // only thing worth spending network time on.
+        var images = NVThumbnailStore.load()?.images ?? [:]
+        let missing = tiles.filter { images[$0.id] == nil }
+        if !missing.isEmpty {
+            images.merge(await NVTileFetcher.fetch(missing)) { existing, _ in existing }
+        }
+
+        return MosaicEntry(date: Date(), snapshot: snapshot, images: images,
+                           filter: filter, config: configuration)
     }
 }
 
@@ -56,7 +101,7 @@ struct MosaicView: View {
     let entry: MosaicEntry
 
     private var tiles: [NVWidgetSnapshot.MediaTile] {
-        Array(entry.snapshot.media.prefix(capacity))
+        Array(entry.snapshot.media.filter { entry.filter.accepts($0.kind) }.prefix(capacity))
     }
 
     /// Tile counts sized so each cell stays large enough to read as an image
@@ -65,7 +110,7 @@ struct MosaicView: View {
         switch family {
         case .systemSmall: return entry.config.style == .featured ? 1 : 4
         case .systemMedium: return entry.config.style == .featured ? 5 : 8
-        case .systemLarge: return entry.config.style == .featured ? 7 : 12
+        case .systemLarge: return entry.config.style == .featured ? 7 : 9
         case .systemExtraLarge: return entry.config.style == .featured ? 9 : 18
         default: return 4
         }
@@ -81,51 +126,127 @@ struct MosaicView: View {
         }
     }
 
+    /// Small is too narrow for four chips and a wand; it stays a pure grid and
+    /// inherits whatever filter you set on a bigger one.
+    private var showsChrome: Bool { family != .systemSmall }
+
     private var corner: CGFloat { entry.config.rounded ? 8 : 0 }
 
     var body: some View {
+        VStack(spacing: 6) {
+            if showsChrome { chrome }
+            grid
+        }
+    }
+
+    @ViewBuilder
+    private var grid: some View {
         if tiles.isEmpty {
-            NVEmptyState(icon: "photo.on.rectangle",
-                         message: entry.snapshot.hasEverRun ? "No media on your relay yet"
-                                                            : "Open Nostr Vault to load your media")
+            NVEmptyState(icon: "photo.on.rectangle", message: emptyMessage)
         } else if entry.config.style == .featured, let hero = tiles.first {
             VStack(spacing: 4) {
-                Tile(url: hero.url, corner: corner)
-                    .frame(maxWidth: .infinity)
-                if tiles.count > 1 {
+                Link(destination: NVDeepLink.media.url) {
+                    Tile(tile: hero, data: entry.images[hero.id], corner: corner)
+                        .frame(maxWidth: .infinity)
+                }
+                if tiles.count > 1, family != .systemSmall {
                     HStack(spacing: 4) {
                         ForEach(tiles.dropFirst()) { tile in
-                            Tile(url: tile.url, corner: corner)
+                            Link(destination: NVDeepLink.media.url) {
+                                Tile(tile: tile, data: entry.images[tile.id], corner: corner)
+                            }
                         }
                     }
-                    .frame(height: family == .systemSmall ? 0 : 44)
+                    .frame(height: 44)
                 }
             }
-            .widgetURL(NVDeepLink.media.url)
         } else {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 4), count: columns), spacing: 4) {
                 ForEach(tiles) { tile in
-                    Tile(url: tile.url, corner: corner)
-                        .aspectRatio(1, contentMode: .fit)
+                    Link(destination: NVDeepLink.media.url) {
+                        Tile(tile: tile, data: entry.images[tile.id], corner: corner)
+                            .aspectRatio(1, contentMode: .fit)
+                    }
                 }
             }
-            .widgetURL(NVDeepLink.media.url)
+        }
+    }
+
+    /// "Nothing here" and "nothing matching this chip" are different problems
+    /// and want different sentences — one is a prompt to upload, the other is a
+    /// prompt to change the filter.
+    private var emptyMessage: String {
+        if !entry.snapshot.hasEverRun { return "Open Nostr Vault to load your media" }
+        if entry.filter != .all && !entry.snapshot.media.isEmpty {
+            return "No \(entry.filter.label.lowercased()) yet"
+        }
+        return "No media on your relay yet"
+    }
+
+    /// The Media tab's filter row, plus its Magic Paste, on the widget face.
+    private var chrome: some View {
+        HStack(spacing: 4) {
+            ForEach(NVMediaFilter.allCases, id: \.self) { option in
+                Button(intent: MosaicFilterIntent(filter: option)) {
+                    Text(option.label)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(option == entry.filter ? Color.white : .secondary)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule().fill(option == entry.filter ? NV.purple.opacity(0.85)
+                                                                  : Color.white.opacity(0.08))
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer(minLength: 0)
+            // Magic Paste cannot happen inside the widget: iOS will not hand an
+            // extension the clipboard without a prompt, and a widget has no
+            // surface to show one on. This opens the Media tab with the app's
+            // own paste already running, which is the same single tap.
+            Link(destination: NVDeepLink.mediaPaste.url) {
+                Image(systemName: "wand.and.stars")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(NV.purple)
+                    .padding(5)
+                    .background(Circle().fill(Color.white.opacity(0.08)))
+            }
         }
     }
 }
 
 private struct Tile: View {
-    let url: URL
+    let tile: NVWidgetSnapshot.MediaTile
+    let data: Data?
     let corner: CGFloat
 
     var body: some View {
-        AsyncImage(url: url) { image in
-            image.resizable().scaledToFill()
-        } placeholder: {
-            Rectangle().fill(Color.white.opacity(0.07))
+        ZStack {
+            if let data, let image = UIImage(data: data) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                // No bytes: a blob still on a host we could not reach, or one
+                // trimmed by the handoff budget. A tinted tile keyed to the id
+                // keeps the grid reading as media rather than as a failure.
+                LinearGradient(colors: [hue.opacity(0.65), hue.opacity(0.25)],
+                               startPoint: .topLeading, endPoint: .bottomTrailing)
+            }
+            if tile.kind == .video {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.white.opacity(0.9))
+                    .shadow(radius: 3)
+            }
         }
         .clipped()
         .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+    }
+
+    private var hue: Color {
+        Color(hue: Double(abs(tile.id.hashValue) % 360) / 360, saturation: 0.5, brightness: 0.8)
     }
 }
 
