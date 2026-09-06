@@ -200,8 +200,15 @@ private struct AccountRow: View {
                             .font(.system(size: 12, weight: .bold))
                             .foregroundColor(.white)
                     } else {
+                        // borderSubtle is #27272A and so is bgElevated, which is
+                        // this row's background — an unselected checkbox drawn
+                        // in it has 1:1 contrast and is invisible. Nothing then
+                        // tells you the row can be selected at all, and you only
+                        // learn it by tapping. textMuted is 3.08:1 against the
+                        // row, which is the WCAG 1.4.11 floor for a control
+                        // boundary.
                         Circle()
-                            .stroke(WizardColors.borderSubtle, lineWidth: 2)
+                            .stroke(WizardColors.textMuted, lineWidth: 2)
                             .frame(width: 24, height: 24)
                     }
                 }
