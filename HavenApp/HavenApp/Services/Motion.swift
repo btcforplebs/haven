@@ -124,6 +124,25 @@ enum Motion {
     /// that a signed event went out. Damping stays low enough to read as a pop.
     static var pop: Animation { spring(0.28, 0.62) }
 
+    /// The scale a `pop`-driven icon pulses to before returning to rest.
+    static var pulseScale: CGFloat { 1.12 }
+
+    /// Pops an icon to `pulseScale` and back via `pop`, for a caller that owns
+    /// the *tap*, not the resulting state — a like that arrives from backfill
+    /// or another client must not replay this.
+    ///
+    /// The hold before reset matches `pop`'s spring response, so the reset
+    /// doesn't cut the outward spring off before it arrives at `pulseScale`.
+    /// `nil` under Reduce Motion, same as the rest of this vocabulary — the
+    /// icon's fill and color already carry the meaning.
+    static func firePulse(_ flag: Binding<Bool>) {
+        guard !isReduced else { return }
+        flag.wrappedValue = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+            flag.wrappedValue = false
+        }
+    }
+
     // MARK: - Structure
 
     /// Expanding or collapsing a region: a thread, a details panel, a sheet's

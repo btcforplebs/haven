@@ -2235,14 +2235,14 @@ struct FeedNoteRow: View {
             actionButton(
                 icon: "arrow.2.squarepath",
                 color: rowData.isReposted ? .green : .secondary,
-                action: { actions.repostNote(note) }
+                action: {
+                    actions.repostNote(note)
+                    Motion.firePulse($repostPulse)
+                }
             )
             .accessibilityLabel(rowData.isReposted ? "Reposted" : "Repost")
-            .scaleEffect(repostPulse ? 1.12 : 1.0)
+            .scaleEffect(repostPulse ? Motion.pulseScale : 1.0)
             .animation(Motion.pop, value: repostPulse)
-            .onChange(of: rowData.isReposted) { _, isReposted in
-                if isReposted { firePulse($repostPulse) }
-            }
 
             actionButton(icon: "quote.closing", action: { onQuote?() })
                 .accessibilityLabel("Quote")
@@ -2254,11 +2254,8 @@ struct FeedNoteRow: View {
                     action: { toggleLike() }
                 )
                 .accessibilityLabel(rowData.isLiked ? "Unlike" : "Like")
-                .scaleEffect(likePulse ? 1.12 : 1.0)
+                .scaleEffect(likePulse ? Motion.pulseScale : 1.0)
                 .animation(Motion.pop, value: likePulse)
-                .onChange(of: rowData.isLiked) { _, isLiked in
-                    if isLiked { firePulse($likePulse) }
-                }
                 .simultaneousGesture(
                     LongPressGesture(minimumDuration: 0.5)
                         .onEnded { _ in
@@ -2289,11 +2286,8 @@ struct FeedNoteRow: View {
                     .frame(width: 32, height: 32)
                     .background(isZapped ? Color.orange.opacity(0.2) : Color.secondary.opacity(0.1))
                     .clipShape(Capsule())
-                    .scaleEffect(zapPulse ? 1.12 : 1.0)
+                    .scaleEffect(zapPulse ? Motion.pulseScale : 1.0)
                     .animation(Motion.pop, value: zapPulse)
-                    .onChange(of: isZapped) { _, zapped in
-                        if zapped { firePulse($zapPulse) }
-                    }
                     .contentShape(Capsule())
                     .accessibilityLabel(isZapped ? "Zapped" : "Zap")
                     .accessibilityHint(hasLightning ? "Tap to send sats" : "No lightning address")
@@ -2308,6 +2302,7 @@ struct FeedNoteRow: View {
                     .onTapGesture {
                         if let lud16 = lud16 {
                             Task { await actions.zapNote(note, lud16, nil) }
+                            Motion.firePulse($zapPulse)
                             showLightning = true
                         } else {
                             noLightningAddressAlert = true
@@ -2614,37 +2609,36 @@ struct FeedNoteRow: View {
         }
     }
 
-    /// Pop an action icon and settle back to rest — the tap confirmation for
-    /// like / repost / zap. `Motion.pop` drives both halves, so under Reduce
-    /// Motion the pop collapses to nothing rather than a residual scale.
-    private func firePulse(_ flag: Binding<Bool>) {
-        guard !Motion.isReduced else { return }
-        flag.wrappedValue = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-            flag.wrappedValue = false
-        }
-    }
-
     /// Arms the terminal failure state for the parent-note skeleton: if the
     /// parent still hasn't arrived 12s after a fetch was requested, the
     /// skeleton is replaced with "Could not load original note" and a Retry
     /// action, instead of breathing forever.
+    ///
+    /// Deliberately does not re-check `rowData.parentNote` before setting the
+    /// flag: `rowData` is a `let`, so this escaping closure would only ever
+    /// see the value captured 12 seconds ago, never an arrival in between.
+    /// Safe because the view always checks `if let parent = rowData.parentNote`
+    /// before `else if parentFetchFailed` — a parent that loaded in the
+    /// meantime renders regardless of this flag. Do not reorder those branches
+    /// without giving this timeout a live way to observe the current note.
     private func scheduleParentFetchTimeout(_ id: String) {
         guard parentFetchStartedAt == nil else { return }
         parentFetchStartedAt = Date()
         DispatchQueue.main.asyncAfter(deadline: .now() + 12) {
-            if rowData.parentNote == nil {
-                parentFetchFailed = true
-            }
+            parentFetchFailed = true
         }
     }
 
-    /// Toggle like: delegates to the appropriate action closure.
+    /// Toggle like: delegates to the appropriate action closure. Only the
+    /// liking direction pulses — a pulse is confirmation of the tap that just
+    /// happened, not a description of the resulting state, so it must not
+    /// also fire when a like arrives from backfill or another client.
     private func toggleLike() {
         if rowData.isLiked {
             actions.unlikeNote(note)
         } else {
             actions.likeNote(note)
+            Motion.firePulse($likePulse)
         }
     }
 
