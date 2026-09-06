@@ -93,6 +93,12 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .havenOpenFeed)) { _ in
             selectedTab = 0 // Feed tab
         }
+        .onReceive(NotificationCenter.default.publisher(for: .havenOpenSearch)) { _ in
+            selectedTab = 1 // Search tab
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .havenOpenMedia)) { _ in
+            selectedTab = 3 // Media tab
+        }
         .onReceive(NotificationCenter.default.publisher(for: .havenOpenDMInbox)) { _ in
             selectedTab = 2 // Profile tab
             showingDMInbox = true
@@ -142,8 +148,6 @@ struct iPadSidebarView: View {
     @State private var showingAccountSwitcher = false
     @State private var searchPath = NavigationPath()
     @State private var profilePath = NavigationPath()
-    @State private var mediaPath = NavigationPath()
-    @State private var relayPath = NavigationPath()
 
     private var activeHex: String { configService.activeAccountHexPubkey }
 
@@ -246,7 +250,12 @@ struct iPadSidebarView: View {
         } detail: {
             switch selectedTab {
             case 0:
-                FeedView()
+                NoteSplitPane(
+                    emptyTitle: "No Note Selected",
+                    emptyMessage: "Pick a note from the feed to read it here."
+                ) {
+                    FeedView()
+                }
             case 1:
                 NavigationStack(path: $searchPath) {
                     SearchView()
@@ -269,24 +278,13 @@ struct iPadSidebarView: View {
                 }
                 .id(activeHex)
             case 3:
-                NavigationStack(path: $mediaPath) {
-                    MediaTabView()
-                        .navigationTitle("")
-                        .navigationBarTitleDisplayMode(.inline)
-                        .toolbarBackground(.hidden, for: .navigationBar)
-                        .navigationDestination(for: FeedNote.self) { note in
-                            NoteDetailView(note: note)
-                        }
-                }
+                MediaTabView()
             case 4:
-                NavigationStack(path: $relayPath) {
+                NoteSplitPane(
+                    emptyTitle: "No Note Selected",
+                    emptyMessage: "Pick a note from the relay to read it here."
+                ) {
                     VaultView()
-                        .navigationTitle("")
-                        .navigationBarTitleDisplayMode(.inline)
-                        .toolbarBackground(.hidden, for: .navigationBar)
-                        .navigationDestination(for: FeedNote.self) { note in
-                            NoteDetailView(note: note)
-                        }
                 }
             case 5:
                 NavigationStack {
@@ -295,7 +293,12 @@ struct iPadSidebarView: View {
                         .toolbarBackground(.hidden, for: .navigationBar)
                 }
             default:
-                FeedView()
+                NoteSplitPane(
+                    emptyTitle: "No Note Selected",
+                    emptyMessage: "Pick a note from the feed to read it here."
+                ) {
+                    FeedView()
+                }
             }
         }
         .onAppear {
@@ -321,6 +324,34 @@ struct iPadSidebarView: View {
         }
         .sheet(isPresented: $showingAccountSwitcher) {
             AccountSwitcherView(configService: configService)
+        }
+        // MARK: - Keyboard Shortcuts
+        // Mirrors the Mac app's bindings (MenuBarView.swift) so a Magic Keyboard
+        // drives the iPad the same way it drives the desktop. Tab indices here
+        // are the sidebar's, which differ from the Mac's tab enum ordering.
+        .background {
+            Group {
+                Button("") { selectedTab = 0 }
+                    .keyboardShortcut("1", modifiers: .command)
+                Button("") { selectedTab = 1 }
+                    .keyboardShortcut("2", modifiers: .command)
+                Button("") { selectedTab = 2 }
+                    .keyboardShortcut("3", modifiers: .command)
+                Button("") { selectedTab = 3 }
+                    .keyboardShortcut("4", modifiers: .command)
+                Button("") { selectedTab = 4 }
+                    .keyboardShortcut("5", modifiers: .command)
+                Button("") { selectedTab = 5 }
+                    .keyboardShortcut("6", modifiers: .command)
+                Button("") { selectedTab = 5 }
+                    .keyboardShortcut(",", modifiers: .command)
+                Button("") {
+                    NotificationCenter.default.post(name: .composeFromTabBar, object: selectedTab)
+                }
+                    .keyboardShortcut("n", modifiers: .command)
+            }
+            .frame(width: 0, height: 0)
+            .opacity(0)
         }
     }
 }
@@ -712,4 +743,144 @@ class AppState: ObservableObject {
     @Published var isOnboarded = false
     @Published var selectedTab = 0
     private init() {}
+}
+
+// MARK: - Note Split Pane
+
+/// Column widths for [NoteSplitPane]. A separate type because static stored
+/// properties are not allowed in a generic one.
+private enum NoteSplitMetrics {
+    /// Leaves a readable note column on the narrowest iPad in landscape
+    /// (1133pt) once the sidebar has claimed its ~320pt.
+    static let defaultList: Double = 380
+    /// Floors, not preferences: below these a column stops being usable. The
+    /// list floor is about one full note row; the detail floor is roughly the
+    /// width at which a note's text stops wrapping into a readable measure.
+    static let minList: Double = 280
+    static let minDetail: Double = 360
+}
+
+/// iPad two-pane note layout: the scrolling list on the left, the selected note
+/// held open on the right.
+///
+/// This is what separates an iPad layout from a stretched phone one. Without it
+/// the list occupies the entire detail pane and tapping a note pushes the note
+/// over all of it, so only one of the two things you are reading is ever on
+/// screen. The pane publishes a `NoteDetailSelection` into the environment;
+/// `NoteNavigationLink` and the views that open notes by id pick it up and
+/// select instead of pushing.
+struct NoteSplitPane<Content: View>: View {
+    /// Placeholder shown in the detail column before anything is selected.
+    let emptyTitle: String
+    let emptyMessage: String
+    @ViewBuilder var content: () -> Content
+
+    @StateObject private var selection = NoteDetailSelection()
+
+    /// Width of the list column, dragged by the reader and remembered across
+    /// launches. The default leaves a readable note column on the narrowest
+    /// iPad in landscape (1133pt) once the sidebar has claimed its ~320pt.
+    @AppStorage("ipad.noteSplit.listWidth") private var listWidth: Double = NoteSplitMetrics.defaultList
+
+    /// Width when the current drag began, so the column tracks the finger
+    /// exactly instead of accelerating away from it (a drag reports total
+    /// translation from its start, not a delta since the last callback).
+    @State private var dragStartWidth: Double?
+
+
+    var body: some View {
+        GeometryReader { geo in
+            // The ceiling depends on the pane's real width, which changes with
+            // rotation, Split View and the sidebar collapsing. Clamping on read
+            // means a width saved on a wide layout can't strand the detail
+            // column off-screen on a narrow one — and it is restored, not
+            // overwritten, when there is room again.
+            let maxListWidth = max(NoteSplitMetrics.minList, geo.size.width - NoteSplitMetrics.minDetail)
+            let width = min(max(listWidth, NoteSplitMetrics.minList), maxListWidth)
+
+            HStack(spacing: 0) {
+                content()
+                    .frame(width: width)
+                    .environment(\.noteDetailSelection, selection)
+
+                resizeHandle(maxListWidth: maxListWidth)
+
+                detailColumn
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            // GeometryReader hands its child the full space but does not force
+            // it to fill: without this the row sizes to its content and the
+            // handle has nothing to span.
+            .frame(width: geo.size.width, height: geo.size.height)
+        }
+    }
+
+    /// The draggable divider. A plain `Divider()` is one hairline wide and
+    /// cannot be hit with a finger, so the visible line stays hairline while the
+    /// gesture is attached to 14pt of clear space around it, with a grip so the
+    /// column is discoverably resizable rather than secretly so.
+    private func resizeHandle(maxListWidth: Double) -> some View {
+        ZStack {
+            Color.clear
+            Rectangle()
+                .fill(Color(uiColor: .separator))
+                .frame(width: 1)
+            Capsule()
+                .fill(Color(uiColor: .tertiaryLabel))
+                .frame(width: 4, height: 44)
+        }
+        .frame(width: 14)
+        .frame(maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 1)
+                .onChanged { value in
+                    let start = dragStartWidth ?? listWidth
+                    dragStartWidth = start
+                    listWidth = min(max(start + value.translation.width, NoteSplitMetrics.minList), maxListWidth)
+                }
+                .onEnded { _ in dragStartWidth = nil }
+        )
+        .onTapGesture(count: 2) { listWidth = NoteSplitMetrics.defaultList }
+        .accessibilityLabel("Resize note list")
+        .accessibilityHint("Drag to change the width of the list. Double tap to reset.")
+    }
+
+    @ViewBuilder
+    private var detailColumn: some View {
+        if let note = selection.note {
+            // No selection injected here on purpose: links inside the detail
+            // column push onto its own stack rather than replacing the note the
+            // reader is looking at.
+            NavigationStack {
+                // A long-form event opens in the reader, not as a note. This is
+                // what makes tapping an Articles card do something on iPad.
+                if note.kind == 30023 {
+                    ArticleReaderView(note: note)
+                        .environmentObject(NostrService.shared)
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbarBackground(.hidden, for: .navigationBar)
+                } else {
+                    NoteDetailView(note: note)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbarBackground(.hidden, for: .navigationBar)
+                    .navigationDestination(for: FeedNote.self) { pushed in
+                        NoteDetailView(note: pushed)
+                    }
+                }
+            }
+            .id(note.id)
+        } else if let noteId = selection.noteId {
+            NoteDetailViewWrapper(noteId: noteId, onDismiss: { selection.clear() })
+                .environmentObject(NostrService.shared)
+                .environmentObject(ConfigService.shared)
+                .id(noteId)
+        } else {
+            ContentUnavailableView(
+                emptyTitle,
+                systemImage: "text.bubble",
+                description: Text(emptyMessage)
+            )
+        }
+    }
 }

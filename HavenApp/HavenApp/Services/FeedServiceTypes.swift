@@ -439,13 +439,16 @@ enum PopularFilter: String, CaseIterable {
     case nonFollows = "Non-Follows"
 }
 
-/// Feed mode: following (contacts only), discovery (extended network), global (all notes), popular (trending), or media grid.
+/// Feed mode: following (contacts only), discovery (extended network), global (all notes), popular (trending), media grid, or articles (long-form from follows).
 enum FeedMode: String, CaseIterable {
     case following = "Following"
     case discovery = "Discovery"
     case global = "Global"
     case popular = "Popular"
     case media = "Media"
+    case articles = "Articles"
+    case recipes = "Recipes"
+    case live = "Live"
 }
 
 /// Per-account, in-memory snapshot of the feed state. Captured before switching

@@ -27,4 +27,9 @@ extension Notification.Name {
     static let composeFromTabBar = Notification.Name("com.haven.composeFromTabBar")
     /// Posted by the collapsed tab bar (or menu bar) to open the relay dashboard.
     static let openRelayDashboard = Notification.Name("com.haven.openRelayDashboard")
+
+    /// Widget deep links. Search and Media had no existing route because
+    /// nothing else needed to open them programmatically.
+    static let havenOpenSearch = Notification.Name("com.haven.openSearch")
+    static let havenOpenMedia = Notification.Name("com.haven.openMedia")
 }

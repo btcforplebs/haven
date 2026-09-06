@@ -841,7 +841,7 @@ class FeedService: ObservableObject {
             // backup by handleContactLoadResolved() (seed-and-stay), so their
             // followedPubkeys is non-empty here and they stay on Following.
             let hasBackup = !(FollowingBackupService.shared.snapshots.last?.pubkeys.isEmpty ?? true)
-            if self.followedPubkeys.isEmpty && self.feedMode == .following && !hasBackup {
+            if self.followedPubkeys.isEmpty && self.isFollowSetMode && !hasBackup {
                 self.didAutoSwitchToPopular = true
                 self.feedMode = .popular
                 self.recomputeFilteredNotes()
@@ -940,6 +940,12 @@ class FeedService: ObservableObject {
 
     func switchMode(_ mode: FeedMode) {
         guard mode != feedMode else { return }
+        if feedMode == .recipes && mode != .recipes {
+            RecipeFeedService.shared.disconnect()
+        }
+        if feedMode == .live && mode != .live {
+            LiveFeedService.shared.disconnect()
+        }
         shouldScrollToTopOnLoad = true
         feedMode = mode
         notes.removeAll()
@@ -969,7 +975,15 @@ class FeedService: ObservableObject {
             self?.bgAccumulator.isGlobalMode = isGlobal
         }
 
-        if mode == .popular {
+        if mode == .live {
+            // Same reasoning as Recipes: LiveFeedService owns this one.
+            LiveFeedService.shared.loadIfNeeded()
+        } else if mode == .recipes {
+            // Recipes are served by RecipeFeedService against external relays —
+            // the note pipeline has nothing to subscribe to here, and starting
+            // it would open follow-set subscriptions nothing will read.
+            RecipeFeedService.shared.loadIfNeeded()
+        } else if mode == .popular {
             loadPopularFeed()
         } else if isGlobal {
             // Global mode doesn't need contacts — subscribe directly
@@ -1073,20 +1087,35 @@ class FeedService: ObservableObject {
     /// sub do not, so their subscriptions never drift on the follow set.
     private var isAuthorFilteredMode: Bool {
         switch feedMode {
-        case .following, .discovery: return true
+        case .following, .discovery, .articles: return true
         case .media: return mediaFeedMode == .following
-        case .global, .popular: return false
+        case .global, .popular, .recipes, .live: return false
         }
+    }
+
+    /// Kinds the primary feed subscription asks for. Articles is a long-form
+    /// feed, so narrowing the REQ stops a page of results from being almost
+    /// entirely kind-1 notes the mode is about to discard.
+    private var primaryFeedKinds: [Int] {
+        feedMode == .articles ? [30023] : [1, 6, 30023]
+    }
+
+    /// True for the modes whose primary subscription is `authors: followedPubkeys`.
+    /// Articles is Following restricted to kind 30023, so it shares every
+    /// follow-set guard: the empty-follow-set short circuit, pagination, and the
+    /// dead-`authors:[]` REQ guard.
+    var isFollowSetMode: Bool {
+        feedMode == .following || feedMode == .articles
     }
 
     /// The authoritative author set the current mode's primary subscription should
     /// carry. Empty means "no valid primary sub" for author-filtered modes.
     private func desiredPrimaryAuthorsForMode() -> [String] {
         switch feedMode {
-        case .following: return followedPubkeys
+        case .following, .articles: return followedPubkeys
         case .media: return mediaFeedMode == .following ? followedPubkeys : []
         case .discovery: return extendedNetworkPubkeys
-        case .global, .popular: return []
+        case .global, .popular, .recipes, .live: return []
         }
     }
 
@@ -1300,7 +1329,7 @@ class FeedService: ObservableObject {
             "limit": 2000
         ]
         switch feedMode {
-        case .following:
+        case .following, .articles:
             if !followedPubkeys.isEmpty {
                 filter["authors"] = followedPubkeys
             }
@@ -1308,7 +1337,7 @@ class FeedService: ObservableObject {
             if !extendedNetworkPubkeys.isEmpty {
                 filter["authors"] = extendedNetworkPubkeys
             }
-        case .global, .popular, .media:
+        case .global, .popular, .media, .recipes, .live:
             break // No author restriction — search everything
         }
 
@@ -1533,7 +1562,7 @@ class FeedService: ObservableObject {
         guard feedMode != .popular else { return } // Popular is a fixed ranked set
         guard !isLoadingFeed, let oldest = notes.last?.createdAt else { return }
         let until = Int64(oldest.timeIntervalSince1970) - 1
-        if (feedMode == .following || (feedMode == .media && mediaFeedMode == .following)) && followedPubkeys.isEmpty { return }
+        if (isFollowSetMode || (feedMode == .media && mediaFeedMode == .following)) && followedPubkeys.isEmpty { return }
         if feedMode == .discovery && extendedNetworkPubkeys.isEmpty { return }
 
         isLoadingFeed = true
@@ -2082,7 +2111,7 @@ class FeedService: ObservableObject {
     private var feedLoadingTimeout: Timer?
 
     private func subscribeToAllRelays() {
-        if (feedMode == .following || (feedMode == .media && mediaFeedMode == .following)) && followedPubkeys.isEmpty {
+        if (isFollowSetMode || (feedMode == .media && mediaFeedMode == .following)) && followedPubkeys.isEmpty {
             connectionStatus = "Follow someone on Nostr to see their posts here"
             return
         }
@@ -2328,7 +2357,7 @@ class FeedService: ObservableObject {
     private func sendPrimaryFeedSubscription(client: WebSocketClient, label: String) {
         let (since, limitVal) = feedSinceAndLimit()
         let isInbox = label == localInboxURL?.absoluteString
-        let isFollowingLike = feedMode == .following || (feedMode == .media && mediaFeedMode == .following)
+        let isFollowingLike = isFollowSetMode || (feedMode == .media && mediaFeedMode == .following)
 
         // GUARD: never send a dead `authors:[]` REQ for an author-filtered mode with
         // no authors yet — it matches zero notes and would silently stick. Record
@@ -2344,7 +2373,7 @@ class FeedService: ObservableObject {
         }
 
         var filter: [String: Any] = [
-            "kinds": [1, 6, 30023],
+            "kinds": primaryFeedKinds,
             "since": since,
             "limit": limitVal
         ]
@@ -2453,11 +2482,11 @@ class FeedService: ObservableObject {
     private func sendFeedSubscription(client: WebSocketClient, label: String, until: Int64) {
         let (since, limitVal) = feedSinceAndLimit(until: until)
         var filter: [String: Any] = [
-            "kinds": [1, 6, 30023],
+            "kinds": primaryFeedKinds,
             "since": since,
             "limit": limitVal
         ]
-        if feedMode == .following || (feedMode == .media && mediaFeedMode == .following) {
+        if isFollowSetMode || (feedMode == .media && mediaFeedMode == .following) {
             filter["authors"] = followedPubkeys
         } else if feedMode == .discovery {
             filter["authors"] = extendedNetworkPubkeys

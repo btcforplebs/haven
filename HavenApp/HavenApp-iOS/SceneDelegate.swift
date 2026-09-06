@@ -9,6 +9,15 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = (scene as? UIWindowScene) else { return }
 
+        // A widget tap can be what launched us. The UI is not up yet, so defer
+        // the route until after the first render -- posting into an empty
+        // NotificationCenter here would be dropped on the floor.
+        if let url = connectionOptions.urlContexts.first?.url {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                NVDeepLinkRouter.handle(url)
+            }
+        }
+
         // NOTE: Do NOT call StartRelayC here directly.
         // RelayProcessManager.startRelay() is called from ContentView.onAppear,
         // which also updates all state flags (isRunning, isBooting, etc.).
@@ -51,9 +60,19 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     private var backgroundTaskID: UIBackgroundTaskIdentifier = .invalid
 
+    /// Widget tap while the app is already running.
+    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        guard let url = URLContexts.first?.url else { return }
+        Task { @MainActor in NVDeepLinkRouter.handle(url) }
+    }
+
     func sceneDidBecomeActive(_ scene: UIScene) {
         // End the background task if the user has returned to the app.
         endBackgroundTask()
+
+        // Refresh what the widgets read. Rate limited inside the bridge, since
+        // scene activation fires more often than the data meaningfully changes.
+        Task { @MainActor in NVWidgetBridge.publish() }
 
         // Show the in-app banner (not a system push) for relay activity while visible.
         LocalNotificationService.shared.appInForeground = true
@@ -67,6 +86,11 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func sceneWillResignActive(_ scene: UIScene) {
         // Back to system push notifications once the app leaves the foreground.
         LocalNotificationService.shared.appInForeground = false
+
+        // Publish on the way out too: this is the state the user will see on
+        // the Home Screen a second from now, and it is the last chance to
+        // capture it before the process is suspended.
+        Task { @MainActor in NVWidgetBridge.publish(force: true) }
     }
 
     func sceneWillEnterForeground(_ scene: UIScene) {

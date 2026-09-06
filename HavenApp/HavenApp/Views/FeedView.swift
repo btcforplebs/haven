@@ -119,17 +119,27 @@ struct FeedView: View {
     @State private var showingNoteId: String?
     @State private var showingProfileKey: IdentifiableString?
     @State private var showingMediaUrl: IdentifiableURL?
+    /// macOS presents the article reader as a sheet; iOS pushes it.
+    @State private var showingArticle: ArticleRoute?
+    @StateObject private var recipeService = RecipeFeedService.shared
+    @StateObject private var liveService = LiveFeedService.shared
+    @State private var showingGlobalLiveWarning = false
+    @State private var playingStream: LiveStream?
     @State private var selectedGridMediaNoteId: String?
     @State private var isShowingGridMediaViewer = false
     @State private var gridMediaSnapshot: [FeedNote] = []
     @State private var galleryDragOffset: CGSize = .zero
     @State private var isRefreshing = false
     @State private var showingGlobalMediaWarning = false
+    /// Same warning, raised before Recipes switches to the global set.
+    @State private var showingGlobalRecipeWarning = false
     @State private var isAtTop: Bool = true
     @State private var scrolledNoteID: String?
     @State private var lastScrollOffset: CGFloat = 0
     @State private var isScrollingDown: Bool = false
     @State private var navigationPath = NavigationPath()
+    /// Non-nil when an iPad split pane owns the note detail column.
+    @Environment(\.noteDetailSelection) private var noteDetailSelection
     /// Debounce work item for auto-loading pending notes so overlapping
     /// onChange triggers don't queue duplicate applyPendingNotes() calls.
     @State private var autoLoadWork: DispatchWorkItem?
@@ -154,7 +164,7 @@ struct FeedView: View {
             return stored
         }
         switch feedService.feedMode {
-        case .following:
+        case .following, .articles, .recipes, .live:
             return false
         case .discovery, .global, .popular, .media:
             return configService.config.useFeedCompactMode
@@ -174,7 +184,9 @@ struct FeedView: View {
         switch feedService.feedMode {
         case .following, .discovery, .global, .popular:
             return true
-        case .media:
+        // Articles and Media are card/grid layouts, not timeline rows —
+        // compact mode has nothing to condense.
+        case .media, .articles, .recipes, .live:
             return false
         }
     }
@@ -199,6 +211,20 @@ struct FeedView: View {
                 }
                 IconFilterButton(icon: "globe", tooltip: "Global", isSelected: feedService.mediaFeedMode == .global, color: .havenPurple) {
                     showingGlobalMediaWarning = true
+                }
+            } else if feedService.feedMode == .recipes {
+                IconFilterButton(icon: recipeService.scope == .following ? "person.2.fill" : "person.2", tooltip: "Following", isSelected: recipeService.scope == .following, color: .havenPurple) {
+                    recipeService.setScope(.following)
+                }
+                IconFilterButton(icon: "globe", tooltip: "Global", isSelected: recipeService.scope == .global, color: .havenPurple) {
+                    showingGlobalRecipeWarning = true
+                }
+            } else if feedService.feedMode == .live {
+                IconFilterButton(icon: liveService.scope == .following ? "person.2.fill" : "person.2", tooltip: "Following", isSelected: liveService.scope == .following, color: .havenPurple) {
+                    liveService.setScope(.following)
+                }
+                IconFilterButton(icon: "globe", tooltip: "Global", isSelected: liveService.scope == .global, color: .havenPurple) {
+                    showingGlobalLiveWarning = true
                 }
             } else if feedService.feedMode == .popular {
                 IconFilterButton(icon: feedService.popularFilter == .follows ? "person.2.fill" : "person.2", tooltip: "Follows", isSelected: feedService.popularFilter == .follows, color: .havenPurple) {
@@ -253,6 +279,20 @@ struct FeedView: View {
                     Label("Following", systemImage: "person.2.fill")
                 }
                 Button { showingGlobalMediaWarning = true } label: {
+                    Label("Global", systemImage: "globe")
+                }
+            } else if feedService.feedMode == .recipes {
+                Button { recipeService.setScope(.following) } label: {
+                    Label("Following", systemImage: "person.2.fill")
+                }
+                Button { showingGlobalRecipeWarning = true } label: {
+                    Label("Global", systemImage: "globe")
+                }
+            } else if feedService.feedMode == .live {
+                Button { liveService.setScope(.following) } label: {
+                    Label("Following", systemImage: "person.2.fill")
+                }
+                Button { showingGlobalLiveWarning = true } label: {
                     Label("Global", systemImage: "globe")
                 }
             } else if feedService.feedMode == .popular {
@@ -351,14 +391,33 @@ struct FeedView: View {
 
     var body: some View {
         #if os(iOS)
-        NavigationStack(path: $navigationPath) {
+        if noteDetailSelection != nil {
+            // iPad two-pane layout: the enclosing NoteSplitPane owns the detail
+            // column, so the feed must NOT wrap itself in a stack — a private
+            // stack here would swallow selections and push over the list again.
             rootContent
                 .navigationTitle("")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbarBackground(.hidden, for: .navigationBar)
-                .navigationDestination(for: FeedNote.self) { note in
-                    NoteDetailView(note: note)
+                // The article reader is pushed onto the enclosing NoteSplitPane
+                // stack in two-pane mode, so the destination has to be
+                // registered on both branches.
+                .navigationDestination(for: ArticleRoute.self) { route in
+                    ArticleReaderView(note: route.note)
                 }
+        } else {
+            NavigationStack(path: $navigationPath) {
+                rootContent
+                    .navigationTitle("")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbarBackground(.hidden, for: .navigationBar)
+                    .navigationDestination(for: FeedNote.self) { note in
+                        NoteDetailView(note: note)
+                    }
+                    .navigationDestination(for: ArticleRoute.self) { route in
+                        ArticleReaderView(note: route.note)
+                    }
+            }
         }
         #else
         VStack(spacing: 0) {
@@ -432,6 +491,38 @@ struct FeedView: View {
                 }
                 .buttonStyle(.plain)
                 .help(String(localized: "feed.help.globalMedia"))
+            } else if feedService.feedMode == .recipes {
+                Button(action: { recipeService.setScope(.following) }) {
+                    Image(systemName: recipeService.scope == .following ? "person.2.fill" : "person.2")
+                        .font(.appSystem(size: 15, weight: .semibold))
+                        .foregroundColor(recipeService.scope == .following ? Color.havenPurple : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Recipes from people you follow")
+
+                Button(action: { showingGlobalRecipeWarning = true }) {
+                    Image(systemName: "globe")
+                        .font(.appSystem(size: 15, weight: .semibold))
+                        .foregroundColor(recipeService.scope == .global ? Color.havenPurple : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Recipes from everyone")
+            } else if feedService.feedMode == .live {
+                Button(action: { liveService.setScope(.following) }) {
+                    Image(systemName: liveService.scope == .following ? "person.2.fill" : "person.2")
+                        .font(.appSystem(size: 15, weight: .semibold))
+                        .foregroundColor(liveService.scope == .following ? Color.havenPurple : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Streams from people you follow")
+
+                Button(action: { showingGlobalLiveWarning = true }) {
+                    Image(systemName: "globe")
+                        .font(.appSystem(size: 15, weight: .semibold))
+                        .foregroundColor(liveService.scope == .global ? Color.havenPurple : .secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Streams from everyone")
             } else if feedService.feedMode == .popular {
                 // My Follows filter
                 Button(action: {
@@ -527,8 +618,8 @@ struct FeedView: View {
                 // are no cached notes to render. Once a snapshot has been
                 // restored (or notes have streamed in), the background sync
                 // is surfaced via the inline `syncingPill` instead.
-                let showLoadingContacts = (feedService.feedMode == .following || (feedService.feedMode == .media && feedService.mediaFeedMode == .following)) && feedService.isLoadingContacts && feedService.notes.isEmpty
-                let showEmptyState = (feedService.feedMode == .following || (feedService.feedMode == .media && feedService.mediaFeedMode == .following)) && feedService.followedPubkeys.isEmpty && !feedService.isLoadingFeed && !feedService.isLoadingContacts
+                let showLoadingContacts = (feedService.isFollowSetMode || (feedService.feedMode == .media && feedService.mediaFeedMode == .following)) && feedService.isLoadingContacts && feedService.notes.isEmpty
+                let showEmptyState = (feedService.isFollowSetMode || (feedService.feedMode == .media && feedService.mediaFeedMode == .following)) && feedService.followedPubkeys.isEmpty && !feedService.isLoadingFeed && !feedService.isLoadingContacts
 
                 if showLoadingContacts {
                     loadingContactsView
@@ -645,6 +736,11 @@ struct FeedView: View {
         .sheet(item: $showingMediaUrl) { media in
             FeedMediaPager(urls: media.allURLs, selected: media.url, onDismiss: { showingMediaUrl = nil })
         }
+        .sheet(item: $showingArticle) { route in
+            ArticleReaderView(note: route.note)
+                .environmentObject(nostrService)
+                .frame(minWidth: 520, minHeight: 480)
+        }
         .sheet(isPresented: $isShowingGridMediaViewer) {
             ZStack {
                 Color.black
@@ -694,6 +790,29 @@ struct FeedView: View {
             Button(String(localized: "feed.alert.sensitiveContent.proceed"), role: .destructive) {
                 feedService.mediaFeedMode = .global
                 feedService.refresh()
+            }
+            Button(String(localized: "feed.alert.sensitiveContent.cancel"), role: .cancel) {}
+        } message: {
+            Text(String(localized: "feed.alert.sensitiveContent.message"))
+        }
+        .alert(String(localized: "feed.alert.sensitiveContent.title"), isPresented: $showingGlobalLiveWarning) {
+            Button(String(localized: "feed.alert.sensitiveContent.proceed"), role: .destructive) {
+                liveService.setScope(.global)
+            }
+            Button(String(localized: "feed.alert.sensitiveContent.cancel"), role: .cancel) {}
+        } message: {
+            Text(String(localized: "feed.alert.sensitiveContent.message"))
+        }
+        .sheet(item: $playingStream) { stream in
+            LiveStreamPlayerView(stream: stream, onBlocked: { pubkey in
+                liveService.removeStreams(byHost: pubkey)
+            })
+            .environmentObject(nostrService)
+            .environmentObject(configService)
+        }
+        .alert(String(localized: "feed.alert.sensitiveContent.title"), isPresented: $showingGlobalRecipeWarning) {
+            Button(String(localized: "feed.alert.sensitiveContent.proceed"), role: .destructive) {
+                recipeService.setScope(.global)
             }
             Button(String(localized: "feed.alert.sensitiveContent.cancel"), role: .cancel) {}
         } message: {
@@ -1206,6 +1325,225 @@ struct FeedView: View {
 
     // MARK: - Feed List
 
+    /// Articles feed: long-form events from the follow set, already synced to
+    /// the device's own relay by the normal feed sync, rendered as cards
+    /// instead of as notes.
+    @ViewBuilder
+    private var articleListView: some View {
+        LazyVStack(spacing: 14) {
+            if feedService.isLoadingFeed && feedService.filteredNotes.isEmpty {
+                ForEach(0..<3, id: \.self) { _ in
+                    FeedNoteSkeletonRow()
+                        .padding(.horizontal, 16)
+                }
+            }
+
+            if feedService.filteredNotes.isEmpty && !feedService.isLoadingFeed {
+                emptyArticlesStateView
+            }
+
+            ForEach(feedService.filteredNotes) { note in
+                let card = ArticleCardView(
+                    note: note,
+                    profile: nostrService.profiles[note.pubkey],
+                    onAuthorTap: { pubkey in showingProfileKey = IdentifiableString(id: pubkey) }
+                )
+                .padding(.horizontal, 16)
+
+                #if os(iOS)
+                // In the iPad two-pane layout the feed is NOT wrapped in its
+                // own NavigationStack — NoteSplitPane owns the detail column —
+                // so a NavigationLink here has no stack to push onto and the
+                // tap silently does nothing. Route through the selection the
+                // same way note rows do.
+                if let noteDetailSelection {
+                    card
+                        .contentShape(Rectangle())
+                        .onTapGesture { noteDetailSelection.select(note) }
+                } else {
+                    NavigationLink(value: ArticleRoute(note: note)) { card }
+                        .buttonStyle(.plain)
+                }
+                #else
+                card.onTapGesture { showingArticle = ArticleRoute(note: note) }
+                #endif
+            }
+
+            if !feedService.filteredNotes.isEmpty {
+                Color.clear
+                    .frame(height: 1)
+                    .onAppear { feedService.loadMore() }
+            }
+        }
+        .padding(.vertical, 16)
+    }
+
+    private var emptyArticlesStateView: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "doc.richtext")
+                .font(.appSystem(size: 34))
+                .foregroundColor(.havenPurple.opacity(0.7))
+            Text("No articles yet")
+                .font(.appSystem(size: 16, weight: .bold))
+            Text("Long-form posts from people you follow show up here. Nothing to read yet.")
+                .font(.appSystem(size: 13))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 40)
+        .padding(.vertical, 60)
+    }
+
+    /// Recipes feed: long-form events tagged zapcooking / nostrcooking, pulled
+    /// live from external relays. Recipe authors are strangers, so these are
+    /// deliberately not synced to the owner's own relay — the grid is empty
+    /// without a connection, unlike Articles.
+    ///
+    /// A recipe opens as a sheet rather than a push: the grid appears inside
+    /// three different containers (the iPhone navigation stack, the iPad
+    /// two-pane layout which owns its own stack, and the macOS window), and a
+    /// sheet is the one presentation that behaves the same in all three.
+    @ViewBuilder
+    private var recipeGridView: some View {
+        VStack(spacing: 12) {
+            if !recipeService.categories.isEmpty {
+                RecipeCategoryBar(categories: recipeService.categories, selected: $recipeService.selectedCategory)
+            }
+
+            if recipeService.isLoading && recipeService.visibleRecipes.isEmpty {
+                ProgressView()
+                    .controlSize(.large)
+                    .tint(Color.havenPurple)
+                    .padding(.vertical, 60)
+            } else if recipeService.visibleRecipes.isEmpty {
+                emptyRecipesStateView
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+                    ForEach(recipeService.visibleRecipes) { recipe in
+                        let card = RecipeCardView(note: recipe, profile: nostrService.profiles[recipe.pubkey])
+
+                        card
+                            .contentShape(Rectangle())
+                            .onTapGesture { showingArticle = ArticleRoute(note: recipe) }
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+        .padding(.vertical, 16)
+        .onAppear { recipeService.loadIfNeeded() }
+    }
+
+    private var emptyRecipesStateView: some View {
+        VStack(spacing: 10) {
+            Image(systemName: recipeService.loadFailed ? "wifi.slash" : "fork.knife")
+                .font(.appSystem(size: 34))
+                .foregroundColor(.havenPurple.opacity(0.7))
+            Text(emptyRecipesTitle)
+                .font(.appSystem(size: 16, weight: .bold))
+            Text(emptyRecipesMessage)
+                .font(.appSystem(size: 13))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+            if recipeService.followSetIsEmpty {
+                Button("Show everyone's recipes") { showingGlobalRecipeWarning = true }
+                    .buttonStyle(.borderless)
+                    .foregroundColor(.havenPurple)
+                    .padding(.top, 4)
+            } else {
+                Button("Try again") { recipeService.refresh() }
+                    .buttonStyle(.borderless)
+                    .foregroundColor(.havenPurple)
+                    .padding(.top, 4)
+            }
+        }
+        .padding(.horizontal, 40)
+        .padding(.vertical, 60)
+    }
+
+    private var emptyRecipesTitle: String {
+        if recipeService.followSetIsEmpty { return "No recipes from your follows" }
+        return recipeService.loadFailed ? "Could not reach any relay" : "No recipes found"
+    }
+
+    private var emptyRecipesMessage: String {
+        if recipeService.followSetIsEmpty {
+            return "Nobody you follow has posted a recipe. Switch to Global to see everyone's."
+        }
+        return recipeService.loadFailed
+            ? "Recipes come from other people's relays, so this one needs a connection."
+            : "Nothing tagged zapcooking or nostrcooking came back."
+    }
+
+    /// Live streams: NIP-53 events that are running *and* carry a URL Apple's
+    /// player can open. Never cached — a stream is only interesting while it is
+    /// live, and a saved one is a gravestone.
+    @ViewBuilder
+    private var liveGridView: some View {
+        VStack(spacing: 12) {
+            if liveService.isLoading && liveService.streams.isEmpty {
+                ProgressView()
+                    .controlSize(.large)
+                    .tint(Color.havenPurple)
+                    .padding(.vertical, 60)
+            } else if liveService.streams.isEmpty {
+                emptyLiveStateView
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 12)], spacing: 12) {
+                    ForEach(liveService.streams) { stream in
+                        LiveStreamCardView(stream: stream, profile: nostrService.profiles[stream.hostPubkey])
+                            .contentShape(Rectangle())
+                            .onTapGesture { playingStream = stream }
+                    }
+                }
+                .padding(.horizontal, 16)
+            }
+        }
+        .padding(.vertical, 16)
+        .onAppear { liveService.loadIfNeeded() }
+    }
+
+    private var emptyLiveStateView: some View {
+        VStack(spacing: 10) {
+            Image(systemName: liveService.loadFailed ? "wifi.slash" : "dot.radiowaves.left.and.right")
+                .font(.appSystem(size: 34))
+                .foregroundColor(.havenPurple.opacity(0.7))
+            Text(emptyLiveTitle)
+                .font(.appSystem(size: 16, weight: .bold))
+            Text(emptyLiveMessage)
+                .font(.appSystem(size: 13))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+            if liveService.followSetIsEmpty {
+                Button("Show everyone's streams") { showingGlobalLiveWarning = true }
+                    .buttonStyle(.borderless)
+                    .foregroundColor(.havenPurple)
+                    .padding(.top, 4)
+            } else {
+                Button("Try again") { liveService.refresh() }
+                    .buttonStyle(.borderless)
+                    .foregroundColor(.havenPurple)
+                    .padding(.top, 4)
+            }
+        }
+        .padding(.horizontal, 40)
+        .padding(.vertical, 60)
+    }
+
+    private var emptyLiveTitle: String {
+        if liveService.followSetIsEmpty { return "Nobody you follow is live" }
+        return liveService.loadFailed ? "Could not reach any relay" : "Nothing live right now"
+    }
+
+    private var emptyLiveMessage: String {
+        if liveService.followSetIsEmpty {
+            return "Switch to Global to see everyone who is streaming."
+        }
+        return liveService.loadFailed
+            ? "Live streams come from other people's relays, so this one needs a connection."
+            : "Most stream announcements on Nostr are for streams that already ended. Only running ones show here."
+    }
+
     private var feedList: some View {
         ScrollViewReader { proxy in
             ZStack(alignment: .top) {
@@ -1218,6 +1556,12 @@ struct FeedView: View {
 
                         if feedService.feedMode == .media {
                             mediaGridView
+                        } else if feedService.feedMode == .articles {
+                            articleListView
+                        } else if feedService.feedMode == .recipes {
+                            recipeGridView
+                        } else if feedService.feedMode == .live {
+                            liveGridView
                         } else {
                             LazyVStack(spacing: 12) {
 
@@ -1247,7 +1591,7 @@ struct FeedView: View {
 
                             Group {
                                 if shouldUseNavLink {
-                                    NavigationLink(value: note) {
+                                    NoteNavigationLink(note: note) {
                                         feedNoteRowContent(note: note, profile: profile, rowData: rowData, parentIsNext: parentIsNext, isExpanded: isExpanded)
                                     }
                                     .buttonStyle(.plain)
@@ -1863,7 +2207,7 @@ struct FeedNoteRow: View {
         // Threading View: Parent Note Preview (shows above the current note)
         if showParent, let pId = note.parentEventId {
             if let parent = rowData.parentNote {
-                NavigationLink(value: parent) {
+                NoteNavigationLink(note: parent) {
                     HStack(alignment: .top, spacing: 12) {
                         VStack(spacing: 0) {
                             AvatarView(url: rowData.parentProfile?.pictureURL, pubkey: parent.pubkey)
@@ -2180,7 +2524,7 @@ struct FeedNoteRow: View {
             VStack(spacing: 8) {
                 ForEach(note.quotedEventIds, id: \.self) { quoteId in
                     if let quotedNote = actions.findNote(quoteId) {
-                        NavigationLink(value: quotedNote) {
+                        NoteNavigationLink(note: quotedNote) {
                             QuotedNoteView(note: quotedNote)
                         }
                         .buttonStyle(.plain)

@@ -59,6 +59,18 @@ struct VaultView: View {
     @State var hasEstablishedNotificationBaseline = false
 
     @State var showingNoteId: String?
+    /// Non-nil when an iPad split pane owns the note detail column.
+    @Environment(\.noteDetailSelection) var noteDetailSelection
+
+    /// Opens a note in the split pane's detail column when there is one, and
+    /// falls back to the full-screen sheet everywhere else.
+    func openNote(_ id: String) {
+        if let noteDetailSelection {
+            noteDetailSelection.select(id: id)
+        } else {
+            showingNoteId = id
+        }
+    }
     @State var showingProfilePubkey: String?
     @State var maxDisplayedItems: Int = 100
     #if os(iOS)
@@ -129,14 +141,23 @@ struct VaultView: View {
 
     var body: some View {
         #if os(iOS)
-        NavigationStack(path: $navigationPath) {
+        if noteDetailSelection != nil {
+            // iPad two-pane layout: the enclosing NoteSplitPane owns the detail
+            // column, so the vault list must not wrap itself in a stack.
             iOSContent
                 .navigationTitle("")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbarBackground(.hidden, for: .navigationBar)
-                .navigationDestination(for: FeedNote.self) { note in
-                    NoteDetailView(note: note)
-                }
+        } else {
+            NavigationStack(path: $navigationPath) {
+                iOSContent
+                    .navigationTitle("")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbarBackground(.hidden, for: .navigationBar)
+                    .navigationDestination(for: FeedNote.self) { note in
+                        NoteDetailView(note: note)
+                    }
+            }
         }
         #else
         viewContent
