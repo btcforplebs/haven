@@ -83,9 +83,20 @@ enum NVWidgetBridge {
         var tiles: [NVWidgetSnapshot.MediaTile] = []
         var seen = Set<String>()
 
-        for item in BlossomMediaCache.shared.items.sorted(by: { $0.dateAdded > $1.dateAdded }) {
-            guard seen.insert(item.url.absoluteString).inserted else { continue }
-            tiles.append(.init(id: item.url.lastPathComponent, url: item.url, kind: kind(of: item)))
+        // Sniffed types, when the Media tab has scanned this session. Only a
+        // lookup: the directory below is the source of truth, because the cache
+        // is empty until that tab is opened and the widget must not depend on
+        // the user having visited a screen.
+        let sniffed = Dictionary(
+            BlossomMediaCache.shared.items.map { ($0.url.lastPathComponent, kind(of: $0)) },
+            uniquingKeysWith: { first, _ in first }
+        )
+
+        for blob in blossomBlobs() {
+            guard seen.insert(blob.url.absoluteString).inserted else { continue }
+            tiles.append(.init(id: blob.url.lastPathComponent,
+                               url: blob.url,
+                               kind: sniffed[blob.url.lastPathComponent]))
             if tiles.count >= maxTiles { return tiles }
         }
 
@@ -102,6 +113,33 @@ enum NVWidgetBridge {
     }
 
     private static let maxTiles = 18
+
+    /// The newest blobs in the relay's Blossom directory.
+    ///
+    /// Read straight off disk rather than through BlossomMediaCache: that cache
+    /// is filled by the Media tab's own scan, so a user who has never opened
+    /// that tab would get an empty Mosaic and reasonably conclude the widget is
+    /// broken. Only names and modification dates are read here — no bytes are
+    /// touched on the main thread; the thumbnail pass below does that off it.
+    private static func blossomBlobs() -> [(url: URL, modified: Date)] {
+        let config = ConfigService.shared
+        let dir = config.relayDataDir.appendingPathComponent(config.config.blossomPath)
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles]
+        ) else { return [] }
+
+        let webURL = config.config.webURL
+        return entries.compactMap { file -> (url: URL, modified: Date)? in
+            let name = file.lastPathComponent
+            guard name != "LOCK", !name.hasPrefix("."),
+                  let served = URL(string: "\(webURL)/\(name)") else { return nil }
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return (served, modified)
+        }
+        .sorted { $0.modified > $1.modified }
+        .prefix(maxTiles)
+        .map { $0 }
+    }
 
     /// The gallery's media types collapsed onto the four the widget filters by.
     /// GIF is its own chip in the Media tab, so it is its own kind here.
@@ -133,8 +171,12 @@ enum NVWidgetBridge {
         Task.detached(priority: .utility) {
             var encoded: [(id: String, data: Data)] = []
             for entry in local {
-                let data = entry.kind == .video ? videoPoster(entry.file)
-                                                : NVDownsample.tile(fileURL: entry.file, maxPixel: 160)
+                // Try the image path first and fall back to a video poster,
+                // rather than trusting the tile's kind: Blossom filenames are
+                // bare hashes, so a blob whose type was never sniffed arrives
+                // here with no kind at all and would otherwise never draw.
+                let data = NVDownsample.tile(fileURL: entry.file, maxPixel: 160)
+                    ?? videoPoster(entry.file)
                 guard let data else { continue }
                 encoded.append((entry.id, data))
             }
