@@ -22,6 +22,16 @@ class MacRelaySyncService: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private let processingQueue = DispatchQueue(label: "com.haven.mac-relay-sync", qos: .userInitiated)
 
+    // Bumped in cancelSync() and at the top of performSync(). Every recursive/async
+    // closure in the sync chain (error retry, EOSE continuation, AUTH resend, safety
+    // timeout) captures the generation it was spawned under and checks it against the
+    // current value before acting. cancelSync() previously just flipped isSyncing back
+    // to false, but performSync() flips it straight back to true for the new sync — so
+    // stale closures from a superseded sync saw isSyncing == true and kept running
+    // against the old endpoint/since/index, stomping the new sync's state. The
+    // generation counter is what actually invalidates them.
+    private var syncGeneration = 0
+
     // BadgerDB (Haven's default) enforces MaxLimit=1000. The query engine honours
     // filter.Limit only when 0 < filter.Limit <= MaxLimit; values above MaxLimit
     // silently fall back to MaxLimit/4 = 250.  Requesting exactly 1000 therefore
@@ -168,6 +178,7 @@ class MacRelaySyncService: ObservableObject {
     }
     
     func cancelSync() {
+        syncGeneration += 1
         client?.disconnect()
         client = nil
         cancellables.removeAll()
@@ -190,23 +201,33 @@ class MacRelaySyncService: ObservableObject {
 
         // Connect to all relay endpoints to get complete sync
         let endpoints = [url, url + "/inbox", url + "/private", url + "/chat"]
-        
+
+        syncGeneration += 1
+        let generation = syncGeneration
+
         isSyncing = true
         notesSynced = 0
         bgAccumulator.reset()
         syncStatus = "Connecting to Mac relay..."
-        
+
         // Use provided timestamp or 1-hour overlap from last known sync
         let startTime = fromTimestamp ?? max(0, lastSyncTimestamp - 3600)
 
         log("starting sync from \(endpoints) since timestamp \(startTime) (original last sync: \(lastSyncTimestamp))")
 
-        syncFromEndpoints(endpoints, index: 0, since: startTime)
+        syncFromEndpoints(endpoints, index: 0, since: startTime, generation: generation)
     }
-    
+
     /// Iterates through each relay endpoint sequentially, paginating within each endpoint
     /// using `until` as a cursor until fewer than `pageLimit` events are returned.
-    private func syncFromEndpoints(_ endpoints: [String], index: Int, since: Int64, until: Int64? = nil) {
+    /// `generation` pins this call to the sync round that spawned it — cancelSync()/
+    /// performSync() bump syncGeneration, so a stale recursive call from a superseded
+    /// sync bails here instead of racing the new one.
+    private func syncFromEndpoints(_ endpoints: [String], index: Int, since: Int64, until: Int64? = nil, generation: Int) {
+        guard generation == syncGeneration else {
+            log("stale sync (generation \(generation), current \(syncGeneration)) — dropping", level: "WARN")
+            return
+        }
         guard index < endpoints.count else {
             finishSync()
             return
@@ -214,7 +235,7 @@ class MacRelaySyncService: ObservableObject {
 
         let endpoint = endpoints[index]
         guard let url = URL(string: endpoint) else {
-            syncFromEndpoints(endpoints, index: index + 1, since: since)
+            syncFromEndpoints(endpoints, index: index + 1, since: since, generation: generation)
             return
         }
 
@@ -246,15 +267,13 @@ class MacRelaySyncService: ObservableObject {
                    let challenge = json[safe: 1] as? String {
                     authSent = true
                     self.log("received AUTH challenge from \(endpoint), authenticating")
-                    self.sendAuthResponse(challenge: challenge, to: wsClient, endpoint: endpoint)
-                    // The original REQ (sent immediately on connect, before this challenge
-                    // arrived) was rejected pre-auth — resend now that we've authenticated.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                        self.sendSyncRequest(to: wsClient, subId: subId, url: url, since: since, until: until)
-                    }
+                    // sendAuthResponse resends the REQ itself once the AUTH event has
+                    // actually been sent — signing is async, so a fixed-delay timer here
+                    // could fire before AUTH lands and get rejected again as unauthenticated.
+                    self.sendAuthResponse(challenge: challenge, to: wsClient, endpoint: endpoint, subId: subId, url: url, since: since, until: until, generation: generation)
                     return
                 }
-                self.processMessage(message, subId: subId, endpoints: endpoints, index: index, since: since)
+                self.processMessage(message, subId: subId, endpoints: endpoints, index: index, since: since, generation: generation)
             }
             .store(in: &cancellables)
 
@@ -271,7 +290,7 @@ class MacRelaySyncService: ObservableObject {
                     self.log("connection error to \(endpoint)", level: "WARN")
                     // On error, skip to next endpoint
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        self.syncFromEndpoints(endpoints, index: index + 1, since: since)
+                        self.syncFromEndpoints(endpoints, index: index + 1, since: since, generation: generation)
                     }
                 default:
                     break
@@ -283,11 +302,11 @@ class MacRelaySyncService: ObservableObject {
 
         // Safety timeout per page — 60 seconds is generous for 500 events
         DispatchQueue.main.asyncAfter(deadline: .now() + 60) { [weak self] in
-            guard let self = self, self.isSyncing else { return }
+            guard let self = self, self.isSyncing, generation == self.syncGeneration else { return }
             if self.client === wsClient && wsClient.connectionState != .disconnected {
                 self.log("timeout for \(endpoint) until=\(until ?? -1), advancing", level: "WARN")
                 wsClient.disconnect()
-                self.syncFromEndpoints(endpoints, index: index + 1, since: since)
+                self.syncFromEndpoints(endpoints, index: index + 1, since: since, generation: generation)
             }
         }
     }
@@ -324,7 +343,7 @@ class MacRelaySyncService: ObservableObject {
     /// match the endpoint's own scheme+host+path (khatru validates against its own base
     /// URL with http(s) swapped for ws(s)) — the endpoint string is already normalized to
     /// wss:// by performSync, so it can be used directly.
-    private func sendAuthResponse(challenge: String, to client: WebSocketClient, endpoint: String) {
+    private func sendAuthResponse(challenge: String, to client: WebSocketClient, endpoint: String, subId: String, url: URL, since: Int64, until: Int64?, generation: Int) {
         let tags: [[String]] = [
             ["relay", endpoint],
             ["challenge", challenge]
@@ -334,11 +353,17 @@ class MacRelaySyncService: ObservableObject {
                 log("failed to sign NIP-42 AUTH event for \(endpoint)", level: "WARN")
                 return
             }
+            guard generation == syncGeneration else { return }
             let msg: [Any] = ["AUTH", eventToDict(authEvent)]
             if let data = try? JSONSerialization.data(withJSONObject: msg),
                let str = String(data: data, encoding: .utf8) {
                 client.send(text: str)
             }
+            // The original REQ (sent immediately on connect, before this challenge
+            // arrived) was rejected pre-auth — resend now that the AUTH event has
+            // actually been sent, not on a fixed timer that could fire before the
+            // async signing above completes.
+            sendSyncRequest(to: client, subId: subId, url: url, since: since, until: until)
         }
     }
 
@@ -354,7 +379,7 @@ class MacRelaySyncService: ObservableObject {
         ]
     }
 
-    private func processMessage(_ message: String, subId: String, endpoints: [String], index: Int, since: Int64) {
+    private func processMessage(_ message: String, subId: String, endpoints: [String], index: Int, since: Int64, generation: Int) {
         guard let data = message.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [Any],
               json.count >= 2,
@@ -374,7 +399,7 @@ class MacRelaySyncService: ObservableObject {
             DispatchQueue.main.async { [weak self] in
                 guard let self = self, self.client != nil else { return }
                 self.client?.disconnect()
-                self.syncFromEndpoints(endpoints, index: index + 1, since: since)
+                self.syncFromEndpoints(endpoints, index: index + 1, since: since, generation: generation)
             }
             return
         }
@@ -399,11 +424,11 @@ class MacRelaySyncService: ObservableObject {
                 // If we received a full page and haven't walked back to `since` yet, paginate
                 if gotFullPage && oldest > since && oldest != Int64.max {
                     self.log("full page (\(pageCount) events), paginating with until=\(oldest - 1)")
-                    self.syncFromEndpoints(endpoints, index: index, since: since, until: oldest - 1)
+                    self.syncFromEndpoints(endpoints, index: index, since: since, until: oldest - 1, generation: generation)
                 } else {
                     // Fewer than a full page — this endpoint is exhausted, move on
                     self.log("endpoint done (\(pageCount) events on last page), next endpoint")
-                    self.syncFromEndpoints(endpoints, index: index + 1, since: since)
+                    self.syncFromEndpoints(endpoints, index: index + 1, since: since, generation: generation)
                 }
             }
             return
