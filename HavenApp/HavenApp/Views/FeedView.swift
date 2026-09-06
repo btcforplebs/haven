@@ -106,6 +106,24 @@ private struct RowDataCacheObservers: ViewModifier {
     }
 }
 
+/// A thread parent / repost original / quoted note just arrived. It changes no
+/// row's own id and no other published property, so this is the only thing that
+/// can clear a row's loading skeleton once its rowData is cached.
+///
+/// Its own modifier rather than an eighth `onChange` in `RowDataCacheObservers`:
+/// one more link in that chain puts it over the type-checker's budget and the
+/// file stops compiling ("unable to type-check this expression in reasonable
+/// time"). Any further observer should be a separate modifier too.
+private struct ReferencedNoteObserver: ViewModifier {
+    @ObservedObject var feedService: FeedService
+    let onReferencedNotes: (Set<String>) -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: feedService.referencedNoteUpdates) { _, signal in onReferencedNotes(signal.ids) }
+    }
+}
+
 // MARK: - FeedView
 
 struct FeedView: View {
@@ -1294,6 +1312,15 @@ struct FeedView: View {
         resolveRows(matching: ids)
     }
 
+    /// Referenced notes (thread parents, kind-6 originals, quoted notes) just
+    /// arrived — re-resolve only the rows that reference them, so the parent
+    /// preview replaces its skeleton immediately instead of waiting for an
+    /// unrelated change to force a rebuild.
+    private func refreshRowsForReferencedNotes(_ arrivedIds: Set<String>) {
+        resolveRows(matching: ReferencedNoteRepair.rowsNeedingRepair(
+            notes: feedService.filteredNotes, arrivedIds: arrivedIds))
+    }
+
     /// noteStats changed — re-resolve rows whose stats actually differ.
     private func updateRowDataForNoteStats(old: [String: NoteStats], new: [String: NoteStats]) {
         var changed = Set<String>()
@@ -1684,6 +1711,10 @@ struct FeedView: View {
                     onProfiles: { refreshRowsForPubkeys($0) },
                     onFollowsChanged: { rebuildRowDataCache() },
                     onNoteStats: { updateRowDataForNoteStats(old: $0, new: $1) }
+                ))
+                .modifier(ReferencedNoteObserver(
+                    feedService: feedService,
+                    onReferencedNotes: { refreshRowsForReferencedNotes($0) }
                 ))
 
                 // Floating "New Posts" indicator — shown when auto-load is off,

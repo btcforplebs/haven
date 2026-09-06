@@ -31,6 +31,32 @@ class FeedService: ObservableObject {
     /// O(1) lookup index for notes by ID. Maintained alongside `notes` mutations.
     private(set) var noteIndex: [String: FeedNote] = [:]
     @Published var parentNotesCache: [String: FeedNote] = [:]
+    /// Fires when referenced notes (thread parents, kind-6 originals, quoted
+    /// notes) arrive and are cached. `parentNotesCache` alone is not a usable
+    /// signal for the feed's row-data cache: rows are keyed by the *referencing*
+    /// note's id, so a re-render changes nothing. See `ReferencedNoteSignal`.
+    @Published private(set) var referencedNoteUpdates = ReferencedNoteSignal()
+    private var pendingReferencedNoteIds: Set<String> = []
+    private var referencedNoteFlushScheduled = false
+    private var referencedNoteGeneration = 0
+
+    /// Records that a referenced note arrived and schedules a coalesced flush,
+    /// so a burst of parents landing together produces one row repair pass.
+    /// Main-thread only (every call site is already on the main thread).
+    private func noteReferencedNoteArrived(_ id: String) {
+        pendingReferencedNoteIds.insert(id)
+        guard !referencedNoteFlushScheduled else { return }
+        referencedNoteFlushScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self = self else { return }
+            self.referencedNoteFlushScheduled = false
+            guard !self.pendingReferencedNoteIds.isEmpty else { return }
+            let batch = self.pendingReferencedNoteIds
+            self.pendingReferencedNoteIds.removeAll(keepingCapacity: true)
+            self.referencedNoteGeneration &+= 1
+            self.referencedNoteUpdates = ReferencedNoteSignal(generation: self.referencedNoteGeneration, ids: batch)
+        }
+    }
     @Published var followedPubkeys: [String] = []
     @Published var extendedNetworkPubkeys: [String] = []
     /// When the extended network was last computed. Used to skip re-fetching within 1 hour.
@@ -3070,6 +3096,7 @@ class FeedService: ObservableObject {
         fetchingNoteIds.remove(id)
         fetchingNoteTimestamps.removeValue(forKey: id)
         parentNotesCache[id] = note
+        noteReferencedNoteArrived(id)
         if parentNotesCache.count > 500 {
             let referencedIds = Set(notes.compactMap { $0.parentEventId })
             parentNotesCache = parentNotesCache.filter { referencedIds.contains($0.key) }

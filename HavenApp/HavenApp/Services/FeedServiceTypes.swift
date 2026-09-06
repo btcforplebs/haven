@@ -493,3 +493,20 @@ struct DiskFeedSnapshot: Codable {
     /// Snapshots older than 7 days are considered stale.
     static let maxAge: TimeInterval = 7 * 24 * 60 * 60
 }
+
+/// Emitted when notes that other rows *reference* (thread parents, kind-6
+/// originals, quoted notes) arrive from a relay and land in
+/// `FeedService.parentNotesCache`. The feed's row-data cache is keyed by the
+/// referencing note's id, so an arriving reference changes no row's own id and
+/// no other published property — without this signal the row keeps rendering
+/// its skeleton until something unrelated (a new note, a profile, a like)
+/// happens to force a re-resolve.
+///
+/// `generation` makes two consecutive batches with identical ids distinct, so
+/// `onChange` still fires.
+struct ReferencedNoteSignal: Equatable {
+    var generation: Int = 0
+    var ids: Set<String> = []
+}
+
+extension FeedNote: ReferencedNoteRow {}
