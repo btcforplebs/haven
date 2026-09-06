@@ -165,7 +165,8 @@ struct MenuBarView: View {
                                 }
                             }
 
-                            // New Post
+                            // New Post (macOS only: showingCompose is macOS-gated)
+                            #if os(macOS)
                             Button(action: { showingCompose = true }) {
                                 HStack(spacing: 8) {
                                     Image(systemName: "square.and.pencil")
@@ -186,6 +187,7 @@ struct MenuBarView: View {
                             .help("New Post (⌘N)")
                             .padding(.horizontal, 12)
                             .padding(.bottom, 12)
+                            #endif
 
                             // Sidebar Tabs
                             VStack(spacing: 4) {
@@ -358,7 +360,8 @@ struct MenuBarView: View {
                             }
                             
                             HStack(spacing: 6) {
-                                // New Post
+                                // New Post (macOS only: showingCompose is macOS-gated)
+                                #if os(macOS)
                                 Button(action: { showingCompose = true }) {
                                     Image(systemName: "square.and.pencil")
                                         .font(.appSystem(size: 16, weight: .medium))
@@ -368,6 +371,7 @@ struct MenuBarView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .help("New Post (⌘N)")
+                                #endif
 
                                 // Restart/start relay icon button
                                 Button(action: {
