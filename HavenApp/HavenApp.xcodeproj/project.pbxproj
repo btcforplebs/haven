@@ -133,6 +133,8 @@
 		5871EF7B3B1A4E58863FD494 /* VaultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABD60255398375B7A8772D93 /* VaultView.swift */; };
 		587441300839972EAF70AF41 /* NIP49Service.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75ABEDE255E82775CCD37559 /* NIP49Service.swift */; };
 		59965C511D2D8F2DCDA83D3C /* BitcoinSweepDisclaimerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89A56934F313BFA876DC49BA /* BitcoinSweepDisclaimerView.swift */; };
+		5A143152BA382638DA305EB1 /* notification.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 16783AE5FB6865F89A80DCA6 /* notification.mp3 */; };
+		5A62E393C0C4ACF9CD153BC8 /* notification.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = 16783AE5FB6865F89A80DCA6 /* notification.mp3 */; };
 		5AEA663D4C925CFBB1E13E82 /* MosaicWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 618885CB514523D351B723B4 /* MosaicWidget.swift */; };
 		5BE1C0F1ADE02933CC0A2272 /* BlossomDashboardComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C27B2F22F799426D3D276B3 /* BlossomDashboardComponents.swift */; };
 		5C0AEAD4DE0514BF0CAD6AF3 /* VaultChangeHandlers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 982E5846CE3EB2461F41A4FB /* VaultChangeHandlers.swift */; };
@@ -405,6 +407,7 @@
 		0F7E39EC2E804B21B7832AC8 /* GroupModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupModels.swift; sourceTree = "<group>"; };
 		0FBC15E9329FDE2D78ED1BD1 /* AnimatedImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnimatedImage.swift; sourceTree = "<group>"; };
 		0FDA644A2B01FFA0F183C0D7 /* templates */ = {isa = PBXFileReference; lastKnownFileType = folder; name = templates; path = Resources/templates; sourceTree = SOURCE_ROOT; };
+		16783AE5FB6865F89A80DCA6 /* notification.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = notification.mp3; sourceTree = "<group>"; };
 		1810634848EE1957C7E49DAF /* ConfigService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigService.swift; sourceTree = "<group>"; };
 		181FBA6695959DF3B88E2211 /* CashuService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CashuService.swift; sourceTree = "<group>"; };
 		19B6B870C61AB1313009408E /* NWCService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NWCService.swift; sourceTree = "<group>"; };
@@ -889,6 +892,7 @@
 			isa = PBXGroup;
 			children = (
 				E7F41B7A5FACA30EA7AE9015 /* Localizable.xcstrings */,
+				16783AE5FB6865F89A80DCA6 /* notification.mp3 */,
 			);
 			path = HavenApp;
 			sourceTree = "<group>";
@@ -1079,6 +1083,7 @@
 				9AAB8FFAA8AC7D7BFDDC0E84 /* FeedView.swift.backup in Resources */,
 				D39D530FAF14B1784E25FE34 /* Localizable.xcstrings in Resources */,
 				87D56536906D88D1C28BD2E2 /* PrivacyInfo.xcprivacy in Resources */,
+				5A143152BA382638DA305EB1 /* notification.mp3 in Resources */,
 				18EE26703E5765D972FEE57B /* templates in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -1099,6 +1104,7 @@
 				EAC6CC60608D5C9986A6C97D /* FeedView.swift.backup in Resources */,
 				A945F90593453AEC2794E43C /* Localizable.xcstrings in Resources */,
 				4980734C45973D0525500813 /* PrivacyInfo.xcprivacy in Resources */,
+				5A62E393C0C4ACF9CD153BC8 /* notification.mp3 in Resources */,
 				423F5321A3A3F1B60E407B0D /* templates in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
