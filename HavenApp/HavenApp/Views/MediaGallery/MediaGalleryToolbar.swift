@@ -8,7 +8,12 @@ extension MediaGalleryView {
 
     // MARK: - Leading Toolbar
 
-    /// Media type filter icons: All, Photo, Video, GIF, Other.
+    /// Media type filter icons: All, Photo, Video, GIF.
+    ///
+    /// No Documents chip here — the row shares the bar with the sort menu, the
+    /// layout toggle and upload, and this was the one worth dropping: documents
+    /// are the rarest thing in the gallery and `All` still includes them. The
+    /// desktop header, which has room, keeps the full set.
     @ViewBuilder
     var leadingToolbarInline: some View {
         HStack(spacing: 12) {
@@ -16,7 +21,6 @@ extension MediaGalleryView {
             let photoSelected = mediaTypeFilter.contains(.photo)
             let videoSelected = mediaTypeFilter.contains(.video)
             let gifSelected = mediaTypeFilter.contains(.gif)
-            let otherSelected = mediaTypeFilter.contains(.other)
 
             IconFilterButton(
                 icon: allSelected ? "circle.grid.2x2.fill" : "circle.grid.2x2",
@@ -43,12 +47,6 @@ extension MediaGalleryView {
                 isSelected: gifSelected,
                 color: .primary
             ) { toggleMediaTypeFilter(.gif) }
-            IconFilterButton(
-                icon: otherSelected ? "doc.fill" : "doc",
-                tooltip: "Documents",
-                isSelected: otherSelected,
-                color: .primary
-            ) { toggleMediaTypeFilter(.other) }
         }
     }
 
