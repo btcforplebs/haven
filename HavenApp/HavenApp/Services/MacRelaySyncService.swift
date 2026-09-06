@@ -355,10 +355,12 @@ class MacRelaySyncService: ObservableObject {
             }
             guard generation == syncGeneration else { return }
             let msg: [Any] = ["AUTH", eventToDict(authEvent)]
-            if let data = try? JSONSerialization.data(withJSONObject: msg),
-               let str = String(data: data, encoding: .utf8) {
-                client.send(text: str)
+            guard let data = try? JSONSerialization.data(withJSONObject: msg),
+                  let str = String(data: data, encoding: .utf8) else {
+                log("failed to serialize NIP-42 AUTH event for \(endpoint)", level: "WARN")
+                return
             }
+            client.send(text: str)
             // The original REQ (sent immediately on connect, before this challenge
             // arrived) was rejected pre-auth — resend now that the AUTH event has
             // actually been sent, not on a fixed timer that could fire before the
@@ -397,7 +399,7 @@ class MacRelaySyncService: ObservableObject {
             guard !reason.hasPrefix("auth-required") else { return }
 
             DispatchQueue.main.async { [weak self] in
-                guard let self = self, self.client != nil else { return }
+                guard let self = self, self.client != nil, generation == self.syncGeneration else { return }
                 self.client?.disconnect()
                 self.syncFromEndpoints(endpoints, index: index + 1, since: since, generation: generation)
             }
@@ -409,7 +411,10 @@ class MacRelaySyncService: ObservableObject {
             let closeMsg: [Any] = ["CLOSE", subId]
             if let d = try? JSONSerialization.data(withJSONObject: closeMsg),
                let s = String(data: d, encoding: .utf8) {
-                DispatchQueue.main.async { [weak self] in self?.client?.send(text: s) }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self, generation == self.syncGeneration else { return }
+                    self.client?.send(text: s)
+                }
             }
 
             // Capture page state before the async hop (we're on processingQueue here)
@@ -418,7 +423,7 @@ class MacRelaySyncService: ObservableObject {
             let oldest = bgAccumulator.pageOldestTimestamp
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                guard let self = self else { return }
+                guard let self = self, generation == self.syncGeneration else { return }
                 self.client?.disconnect()
 
                 // If we received a full page and haven't walked back to `since` yet, paginate
