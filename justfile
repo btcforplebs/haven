@@ -32,6 +32,12 @@ android-build:
 android-install:
     {{adb}} install -r {{justfile_directory()}}/NostrVault/app/build/outputs/apk/release/app-release.apk
 
+# Check the committed .xcodeproj against what project.yml would generate.
+# Run before merging a branch that regenerated the project — xcodegen drops
+# anything the yml does not name, and the build stays green when it does.
+check-project:
+    {{justfile_directory()}}/scripts/check-project-sync.sh
+
 # Build iOS app via Xcode
 ios-build:
     xcodebuild -project {{justfile_directory()}}/HavenApp/HavenApp.xcodeproj \
