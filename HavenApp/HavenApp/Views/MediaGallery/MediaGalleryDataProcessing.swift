@@ -35,6 +35,7 @@ extension MediaGalleryView {
         let currentFilter = contentFilter
         let currentLocationFilter = mediaLocationFilter
         let currentTypeFilter = mediaTypeFilter
+        let currentSort = sortOption
         let currentMirrorHosts: Set<String> = Set(
             configService.config.activeBlossomMirrors.compactMap {
                 URL(string: $0)?.host?.lowercased()
@@ -198,12 +199,23 @@ extension MediaGalleryView {
             // all (blossom+cache).
             let notFoundCapture = currentNotFound
             let locationFilter = currentLocationFilter
+
+            // Resolve "is this actually in the local blossom directory" once per
+            // item. It can hit the filesystem, and both the location filter and
+            // the on-relay-first sort need the answer.
+            var inBlossomByKey: [String: Bool] = [:]
+            for item in filtered {
+                let hash = self.normalizedKeyStatic(for: item.url)
+                if inBlossomByKey[hash] == nil {
+                    inBlossomByKey[hash] = MediaCacheService.shared.isInLocalBlossom(hash: hash)
+                }
+            }
+            let inBlossomLookup = inBlossomByKey
+
             let passesLocation: (MediaItem) -> Bool = { item in
                 let is404 = notFoundCapture.contains(item.url.absoluteString)
-
-                // Check if file is actually in the local blossom directory
                 let hash = self.normalizedKeyStatic(for: item.url)
-                let inBlossomDir = MediaCacheService.shared.isInLocalBlossom(hash: hash)
+                let inBlossomDir = inBlossomLookup[hash] ?? false
 
                 switch locationFilter {
                 case .all: return !is404
@@ -222,8 +234,27 @@ extension MediaGalleryView {
                 return !tagsOwner
             }
 
-            // Sort by date added, newest first
-            filtered.sort(by: { $0.dateAdded > $1.dateAdded })
+            // Apply the chosen order. Every branch falls back to date so the
+            // result is fully determined and does not shuffle between runs.
+            switch currentSort {
+            case .newestFirst:
+                filtered.sort { $0.dateAdded > $1.dateAdded }
+            case .oldestFirst:
+                filtered.sort { $0.dateAdded < $1.dateAdded }
+            case .mediaType:
+                filtered.sort {
+                    let a = Self.typeRank(for: $0), b = Self.typeRank(for: $1)
+                    if a != b { return a < b }
+                    return $0.dateAdded > $1.dateAdded
+                }
+            case .onRelayFirst:
+                filtered.sort {
+                    let a = inBlossomLookup[self.normalizedKeyStatic(for: $0.url)] ?? false
+                    let b = inBlossomLookup[self.normalizedKeyStatic(for: $1.url)] ?? false
+                    if a != b { return a }
+                    return $0.dateAdded > $1.dateAdded
+                }
+            }
             var result = filtered
 
             #if DEBUG
@@ -275,6 +306,20 @@ extension MediaGalleryView {
                 self.displayMedia = Array(finalResult.prefix(self.maxDisplayedItems))
                 self.mediaHasLoadedOnce = true
             }
+        }
+    }
+
+    // MARK: - Sorting Helpers
+
+    /// Ordering used by the "Media type" sort: photos, then GIFs, then video,
+    /// then everything else.
+    nonisolated static func typeRank(for item: MediaItem) -> Int {
+        if item.isAnimatedGIF { return 1 }
+        switch item.type {
+        case .image:   return 0
+        case .video:   return 2
+        case .audio:   return 3
+        case .unknown: return 4
         }
     }
 

@@ -58,6 +58,7 @@ extension MediaGalleryView {
     @ViewBuilder
     var trailingToolbarInline: some View {
         HStack(spacing: 4) {
+            sortMenu
             layoutToggleButton
             uploadButton
                 .confirmationDialog("Upload Media", isPresented: $showingUploadOptions) {
@@ -83,6 +84,11 @@ extension MediaGalleryView {
                     mediaLayoutMode == .grid ? "List View" : "Grid View",
                     systemImage: mediaLayoutMode == .grid ? "list.bullet" : "square.grid.2x2.fill"
                 )
+            }
+            Menu {
+                sortMenuItems
+            } label: {
+                Label("Sort by", systemImage: "arrow.up.arrow.down")
             }
             Button { showingUploadOptions = true } label: {
                 Label("Upload", systemImage: "plus")
@@ -110,6 +116,36 @@ extension MediaGalleryView {
         IconFilterButton(icon: "plus", tooltip: "Upload Options", isSelected: true, color: .havenPurple) {
             showingUploadOptions = true
         }
+    }
+
+    // MARK: - Sort
+
+    /// The sort options, shared by the toolbar menu and the compact fallback.
+    @ViewBuilder
+    var sortMenuItems: some View {
+        ForEach(MediaSortOption.allCases) { option in
+            Button {
+                withAnimation(Motion.toggle) { sortOption = option }
+            } label: {
+                // A checkmark on the active row rather than a separate
+                // indicator: this is a one-of-many choice, not a set of toggles.
+                Label(option.label, systemImage: sortOption == option ? "checkmark" : option.icon)
+            }
+        }
+    }
+
+    /// Toolbar entry point for sorting. Expands into the full option list.
+    var sortMenu: some View {
+        Menu {
+            sortMenuItems
+        } label: {
+            Image(systemName: "arrow.up.arrow.down")
+                .font(.appSystem(size: 15, weight: .semibold))
+                .foregroundColor(.havenPurple)
+                .frame(width: 36, height: 36)
+                .contentShape(Rectangle())
+        }
+        .help("Sort by")
     }
 
     // MARK: - Layout Toggle
