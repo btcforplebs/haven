@@ -74,6 +74,7 @@ fun ImportExportSection(
                     // Progress bar
                     val animatedProgress by animateFloatAsState(
                         targetValue = importProgress,
+                        animationSpec = Motion.fade(),
                         label = "importProgress",
                     )
                     LinearProgressIndicator(

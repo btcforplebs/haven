@@ -25,16 +25,25 @@ fun NoteCardSkeleton(
 ) {
     val colors = LocalNostrVaultColors.current
 
-    val infiniteTransition = rememberInfiniteTransition(label = "skeleton")
-    val alpha by infiniteTransition.animateFloat(
-        initialValue = 0.3f,
-        targetValue = 0.7f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(900, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "skeletonAlpha",
-    )
+    // Under Reduce Motion `Motion.shimmer` is null, and the skeleton simply
+    // holds still at the bright end of its range. Note that it holds at 0.7 and
+    // not at the 0.5 midpoint: the placeholder still has to be legible as a
+    // placeholder once it has stopped breathing. Skipping the animation must
+    // never mean skipping the value — an unanimated alpha left at the 0.3
+    // initialValue would strand every skeleton at near-invisible.
+    val shimmerSpec = Motion.shimmer
+    val alpha = if (shimmerSpec == null) {
+        0.7f
+    } else {
+        val infiniteTransition = rememberInfiniteTransition(label = "skeleton")
+        val animated by infiniteTransition.animateFloat(
+            initialValue = 0.3f,
+            targetValue = 0.7f,
+            animationSpec = shimmerSpec,
+            label = "skeletonAlpha",
+        )
+        animated
+    }
 
     val shimmerColor = TertiaryText.copy(alpha = alpha)
 

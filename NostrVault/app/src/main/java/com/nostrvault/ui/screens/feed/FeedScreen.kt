@@ -3,8 +3,6 @@ package com.nostrvault.ui.screens.feed
 import android.content.Intent
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -297,10 +295,8 @@ fun FeedScreen(
             // Reading the flag inside this slot keeps recomposition scoped to the
             // FAB — the feed list never re-renders when it shows/hides.
             val scrollingDown by viewModel.feedScrollingDown.collectAsState()
-            val fabSpring = spring<Float>(
-                dampingRatio = 0.75f,
-                stiffness = Spring.StiffnessMediumLow,
-            )
+            // The FAB hides and shows with the scroll, so it is chrome.
+            val fabSpring = Motion.chrome<Float>()
             AnimatedVisibility(
                 visible = !scrollingDown,
                 enter = scaleIn(animationSpec = fabSpring, initialScale = 0.5f) + fadeIn(fabSpring),

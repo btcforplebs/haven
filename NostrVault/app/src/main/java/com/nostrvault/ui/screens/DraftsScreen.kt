@@ -233,6 +233,7 @@ fun DraftsScreen(
                                 if (dismissState.dismissDirection == SwipeToDismissBoxValue.EndToStart)
                                     ErrorRed.copy(alpha = 0.9f)
                                 else ErrorRed.copy(alpha = 0.3f),
+                                animationSpec = Motion.control(),
                                 label = "dismiss-bg",
                             )
                             Box(

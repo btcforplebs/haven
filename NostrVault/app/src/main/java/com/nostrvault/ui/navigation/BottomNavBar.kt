@@ -2,10 +2,7 @@ package com.nostrvault.ui.navigation
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -48,6 +45,7 @@ import com.nostrvault.ui.components.glassPillBackground
 import com.nostrvault.ui.theme.ErrorRed
 import com.nostrvault.ui.theme.LocalNostrVaultColors
 import com.nostrvault.ui.theme.LocalOledMode
+import com.nostrvault.ui.theme.Motion
 import com.nostrvault.ui.theme.NostrVaultIcons
 import com.nostrvault.ui.theme.SecondaryGroupedBg
 
@@ -103,17 +101,17 @@ fun BottomNavBar(
     ) {
         // Morph between the full 5-tab row and a condensed avatar + compose
         // cluster. SizeTransform shrinks the glass pill inward from both sides;
-        // the cross-fade + scale mirrors the iOS distillation. The spring is
-        // tuned to match iOS's tab-bar feel (response 0.5, damping 0.82).
+        // the cross-fade + scale mirrors the iOS distillation. This is
+        // scroll-driven chrome, so it takes the `chrome` token — damping 0.86
+        // rather than the 0.82 it had, because a bar that overshoots after your
+        // thumb has already stopped reads as a bug.
         AnimatedContent(
             targetState = condensed,
             transitionSpec = {
-                val barSpring = spring<Float>(dampingRatio = 0.82f, stiffness = 320f)
+                val barSpring = Motion.chrome<Float>()
                 (fadeIn(barSpring) + scaleIn(barSpring, initialScale = 0.9f)) togetherWith
                     (fadeOut(barSpring) + scaleOut(barSpring, targetScale = 0.9f)) using
-                    SizeTransform(clip = false) { _, _ ->
-                        spring(dampingRatio = 0.82f, stiffness = 320f)
-                    }
+                    SizeTransform(clip = false) { _, _ -> Motion.chrome() }
             },
             label = "navBarCondense",
         ) { isCondensed ->
@@ -326,7 +324,7 @@ private fun NavTab(
 ) {
     val scale by animateFloatAsState(
         targetValue = if (selected) 1.1f else 1.0f,
-        animationSpec = tween(150),
+        animationSpec = Motion.control(),
         label = "tabScale",
     )
 
@@ -384,7 +382,7 @@ private fun ProfileTab(
     val haptic = LocalHapticFeedback.current
     val scale by animateFloatAsState(
         targetValue = if (selected) 1.1f else 1.0f,
-        animationSpec = tween(150),
+        animationSpec = Motion.control(),
         label = "profileScale",
     )
     val ringColor = if (isOwner) selectedColor else Color(0xFFFF9500)

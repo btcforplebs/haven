@@ -5,7 +5,6 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
@@ -304,10 +303,7 @@ fun MediaViewerScreen(
                             onBack()
                         } else {
                             scope.launch {
-                                dragOffsetY.animateTo(
-                                    0f,
-                                    spring(dampingRatio = 0.6f, stiffness = 400f),
-                                )
+                                dragOffsetY.animateTo(0f, Motion.snapBack())
                             }
                         }
                         accumulatedDragY = 0f

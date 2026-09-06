@@ -4,9 +4,6 @@ import android.content.Intent
 import android.util.Log
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -1688,7 +1685,7 @@ private fun IconFilterButton(
     val colors = LocalNostrVaultColors.current
     val tint by animateColorAsState(
         targetValue = if (isSelected) colors.primary else SecondaryText,
-        animationSpec = tween(durationMillis = 150),
+        animationSpec = Motion.control(),
         label = "filterTint",
     )
     IconButton(
@@ -1956,7 +1953,8 @@ fun DashboardScreen(
         },
         floatingActionButton = {
             val scrollingDown by feedService.feedScrollingDown.collectAsState()
-            val fabSpring = spring<Float>(dampingRatio = 0.75f, stiffness = Spring.StiffnessMediumLow)
+            // The FAB hides and shows with the scroll, so it is chrome.
+            val fabSpring = Motion.chrome<Float>()
             AnimatedVisibility(
                 visible = !scrollingDown,
                 enter = scaleIn(animationSpec = fabSpring, initialScale = 0.5f) + fadeIn(fabSpring),

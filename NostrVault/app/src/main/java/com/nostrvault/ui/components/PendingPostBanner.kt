@@ -2,7 +2,6 @@ package com.nostrvault.ui.components
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
@@ -43,9 +42,10 @@ fun PendingPostBanner(
         visible = isShowing,
         enter = slideInVertically(
             initialOffsetY = { it },
-            animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f),
-        ) + fadeIn(),
-        exit = slideOutVertically(targetOffsetY = { it }) + fadeOut(),
+            animationSpec = Motion.bannerIn(),
+        ) + fadeIn(Motion.bannerIn()),
+        exit = slideOutVertically(targetOffsetY = { it }, animationSpec = Motion.bannerOut()) +
+            fadeOut(Motion.bannerOut()),
         modifier = modifier,
     ) {
         // Swipe the banner away to get on with things — the post still goes out.
@@ -72,7 +72,7 @@ fun PendingPostBanner(
                         if (abs(dragOffset.value) > dismissThresholdPx) {
                             pendingPostManager.dismissBanner()
                         }
-                        dragOffset.animateTo(0f, spring(dampingRatio = 0.8f))
+                        dragOffset.animateTo(0f, Motion.snapBack())
                     },
                 )
                 .clip(RoundedCornerShape(16.dp))

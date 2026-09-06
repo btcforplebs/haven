@@ -43,9 +43,14 @@
         </intent>
     </queries>
 
+    <!-- enableOnBackInvokedCallback: opt in to the predictive back gesture. It
+         is still opt-in at targetSdk 35 and default-on only from 36, so without
+         it the app gets no back animation at all — the closest Android has to
+         the interactive edge-swipe-back iOS gives every push for free. -->
     <application
         android:name=".NostrVaultApp"
         android:allowBackup="true"
+        android:enableOnBackInvokedCallback="true"
         android:largeHeap="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"

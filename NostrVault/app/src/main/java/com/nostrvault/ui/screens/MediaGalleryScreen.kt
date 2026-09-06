@@ -6,8 +6,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -470,7 +468,8 @@ fun MediaGalleryScreen(
         },
         floatingActionButton = {
             val scrollingDown by feedService.feedScrollingDown.collectAsState()
-            val fabSpring = spring<Float>(dampingRatio = 0.75f, stiffness = Spring.StiffnessMediumLow)
+            // The FAB hides and shows with the scroll, so it is chrome.
+            val fabSpring = Motion.chrome<Float>()
             AnimatedVisibility(
                 visible = !scrollingDown,
                 enter = scaleIn(animationSpec = fabSpring, initialScale = 0.5f) + fadeIn(fabSpring),
