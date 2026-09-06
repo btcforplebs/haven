@@ -32,7 +32,8 @@ android-build:
 android-install:
     {{adb}} install -r {{justfile_directory()}}/NostrVault/app/build/outputs/apk/release/app-release.apk
 
-# Check the committed .xcodeproj against what project.yml would generate.
+# Check the committed .xcodeproj against what project.yml would generate:
+# which files each has, and which target actually builds them.
 # Run before merging a branch that regenerated the project — xcodegen drops
 # anything the yml does not name, and the build stays green when it does.
 check-project:

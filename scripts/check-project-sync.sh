@@ -62,7 +62,20 @@ if [ -n "$ADDED" ]; then
     echo "  -> regenerate, or the committed project is stale."
     status=1
 fi
+# The check above asks whether a file is in the project. It does not ask
+# whether the file is in a target's build phase, and that is a different
+# question: a file can keep its PBXFileReference and its group entry while
+# belonging to no Sources or Resources phase, in which case it does not compile
+# or ship and every path above still matches. Removing notification.mp3 from
+# both Resources phases and leaving the reference alone passes the path check.
+if ! python3 "$REPO_ROOT/scripts/pbx-target-files.py" \
+        "$COMMITTED" "$WORK/HavenApp/HavenApp.xcodeproj/project.pbxproj"; then
+    echo "  -> a file above is referenced by the project but built by nobody,"
+    echo "     or built by the wrong target. Fix the target membership."
+    status=1
+fi
+
 if [ "$status" -eq 0 ] && [ "${1:-}" != "--quiet" ]; then
-    echo "project.yml and the committed project agree ($(wc -l < "$WORK/committed.txt" | tr -d ' ') paths)."
+    echo "project.yml and the committed project agree ($(wc -l < "$WORK/committed.txt" | tr -d ' ') paths, and every target builds the same files)."
 fi
 exit "$status"
