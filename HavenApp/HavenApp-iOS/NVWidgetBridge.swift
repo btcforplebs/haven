@@ -51,7 +51,13 @@ enum NVWidgetBridge {
                 connectionCount: relay.activeConnections,
                 uptimeSeconds: relay.isRunning ? Int(Date().timeIntervalSince(processStart)) : 0
             ),
-            feed: recent.prefix(10).map { note($0, nostr: nostr) },
+            // Top-level notes only. A reply out of its thread is a fragment --
+            // half of them read as answers to a question the widget cannot show
+            // -- so Feed Glance is posts, and replies aimed at you keep their
+            // own place under Mentions.
+            feed: Array(feed.notes.lazy.filter { !$0.isReply }.prefix(10).map { note($0, nostr: nostr) }),
+            // Mentions deliberately keep replies: a reply to your note is the
+            // most common way someone mentions you at all.
             mentions: recent.filter { mentions(me, $0) }.prefix(10).map { note($0, nostr: nostr) },
             wallet: .init(
                 cashuSats: Int(CashuService.shared.balanceSats),
