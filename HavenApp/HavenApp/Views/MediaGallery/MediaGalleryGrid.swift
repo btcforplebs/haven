@@ -59,6 +59,37 @@ extension MediaGalleryView {
         }
     }
 
+    // MARK: - Sections
+
+    /// The list broken into dated runs. Under a non-date sort this collapses to
+    /// a single untitled section, so the same rendering path serves both.
+    var mediaSections: [MediaDateSection] {
+        guard sortOption.groupsByDate else {
+            return [MediaDateSection(id: "all", title: "", items: displayMedia)]
+        }
+        return MediaDateSection.sections(for: displayMedia)
+    }
+
+    /// Pinned heading for a dated run. Renders nothing for the untitled
+    /// single-section case, so no empty bar appears under a non-date sort.
+    @ViewBuilder
+    func mediaSectionHeader(_ title: String) -> some View {
+        if title.isEmpty {
+            EmptyView()
+        } else {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.appSystem(size: 13, weight: .bold, design: .rounded))
+                    .tracking(0.3)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.ultraThinMaterial)
+        }
+    }
+
     // MARK: - Media Grid / List Layout
 
     var mediaGrid: some View {
@@ -70,39 +101,51 @@ extension MediaGalleryView {
                 let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 3)
                 #endif
 
-                LazyVGrid(columns: columns, spacing: 8) {
-                    ForEach(displayMedia) { item in
-                        MediaGridItem(
-                            item: item,
-                            onDeleteFromMirrors: { deleteMediaFromMirrors(item: $0) },
-                            onDeleteEverywhere: { deleteMediaEverywhere(item: $0) },
-                            onMirrorComplete: { loadLocalMedia(force: true) }
-                        ) {
-                            withAnimation(Motion.pick) { selectedMedia = item }
-                        }
-                        .onAppear {
-                            if item.id == displayMedia.last?.id {
-                                loadMoreItems()
+                LazyVGrid(columns: columns, spacing: 8, pinnedViews: [.sectionHeaders]) {
+                    ForEach(mediaSections) { section in
+                        Section {
+                            ForEach(section.items) { item in
+                                MediaGridItem(
+                                    item: item,
+                                    onDeleteFromMirrors: { deleteMediaFromMirrors(item: $0) },
+                                    onDeleteEverywhere: { deleteMediaEverywhere(item: $0) },
+                                    onMirrorComplete: { loadLocalMedia(force: true) }
+                                ) {
+                                    withAnimation(Motion.pick) { selectedMedia = item }
+                                }
+                                .onAppear {
+                                    if item.id == displayMedia.last?.id {
+                                        loadMoreItems()
+                                    }
+                                }
                             }
+                        } header: {
+                            mediaSectionHeader(section.title)
                         }
                     }
                 }
                 .padding(.horizontal, 8)
             } else {
-                LazyVStack(spacing: 8) {
-                    ForEach(displayMedia) { item in
-                        MediaListItem(
-                            item: item,
-                            onDeleteFromMirrors: { deleteMediaFromMirrors(item: $0) },
-                            onDeleteEverywhere: { deleteMediaEverywhere(item: $0) },
-                            onMirrorComplete: { loadLocalMedia(force: true) }
-                        ) {
-                            withAnimation(Motion.pick) { selectedMedia = item }
-                        }
-                        .onAppear {
-                            if item.id == displayMedia.last?.id {
-                                loadMoreItems()
+                LazyVStack(spacing: 8, pinnedViews: [.sectionHeaders]) {
+                    ForEach(mediaSections) { section in
+                        Section {
+                            ForEach(section.items) { item in
+                                MediaListItem(
+                                    item: item,
+                                    onDeleteFromMirrors: { deleteMediaFromMirrors(item: $0) },
+                                    onDeleteEverywhere: { deleteMediaEverywhere(item: $0) },
+                                    onMirrorComplete: { loadLocalMedia(force: true) }
+                                ) {
+                                    withAnimation(Motion.pick) { selectedMedia = item }
+                                }
+                                .onAppear {
+                                    if item.id == displayMedia.last?.id {
+                                        loadMoreItems()
+                                    }
+                                }
                             }
+                        } header: {
+                            mediaSectionHeader(section.title)
                         }
                     }
                 }
