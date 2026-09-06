@@ -22,6 +22,9 @@ struct MenuBarView: View {
     @State private var statusPulse = false
     @State private var showingOwnProfile = false
     @State private var showingAccountSwitcher = false
+    #if os(macOS)
+    @State private var showingCompose = false
+    #endif
 
     @State private var activeHex: String = ConfigService.shared.activeAccountHexPubkey
 
@@ -161,6 +164,28 @@ struct MenuBarView: View {
                                     }
                                 }
                             }
+
+                            // New Post
+                            Button(action: { showingCompose = true }) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "square.and.pencil")
+                                        .font(.appSystem(size: 13, weight: .bold))
+                                    Text("New Post")
+                                        .font(.appSystem(size: 13, weight: .semibold))
+                                    Spacer()
+                                }
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 9)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(Color.havenPurple)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .help("New Post (⌘N)")
+                            .padding(.horizontal, 12)
+                            .padding(.bottom, 12)
 
                             // Sidebar Tabs
                             VStack(spacing: 4) {
@@ -333,6 +358,17 @@ struct MenuBarView: View {
                             }
                             
                             HStack(spacing: 6) {
+                                // New Post
+                                Button(action: { showingCompose = true }) {
+                                    Image(systemName: "square.and.pencil")
+                                        .font(.appSystem(size: 16, weight: .medium))
+                                        .foregroundColor(.havenPurple)
+                                        .frame(width: 28, height: 28)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .help("New Post (⌘N)")
+
                                 // Restart/start relay icon button
                                 Button(action: {
                                     if relayManager.isRunning {
@@ -852,6 +888,17 @@ struct MenuBarView: View {
             .padding(.top, 4)
         }
         #if os(macOS)
+        .sheet(isPresented: $showingCompose) {
+            ComposeView(onDismiss: { showingCompose = false })
+                .environmentObject(nostrService)
+                .environmentObject(configService)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .composeFromTabBar)) { note in
+            // SearchView owns object == 1 while it's on screen (selectedTab == .search);
+            // for every other tab this is the only listener, so ⌘N works app-wide.
+            guard (note.object as? Int) == 1, selectedTab != .search else { return }
+            showingCompose = true
+        }
         .onAppear {
             FloatingArrowController.shared.dismiss()
             DMService.shared.startListening()
