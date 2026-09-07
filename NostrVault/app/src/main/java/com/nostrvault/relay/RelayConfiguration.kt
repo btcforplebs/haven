@@ -361,8 +361,10 @@ data class HavenConfig(
     val cacheTTLDays: Int = 7, // 0 = never evict
     val autoStartRelay: Boolean = true,
 
-    // Push Notifications
-    val pushServerURL: String = "",
+    // Notifications. These drive the on-device notifications the embedded
+    // relay generates; there is no push server. The APNs forwarder that
+    // pushServerURL used to point at was deleted in cd604a3 — it only ever
+    // spoke APNs and had no clients left.
     val enablePushNotifications: Boolean = false,
     val pushNotifyMentions: Boolean = true,
     val pushNotifyReplies: Boolean = true,

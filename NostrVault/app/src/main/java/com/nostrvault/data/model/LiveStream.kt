@@ -17,6 +17,15 @@ data class LiveStream(
     val streamingUrl: String?,
     val status: String?,
     val participants: Int?,
+    /**
+     * The `relays` tag: where this stream's own chat lives.
+     *
+     * Measured 2026-09-07 against 19 live streams: chat was on nos.lol, and
+     * relay.zap.stream — the relay every client's docs name for this — served
+     * zero kind-1311 events of any kind. So the stream's own hint is the only
+     * trustworthy source, and a hardcoded list is a fallback, not the answer.
+     */
+    val chatRelays: List<String> = emptyList(),
 ) {
     /** The addressable form: what an naddr for this stream points at. */
     val address: String get() = "$KIND:$hostPubkey:$identifier"
@@ -64,6 +73,11 @@ data class LiveStream(
                 streamingUrl = streaming,
                 status = value("status")?.lowercase(),
                 participants = value("current_participants")?.toIntOrNull(),
+                chatRelays = tags.firstOrNull { it.isNotEmpty() && it[0] == "relays" }
+                    ?.drop(1)
+                    ?.map { it.trim() }
+                    ?.filter { it.startsWith("wss://") || it.startsWith("ws://") }
+                    ?: emptyList(),
             )
         }
     }
