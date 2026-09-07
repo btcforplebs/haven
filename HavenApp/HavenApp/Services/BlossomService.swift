@@ -444,6 +444,19 @@ class BlossomService: @unchecked Sendable {
             guard let authEvent = await nostrService.signEventAsync(kind: 24242, content: authContent, tags: authTags) else {
                 let signingMode = await MainActor.run { ConfigService.shared.config.activeSigningMode() }
                 logger.error("Failed to create Blossom auth event for \(url) (signingMode=\(signingMode)) — if NIP-46, the remote signer may not support kind 24242")
+                appLog("could not sign the upload authorisation for \(url) (mode \(signingMode)) — attempt \(attempt + 1)/\(maxRetries)", level: "WARN")
+                // Retry rather than abandon the upload. This sits inside a
+                // three-attempt loop but used to return outright, so a single
+                // transient signing hiccup — a keychain read before the device
+                // finished unlocking, a NIP-46 bunker not yet reconnected —
+                // killed the whole upload while the loop stood unused. The user
+                // then retried by hand and it worked, because by then the
+                // signer was ready. A key that is genuinely unavailable fails
+                // all three attempts and still reports failure.
+                if attempt < maxRetries - 1 {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    continue
+                }
                 return nil
             }
 
@@ -588,6 +601,18 @@ class BlossomService: @unchecked Sendable {
                     return true
                 }
                 let reason = httpResponse.value(forHTTPHeaderField: "X-Reason") ?? "none"
+                // A 5xx, a timeout or a rate-limit is the server failing to
+                // answer, not the server declining this blob. BUD-06 exists so
+                // a server can say "not this file" — too big, wrong type, not
+                // allowed — and only those deserve to skip the mirror. Treating
+                // a cold origin's 502 as a refusal meant the upload was never
+                // even attempted, which is indistinguishable to the user from
+                // the upload failing, and it recovers by itself on the next try.
+                if httpResponse.statusCode >= 500 || httpResponse.statusCode == 408 || httpResponse.statusCode == 429 {
+                    logger.info("BUD-06: \(url) could not answer preflight (status \(httpResponse.statusCode)) — attempting the upload anyway")
+                    appLog("preflight inconclusive for \(url) — HTTP \(httpResponse.statusCode), attempting upload anyway", level: "WARN")
+                    return true
+                }
                 logger.info("BUD-06: Preflight rejected by \(url) — status \(httpResponse.statusCode), reason: \(reason)")
                 appLog("preflight rejected by \(url) — HTTP \(httpResponse.statusCode), reason: \(reason)", level: "WARN")
                 return false
