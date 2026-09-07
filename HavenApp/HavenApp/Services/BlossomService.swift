@@ -74,7 +74,13 @@ class BlossomService: @unchecked Sendable {
     /// all, and neither did the file. These are low-frequency, one line per
     /// upload decision, so they cost nothing next to the relay's own output.
     private func appLog(_ message: String, level: String = "INFO") {
+        // Two sinks on purpose. addLog reaches the in-app Logs screen, which is
+        // what a user can read — but that store is in memory and a relaunch
+        // wipes it. print() reaches relay.log via the stdout redirect, which is
+        // the file we copy off a device after the fact. Writing to only the
+        // first is how I shipped diagnostics I then could not read myself.
         RelayProcessManager.shared.addLog("Blossom: " + message, level: level)
+        print("Blossom: \(message)")
     }
 
     /// Upload media to local Blossom and mirror to external servers
