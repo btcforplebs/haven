@@ -813,6 +813,8 @@ class FeedService @Inject constructor(
                     FeedMode.MEDIA -> "media"
                     FeedMode.POPULAR -> "popular"
                     FeedMode.ARTICLES -> "articles"
+            FeedMode.RECIPES -> "recipes"
+                    FeedMode.RECIPES -> "recipes"
                 }
                 sendPrimaryFeedSubscription(relayUrl, "feed-$label")
                 continue
@@ -863,6 +865,7 @@ class FeedService @Inject constructor(
             FeedMode.MEDIA -> "media"
             FeedMode.POPULAR -> "popular"
             FeedMode.ARTICLES -> "articles"
+            FeedMode.RECIPES -> "recipes"
         }
         return "feed-$label"
     }
@@ -927,6 +930,7 @@ class FeedService @Inject constructor(
             FeedMode.MEDIA -> "media"
             FeedMode.POPULAR -> return
             FeedMode.ARTICLES -> "articles"
+            FeedMode.RECIPES -> "recipes"
         }
         for ((relayUrl, client) in feedClients) {
             if (client.connectionState.value == WebSocketClient.ConnectionState.CONNECTED) {
@@ -963,6 +967,15 @@ class FeedService @Inject constructor(
                     // No author restriction either: the kinds list already
                     // asks for 30023, and long-form is rare enough that
                     // scoping it to follows usually leaves an empty screen.
+                }
+                FeedMode.RECIPES -> {
+                    // Ask the relays for the topic rather than pulling every
+                    // long-form event and throwing most of it away. Only the
+                    // base topics go on the wire — a "#t" filter matches exact
+                    // values, so zapcooking-<category> tags cannot be asked for
+                    // here; RecipeTopics.matches still accepts them locally for
+                    // recipes that arrive through another subscription.
+                    append(",\"#t\":[${RecipeTopics.BASE.joinToString(",") { "\"$it\"" }}]")
                 }
                 FeedMode.MEDIA -> {
                     val authors = when (_mediaFeedMode.value) {

@@ -363,8 +363,9 @@ fun FeedScreen(
             onRefresh = viewModel::refresh,
             modifier = Modifier.fillMaxSize(),
         ) {
-            if (feedMode == FeedMode.ARTICLES) {
+            if (feedMode == FeedMode.ARTICLES || feedMode == FeedMode.RECIPES) {
                 ArticleList(
+                    mode = feedMode,
                     notes = notes,
                     profiles = allProfiles,
                     isRefreshing = isRefreshing,
@@ -664,6 +665,7 @@ fun FeedScreen(
  */
 @Composable
 private fun ArticleList(
+    mode: FeedMode,
     notes: List<FeedNote>,
     profiles: Map<String, FeedProfile>,
     isRefreshing: Boolean,
@@ -672,7 +674,7 @@ private fun ArticleList(
     onRefresh: () -> Unit,
 ) {
     if (notes.isEmpty()) {
-        if (!isRefreshing) EmptyFeedPlaceholder(FeedMode.ARTICLES, onRefresh = onRefresh)
+        if (!isRefreshing) EmptyFeedPlaceholder(mode, onRefresh = onRefresh)
         return
     }
 
@@ -984,7 +986,7 @@ private fun FeedTopBar(
             // replies and auto-load are all about kind-1 traffic, and a
             // long-form list is short enough not to need them.
             when (feedMode) {
-                FeedMode.ARTICLES -> Unit
+                FeedMode.ARTICLES, FeedMode.RECIPES -> Unit
                 FeedMode.FOLLOWING, FeedMode.DISCOVERY, FeedMode.GLOBAL -> {
                     // Auto-load posts
                     IconButton(onClick = onToggleAutoLoad, modifier = Modifier.size(32.dp)) {
@@ -1105,6 +1107,7 @@ private fun EmptyFeedPlaceholder(mode: FeedMode, onRefresh: (() -> Unit)? = null
                     FeedMode.POPULAR -> NostrVaultIcons.BarChart
                     FeedMode.MEDIA -> NostrVaultIcons.Media
                     FeedMode.ARTICLES -> NostrVaultIcons.Articles
+                    FeedMode.RECIPES -> NostrVaultIcons.Recipes
                 },
                 contentDescription = null,
                 tint = colors.primaryLight,
@@ -1119,6 +1122,7 @@ private fun EmptyFeedPlaceholder(mode: FeedMode, onRefresh: (() -> Unit)? = null
                     FeedMode.POPULAR -> "No Popular Notes Yet"
                     FeedMode.MEDIA -> "No Media Found"
                     FeedMode.ARTICLES -> "No Articles Yet"
+                    FeedMode.RECIPES -> "No Recipes Yet"
                 },
                 color = PrimaryText,
                 fontSize = 22.sp,
@@ -1134,6 +1138,7 @@ private fun EmptyFeedPlaceholder(mode: FeedMode, onRefresh: (() -> Unit)? = null
                     FeedMode.POPULAR -> "Waiting for engagement data to arrive"
                     FeedMode.MEDIA -> "Photos and videos from your feed show up here"
                     FeedMode.ARTICLES -> "Long-form posts in your vault show up here"
+                    FeedMode.RECIPES -> "Recipes from zap.cooking show up here"
                 },
                 color = SecondaryText,
                 fontSize = 13.sp,

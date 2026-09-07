@@ -414,6 +414,27 @@ enum class FeedMode(val displayName: String) {
      * not a new fetch.
      */
     ARTICLES("Articles"),
+
+    /**
+     * Recipes: the same kind-30023 long-form events, tagged for zap.cooking.
+     * A separate mode rather than a filter chip because a recipe list is what
+     * you want when you want a recipe, and articles and recipes read nothing
+     * alike even though the wire format is identical.
+     */
+    RECIPES("Recipes"),
+}
+
+/** `t` topics zap.cooking publishes recipes under; category tags are `zapcooking-<category>`. */
+object RecipeTopics {
+    const val CATEGORY_PREFIX = "zapcooking-"
+    val BASE = listOf("zapcooking", "nostrcooking")
+
+    /** True when this note carries one of the recipe topics. */
+    fun matches(tags: List<List<String>>): Boolean = tags.any { tag ->
+        tag.size >= 2 && tag[0] == "t" && tag[1].lowercase().let { topic ->
+            topic in BASE || topic.startsWith(CATEGORY_PREFIX)
+        }
+    }
 }
 
 enum class MediaFeedMode(val displayName: String) {
