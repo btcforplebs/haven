@@ -37,9 +37,11 @@ extension PlatformImage {
 
 extension Color {
     @MainActor
+    /// Resting content: cards, grouped rows, controls, sheets. NOT the page —
+    /// a full-bleed background wants `platformWindowBackground`.
     static var platformControlBackground: Color {
         if ConfigService.shared.config.useOLED {
-            return Color.black
+            return .surface1
         }
         #if canImport(AppKit)
         return Color(NSColor.windowBackgroundColor)
@@ -49,9 +51,10 @@ extension Color {
     }
 
     @MainActor
+    /// The page. Everything else sits on this.
     static var platformWindowBackground: Color {
         if ConfigService.shared.config.useOLED {
-            return Color.black
+            return .surface0
         }
         return Color(red: 0.08, green: 0.08, blue: 0.1)
     }
@@ -59,7 +62,7 @@ extension Color {
     @MainActor
     static var platformTextBackground: Color {
         if ConfigService.shared.config.useOLED {
-            return Color.black
+            return .surface1
         }
         #if canImport(AppKit)
         return Color(NSColor.textBackgroundColor)
@@ -71,7 +74,7 @@ extension Color {
     @MainActor
     static var platformSecondaryGroupedBackground: Color {
         if ConfigService.shared.config.useOLED {
-            return Color.black
+            return .surface1
         }
         return Color(red: 0.12, green: 0.12, blue: 0.16)
     }
@@ -79,7 +82,7 @@ extension Color {
     @MainActor
     static var platformTertiaryGroupedBackground: Color {
         if ConfigService.shared.config.useOLED {
-            return Color(red: 0.05, green: 0.05, blue: 0.07)
+            return .surface2
         }
         return Color(red: 0.15, green: 0.15, blue: 0.2)
     }
@@ -87,7 +90,7 @@ extension Color {
     @MainActor
     static var platformSeparator: Color {
         if ConfigService.shared.config.useOLED {
-            return Color(red: 0.15, green: 0.15, blue: 0.18)
+            return .borderHairline
         }
         return Color(red: 0.2, green: 0.2, blue: 0.25)
     }
@@ -96,16 +99,18 @@ extension Color {
     @MainActor
     static var platformCardBackground: Color {
         if ConfigService.shared.config.useOLED {
-            return Color(red: 0.06, green: 0.06, blue: 0.06)
+            return .surface1
         }
         return Color(red: 0.12, green: 0.12, blue: 0.12).opacity(0.6)
     }
 
-    /// Subtle card borders — nearly invisible in OLED mode
+    /// The seam around a card whose fill already separates it from the page.
+    /// If the border is the only thing making a control visible, that control
+    /// wants `Color.borderStrong` instead — this one does not meet 3:1.
     @MainActor
     static var platformCardBorder: Color {
         if ConfigService.shared.config.useOLED {
-            return Color.white.opacity(0.02)
+            return .borderHairline
         }
         return Color.white.opacity(0.04)
     }
@@ -114,7 +119,7 @@ extension Color {
     @MainActor
     static var platformConsoleHeaderBackground: Color {
         if ConfigService.shared.config.useOLED {
-            return Color(red: 0.04, green: 0.04, blue: 0.05)
+            return .surface2
         }
         return Color(red: 0.12, green: 0.12, blue: 0.15)
     }
