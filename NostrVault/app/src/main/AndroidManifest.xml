@@ -121,6 +121,57 @@
             </intent-filter>
         </receiver>
 
+
+        <!-- Home-screen widgets (Glance). Each receiver names the provider XML
+             that gives its size; the widget itself draws from the snapshot file
+             the app publishes. -->
+        <receiver
+            android:name=".widget.VaultPulseReceiver"
+            android:exported="true"
+            android:label="@string/widget_pulse_description">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_pulse_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.QuickActionsReceiver"
+            android:exported="true"
+            android:label="@string/widget_actions_description">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_actions_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.FeedReceiver"
+            android:exported="true"
+            android:label="@string/widget_feed_description">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_feed_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.SatsReceiver"
+            android:exported="true"
+            android:label="@string/widget_sats_description">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_sats_info" />
+        </receiver>
     </application>
 
 </manifest>

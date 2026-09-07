@@ -170,6 +170,10 @@ dependencies {
     // ---- QR Code ----
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 
+    // ---- Home-screen widgets (Glance) ----
+    implementation("androidx.glance:glance-appwidget:1.1.1")
+    implementation("androidx.glance:glance-material3:1.1.1")
+
     // ---- Markdown ----
     implementation("com.github.jeziellago:compose-markdown:0.5.4")
 

@@ -20,6 +20,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
 import com.nostrvault.data.local.ConfigStore
 import com.nostrvault.relay.LogStore
 import com.nostrvault.relay.RelayForegroundService
@@ -40,6 +41,7 @@ import com.nostrvault.ui.notification.NotificationManager
 import com.nostrvault.ui.theme.AppTheme
 import com.nostrvault.ui.theme.NostrVaultTheme
 import com.nostrvault.ui.theme.WindowBackground
+import com.nostrvault.widget.WidgetPublisher
 import androidx.fragment.app.FragmentActivity
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -56,6 +58,7 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var notificationManager: NotificationManager
     @Inject lateinit var pendingPostManager: PendingPostManager
     @Inject lateinit var mediaUploadManager: MediaUploadManager
+    @Inject lateinit var widgetPublisher: WidgetPublisher
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* result ignored */ }
@@ -83,6 +86,10 @@ class MainActivity : FragmentActivity() {
 
         // Keep PiP auto-enter params in sync with whichever video is playing full-screen
         VideoPiPBridge.onActiveVideoChanged = { refreshPipParams() }
+
+        // Home-screen widgets draw from a snapshot on disk; this keeps it
+        // current for as long as the app is alive.
+        widgetPublisher.start(lifecycleScope)
 
         setContent {
             val config by configStore.config.collectAsState()
