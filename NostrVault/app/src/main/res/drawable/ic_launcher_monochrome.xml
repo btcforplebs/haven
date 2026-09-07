@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Themed-icon (Android 13+) monochrome layer. Same silhouette as
+    ic_notification, at the adaptive icon's scale and position so it registers
+    exactly with ic_launcher_foreground. The launcher supplies the colour; only
+    alpha is read, so the wall fills, the opening cuts out under even-odd, and
+    the lock — nested one level deeper — fills again.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M34.031,80.2 L34.031,47.77 A19.97,19.97 0 0 1 73.969,47.77 L73.969,80.2 Z M41.22,80.2 L41.22,49.207 A12.781,12.781 0 0 1 66.78,49.207 L66.78,80.2 Z M54,66.301 a3.195,3.195 0 1 1 0,6.39 a3.195,3.195 0 1 1 0,-6.39 Z"/>
+</vector>

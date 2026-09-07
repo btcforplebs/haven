@@ -247,13 +247,14 @@ class LocalNotificationService @Inject constructor(
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
-        // Fetch the sender's avatar off the poll loop, then post. The small icon is
-        // the app logo (Android masks it to a silhouette on the lockscreen); the
-        // large icon is the sender's profile picture when we have one.
+        // Fetch the sender's avatar off the poll loop, then post. Android tints the
+        // small icon to a flat silhouette everywhere it appears, reading only alpha,
+        // so it has to be ic_notification rather than the full-colour launcher art;
+        // the large icon is the sender's profile picture when we have one.
         scope.launch {
             val largeIcon = loadAvatar(pictureUrl)
             val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setSmallIcon(R.drawable.ic_notification)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(text))
