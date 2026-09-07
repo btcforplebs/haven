@@ -1,0 +1,113 @@
+import XCTest
+@testable import MediaLogic
+
+final class LiveChatTests: XCTestCase {
+    private let host = String(repeating: "a1", count: 32)
+    private let service = String(repeating: "b2", count: 32)
+    private let payer = String(repeating: "c3", count: 32)
+
+    private func zapRequestJSON(pubkey: String, content: String, amountMsat: String?) -> String {
+        var tags: [[String]] = [["p", host]]
+        if let amountMsat { tags.append(["amount", amountMsat]) }
+        let object: [String: Any] = ["pubkey": pubkey, "content": content, "tags": tags]
+        let data = try! JSONSerialization.data(withJSONObject: object)
+        return String(data: data, encoding: .utf8)!
+    }
+
+    // MARK: - Addressing
+
+    func testAddressIsTheStreamCoordinate() {
+        XCTAssertEqual(LiveChat.address(hostPubkey: host, identifier: "abc"), "30311:\(host):abc")
+    }
+
+    /// zap.stream publishes a stream on the host's behalf. Paying the author
+    /// would pay zap.stream.
+    func testHostComesFromTheHostRoleTagWhenTheStreamWasPublishedByAService() {
+        let tags = [["p", payer, "", "Speaker"], ["p", host, "wss://relay.zap.stream", "Host"]]
+        XCTAssertEqual(LiveChat.hostPubkey(authorPubkey: service, tags: tags), host)
+    }
+
+    func testHostFallsBackToTheAuthorWhenNobodyIsTaggedHost() {
+        XCTAssertEqual(LiveChat.hostPubkey(authorPubkey: host, tags: [["p", payer, "", "Speaker"]]), host)
+        XCTAssertEqual(LiveChat.hostPubkey(authorPubkey: host, tags: []), host)
+    }
+
+    // MARK: - Chat messages
+
+    func testChatMessageKeepsItsAuthorAndText() {
+        let message = LiveChat.message(id: "1", pubkey: payer, kind: 1311, createdAt: 100,
+                                       content: "  gm  ", tags: [["a", "30311:x:y"]])
+        XCTAssertEqual(message?.authorPubkey, payer)
+        XCTAssertEqual(message?.text, "gm")
+        XCTAssertFalse(message?.isZap ?? true)
+    }
+
+    func testEmptyAndUnknownKindsAreDropped() {
+        XCTAssertNil(LiveChat.message(id: "1", pubkey: payer, kind: 1311, createdAt: 1, content: "   ", tags: []))
+        XCTAssertNil(LiveChat.message(id: "1", pubkey: payer, kind: 1, createdAt: 1, content: "hi", tags: []))
+        XCTAssertNil(LiveChat.message(id: "", pubkey: payer, kind: 1311, createdAt: 1, content: "hi", tags: []))
+    }
+
+    // MARK: - Zap receipts
+
+    /// The receipt is signed by the LNURL provider, so attributing the row to
+    /// its pubkey credits the payment processor instead of the person.
+    func testZapIsAttributedToThePayerFromTheEmbeddedRequest() {
+        let tags = [["description", zapRequestJSON(pubkey: payer, content: "nice stream", amountMsat: "21000")]]
+        let message = LiveChat.message(id: "z", pubkey: service, kind: 9735, createdAt: 5,
+                                       content: "", tags: tags)
+        XCTAssertEqual(message?.authorPubkey, payer)
+        XCTAssertEqual(message?.zapSats, 21)
+        XCTAssertEqual(message?.text, "nice stream")
+    }
+
+    func testZapWithoutADescriptionFallsBackToTheCapitalPTagThenTheReceipt() {
+        let withP = LiveChat.message(id: "z", pubkey: service, kind: 9735, createdAt: 5, content: "",
+                                     tags: [["P", payer], ["amount", "5000"]])
+        XCTAssertEqual(withP?.authorPubkey, payer)
+        XCTAssertEqual(withP?.zapSats, 5)
+
+        let bare = LiveChat.message(id: "z", pubkey: service, kind: 9735, createdAt: 5, content: "", tags: [])
+        XCTAssertEqual(bare?.authorPubkey, service)
+        XCTAssertEqual(bare?.zapSats, 0)
+    }
+
+    /// Providers have been seen copying the request through a channel that
+    /// leaves raw control bytes in the string; JSONSerialization refuses those.
+    func testZapRequestWithControlCharactersStillParses() {
+        let dirty = zapRequestJSON(pubkey: payer, content: "hi", amountMsat: "1000")
+            .replacingOccurrences(of: "\"hi\"", with: "\"h\u{0007}i\"")
+        let message = LiveChat.message(id: "z", pubkey: service, kind: 9735, createdAt: 5,
+                                       content: "", tags: [["description", dirty]])
+        XCTAssertEqual(message?.authorPubkey, payer)
+        XCTAssertEqual(message?.text, "hi")
+    }
+
+    // MARK: - Amounts
+
+    /// The one that matters for live: zap.stream receipts routinely carry the
+    /// invoice and nothing else, and a stream chat full of "⚡ 0" is useless.
+    func testAmountFallsBackToTheInvoiceWhenNoTagCarriesIt() {
+        let tags = [["bolt11", "lnbc2500u1pvjluezpp5abcdef"],
+                    ["description", zapRequestJSON(pubkey: payer, content: "", amountMsat: nil)]]
+        XCTAssertEqual(LiveChat.message(id: "z", pubkey: service, kind: 9735, createdAt: 5,
+                                        content: "", tags: tags)?.zapSats, 250_000)
+    }
+
+    func testBolt11Multipliers() {
+        XCTAssertEqual(LiveChat.satsFromBolt11("lnbc2500u1pvjluez"), 250_000)
+        XCTAssertEqual(LiveChat.satsFromBolt11("lnbc10n1pvjluez"), 1)
+        XCTAssertEqual(LiveChat.satsFromBolt11("lnbc1m1pvjluez"), 100_000)
+        XCTAssertEqual(LiveChat.satsFromBolt11("LNBC1P1PVJLUEZ"), nil)   // 1 pico-BTC rounds under a sat
+        XCTAssertEqual(LiveChat.satsFromBolt11("lntb20m1pvjluez"), 2_000_000)
+        XCTAssertNil(LiveChat.satsFromBolt11("lnbc1pvjluez"))            // amountless invoice
+        XCTAssertNil(LiveChat.satsFromBolt11("not-an-invoice"))
+    }
+
+    /// The request's own amount is the zapper's stated intent and wins over a
+    /// receipt tag a relay may have added.
+    func testRequestAmountBeatsReceiptAmount() {
+        XCTAssertEqual(LiveChat.zapAmountSats(receiptTags: [["amount", "1000"]],
+                                              requestTags: [["amount", "7000"]]), 7)
+    }
+}

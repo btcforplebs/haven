@@ -114,18 +114,17 @@ final class LiveFeedService: ObservableObject {
         streams = streams.filter { $0.hostPubkey != pubkey }
     }
 
-    // MARK: - Private
-
     /// zap.stream is where most live events are published and is worth asking
     /// even when the owner has not configured it, since this feed is
     /// external-only by design.
-    private static var relayURLs: [URL] {
+    static var relayURLs: [URL] {
         var strings = ConfigService.shared.config.activeFeedRelays
         if strings.isEmpty { strings = ["wss://relay.primal.net", "wss://nos.lol"] }
-        let streamRelay = "wss://relay.zap.stream"
-        if !strings.contains(streamRelay) { strings.append(streamRelay) }
+        if !strings.contains(LiveChat.streamRelay) { strings.append(LiveChat.streamRelay) }
         return strings.compactMap { URL(string: $0) }
     }
+
+    // MARK: - Private
 
     private func handle(message: String, blocked: Set<String>) {
         guard let data = message.data(using: .utf8),
@@ -136,6 +135,7 @@ final class LiveFeedService: ObservableObject {
 
         guard type == "EVENT", json.count >= 3,
               let event = json[2] as? [String: Any],
+              let id = event["id"] as? String,
               let pubkey = event["pubkey"] as? String,
               let createdAt = event["created_at"] as? Int64,
               let kind = event["kind"] as? Int,
@@ -144,7 +144,7 @@ final class LiveFeedService: ObservableObject {
               !blocked.contains(pubkey)
         else { return }
 
-        guard let stream = LiveStream(pubkey: pubkey, createdAt: createdAt, tags: tags) else { return }
+        guard let stream = LiveStream(id: id, pubkey: pubkey, createdAt: createdAt, tags: tags) else { return }
 
         // Addressable: the newest event for an address wins, which is how a
         // stream that has since ended replaces its own live announcement.
@@ -175,6 +175,9 @@ final class LiveFeedService: ObservableObject {
 
 /// A NIP-53 live event, reduced to what the grid and the player need.
 struct LiveStream: Identifiable, Equatable {
+    /// The 30311 event's own id, which a zap for this stream tags alongside
+    /// the address.
+    let eventId: String
     let hostPubkey: String
     let identifier: String
     let createdAt: Int64
@@ -184,8 +187,11 @@ struct LiveStream: Identifiable, Equatable {
     let streamingURL: URL?
     let status: String?
     let participants: Int?
+    /// Who a zap pays. Usually the author, but zap.stream publishes on the
+    /// host's behalf, and then the author is the service.
+    let zapPubkey: String
 
-    var address: String { "30311:\(hostPubkey):\(identifier)" }
+    var address: String { LiveChat.address(hostPubkey: hostPubkey, identifier: identifier) }
     var id: String { address }
 
     /// Shown only when the stream is running AND something can play it.
@@ -200,7 +206,7 @@ struct LiveStream: Identifiable, Equatable {
         return status == "live"
     }
 
-    init?(pubkey: String, createdAt: Int64, tags: [[String]]) {
+    init?(id: String, pubkey: String, createdAt: Int64, tags: [[String]]) {
         func value(_ name: String) -> String? {
             guard let raw = tags.first(where: { $0.count >= 2 && $0[0] == name })?[1] else { return nil }
             let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -208,7 +214,9 @@ struct LiveStream: Identifiable, Equatable {
         }
 
         guard let identifier = value("d") else { return nil }
+        self.eventId = id
         self.hostPubkey = pubkey
+        self.zapPubkey = LiveChat.hostPubkey(authorPubkey: pubkey, tags: tags)
         self.identifier = identifier
         self.createdAt = createdAt
         self.title = value("title")

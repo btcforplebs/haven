@@ -24,7 +24,11 @@ class ZapService: ObservableObject {
     }
     
     /// Executes a full Zap flow: LNURL -> Zap Request -> Invoice -> NWC Payment
-    func zapNote(noteId: String, notePubkey: String, lud16: String, amountSats: Int? = nil, message: String = "Zap from Nostr Vault") async throws {
+    /// - Parameter addressTag: `a` address (`kind:pubkey:d`) of an addressable event the
+    ///   zap belongs to. A live stream is the case that needs it: clients count
+    ///   a stream's zaps by its address, so a receipt with only `e` and `p` is
+    ///   invisible on the stream it paid for.
+    func zapNote(noteId: String, notePubkey: String, lud16: String, amountSats: Int? = nil, message: String = "Zap from Nostr Vault", addressTag: String? = nil) async throws {
         let amountSats = amountSats ?? (ConfigService.shared.config.defaultZapAmount / 1000)
         guard amountSats > 0 else {
             throw ZapError.paymentFailed("Zap amount must be greater than 0")
@@ -71,6 +75,10 @@ class ZapService: ObservableObject {
             
             if !noteId.isEmpty {
                 tags.append(["e", noteId])
+            }
+
+            if let addressTag, !addressTag.isEmpty {
+                tags.append(["a", addressTag, LiveChat.streamRelay])
             }
             
             // Add lnurl tag — strip internal sentinel prefix if present
