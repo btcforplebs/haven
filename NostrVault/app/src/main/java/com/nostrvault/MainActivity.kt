@@ -32,7 +32,10 @@ import com.nostrvault.service.NostrService
 import com.nostrvault.service.PendingPostManager
 import com.nostrvault.ui.components.FullScreenMediaHost
 import com.nostrvault.ui.components.VideoPiPBridge
+import com.nostrvault.ui.navigation.BridgeEntityDecoder
+import com.nostrvault.ui.navigation.DeepLinkRouter
 import com.nostrvault.ui.navigation.NostrVaultNavHost
+import com.nostrvault.ui.navigation.PendingDeepLink
 import com.nostrvault.ui.notification.NotificationManager
 import com.nostrvault.ui.theme.AppTheme
 import com.nostrvault.ui.theme.NostrVaultTheme
@@ -74,6 +77,9 @@ class MainActivity : FragmentActivity() {
 
         // Handle media shared into the app via the system share sheet (ACTION_SEND)
         handleShareIntent(intent)
+
+        // …and taps that came from a widget, a notification or a nostr: link.
+        handleDeepLinkIntent(intent)
 
         // Keep PiP auto-enter params in sync with whichever video is playing full-screen
         VideoPiPBridge.onActiveVideoChanged = { refreshPipParams() }
@@ -136,6 +142,41 @@ class MainActivity : FragmentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleShareIntent(intent)
+        handleDeepLinkIntent(intent)
+    }
+
+    /**
+     * Route a tap that started (or resumed) the app: a `nostrvault://` link
+     * from a widget, a `nostr:` link handed over by another app, or the extras
+     * on a notification's PendingIntent.
+     *
+     * The extras had been set on that intent for a while with nothing reading
+     * them, so tapping a mention opened the app wherever it last was. All three
+     * sources go through [DeepLinkRouter]; the nav host does the navigating.
+     */
+    private fun handleDeepLinkIntent(intent: Intent?) {
+        if (intent == null) return
+
+        val fromNotification = DeepLinkRouter.fromNotification(
+            type = intent.getStringExtra("notif_type"),
+            eventId = intent.getStringExtra("notif_event_id"),
+            author = intent.getStringExtra("notif_author"),
+            npub = intent.getStringExtra("notif_npub"),
+        )
+        if (fromNotification != null) {
+            // Consumed: a rotation re-delivers the same intent, and without this
+            // the app would jump back to the note every time.
+            intent.removeExtra("notif_type")
+            PendingDeepLink.post(fromNotification)
+            return
+        }
+
+        if (intent.action != Intent.ACTION_VIEW) return
+        val data = intent.data?.toString() ?: return
+        DeepLinkRouter.fromUri(data, BridgeEntityDecoder)?.let {
+            intent.data = null
+            PendingDeepLink.post(it)
+        }
     }
 
     /** Request POST_NOTIFICATIONS on Android 13+ if not already granted. */

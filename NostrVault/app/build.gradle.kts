@@ -66,6 +66,14 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    testOptions {
+        unitTests {
+            // android.util.Log throws "not mocked" by default, which fails any
+            // JVM test that walks through code that logs — which is most of it.
+            isReturnDefaultValues = true
+        }
+    }
+
     kotlinOptions {
         jvmTarget = "17"
     }

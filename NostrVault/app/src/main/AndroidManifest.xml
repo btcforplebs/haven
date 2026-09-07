@@ -77,6 +77,15 @@
                 <data android:scheme="nostr" />
             </intent-filter>
 
+            <!-- The app's own scheme. Widgets open the app with these, matching
+                 iOS's nostrvault:// destinations; DeepLinkRouter maps them. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="nostrvault" />
+            </intent-filter>
+
             <!-- Share sheet: receive images/videos shared from other apps and
                  upload them to Blossom -->
             <intent-filter>

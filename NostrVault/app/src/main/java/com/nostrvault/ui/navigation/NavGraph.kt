@@ -126,6 +126,22 @@ fun NostrVaultNavHost(
     val unreadDMs by dmUnreadCount.collectAsState()
     val relayActivity by hasNewRelayActivity.collectAsState()
 
+    // A tap from outside the app — widget, notification, nostr: link — lands in
+    // PendingDeepLink; this is the only place that can act on it. Setup has to
+    // be finished first: navigating away from the wizard would strand a
+    // half-configured install with no way back.
+    val pendingLink by PendingDeepLink.target.collectAsState()
+    LaunchedEffect(pendingLink, isSetupComplete) {
+        if (pendingLink == null || !isSetupComplete) return@LaunchedEffect
+        val target = PendingDeepLink.consume() ?: return@LaunchedEffect
+        // Notifications carry the account they arrived for. Switch first, so a
+        // mention of a second identity does not open under the first.
+        target.accountNpub
+            ?.takeIf { it != configStore.config.value.activeOrOwnerNpub() }
+            ?.let { configStore.switchActiveAccount(it) }
+        navController.navigate(target.route) { launchSingleTop = true }
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         NavHost(
             navController = navController,
@@ -222,6 +238,9 @@ fun NostrVaultNavHost(
                     },
                     onNewMessage = {
                         navController.navigate(Screen.NewMessage.createRoute())
+                    },
+                    onGroups = {
+                        navController.navigate(Screen.GroupList.route)
                     },
                 )
             }

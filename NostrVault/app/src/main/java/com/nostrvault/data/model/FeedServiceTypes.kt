@@ -2,6 +2,7 @@ package com.nostrvault.data.model
 
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
+import com.nostrvault.relay.HavenBridge
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -267,16 +268,28 @@ data class FeedNote(
                 .toList()
         }
 
+        /**
+         * Hex event ids for the notes this one quotes.
+         *
+         * Callers fetch by id, so what comes out has to be hex: this used to
+         * pass the bech32 string straight through, which meant every quoted
+         * note lookup asked the relay for an id that cannot exist and no quote
+         * ever rendered. The decoders were already here, just never called.
+         *
+         * naddr points at a replaceable event (long-form articles, live
+         * streams) — addressed by kind/pubkey/identifier, not by id, and with
+         * no screen on Android yet. Dropping it is better than emitting
+         * something id-shaped that will never resolve.
+         */
         private fun parseQuotedEventIds(content: String): List<String> {
             return QUOTE_REGEX.findAll(content).mapNotNull { match ->
                 val identifier = match.groupValues[1]
                 when {
-                    identifier.startsWith("note1") -> identifier // TODO: bech32 decode to hex
-                    identifier.startsWith("nevent1") -> identifier // TODO: TLV decode
-                    identifier.startsWith("naddr1") -> identifier // TODO: TLV decode
+                    identifier.startsWith("note1") -> HavenBridge.decodeNote(identifier)
+                    identifier.startsWith("nevent1") -> HavenBridge.decodeNevent(identifier)
                     else -> null
                 }
-            }.toList()
+            }.distinct().toList()
         }
 
         /**
