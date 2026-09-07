@@ -139,6 +139,39 @@ final class LiveChatTests: XCTestCase {
         XCTAssertNil(LiveChat.satsFromBolt11("not-an-invoice"))
     }
 
+    /// An amountless invoice ("pay me what you like") is legal and zap
+    /// receipts do carry them. The digits after `lnbc` in one of those are not
+    /// an amount — they are the bech32 separator and the start of the data
+    /// part. Reading them as an amount invents a number, and because bech32's
+    /// charset contains `m`/`u`/`n`/`p`, which number it invents depends on
+    /// the random first character of the payload.
+    func testAmountlessInvoicesReportNothingWhateverTheDataStartsWith() {
+        // Data part starting with an ordinary bech32 character: this used to
+        // read as 1 whole BTC.
+        XCTAssertNil(LiveChat.satsFromBolt11("lnbc1qqqqsyqcyq5rqwzqfqypqdq5"))
+        // Data part starting with a multiplier letter: 1 micro-BTC, 100 sats.
+        XCTAssertNil(LiveChat.satsFromBolt11("lnbc1u3qqqsyqcyq5rqwzqfqypq"))
+        XCTAssertNil(LiveChat.satsFromBolt11("lnbc1n3qqqsyqcyq5rqwzqfqypq"))
+        XCTAssertNil(LiveChat.satsFromBolt11("lntb1qqqqsyqcyq5rqwzqfqypqdq5"))
+    }
+
+    /// The digit run comes off the wire unbounded, and `*` traps on overflow
+    /// in Swift — a hostile invoice must return nil, not kill the app.
+    func testAbsurdAmountsDoNotTrap() {
+        XCTAssertNil(LiveChat.satsFromBolt11("lnbc99999999999999999m1pvjluez"))
+        XCTAssertNil(LiveChat.satsFromBolt11("lnbc999999999999999999999999991pvjluez"))
+        // 21 million BTC is the whole supply; anything at or past it is junk.
+        XCTAssertNil(LiveChat.satsFromBolt11("lnbc21000000001pvjluez"))
+    }
+
+    /// The bech32 separator is the *last* `1`, because the data charset has no
+    /// `1` in it. Anchoring on the first one mis-splits any invoice whose
+    /// amount contains a 1.
+    func testAmountContainingAOneIsNotCutShort() {
+        XCTAssertEqual(LiveChat.satsFromBolt11("lnbc1500n1pvjluez"), 150)
+        XCTAssertEqual(LiveChat.satsFromBolt11("lnbc21u1pvjluez"), 2_100)
+    }
+
     /// The request's own amount is the zapper's stated intent and wins over a
     /// receipt tag a relay may have added.
     func testRequestAmountBeatsReceiptAmount() {

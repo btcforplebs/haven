@@ -139,35 +139,54 @@ enum LiveChat {
         return 0
     }
 
-    /// BOLT-11 encodes the amount in its human-readable part: `lnbc2500u1…` is
-    /// 2500 micro-BTC, i.e. 250,000 sats. An amountless invoice has no digits.
+    /// Sats from a BOLT-11 invoice's human-readable part: `lnbc2500u1…` is
+    /// 2500 micro-BTC, i.e. 250,000 sats. Nil when the invoice states no
+    /// amount, or states less than one sat.
+    ///
+    /// The split is on the *last* `1` in the string, not the first digits after
+    /// the network prefix. `1` is the bech32 separator and the data charset
+    /// deliberately excludes it, so the last one is unambiguous — whereas an
+    /// amountless invoice is literally `lnbc` + `1` + data, and reading digits
+    /// forward from the prefix turns that `1` into an amount whose size is
+    /// decided by the first character of the payload: `lnbc1qqq…` came out as
+    /// 1 whole BTC, `lnbc1u3q…` as 100 sats.
+    ///
+    /// Integer millisats throughout: in floating point 90 nano-BTC comes out as
+    /// 9.000000000000002 sats.
     static func satsFromBolt11(_ invoice: String) -> Int? {
-        let lower = invoice.lowercased()
-        guard let prefixRange = ["lnbcrt", "lnbc", "lntbs", "lntb"]
-            .first(where: { lower.hasPrefix($0) })
-            .map({ lower.index(lower.startIndex, offsetBy: $0.count) })
+        let lower = invoice.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard let separator = lower.lastIndex(of: "1"),
+              lower.index(after: separator) < lower.endIndex
         else { return nil }
 
-        var digits = ""
-        var index = prefixRange
-        while index < lower.endIndex, lower[index].isNumber {
-            digits.append(lower[index])
-            index = lower.index(after: index)
-        }
-        guard !digits.isEmpty, let value = Double(digits) else { return nil }
+        let hrp = lower[lower.startIndex..<separator]
+        guard let network = ["lnbcrt", "lnbc", "lntbs", "lntb"].first(where: { hrp.hasPrefix($0) })
+        else { return nil }
 
-        let multiplier: Double
-        switch index < lower.endIndex ? lower[index] : " " {
-        case "m": multiplier = 1e-3
-        case "u": multiplier = 1e-6
-        case "n": multiplier = 1e-9
-        case "p": multiplier = 1e-12
-        default: multiplier = 1  // whole BTC
-        }
+        var rest = hrp[hrp.index(hrp.startIndex, offsetBy: network.count)...]
+        let digits = rest.prefix(while: \.isNumber)
+        rest = rest.dropFirst(digits.count)
+        // Amountless invoice, or trailing junk where the multiplier should be.
+        guard !digits.isEmpty, let amount = Int(digits), rest.count <= 1 else { return nil }
 
-        let sats = value * multiplier * 100_000_000
-        guard sats >= 1, sats < 21_000_000 * 100_000_000 else { return nil }
-        return Int(sats.rounded())
+        // 1 BTC = 100_000_000_000 msat. Multiplied with overflow reported
+        // rather than `*`, which traps: the digits come off the wire and
+        // nothing upstream bounds them.
+        let perUnit: Int
+        switch rest.first {
+        case "m": perUnit = 100_000_000
+        case "u": perUnit = 100_000
+        case "n": perUnit = 100
+        // Pico-BTC is a tenth of a msat; a valid pico amount is a multiple of 10.
+        case "p": return (amount / 10) >= 1_000 ? (amount / 10) / 1_000 : nil
+        case nil: perUnit = 100_000_000_000
+        default: return nil
+        }
+        let (msat, overflowed) = amount.multipliedReportingOverflow(by: perUnit)
+        guard !overflowed else { return nil }
+
+        guard msat >= 1_000, msat < 21_000_000 * 100_000_000_000 else { return nil }
+        return msat / 1_000
     }
 
     // MARK: - Private
