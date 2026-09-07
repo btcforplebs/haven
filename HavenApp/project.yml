@@ -95,6 +95,12 @@ targets:
           "${PROJECT_DIR}/HavenApp/App/build_haven.sh"
         outputFiles:
           - $(PROJECT_DIR)/build/libhaven.a
+        # The script does its own checksum of the Go sources and exits in
+        # milliseconds when nothing changed. Xcode's own dependency analysis
+        # cannot help here: with an output declared and no inputs it skips the
+        # phase entirely once the .a exists, so every Go change was silently
+        # missing from incremental builds.
+        basedOnDependencyAnalysis: false
 
     dependencies:
       - sdk: build/libhaven.a
@@ -148,6 +154,12 @@ targets:
           "${PROJECT_DIR}/HavenApp/App/build_haven_ios.sh"
         outputFiles:
           - $(PROJECT_DIR)/build/ios/libhaven_ios.a
+        # The script does its own checksum of the Go sources and exits in
+        # milliseconds when nothing changed. Xcode's own dependency analysis
+        # cannot help here: with an output declared and no inputs it skips the
+        # phase entirely once the .a exists, so every Go change was silently
+        # missing from incremental builds.
+        basedOnDependencyAnalysis: false
 
     dependencies:
       - framework: build/ios/libhaven_ios.a

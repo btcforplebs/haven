@@ -1112,6 +1112,7 @@
 		E607D2B8B06A5D00090F816C /* Build Go Library (macOS) */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
+			alwaysOutOfDate = 1;
 			files = (
 			);
 			inputFileListPaths = (
@@ -1131,6 +1132,7 @@
 		FA9359A486A7BC73C21528F2 /* Build Go Library (iOS) */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
+			alwaysOutOfDate = 1;
 			files = (
 			);
 			inputFileListPaths = (
