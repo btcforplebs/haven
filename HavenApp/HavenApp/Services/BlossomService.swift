@@ -65,6 +65,18 @@ class BlossomService: @unchecked Sendable {
         self.remoteSession = URLSession(configuration: remoteConfig, delegate: nil, delegateQueue: nil)
     }
 
+    /// Mirror a message into the app's own log as well as OSLog.
+    ///
+    /// Everything in this file logged only to OSLog, which is invisible from
+    /// the Logs screen, invisible in the log file we pull off a device, and
+    /// unreadable without Console.app attached at the moment of failure. A
+    /// user reporting "the upload failed" therefore came with no evidence at
+    /// all, and neither did the file. These are low-frequency, one line per
+    /// upload decision, so they cost nothing next to the relay's own output.
+    private func appLog(_ message: String, level: String = "INFO") {
+        RelayProcessManager.shared.addLog("Blossom: " + message, level: level)
+    }
+
     /// Upload media to local Blossom and mirror to external servers
     /// - Parameters:
     ///   - data: The media file data
@@ -272,6 +284,10 @@ class BlossomService: @unchecked Sendable {
         // Step 1: Upload to local Blossom first (with restart recovery)
         guard await uploadToLocalWithRecovery(source: source, sha256: sha256, contentType: contentType) != nil else {
             logger.error("uploadAndMirror: failed to upload to local relay after recovery attempt")
+            // Stage matters: the composer shows the same "mirrors failed" text
+            // whichever half broke, which sent us looking at the Mac when the
+            // blob had never left the phone.
+            appLog("post upload FAILED at stage 1 of 2 — the blob never reached this device's own relay", level: "ERROR")
             return nil
         }
 
@@ -296,6 +312,7 @@ class BlossomService: @unchecked Sendable {
         // before failing the post.
         if mirrorURLs.isEmpty {
             logger.warning("All Blossom mirrors failed — retrying once in 10s in case a sleeping host is still waking")
+            appLog("first mirror pass failed for all of \(mirrors) — retrying once in 10s", level: "WARN")
             try? await Task.sleep(nanoseconds: 10_000_000_000)
             mirrorURLs = await mirrorUploadPass(source: source, sha256: sha256, contentType: contentType, mirrors: mirrors, progress: progress)
         }
@@ -303,11 +320,13 @@ class BlossomService: @unchecked Sendable {
         // Return first successful external mirror
         if let externalURL = mirrorURLs.first {
             logger.info("Using external Blossom mirror: \(externalURL.absoluteString)")
+            appLog("post upload ok — mirrored to \(externalURL.absoluteString)")
             return externalURL
         }
 
         // FAIL if no mirrors succeeded
         logger.error("All Blossom mirror uploads failed — cannot post without accessible mirror URL")
+        appLog("post upload FAILED at stage 2 of 2 — saved on this device, but no mirror accepted it after two passes", level: "ERROR")
         return nil
     }
 
@@ -471,6 +490,7 @@ class BlossomService: @unchecked Sendable {
                     let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
                     let responseBody = String(data: responseData, encoding: .utf8) ?? "(binary)"
                     logger.warning("Upload to \(url) attempt \(attempt + 1)/\(maxRetries) failed with status: \(statusCode), response: \(responseBody)")
+                    appLog("upload to \(url) attempt \(attempt + 1)/\(maxRetries) — HTTP \(statusCode): \(responseBody.prefix(200))", level: "WARN")
 
                     // Retry on transient errors (5xx)
                     if attempt < maxRetries - 1 && statusCode >= 500 {
@@ -483,6 +503,7 @@ class BlossomService: @unchecked Sendable {
             } catch {
                 let errorDesc = error.localizedDescription
                 logger.error("Upload to \(url) attempt \(attempt + 1)/\(maxRetries) caught error: \(errorDesc), error type: \(type(of: error))")
+                appLog("upload to \(url) attempt \(attempt + 1)/\(maxRetries) failed: \(errorDesc)", level: "WARN")
 
                 if let urlError = error as? URLError {
                     logger.error("URLError code: \(urlError.code.rawValue)")
@@ -562,10 +583,12 @@ class BlossomService: @unchecked Sendable {
                 }
                 let reason = httpResponse.value(forHTTPHeaderField: "X-Reason") ?? "none"
                 logger.info("BUD-06: Preflight rejected by \(url) — status \(httpResponse.statusCode), reason: \(reason)")
+                appLog("preflight rejected by \(url) — HTTP \(httpResponse.statusCode), reason: \(reason)", level: "WARN")
                 return false
             }
         } catch {
             logger.warning("BUD-06: Preflight network error for \(url): \(error.localizedDescription)")
+            appLog("preflight network error for \(url): \(error.localizedDescription) — proceeding anyway", level: "WARN")
         }
         return true // Fail-open
     }
