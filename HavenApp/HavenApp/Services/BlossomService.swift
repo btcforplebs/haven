@@ -83,6 +83,53 @@ class BlossomService: @unchecked Sendable {
         print("Blossom: \(message)")
     }
 
+    /// Sign one BUD-02 upload authorisation for a blob, to be reused for every
+    /// request that blob needs.
+    ///
+    /// The auth event is scoped to an operation and a hash — `t: upload` and
+    /// `x: <sha256>` — not to a request or a server, and the server never reads
+    /// its content. So the preflight, the upload, each retry and each mirror
+    /// were all signing byte-identical events and throwing them away. With a
+    /// NIP-49 encrypted key every one of those is a keychain read plus a
+    /// deliberately slow decrypt, stacked up at the moment the user hits post,
+    /// and any one of them failing killed the upload.
+    ///
+    /// Caveat if a mirror is ever added that requires BUD-01's optional
+    /// `server` tag: that one needs its own signature, because reuse across
+    /// hosts is exactly what such a tag exists to prevent.
+    ///
+    /// Retries, because a momentary signer problem — a keychain read before the
+    /// device has finished unlocking, a NIP-46 bunker mid-reconnect — should
+    /// cost a second, not the whole upload.
+    private func makeUploadAuth(sha256: String) async -> String? {
+        let expirationTimestamp = Int64(Date().timeIntervalSince1970) + 3600
+        let authTags = [
+            ["t", "upload"],
+            ["x", sha256],
+            ["expiration", String(expirationTimestamp)]
+        ]
+        let authContent = "Upload blob \(sha256.prefix(8))..."
+
+        for attempt in 0..<3 {
+            guard let authEvent = await nostrService.signEventAsync(kind: 24242, content: authContent, tags: authTags) else {
+                let signingMode = await MainActor.run { ConfigService.shared.config.activeSigningMode() }
+                appLog("could not sign the upload authorisation (mode \(signingMode)) — attempt \(attempt + 1)/3", level: "WARN")
+                if attempt < 2 {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    continue
+                }
+                return nil
+            }
+            guard let authJSON = try? JSONEncoder().encode(authEvent) else {
+                logger.error("Failed to encode auth event")
+                appLog("could not encode the upload authorisation", level: "ERROR")
+                return nil
+            }
+            return authJSON.base64EncodedString()
+        }
+        return nil
+    }
+
     /// Upload media to local Blossom and mirror to external servers
     /// - Parameters:
     ///   - data: The media file data
@@ -172,7 +219,7 @@ class BlossomService: @unchecked Sendable {
     /// not for request-specific upload failures, and not right after the
     /// system woke from sleep (gracefulRestart enforces coalescing, a
     /// cooldown, and the post-wake grace window).
-    private func uploadToLocalWithRecovery(source: UploadSource, sha256: String, contentType: String) async -> URL? {
+    private func uploadToLocalWithRecovery(source: UploadSource, sha256: String, contentType: String, authBase64: String? = nil) async -> URL? {
         var relayReady = await RelayProcessManager.shared.ensureRelayReady()
         if !relayReady {
             logger.warning("uploadToLocalWithRecovery: relay not ready, attempting graceful restart")
@@ -191,7 +238,7 @@ class BlossomService: @unchecked Sendable {
         #endif
 
         // First attempt
-        if let result = await uploadToServer(source: source, url: localURLStr, sha256: sha256, contentType: contentType, useLocalhostSession: true) {
+        if let result = await uploadToServer(source: source, url: localURLStr, sha256: sha256, contentType: contentType, useLocalhostSession: true, authBase64: authBase64) {
             return result
         }
 
@@ -199,7 +246,7 @@ class BlossomService: @unchecked Sendable {
         // is request-specific — retry once without restarting.
         if await isLocalRelayHealthy() {
             logger.warning("uploadToLocalWithRecovery: upload failed but relay is healthy — retrying without restart")
-            return await uploadToServer(source: source, url: localURLStr, sha256: sha256, contentType: contentType, useLocalhostSession: true)
+            return await uploadToServer(source: source, url: localURLStr, sha256: sha256, contentType: contentType, useLocalhostSession: true, authBase64: authBase64)
         }
 
         // Relay is unreachable — restart and retry once.
@@ -217,11 +264,12 @@ class BlossomService: @unchecked Sendable {
         let retryURL = "https://localhost:\(retryPort)"
         #endif
 
-        return await uploadToServer(source: source, url: retryURL, sha256: sha256, contentType: contentType, useLocalhostSession: true)
+        return await uploadToServer(source: source, url: retryURL, sha256: sha256, contentType: contentType, useLocalhostSession: true, authBase64: authBase64)
     }
 
     private func saveToLocalRelay(source: UploadSource, sha256: String, contentType: String, mirrorToExternal: Bool, progress: ((Double) -> Void)? = nil) async -> Bool {
-        let localResult = await uploadToLocalWithRecovery(source: source, sha256: sha256, contentType: contentType)
+        let auth = await makeUploadAuth(sha256: sha256)
+        let localResult = await uploadToLocalWithRecovery(source: source, sha256: sha256, contentType: contentType, authBase64: auth)
         guard localResult != nil else {
             logger.error("saveToLocalRelay: local upload failed after recovery attempt")
             return false
@@ -246,14 +294,14 @@ class BlossomService: @unchecked Sendable {
                         let accepted = await self.preflightCheck(
                             url: mirror, sha256: sha256,
                             contentLength: source.byteCount, contentType: contentType,
-                            useLocalhostSession: useLocal
+                            useLocalhostSession: useLocal, authBase64: auth
                         )
                         guard accepted else {
                             self.logger.info("saveToLocalRelay: skipping \(mirror) — BUD-06 preflight rejected")
                             return (mirror, false)
                         }
 
-                        let result = await self.uploadToServer(source: source, url: mirror, sha256: sha256, contentType: contentType, useLocalhostSession: useLocal, progress: progressHandler)
+                        let result = await self.uploadToServer(source: source, url: mirror, sha256: sha256, contentType: contentType, useLocalhostSession: useLocal, authBase64: auth, progress: progressHandler)
                         if result != nil {
                             self.logger.info("saveToLocalRelay: mirrored to \(mirror)")
                         } else {
@@ -287,8 +335,14 @@ class BlossomService: @unchecked Sendable {
     }
 
     private func uploadAndMirror(source: UploadSource, sha256: String, contentType: String, progress: ((Double) -> Void)?) async -> URL? {
+        // One signature for this blob, reused by the local save, the preflight,
+        // every retry and every mirror. nil means the key is genuinely
+        // unavailable after three tries — each call below then signs its own,
+        // which will fail the same way but keeps the failure local.
+        let auth = await makeUploadAuth(sha256: sha256)
+
         // Step 1: Upload to local Blossom first (with restart recovery)
-        guard await uploadToLocalWithRecovery(source: source, sha256: sha256, contentType: contentType) != nil else {
+        guard await uploadToLocalWithRecovery(source: source, sha256: sha256, contentType: contentType, authBase64: auth) != nil else {
             logger.error("uploadAndMirror: failed to upload to local relay after recovery attempt")
             // Stage matters: the composer shows the same "mirrors failed" text
             // whichever half broke, which sent us looking at the Mac when the
@@ -310,7 +364,7 @@ class BlossomService: @unchecked Sendable {
         }
 
         // Step 3: Upload to external mirrors concurrently using standard BUD-02 protocol
-        var mirrorURLs = await mirrorUploadPass(source: source, sha256: sha256, contentType: contentType, mirrors: mirrors, progress: progress)
+        var mirrorURLs = await mirrorUploadPass(source: source, sha256: sha256, contentType: contentType, mirrors: mirrors, authBase64: auth, progress: progress)
 
         // A sleeping mirror host (e.g. the Mac relay over LAN/Tailscale) is often
         // woken *by* the first pass's connection attempts (wake-on-network) but
@@ -320,7 +374,7 @@ class BlossomService: @unchecked Sendable {
             logger.warning("All Blossom mirrors failed — retrying once in 10s in case a sleeping host is still waking")
             appLog("first mirror pass failed for all of \(mirrors) — retrying once in 10s", level: "WARN")
             try? await Task.sleep(nanoseconds: 10_000_000_000)
-            mirrorURLs = await mirrorUploadPass(source: source, sha256: sha256, contentType: contentType, mirrors: mirrors, progress: progress)
+            mirrorURLs = await mirrorUploadPass(source: source, sha256: sha256, contentType: contentType, mirrors: mirrors, authBase64: auth, progress: progress)
         }
 
         // Return first successful external mirror
@@ -338,7 +392,7 @@ class BlossomService: @unchecked Sendable {
 
     /// One concurrent BUD-02 upload pass over all configured mirrors.
     /// Returns the URLs of every mirror that accepted the blob.
-    private func mirrorUploadPass(source: UploadSource, sha256: String, contentType: String, mirrors: [String], progress: ((Double) -> Void)?) async -> [URL] {
+    private func mirrorUploadPass(source: UploadSource, sha256: String, contentType: String, mirrors: [String], authBase64: String?, progress: ((Double) -> Void)?) async -> [URL] {
         logger.debug("Attempting to mirror to: \(mirrors.description)")
         return await withTaskGroup(of: (String, URL?).self) { group in
             for (index, mirrorURL) in mirrors.enumerated() {
@@ -352,14 +406,14 @@ class BlossomService: @unchecked Sendable {
                     let accepted = await self.preflightCheck(
                         url: mirrorURL, sha256: sha256,
                         contentLength: source.byteCount, contentType: contentType,
-                        useLocalhostSession: useLocalSession
+                        useLocalhostSession: useLocalSession, authBase64: authBase64
                     )
                     guard accepted else {
                         self.logger.info("BUD-06: Skipping mirror \(mirrorURL) — preflight rejected")
                         return (mirrorURL, nil)
                     }
 
-                    let result = await self.uploadToServer(source: source, url: mirrorURL, sha256: sha256, contentType: contentType, useLocalhostSession: useLocalSession, progress: progressHandler)
+                    let result = await self.uploadToServer(source: source, url: mirrorURL, sha256: sha256, contentType: contentType, useLocalhostSession: useLocalSession, authBase64: authBase64, progress: progressHandler)
                     return (mirrorURL, result)
                 }
             }
@@ -400,7 +454,11 @@ class BlossomService: @unchecked Sendable {
 
     /// Upload media to a specific Blossom server with retry logic
     /// Uses Blossom HTTP Auth (kind 24242, per BUD-01 spec)
-    private func uploadToServer(source: UploadSource, url: String, sha256: String, contentType: String, useLocalhostSession: Bool, progress: ((Double) -> Void)? = nil) async -> URL? {
+    /// `authBase64` is a pre-signed BUD-02 authorisation from makeUploadAuth,
+    /// reused across the preflight, the retries and every mirror for one blob.
+    /// Passing nil makes this sign its own, for callers that upload a single
+    /// blob to a single server.
+    private func uploadToServer(source: UploadSource, url: String, sha256: String, contentType: String, useLocalhostSession: Bool, authBase64: String? = nil, progress: ((Double) -> Void)? = nil) async -> URL? {
         let maxRetries = 3
         let parsedURL = URL(string: url)
         // isOnDeviceRelay: strict localhost only — used for response parsing (skip BlobDescriptor)
@@ -429,50 +487,21 @@ class BlossomService: @unchecked Sendable {
             // BUD-02 standard: PUT /upload for all servers (local khatru/blossom + external)
             let uploadURL = serverURL.appendingPathComponent("upload")
 
-            // Create Blossom auth event per BUD-02 spec (kind 24242)
-            // Includes: t tag (operation type), x tag (sha256 hash), expiration tag
-            let expirationTimestamp = Int64(Date().timeIntervalSince1970) + 3600  // 1 hour expiration
-            let authTags = [
-                ["t", "upload"],                        // Operation type: upload
-                ["x", sha256],                          // SHA256 hash of the blob being uploaded
-                ["expiration", String(expirationTimestamp)]  // NIP-40 expiration
-            ]
-
-            let authContent = "Upload blob \(sha256.prefix(8))..."  // Human-readable content
-
-            // Create auth event (kind 24242 per Blossom BUD-02 spec)
-            guard let authEvent = await nostrService.signEventAsync(kind: 24242, content: authContent, tags: authTags) else {
-                let signingMode = await MainActor.run { ConfigService.shared.config.activeSigningMode() }
-                logger.error("Failed to create Blossom auth event for \(url) (signingMode=\(signingMode)) — if NIP-46, the remote signer may not support kind 24242")
-                appLog("could not sign the upload authorisation for \(url) (mode \(signingMode)) — attempt \(attempt + 1)/\(maxRetries)", level: "WARN")
-                // Retry rather than abandon the upload. This sits inside a
-                // three-attempt loop but used to return outright, so a single
-                // transient signing hiccup — a keychain read before the device
-                // finished unlocking, a NIP-46 bunker not yet reconnected —
-                // killed the whole upload while the loop stood unused. The user
-                // then retried by hand and it worked, because by then the
-                // signer was ready. A key that is genuinely unavailable fails
-                // all three attempts and still reports failure.
-                if attempt < maxRetries - 1 {
-                    try? await Task.sleep(nanoseconds: 1_000_000_000)
-                    continue
-                }
+            // One authorisation per blob, signed by the caller and reused for
+            // the preflight, every retry and every mirror. See makeUploadAuth.
+            let auth: String
+            if let provided = authBase64 {
+                auth = provided
+            } else if let signed = await makeUploadAuth(sha256: sha256) {
+                auth = signed
+            } else {
+                logger.error("Failed to create Blossom auth event for \(url)")
                 return nil
             }
-
-            // Encode auth event as JSON then base64 (Blossom spec)
-            guard let authJSON = try? JSONEncoder().encode(authEvent) else {
-                logger.error("Failed to encode auth event for \(url)")
-                return nil
-            }
-            let authBase64 = authJSON.base64EncodedString()
-
-            logger.debug("Auth event: kind=24242, id=\(authEvent.id.prefix(8)), pubkey=\(authEvent.pubkey.prefix(8)), tags=\(authTags.description)")
-            logger.debug("Auth base64: \(authBase64.prefix(100))...")
 
             var request = URLRequest(url: uploadURL)
             request.httpMethod = "PUT"
-            request.setValue("Nostr \(authBase64)", forHTTPHeaderField: "Authorization")  // Nostr auth scheme per Blossom spec
+            request.setValue("Nostr \(auth)", forHTTPHeaderField: "Authorization")  // Nostr auth scheme per Blossom spec
             request.setValue(contentType, forHTTPHeaderField: "Content-Type")
             // Explicit Content-Length for BUD-02 compliance — ensures servers know the
             // full payload size upfront regardless of upload source type.
@@ -547,7 +576,7 @@ class BlossomService: @unchecked Sendable {
     /// BUD-06: Pre-flight check via HEAD /upload before attempting a PUT upload.
     /// Returns true if the server would accept the upload, false if the mirror should be skipped.
     /// Fail-open: returns true on network errors or if the server doesn't support BUD-06.
-    private func preflightCheck(url: String, sha256: String, contentLength: Int, contentType: String, useLocalhostSession: Bool) async -> Bool {
+    private func preflightCheck(url: String, sha256: String, contentLength: Int, contentType: String, useLocalhostSession: Bool, authBase64: String? = nil) async -> Bool {
         guard var serverURL = URL(string: url) else { return true }
 
         let isLocalNetwork = isLocalhost(serverURL)
@@ -559,27 +588,23 @@ class BlossomService: @unchecked Sendable {
 
         let uploadURL = serverURL.appendingPathComponent("upload")
 
-        // Kind 24242 auth — same as uploadToServer
-        let expirationTimestamp = Int64(Date().timeIntervalSince1970) + 3600
-        let authTags = [
-            ["t", "upload"],
-            ["x", sha256],
-            ["expiration", String(expirationTimestamp)]
-        ]
-        let authContent = "Preflight \(sha256.prefix(8))..."
-
-        guard let authEvent = await nostrService.signEventAsync(kind: 24242, content: authContent, tags: authTags) else {
-            let signingMode = await MainActor.run { ConfigService.shared.config.activeSigningMode() }
-            logger.warning("BUD-06: Failed to sign preflight auth for \(url) (signingMode=\(signingMode))")
-            return true // Fail-open
+        // Reuses the blob's single authorisation — the preflight used to sign
+        // its own byte-identical copy. Fail-open if we have none: this check is
+        // optional, and refusing to upload because a signature for an optional
+        // check could not be produced would be the tail wagging the dog.
+        let auth: String
+        if let provided = authBase64 {
+            auth = provided
+        } else if let signed = await makeUploadAuth(sha256: sha256) {
+            auth = signed
+        } else {
+            appLog("no authorisation available for the preflight of \(url) — proceeding to the upload anyway", level: "WARN")
+            return true
         }
-
-        guard let authJSON = try? JSONEncoder().encode(authEvent) else { return true }
-        let authBase64 = authJSON.base64EncodedString()
 
         var request = URLRequest(url: uploadURL)
         request.httpMethod = "HEAD"
-        request.setValue("Nostr \(authBase64)", forHTTPHeaderField: "Authorization")
+        request.setValue("Nostr \(auth)", forHTTPHeaderField: "Authorization")
         request.setValue(sha256, forHTTPHeaderField: "X-SHA-256")
         request.setValue(String(contentLength), forHTTPHeaderField: "X-Content-Length")
         request.setValue(contentType, forHTTPHeaderField: "X-Content-Type")
