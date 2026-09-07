@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.jsonArray
@@ -72,7 +74,14 @@ class LiveFeedService @Inject constructor(
         // Newest announcement per address wins: 30311 is replaceable, so the
         // same stream arrives repeatedly with updated status and viewer counts,
         // and keeping the first copy would pin it to whatever it said first.
+        //
+        // One collector per relay writes into this concurrently. A plain
+        // LinkedHashMap crashed the app with ConcurrentModificationException on
+        // the first real run — one relay inserting while another's publish()
+        // iterated. The mutex is what makes read-modify-write atomic; the
+        // snapshot copy is what keeps the iteration off the live map.
         val newest = mutableMapOf<String, LiveStream>()
+        val newestLock = Mutex()
 
         job = scope.launch {
             for (url in relays) {
@@ -80,14 +89,18 @@ class LiveFeedService @Inject constructor(
                 clients.add(client)
                 launch {
                     client.messages.collect { raw ->
-                        parseStream(raw, subId)?.let { stream ->
-                            if (stream.hostPubkey in blocked) return@collect
+                        val stream = parseStream(raw, subId) ?: return@collect
+                        if (stream.hostPubkey in blocked) return@collect
+                        val snapshot = newestLock.withLock {
                             val existing = newest[stream.address]
-                            if (existing == null || stream.createdAt > existing.createdAt) {
+                            if (existing != null && existing.createdAt >= stream.createdAt) {
+                                null
+                            } else {
                                 newest[stream.address] = stream
-                                publish(newest.values)
+                                newest.values.toList()
                             }
                         }
+                        snapshot?.let { publish(it) }
                     }
                 }
                 launch {
