@@ -20,11 +20,17 @@ const starterPackPath = "starter_pack.json"
 // the default seed relays over 24h was measured to be a single spam campaign, so
 // "show everything" is not a safe default for someone with nobody to trust yet.
 //
+// This is the FALLBACK, used only by a headless relay before the app has ever
+// run. The app owns the real list: it writes the npubs from its bundled
+// starter_packs.json to starter_pack.json in the relay data root on every
+// config save, and loadStarterPack prefers that file. Edit the JSON, not this.
+//
 // PROVISIONAL. Derived 2026-09-07 from accounts that were engaged with on the
 // default seed relays over 48h, keeping only those with a real follow list and
-// more than 200 followers, with the measured spam campaign excluded. It is a
-// bootstrap, not an editorial selection — replace it with people you would
-// actually introduce a stranger to.
+// more than 200 followers, with the measured spam campaign excluded. Chosen for
+// being demonstrably real and active rather than for who they are; it carries
+// no name claims, deliberately, because it was assembled by measurement and not
+// by a human who knows whose account is whose.
 var defaultStarterPack = []string{
 	"8fb140b4e8ddef97ce4b821d247278a1a4353362623f64021484b372f948000c",
 	"3f770d65d3a764a9c5cb503ae123e62ec7598ad035d836e2a810f3877a745b24",
