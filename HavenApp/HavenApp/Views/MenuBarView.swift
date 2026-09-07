@@ -676,32 +676,13 @@ struct MenuBarView: View {
                                 }
                             }
                             
-                            if !isPoppedOut {
-                                Button(action: {
-                                    #if os(macOS)
-                                    openWindow(id: "viewer-window")
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                        NSApp.activate(ignoringOtherApps: true)
-                                        for window in NSApp.windows {
-                                            if window.title == "Nostr Vault" {
-                                                window.makeKeyAndOrderFront(nil)
-                                                window.level = .normal
-                                            }
-                                            
-                                            if window.level.rawValue > NSWindow.Level.normal.rawValue && window.title.isEmpty {
-                                                window.orderOut(nil)
-                                            }
-                                        }
-                                    }
-                                    #endif
-                                }) {
-                                    Image(systemName: "arrow.up.forward.square")
-                                        .font(.appSystem(size: 16))
-                                        .foregroundColor(.secondary)
-                                }
-                                .buttonStyle(.plain)
-                                .help("Pop Out")
-                            }
+                            // The third copy of "open the main window" lived here as a
+                            // "Pop Out" button. It was dead on both platforms: on macOS
+                            // MenuBarView now only ever renders with isPoppedOut == true
+                            // (the window itself), and on iOS the entire action body was
+                            // inside #if os(macOS), so it rendered a button whose closure
+                            // was empty — it did nothing when tapped. Removed; the one
+                            // remaining implementation is MacWindow.openMain.
                             
                             Spacer()
 
@@ -953,7 +934,16 @@ struct MenuBarView: View {
                     .keyboardShortcut("5", modifiers: .command)
                 Button("") { selectedTab = .media }
                     .keyboardShortcut("6", modifiers: .command)
-                Button("") { selectedTab = .settings }
+                // ⌘, opens the real Settings scene declared in HavenApp.swift.
+                // It used to select the .settings tab instead, which left that
+                // scene reachable from nothing in the entire app — `openSettings`
+                // was declared here and never called. The status panel now does
+                // the same thing, so the shortcut means one thing everywhere.
+                //
+                // The sidebar's embedded Settings tab is untouched and still
+                // works; whether a window that hosts settings inline should also
+                // have a separate Settings window is a design call, not mine.
+                Button("") { openSettings() }
                     .keyboardShortcut(",", modifiers: .command)
                 Button("") {
                     NotificationCenter.default.post(name: .composeFromTabBar, object: 1)

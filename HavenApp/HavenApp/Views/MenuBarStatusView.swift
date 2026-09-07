@@ -28,6 +28,7 @@ struct MenuBarStatusView: View {
 
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.dismiss) private var dismissPanel
 
     @State private var activeHex: String = ConfigService.shared.activeAccountHexPubkey
     @State private var statusPulse = false
@@ -381,12 +382,10 @@ struct MenuBarStatusView: View {
     ///
     /// There were three copies of this before, and only one of them fronted the
     /// window — so the other two could open it *behind* the panel and read as
-    /// doing nothing. Consolidated here so there is one place to fix. The
-    /// `NSApp.windows` title match and level heuristic inside `MacWindow` are
-    /// carried over as-is and are @Ted's to make honest; this file only needs
-    /// there to be exactly one of them.
+    /// doing nothing. Consolidated into `MacWindow.openMain`, which also no
+    /// longer matches windows by title or hides panels by level.
     private func openMainWindow() {
-        MacWindow.openMain(using: openWindow)
+        MacWindow.openMain(using: openWindow, dismissPanel: dismissPanel)
     }
 }
 
@@ -396,28 +395,47 @@ enum MacWindow {
     static let mainWindowID = "viewer-window"
     static let mainWindowTitle = "Nostr Vault"
 
-    /// Opens and fronts the main window, dismissing the menu bar panel.
+    /// Opens and fronts the main window, then dismisses the menu bar panel.
     ///
-    /// NOTE (@Ted): the window is located by matching `window.title` and panels
-    /// are dismissed by `orderOut` on any untitled window above `.normal` level.
-    /// Both are heuristics inherited from `MenuBarView`. They are consolidated
-    /// here rather than fixed here — this is the one call site to harden.
+    /// Two heuristics were inherited from `MenuBarView` here. Both are gone:
+    ///
+    /// * **Finding the window by title string.** `window.title` is display text
+    ///   — it is localised, and "Nostr Vault" is also a prefix of the setup
+    ///   window's "Nostr Vault Setup". SwiftUI stamps `Window(id:)` scenes with
+    ///   an `NSWindow.identifier` derived from that id, so we match on the id we
+    ///   actually declared. The title comparison is kept only as a fallback, so
+    ///   this cannot behave worse than what it replaces if the identifier format
+    ///   ever changes under us.
+    /// * **Dismissing the panel via `orderOut` on any untitled window above
+    ///   `.normal` level.** That describes the `MenuBarExtra` panel, but it also
+    ///   describes tooltips, popovers and other transient panels — including
+    ///   ones we do not own. `MenuBarExtra(.window)` content can close itself
+    ///   with the `dismiss` environment action, which is the supported way and
+    ///   touches exactly one window. Callers outside the panel pass `nil`.
     @MainActor
-    static func openMain(using openWindow: OpenWindowAction) {
+    static func openMain(using openWindow: OpenWindowAction, dismissPanel: DismissAction? = nil) {
         openWindow(id: mainWindowID)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+
+        // The NSWindow backing a freshly-opened SwiftUI scene is not in
+        // `NSApp.windows` synchronously; one main-queue hop is enough for it to
+        // exist. This is the only delay left in the sequence.
+        DispatchQueue.main.async {
             NSApp.activate(ignoringOtherApps: true)
-            for window in NSApp.windows {
-                if window.title == mainWindowTitle {
-                    window.makeKeyAndOrderFront(nil)
-                    window.level = .normal
-                }
-                if window.level.rawValue > NSWindow.Level.normal.rawValue
-                    && window.title.isEmpty {
-                    window.orderOut(nil)
-                }
-            }
+            mainWindow()?.makeKeyAndOrderFront(nil)
+            dismissPanel?()
         }
+    }
+
+    /// The main window, located by the scene id we declared rather than by
+    /// display text. Falls back to an exact title match.
+    @MainActor
+    private static func mainWindow() -> NSWindow? {
+        if let byID = NSApp.windows.first(where: {
+            $0.identifier?.rawValue.contains(mainWindowID) == true
+        }) {
+            return byID
+        }
+        return NSApp.windows.first { $0.title == mainWindowTitle }
     }
 }
 
