@@ -544,11 +544,11 @@ struct SetupWizardView: View {
                     .foregroundColor(WizardColors.accentPrimary)
 
                 VStack(spacing: 6) {
-                    Text(String(localized: "setup.error.processKill.title"))
+                    Text(String(localized: "relay.error.processKill.title"))
                         .font(.title2.bold())
                         .foregroundColor(WizardColors.textPrimary)
 
-                    Text(String(localized: "setup.error.processKill.message"))
+                    Text(String(localized: "relay.error.processKill.message"))
                         .multilineTextAlignment(.center)
                         .foregroundColor(WizardColors.textSecondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -584,7 +584,7 @@ struct SetupWizardView: View {
                     relayManager.showProcessKillAlert = false
                     relayManager.forceCleanAndRestart()
                 }) {
-                    Text(String(localized: "setup.error.processKill.retry"))
+                    Text(String(localized: "relay.error.processKill.retry"))
                         .font(.headline)
                         .foregroundColor(WizardColors.textPrimary)
                         .frame(width: 140, height: 36)

@@ -676,32 +676,13 @@ struct MenuBarView: View {
                                 }
                             }
                             
-                            if !isPoppedOut {
-                                Button(action: {
-                                    #if os(macOS)
-                                    openWindow(id: "viewer-window")
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                        NSApp.activate(ignoringOtherApps: true)
-                                        for window in NSApp.windows {
-                                            if window.title == "Nostr Vault" {
-                                                window.makeKeyAndOrderFront(nil)
-                                                window.level = .normal
-                                            }
-                                            
-                                            if window.level.rawValue > NSWindow.Level.normal.rawValue && window.title.isEmpty {
-                                                window.orderOut(nil)
-                                            }
-                                        }
-                                    }
-                                    #endif
-                                }) {
-                                    Image(systemName: "arrow.up.forward.square")
-                                        .font(.appSystem(size: 16))
-                                        .foregroundColor(.secondary)
-                                }
-                                .buttonStyle(.plain)
-                                .help("Pop Out")
-                            }
+                            // The third copy of "open the main window" lived here as a
+                            // "Pop Out" button. It was dead on both platforms: on macOS
+                            // MenuBarView now only ever renders with isPoppedOut == true
+                            // (the window itself), and on iOS the entire action body was
+                            // inside #if os(macOS), so it rendered a button whose closure
+                            // was empty — it did nothing when tapped. Removed; the one
+                            // remaining implementation is MacWindow.openMain.
                             
                             Spacer()
 
@@ -820,11 +801,11 @@ struct MenuBarView: View {
                         .foregroundColor(.orange)
 
                     VStack(spacing: 6) {
-                        Text("Startup Error")
+                        Text(String(localized: "relay.error.processKill.title"))
                             .font(.appTitle2.bold())
                             .foregroundColor(.white)
 
-                        Text("A previous Nostr Vault process is still running. Run the following command in Terminal to stop it, then relaunch the app.")
+                        Text(String(localized: "relay.error.processKill.message"))
                             .multilineTextAlignment(.center)
                             .foregroundColor(.white.opacity(0.9))
                             .fixedSize(horizontal: false, vertical: true)
@@ -863,7 +844,7 @@ struct MenuBarView: View {
                         relayManager.showProcessKillAlert = false
                         relayManager.forceCleanAndRestart()
                     }) {
-                        Text("Retry")
+                        Text(String(localized: "relay.error.processKill.retry"))
                             .font(.appHeadline)
                             .foregroundColor(.white)
                             .frame(width: 140, height: 36)
@@ -898,39 +879,41 @@ struct MenuBarView: View {
                 .environmentObject(configService)
         }
         .onReceive(NotificationCenter.default.publisher(for: .composeFromTabBar)) { note in
+            // Clear the pending-compose flag before the tab guard, not after.
+            // The window is on screen if this fires, so `onAppear` will not run
+            // again to consume it — and when the Search tab is showing,
+            // SearchView answers this notification instead of us. Clearing after
+            // the guard left the flag set in exactly that case, so the next time
+            // the window was closed and reopened it mounted with a composer
+            // nobody asked for.
+            guard (note.object as? Int) == 1 else { return }
+            MacWindow.pendingCompose = false
             // SearchView owns object == 1 while it's on screen (selectedTab == .search);
             // for every other tab this is the only listener, so ⌘N works app-wide.
-            guard (note.object as? Int) == 1, selectedTab != .search else { return }
+            guard selectedTab != .search else { return }
             showingCompose = true
         }
         .onAppear {
             FloatingArrowController.shared.dismiss()
             DMService.shared.startListening()
+            #if os(macOS)
+            // The status panel asks for a composer by setting this before the
+            // window exists; this is the first moment a receiver could hear it.
+            if MacWindow.consumePendingCompose() {
+                showingCompose = true
+            }
+            #endif
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            // Service pausing moved to AppDelegate.startFocusLifecycleObservers().
+            // This view is now mounted only by the window scene, so an app sitting
+            // in the menu bar had no owner for it at all. Only the tab reset —
+            // which is genuinely this view's concern — stays here.
             startInactivityTimer()
-            // Pause the feed when the app loses focus to reduce background
-            // CPU/memory usage from relay traffic and note accumulation.
-            FeedService.shared.pauseFeed()
-            // Pause network sync to stop external relay traffic and event
-            // injection while the app is inactive — reduces log volume, CPU,
-            // and prevents pipe backpressure from Go stdout.
-            NetworkSyncService.shared.stop()
-            // Throttle Swift-side background work: stop log parsing into
-            // UI entries, pause the profile-fetch timer, and halt the
-            // LogStore 1-second publishing timer.
-            RelayProcessManager.shared.enterBackground()
-            NostrService.shared.enterBackground()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            // Service resuming moved to AppDelegate — see the resign handler above.
             stopInactivityTimer()
-            // Resume feed connections when the app becomes active again.
-            FeedService.shared.resumeFeed()
-            // Resume external relay syncing.
-            NetworkSyncService.shared.start()
-            // Resume full log processing and profile fetching.
-            RelayProcessManager.shared.enterForeground()
-            NostrService.shared.enterForeground()
         }
         .onReceive(NotificationCenter.default.publisher(for: .havenOpenFeedRelaySettings)) { _ in
             selectedTab = .settings
@@ -953,7 +936,16 @@ struct MenuBarView: View {
                     .keyboardShortcut("5", modifiers: .command)
                 Button("") { selectedTab = .media }
                     .keyboardShortcut("6", modifiers: .command)
-                Button("") { selectedTab = .settings }
+                // ⌘, opens the real Settings scene declared in HavenApp.swift.
+                // It used to select the .settings tab instead, which left that
+                // scene reachable from nothing in the entire app — `openSettings`
+                // was declared here and never called. The status panel now does
+                // the same thing, so the shortcut means one thing everywhere.
+                //
+                // The sidebar's embedded Settings tab is untouched and still
+                // works; whether a window that hosts settings inline should also
+                // have a separate Settings window is a design call, not mine.
+                Button("") { openSettings() }
                     .keyboardShortcut(",", modifiers: .command)
                 Button("") {
                     NotificationCenter.default.post(name: .composeFromTabBar, object: 1)

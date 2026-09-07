@@ -202,9 +202,6 @@
     "A FIPS transport (e.g. nostr-vpn) must be running to make this address reachable." : {
 
     },
-    "A previous Nostr Vault process is still running. Run the following command in Terminal to stop it, then relaunch the app." : {
-
-    },
     "Abuse Reporting: npub1vxlh...g0nvx" : {
 
     },
@@ -1843,6 +1840,36 @@
     "Setup Incomplete" : {
 
     },
+    "relay.error.processKill.message" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A previous Nostr Vault process is still running. Retry will stop it and start the relay again. If that does not work, run this in Terminal and relaunch the app."
+          }
+        }
+      }
+    },
+    "relay.error.processKill.retry" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Retry"
+          }
+        }
+      }
+    },
+    "relay.error.processKill.title" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Startup Error"
+          }
+        }
+      }
+    },
     "setup.action.cancel" : {
       "localizations" : {
         "en" : {
@@ -1989,36 +2016,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "You're All Set"
-          }
-        }
-      }
-    },
-    "setup.error.processKill.message" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "A previous Nostr Vault process is still running. Run the following command in Terminal to stop it, then relaunch the app."
-          }
-        }
-      }
-    },
-    "setup.error.processKill.retry" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Retry"
-          }
-        }
-      }
-    },
-    "setup.error.processKill.title" : {
-      "localizations" : {
-        "en" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Startup Error"
           }
         }
       }
@@ -3078,9 +3075,6 @@
 
     },
     "Spam Filter" : {
-
-    },
-    "Startup Error" : {
 
     },
     "Statistics" : {
