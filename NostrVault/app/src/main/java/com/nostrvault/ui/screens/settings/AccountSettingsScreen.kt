@@ -27,6 +27,11 @@ import androidx.fragment.app.FragmentActivity
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.QrCodeScanner
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import com.nostrvault.data.local.ConfigStore
 import com.nostrvault.data.local.CredentialStore
 import com.nostrvault.data.model.FeedProfile
@@ -398,6 +403,21 @@ private fun AddAccountSection(viewModel: AccountSettingsViewModel) {
     var bunkerInput by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
 
+    // Remote signers hand out their bunker string as a QR code. Typing one by
+    // hand on a phone is the difference between the feature being usable and
+    // being theoretical, and the app already scans QR codes in setup and the
+    // wallet.
+    val bunkerScanner = rememberLauncherForActivityResult(ScanContract()) { result ->
+        result.contents?.trim()?.let { scanned ->
+            if (scanned.startsWith("bunker://")) {
+                bunkerInput = scanned
+                error = null
+            } else {
+                error = "That QR code is not a bunker:// connection string"
+            }
+        }
+    }
+
     if (!expanded) {
         OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
             Text("Add Account")
@@ -446,6 +466,24 @@ private fun AddAccountSection(viewModel: AccountSettingsViewModel) {
         onValueChange = { bunkerInput = it; error = null },
         placeholder = { Text("bunker://…") },
         singleLine = true,
+        trailingIcon = {
+            IconButton(onClick = {
+                bunkerScanner.launch(
+                    ScanOptions().apply {
+                        setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                        setPrompt("Scan your signer's bunker:// code")
+                        setBeepEnabled(false)
+                        setOrientationLocked(true)
+                    }
+                )
+            }) {
+                Icon(
+                    Icons.Default.QrCodeScanner,
+                    contentDescription = "Scan bunker QR code",
+                    tint = colors.primary,
+                )
+            }
+        },
         modifier = Modifier.fillMaxWidth(),
         colors = OutlinedTextFieldDefaults.colors(
             focusedTextColor = PrimaryText, unfocusedTextColor = PrimaryText,

@@ -564,6 +564,16 @@ class RelayForegroundService : Service() {
      */
     private fun startHealthWatchdog() {
         healthWatchdogJob?.cancel()
+        // The relay half of the widget snapshot: this service is the only
+        // thing still running when the activity is gone, and it is the half
+        // that changes on its own. The store skips the redraw when nothing
+        // moved, so riding the watchdog's 30s tick costs a file read.
+        serviceScope.launch {
+            while (lifecycleState == LifecycleState.RUNNING || lifecycleState == LifecycleState.BOOTING) {
+                com.nostrvault.widget.WidgetPublisher.publishRelayStats(applicationContext)
+                delay(WATCHDOG_INTERVAL_MS)
+            }
+        }
         healthWatchdogJob = serviceScope.launch {
             var consecutiveFailures = 0
             while (lifecycleState == LifecycleState.RUNNING && !isShuttingDown) {

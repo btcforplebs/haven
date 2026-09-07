@@ -1,5 +1,7 @@
 package com.nostrvault.service
 
+import com.nostrvault.relay.HavenBridge
+
 /**
  * Port of ContactManager.swift -- pure contact list management logic.
  * No networking, no UI. Operates on tag lists and pubkey sets.
@@ -41,10 +43,15 @@ object ContactManager {
             finalPTags.add(listOf("p", ownerHex))
         }
 
-        // Auto-follow whitelisted accounts
+        // Auto-follow whitelisted accounts. These are stored as npubs and the
+        // follow set is hex, so each one has to be decoded — this loop used to
+        // do nothing at all, which meant a whitelisted account was never
+        // actually added to the contact list it was whitelisted for.
         for (npub in whitelistedNpubs) {
-            // TODO: bech32 decode npub to hex
-            // For now, skip bech32 conversion -- will be added when Bech32 utility is ported
+            val hex = HavenBridge.decodeNpub(npub.trim()) ?: continue
+            if (hex !in existingPubkeys && finalPTags.none { it.size >= 2 && it[1] == hex }) {
+                finalPTags.add(listOf("p", hex))
+            }
         }
 
         val pubkeys = finalPTags.mapNotNull { if (it.size >= 2) it[1] else null }

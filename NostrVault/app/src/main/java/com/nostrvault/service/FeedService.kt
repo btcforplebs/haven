@@ -812,6 +812,12 @@ class FeedService @Inject constructor(
                     FeedMode.GLOBAL -> "global"
                     FeedMode.MEDIA -> "media"
                     FeedMode.POPULAR -> "popular"
+                    FeedMode.ARTICLES -> "articles"
+            FeedMode.RECIPES -> "recipes"
+            FeedMode.LIVE -> "live"
+                    FeedMode.RECIPES -> "recipes"
+            FeedMode.LIVE -> "live"
+                    FeedMode.LIVE -> "live"
                 }
                 sendPrimaryFeedSubscription(relayUrl, "feed-$label")
                 continue
@@ -861,6 +867,9 @@ class FeedService @Inject constructor(
             FeedMode.GLOBAL -> "global"
             FeedMode.MEDIA -> "media"
             FeedMode.POPULAR -> "popular"
+            FeedMode.ARTICLES -> "articles"
+            FeedMode.RECIPES -> "recipes"
+            FeedMode.LIVE -> "live"
         }
         return "feed-$label"
     }
@@ -924,6 +933,9 @@ class FeedService @Inject constructor(
             FeedMode.GLOBAL -> "global"
             FeedMode.MEDIA -> "media"
             FeedMode.POPULAR -> return
+            FeedMode.ARTICLES -> "articles"
+            FeedMode.RECIPES -> "recipes"
+            FeedMode.LIVE -> "live"
         }
         for ((relayUrl, client) in feedClients) {
             if (client.connectionState.value == WebSocketClient.ConnectionState.CONNECTED) {
@@ -955,6 +967,24 @@ class FeedService @Inject constructor(
                 }
                 FeedMode.GLOBAL -> {
                     // No author restriction
+                }
+                FeedMode.ARTICLES -> {
+                    // No author restriction either: the kinds list already
+                    // asks for 30023, and long-form is rare enough that
+                    // scoping it to follows usually leaves an empty screen.
+                }
+                FeedMode.LIVE -> {
+                    // Handled entirely by LiveFeedService; this subscription
+                    // never runs for it.
+                }
+                FeedMode.RECIPES -> {
+                    // Ask the relays for the topic rather than pulling every
+                    // long-form event and throwing most of it away. Only the
+                    // base topics go on the wire — a "#t" filter matches exact
+                    // values, so zapcooking-<category> tags cannot be asked for
+                    // here; RecipeTopics.matches still accepts them locally for
+                    // recipes that arrive through another subscription.
+                    append(",\"#t\":[${RecipeTopics.BASE.joinToString(",") { "\"$it\"" }}]")
                 }
                 FeedMode.MEDIA -> {
                     val authors = when (_mediaFeedMode.value) {

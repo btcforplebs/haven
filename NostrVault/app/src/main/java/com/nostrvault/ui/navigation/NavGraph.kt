@@ -33,6 +33,7 @@ import com.nostrvault.ui.theme.NostrVaultIcons
 import com.nostrvault.ui.theme.SuccessGreen
 import com.nostrvault.ui.theme.ZapOrange
 import com.nostrvault.relay.LogStore
+import com.nostrvault.ui.screens.ArticleReaderScreen
 import com.nostrvault.ui.screens.*
 import com.nostrvault.ui.screens.dashboard.LogViewerScreen
 import com.nostrvault.ui.screens.dm.DMInboxScreen
@@ -126,6 +127,22 @@ fun NostrVaultNavHost(
     val unreadDMs by dmUnreadCount.collectAsState()
     val relayActivity by hasNewRelayActivity.collectAsState()
 
+    // A tap from outside the app — widget, notification, nostr: link — lands in
+    // PendingDeepLink; this is the only place that can act on it. Setup has to
+    // be finished first: navigating away from the wizard would strand a
+    // half-configured install with no way back.
+    val pendingLink by PendingDeepLink.target.collectAsState()
+    LaunchedEffect(pendingLink, isSetupComplete) {
+        if (pendingLink == null || !isSetupComplete) return@LaunchedEffect
+        val target = PendingDeepLink.consume() ?: return@LaunchedEffect
+        // Notifications carry the account they arrived for. Switch first, so a
+        // mention of a second identity does not open under the first.
+        target.accountNpub
+            ?.takeIf { it != configStore.config.value.activeOrOwnerNpub() }
+            ?.let { configStore.switchActiveAccount(it) }
+        navController.navigate(target.route) { launchSingleTop = true }
+    }
+
     Box(modifier = modifier.fillMaxSize()) {
         NavHost(
             navController = navController,
@@ -167,6 +184,9 @@ fun NostrVaultNavHost(
                 FeedScreen(
                     onNoteClick = { noteId ->
                         navController.navigate(Screen.NoteDetail.createRoute(noteId))
+                    },
+                    onArticleClick = { noteId ->
+                        navController.navigate(Screen.ArticleReader.createRoute(noteId))
                     },
                     onProfileClick = { pubkey ->
                         navController.navigate(Screen.Profile.createRoute(pubkey))
@@ -223,6 +243,9 @@ fun NostrVaultNavHost(
                     onNewMessage = {
                         navController.navigate(Screen.NewMessage.createRoute())
                     },
+                    onGroups = {
+                        navController.navigate(Screen.GroupList.route)
+                    },
                 )
             }
 
@@ -265,6 +288,18 @@ fun NostrVaultNavHost(
             }
 
             // ── Detail screens ────────────────────────────────────
+            composable(
+                route = Screen.ArticleReader.route,
+                arguments = listOf(navArgument("noteId") { type = NavType.StringType }),
+            ) {
+                ArticleReaderScreen(
+                    onBack = { navController.popBackStack() },
+                    onProfileClick = { pubkey ->
+                        navController.navigate(Screen.Profile.createRoute(pubkey))
+                    },
+                )
+            }
+
             composable(
                 route = Screen.NoteDetail.route,
                 arguments = listOf(navArgument("noteId") { type = NavType.StringType }),

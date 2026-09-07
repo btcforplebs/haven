@@ -66,6 +66,14 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    testOptions {
+        unitTests {
+            // android.util.Log throws "not mocked" by default, which fails any
+            // JVM test that walks through code that logs — which is most of it.
+            isReturnDefaultValues = true
+        }
+    }
+
     kotlinOptions {
         jvmTarget = "17"
     }
@@ -148,6 +156,8 @@ dependencies {
     // ---- Video (ExoPlayer / Media3) ----
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")
+    // Live streams are HLS (.m3u8); ExoPlayer needs this to open one.
+    implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
 
     // ---- JSON ----
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
@@ -161,6 +171,10 @@ dependencies {
 
     // ---- QR Code ----
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+
+    // ---- Home-screen widgets (Glance) ----
+    implementation("androidx.glance:glance-appwidget:1.1.1")
+    implementation("androidx.glance:glance-material3:1.1.1")
 
     // ---- Markdown ----
     implementation("com.github.jeziellago:compose-markdown:0.5.4")

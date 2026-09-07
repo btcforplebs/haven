@@ -20,6 +20,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
 import com.nostrvault.data.local.ConfigStore
 import com.nostrvault.relay.LogStore
 import com.nostrvault.relay.RelayForegroundService
@@ -32,11 +33,15 @@ import com.nostrvault.service.NostrService
 import com.nostrvault.service.PendingPostManager
 import com.nostrvault.ui.components.FullScreenMediaHost
 import com.nostrvault.ui.components.VideoPiPBridge
+import com.nostrvault.ui.navigation.BridgeEntityDecoder
+import com.nostrvault.ui.navigation.DeepLinkRouter
 import com.nostrvault.ui.navigation.NostrVaultNavHost
+import com.nostrvault.ui.navigation.PendingDeepLink
 import com.nostrvault.ui.notification.NotificationManager
 import com.nostrvault.ui.theme.AppTheme
 import com.nostrvault.ui.theme.NostrVaultTheme
 import com.nostrvault.ui.theme.WindowBackground
+import com.nostrvault.widget.WidgetPublisher
 import androidx.fragment.app.FragmentActivity
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -53,6 +58,7 @@ class MainActivity : FragmentActivity() {
     @Inject lateinit var notificationManager: NotificationManager
     @Inject lateinit var pendingPostManager: PendingPostManager
     @Inject lateinit var mediaUploadManager: MediaUploadManager
+    @Inject lateinit var widgetPublisher: WidgetPublisher
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { /* result ignored */ }
@@ -75,8 +81,15 @@ class MainActivity : FragmentActivity() {
         // Handle media shared into the app via the system share sheet (ACTION_SEND)
         handleShareIntent(intent)
 
+        // …and taps that came from a widget, a notification or a nostr: link.
+        handleDeepLinkIntent(intent)
+
         // Keep PiP auto-enter params in sync with whichever video is playing full-screen
         VideoPiPBridge.onActiveVideoChanged = { refreshPipParams() }
+
+        // Home-screen widgets draw from a snapshot on disk; this keeps it
+        // current for as long as the app is alive.
+        widgetPublisher.start(lifecycleScope)
 
         setContent {
             val config by configStore.config.collectAsState()
@@ -136,6 +149,41 @@ class MainActivity : FragmentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleShareIntent(intent)
+        handleDeepLinkIntent(intent)
+    }
+
+    /**
+     * Route a tap that started (or resumed) the app: a `nostrvault://` link
+     * from a widget, a `nostr:` link handed over by another app, or the extras
+     * on a notification's PendingIntent.
+     *
+     * The extras had been set on that intent for a while with nothing reading
+     * them, so tapping a mention opened the app wherever it last was. All three
+     * sources go through [DeepLinkRouter]; the nav host does the navigating.
+     */
+    private fun handleDeepLinkIntent(intent: Intent?) {
+        if (intent == null) return
+
+        val fromNotification = DeepLinkRouter.fromNotification(
+            type = intent.getStringExtra("notif_type"),
+            eventId = intent.getStringExtra("notif_event_id"),
+            author = intent.getStringExtra("notif_author"),
+            npub = intent.getStringExtra("notif_npub"),
+        )
+        if (fromNotification != null) {
+            // Consumed: a rotation re-delivers the same intent, and without this
+            // the app would jump back to the note every time.
+            intent.removeExtra("notif_type")
+            PendingDeepLink.post(fromNotification)
+            return
+        }
+
+        if (intent.action != Intent.ACTION_VIEW) return
+        val data = intent.data?.toString() ?: return
+        DeepLinkRouter.fromUri(data, BridgeEntityDecoder)?.let {
+            intent.data = null
+            PendingDeepLink.post(it)
+        }
     }
 
     /** Request POST_NOTIFICATIONS on Android 13+ if not already granted. */

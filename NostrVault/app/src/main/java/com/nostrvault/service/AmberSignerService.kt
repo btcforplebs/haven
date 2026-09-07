@@ -187,8 +187,12 @@ class AmberSignerService @Inject constructor(
                 }
                 !result.rejected && result.resultCode == android.app.Activity.RESULT_OK -> result.event
                 else -> {
+                    // The user saw the prompt and did not approve it. Distinct from
+                    // every other failure here (Amber unreachable, no launcher,
+                    // timeout), which callers may retry — an answer of "no" must not
+                    // be re-asked.
                     Log.w(TAG, "Amber sign_event rejected")
-                    null
+                    throw SignerRejectedException()
                 }
             }
         }
@@ -453,3 +457,15 @@ class AmberSignerService @Inject constructor(
         null
     }
 }
+
+/**
+ * The signer prompt was shown and the user did not approve it.
+ *
+ * Subclasses [IllegalStateException] so existing call sites — which already see
+ * that type thrown by `NostrService.signEventAsync` when a signer fails — behave
+ * exactly as before. Callers that retry a failed signature check for this type
+ * and stop, so a declined prompt is never re-shown.
+ */
+class SignerRejectedException(
+    message: String = "Amber signing request was rejected",
+) : IllegalStateException(message)

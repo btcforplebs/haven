@@ -48,6 +48,7 @@
         android:allowBackup="true"
         android:largeHeap="true"
         android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:networkSecurityConfig="@xml/network_security_config"
         android:supportsRtl="true"
@@ -74,6 +75,15 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="nostr" />
+            </intent-filter>
+
+            <!-- The app's own scheme. Widgets open the app with these, matching
+                 iOS's nostrvault:// destinations; DeepLinkRouter maps them. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="nostrvault" />
             </intent-filter>
 
             <!-- Share sheet: receive images/videos shared from other apps and
@@ -111,6 +121,57 @@
             </intent-filter>
         </receiver>
 
+
+        <!-- Home-screen widgets (Glance). Each receiver names the provider XML
+             that gives its size; the widget itself draws from the snapshot file
+             the app publishes. -->
+        <receiver
+            android:name=".widget.VaultPulseReceiver"
+            android:exported="true"
+            android:label="@string/widget_pulse_description">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_pulse_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.QuickActionsReceiver"
+            android:exported="true"
+            android:label="@string/widget_actions_description">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_actions_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.FeedReceiver"
+            android:exported="true"
+            android:label="@string/widget_feed_description">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_feed_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.SatsReceiver"
+            android:exported="true"
+            android:label="@string/widget_sats_description">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_sats_info" />
+        </receiver>
     </application>
 
 </manifest>

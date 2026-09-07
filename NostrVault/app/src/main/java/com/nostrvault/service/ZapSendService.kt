@@ -41,11 +41,18 @@ class ZapSendService @Inject constructor(
      * has paid; the kind-9735 receipt then propagates via relays and is picked
      * up by the existing FeedService 9735 ingestion.
      */
+    /**
+     * @param addressTag the NIP-01 addressable identifier to attribute the zap
+     *   to, e.g. `30311:<host>:<d>` for a live stream. Live clients read the
+     *   `a` tag to decide which room a zap belongs in — without it the zap
+     *   pays the host but never appears in the stream's chat.
+     */
     suspend fun zapNote(
         noteId: String,
         notePubkey: String,
         amountSats: Int,
         message: String = "Zap from Nostr Vault",
+        addressTag: String? = null,
     ): Result<Unit> {
         if (amountSats <= 0) {
             return Result.failure(ZapError.PaymentFailed("Zap amount must be greater than 0"))
@@ -94,12 +101,16 @@ class ZapSendService @Inject constructor(
                     listOf("wss://relay.primal.net", "wss://nos.lol")
                 }
                 addAll(external)
+                // A stream zap has to be published where the room is watching,
+                // or the receipt never shows up in its chat.
+                if (addressTag != null) addAll(LiveChatService.STREAMING_RELAYS)
             }.distinct()
             val tags = buildList {
                 add(listOf("p", notePubkey))
                 add(listOf("relays") + relayList)
                 add(listOf("amount", amountMsat.toString()))
                 if (noteId.isNotEmpty()) add(listOf("e", noteId))
+                addressTag?.let { add(listOf("a", it, LiveChatService.STREAMING_RELAYS.first())) }
                 if (lnurlTag.isNotEmpty()) add(listOf("lnurl", lnurlTag))
             }
             val signed = try {

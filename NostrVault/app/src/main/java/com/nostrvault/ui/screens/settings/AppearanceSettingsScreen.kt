@@ -21,7 +21,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nostrvault.data.local.ConfigStore
 import com.nostrvault.service.FeedService
-import com.nostrvault.service.PushNotificationService
 import com.nostrvault.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,7 +37,6 @@ import javax.inject.Inject
 @HiltViewModel
 class AppearanceViewModel @Inject constructor(
     private val configStore: ConfigStore,
-    private val pushService: PushNotificationService,
     private val feedService: FeedService,
 ) : ViewModel() {
 
@@ -83,9 +81,6 @@ class AppearanceViewModel @Inject constructor(
         _zapsOnly.value = enabled
         viewModelScope.launch {
             configStore.update { it.copy(zapsOnlyMode = enabled) }
-            // Re-push notification preferences so the server applies/lifts the
-            // reaction-push override immediately (see PushNotificationService).
-            pushService.registerIfReady()
         }
     }
 

@@ -3,12 +3,16 @@ package com.nostrvault.service
 import com.nostrvault.data.model.FeedMode
 import com.nostrvault.data.model.FeedNote
 import com.nostrvault.data.model.PopularFilter
+import com.nostrvault.data.model.RecipeTopics
 
 /**
  * Port of FeedFilterEngine.swift -- pure feed filtering and sorting.
  * No state, no UI dependencies. All inputs explicit.
  */
 object FeedFilterEngine {
+
+    /** NIP-23 long-form content. */
+    private const val LONG_FORM_KIND = 30023
 
     /**
      * Main feed filter: applies blocked list, reply/repost visibility,
@@ -57,6 +61,14 @@ object FeedFilterEngine {
                     }
                 }
                 FeedMode.MEDIA -> note.mediaURLs.isNotEmpty()
+                // Long-form only, from anyone the relay has. Scoping this to
+                // follows would usually show an empty screen: articles are rare
+                // enough that the interesting ones come from outside the follow
+                // set, and they are already in the vault either way.
+                FeedMode.ARTICLES -> note.kind == LONG_FORM_KIND
+                FeedMode.RECIPES -> note.kind == LONG_FORM_KIND && RecipeTopics.matches(note.tags)
+                // Live streams are not notes; LiveFeedService supplies them.
+                FeedMode.LIVE -> false
             }
         }
 
