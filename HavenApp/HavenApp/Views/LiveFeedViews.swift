@@ -110,15 +110,27 @@ struct LiveStreamPlayerView: View {
             if let url = stream.streamingURL {
                 VideoPlayerView(url: url)
                     .aspectRatio(16.0 / 9.0, contentMode: .fit)
-                    .frame(maxWidth: .infinity)
+                    // A 16:9 video sized to the width of a phone in landscape
+                    // is taller than the screen, and a VStack that cannot fit
+                    // its children pushes the last one — the composer — off the
+                    // bottom. Cap the video instead; the chat takes the rest.
+                    .frame(maxWidth: .infinity, maxHeight: 320)
                     .background(Color.black)
             }
 
             header
             Divider()
             chatColumn
-            Divider()
-            composer
+        }
+        // The composer is an inset rather than the last row of the stack, so it
+        // is laid out against the safe area and rides above the keyboard
+        // instead of being something the rest of the screen can push away.
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 0) {
+                Divider()
+                composer
+            }
+            .background(.regularMaterial)
         }
         .background(Color.platformWindowBackground)
         .onAppear {
