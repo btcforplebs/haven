@@ -32,7 +32,12 @@ class Bolt11AmountTest {
     @Test fun `other multipliers`() {
         assertEquals(100_000L, service.satsFromBolt11("lnbc1m1p4fakabc"))
         assertEquals(100L, service.satsFromBolt11("lnbc1u1p4fakabc"))
-        assertEquals(100_000_000L, service.satsFromBolt11("lnbc1a1p4x").let { it ?: 100_000_000L })
+        // No multiplier at all: whole BTC.
+        assertEquals(100_000_000L, service.satsFromBolt11("lnbc11p4fakabc"))
+        // `a` is not a multiplier. Asserted directly — the earlier version of
+        // this line was `assertEquals(x, f(y) ?: x)`, which passes whatever
+        // the function does.
+        assertNull(service.satsFromBolt11("lnbc1a1p4fakabc"))
     }
 
     @Test fun `an invoice with no amount has nothing to report`() {
