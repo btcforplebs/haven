@@ -44,7 +44,11 @@ import androidx.compose.ui.zIndex
 import androidx.hilt.navigation.compose.hiltViewModel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.ui.text.style.TextOverflow
+import coil.compose.AsyncImage
+import com.nostrvault.data.model.ArticleMeta
 import com.nostrvault.data.model.FeedMode
+import com.nostrvault.data.model.FeedProfile
 import com.nostrvault.data.model.FeedNote
 import com.nostrvault.data.model.PopularFilter
 import com.nostrvault.ui.components.CustomZapSheet
@@ -61,6 +65,7 @@ import com.nostrvault.ui.components.ScrollCondenseEffect
 import com.nostrvault.ui.components.SkeletonFeed
 import com.nostrvault.service.ScrollPosition
 import com.nostrvault.ui.theme.*
+import java.text.DateFormat
 
 /**
  * Main feed screen with mode tabs, pull-to-refresh, and infinite scroll.
@@ -70,6 +75,7 @@ import com.nostrvault.ui.theme.*
 @Composable
 fun FeedScreen(
     onNoteClick: (String) -> Unit,
+    onArticleClick: (String) -> Unit,
     onProfileClick: (String) -> Unit,
     onCompose: () -> Unit,
     onReply: ((String) -> Unit)? = null,
@@ -357,7 +363,16 @@ fun FeedScreen(
             onRefresh = viewModel::refresh,
             modifier = Modifier.fillMaxSize(),
         ) {
-            if (feedMode == FeedMode.MEDIA) {
+            if (feedMode == FeedMode.ARTICLES) {
+                ArticleList(
+                    notes = notes,
+                    profiles = allProfiles,
+                    isRefreshing = isRefreshing,
+                    contentPadding = padding,
+                    onArticleClick = onArticleClick,
+                    onRefresh = viewModel::refresh,
+                )
+            } else if (feedMode == FeedMode.MEDIA) {
                 MediaFeedGrid(
                     notes = mediaNotes,
                     isRefreshing = isRefreshing,
@@ -641,6 +656,87 @@ fun FeedScreen(
  * media, and long-pressing opens the note's detail view.
  */
 @OptIn(ExperimentalFoundationApi::class)
+/**
+ * The Articles mode list: one card per long-form post, drawn from tags only so
+ * a 20,000-word body never gets laid out to render a row. Tapping opens the
+ * reader rather than the note screen — the note screen renders kind-1 threads,
+ * and would show the Markdown source.
+ */
+@Composable
+private fun ArticleList(
+    notes: List<FeedNote>,
+    profiles: Map<String, FeedProfile>,
+    isRefreshing: Boolean,
+    contentPadding: PaddingValues,
+    onArticleClick: (String) -> Unit,
+    onRefresh: () -> Unit,
+) {
+    if (notes.isEmpty()) {
+        if (!isRefreshing) EmptyFeedPlaceholder(FeedMode.ARTICLES, onRefresh = onRefresh)
+        return
+    }
+
+    val colors = LocalNostrVaultColors.current
+    LazyColumn(
+        contentPadding = contentPadding,
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        items(notes, key = { it.id }) { note ->
+            val meta = remember(note.id, note.tags) { ArticleMeta.from(note) }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onArticleClick(note.id) }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+            ) {
+                meta.imageUrl?.let { url ->
+                    AsyncImage(
+                        model = url,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(140.dp)
+                            .clip(RoundedCornerShape(10.dp)),
+                    )
+                    Spacer(Modifier.height(10.dp))
+                }
+                Text(
+                    text = meta.title,
+                    color = PrimaryText,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    lineHeight = 22.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                meta.summary?.let {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        text = it,
+                        color = SecondaryText,
+                        fontSize = 14.sp,
+                        lineHeight = 19.sp,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    text = buildString {
+                        append(profiles[note.pubkey]?.bestName ?: note.pubkey.take(8))
+                        append(" · ")
+                        append(DateFormat.getDateInstance(DateFormat.MEDIUM).format(meta.publishedAt))
+                    },
+                    color = TertiaryText,
+                    fontSize = 12.sp,
+                )
+            }
+            HorizontalDivider(color = colors.primary.copy(alpha = 0.10f))
+        }
+    }
+}
+
 @Composable
 private fun MediaFeedGrid(
     notes: List<FeedNote>,
@@ -884,8 +980,11 @@ private fun FeedTopBar(
                 )
             }
 
-            // Mode-dependent filter buttons
+            // Mode-dependent filter buttons. Articles has none: reposts,
+            // replies and auto-load are all about kind-1 traffic, and a
+            // long-form list is short enough not to need them.
             when (feedMode) {
+                FeedMode.ARTICLES -> Unit
                 FeedMode.FOLLOWING, FeedMode.DISCOVERY, FeedMode.GLOBAL -> {
                     // Auto-load posts
                     IconButton(onClick = onToggleAutoLoad, modifier = Modifier.size(32.dp)) {
@@ -1005,6 +1104,7 @@ private fun EmptyFeedPlaceholder(mode: FeedMode, onRefresh: (() -> Unit)? = null
                     FeedMode.GLOBAL -> NostrVaultIcons.Globe
                     FeedMode.POPULAR -> NostrVaultIcons.BarChart
                     FeedMode.MEDIA -> NostrVaultIcons.Media
+                    FeedMode.ARTICLES -> NostrVaultIcons.Articles
                 },
                 contentDescription = null,
                 tint = colors.primaryLight,
@@ -1018,6 +1118,7 @@ private fun EmptyFeedPlaceholder(mode: FeedMode, onRefresh: (() -> Unit)? = null
                     FeedMode.GLOBAL -> "No Global Notes Yet"
                     FeedMode.POPULAR -> "No Popular Notes Yet"
                     FeedMode.MEDIA -> "No Media Found"
+                    FeedMode.ARTICLES -> "No Articles Yet"
                 },
                 color = PrimaryText,
                 fontSize = 22.sp,
@@ -1032,6 +1133,7 @@ private fun EmptyFeedPlaceholder(mode: FeedMode, onRefresh: (() -> Unit)? = null
                     FeedMode.GLOBAL -> "Waiting for notes from your feed relays"
                     FeedMode.POPULAR -> "Waiting for engagement data to arrive"
                     FeedMode.MEDIA -> "Photos and videos from your feed show up here"
+                    FeedMode.ARTICLES -> "Long-form posts in your vault show up here"
                 },
                 color = SecondaryText,
                 fontSize = 13.sp,

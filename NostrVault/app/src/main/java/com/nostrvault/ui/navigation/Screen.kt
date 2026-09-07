@@ -15,6 +15,10 @@ sealed class Screen(val route: String) {
     }
 
     // Detail screens
+    /** Reader for a NIP-23 long-form post; the note screen renders kind-1 threads. */
+    data object ArticleReader : Screen("article/{noteId}") {
+        fun createRoute(noteId: String) = "article/$noteId"
+    }
     data object NoteDetail : Screen("note/{noteId}") {
         fun createRoute(noteId: String) = "note/$noteId"
     }

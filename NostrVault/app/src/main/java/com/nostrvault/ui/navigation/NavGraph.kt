@@ -33,6 +33,7 @@ import com.nostrvault.ui.theme.NostrVaultIcons
 import com.nostrvault.ui.theme.SuccessGreen
 import com.nostrvault.ui.theme.ZapOrange
 import com.nostrvault.relay.LogStore
+import com.nostrvault.ui.screens.ArticleReaderScreen
 import com.nostrvault.ui.screens.*
 import com.nostrvault.ui.screens.dashboard.LogViewerScreen
 import com.nostrvault.ui.screens.dm.DMInboxScreen
@@ -184,6 +185,9 @@ fun NostrVaultNavHost(
                     onNoteClick = { noteId ->
                         navController.navigate(Screen.NoteDetail.createRoute(noteId))
                     },
+                    onArticleClick = { noteId ->
+                        navController.navigate(Screen.ArticleReader.createRoute(noteId))
+                    },
                     onProfileClick = { pubkey ->
                         navController.navigate(Screen.Profile.createRoute(pubkey))
                     },
@@ -284,6 +288,18 @@ fun NostrVaultNavHost(
             }
 
             // ── Detail screens ────────────────────────────────────
+            composable(
+                route = Screen.ArticleReader.route,
+                arguments = listOf(navArgument("noteId") { type = NavType.StringType }),
+            ) {
+                ArticleReaderScreen(
+                    onBack = { navController.popBackStack() },
+                    onProfileClick = { pubkey ->
+                        navController.navigate(Screen.Profile.createRoute(pubkey))
+                    },
+                )
+            }
+
             composable(
                 route = Screen.NoteDetail.route,
                 arguments = listOf(navArgument("noteId") { type = NavType.StringType }),

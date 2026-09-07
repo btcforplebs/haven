@@ -10,6 +10,9 @@ import com.nostrvault.data.model.PopularFilter
  */
 object FeedFilterEngine {
 
+    /** NIP-23 long-form content. */
+    private const val LONG_FORM_KIND = 30023
+
     /**
      * Main feed filter: applies blocked list, reply/repost visibility,
      * WoT membership, popular scoring, and throttle limits.
@@ -57,6 +60,11 @@ object FeedFilterEngine {
                     }
                 }
                 FeedMode.MEDIA -> note.mediaURLs.isNotEmpty()
+                // Long-form only, from anyone the relay has. Scoping this to
+                // follows would usually show an empty screen: articles are rare
+                // enough that the interesting ones come from outside the follow
+                // set, and they are already in the vault either way.
+                FeedMode.ARTICLES -> note.kind == LONG_FORM_KIND
             }
         }
 

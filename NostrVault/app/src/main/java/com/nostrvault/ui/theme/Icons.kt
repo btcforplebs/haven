@@ -6,6 +6,7 @@ import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.ViewList
 import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AlternateEmail
@@ -130,6 +131,7 @@ object NostrVaultIcons {
     val Search: ImageVector = Icons.Filled.Search          // magnifyingglass
     val History: ImageVector = Icons.Filled.History         // clock.arrow.circlepath
     val Media: ImageVector = Icons.Filled.Image            // photo
+    val Articles: ImageVector = Icons.Filled.Article       // doc.text
     val More: ImageVector = Icons.Filled.MoreVert          // ellipsis
     val Edit: ImageVector = Icons.Filled.Edit              // pencil
     val Delete: ImageVector = Icons.Filled.Delete          // trash

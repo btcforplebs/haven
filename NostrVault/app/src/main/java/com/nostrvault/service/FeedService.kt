@@ -812,6 +812,7 @@ class FeedService @Inject constructor(
                     FeedMode.GLOBAL -> "global"
                     FeedMode.MEDIA -> "media"
                     FeedMode.POPULAR -> "popular"
+                    FeedMode.ARTICLES -> "articles"
                 }
                 sendPrimaryFeedSubscription(relayUrl, "feed-$label")
                 continue
@@ -861,6 +862,7 @@ class FeedService @Inject constructor(
             FeedMode.GLOBAL -> "global"
             FeedMode.MEDIA -> "media"
             FeedMode.POPULAR -> "popular"
+            FeedMode.ARTICLES -> "articles"
         }
         return "feed-$label"
     }
@@ -924,6 +926,7 @@ class FeedService @Inject constructor(
             FeedMode.GLOBAL -> "global"
             FeedMode.MEDIA -> "media"
             FeedMode.POPULAR -> return
+            FeedMode.ARTICLES -> "articles"
         }
         for ((relayUrl, client) in feedClients) {
             if (client.connectionState.value == WebSocketClient.ConnectionState.CONNECTED) {
@@ -955,6 +958,11 @@ class FeedService @Inject constructor(
                 }
                 FeedMode.GLOBAL -> {
                     // No author restriction
+                }
+                FeedMode.ARTICLES -> {
+                    // No author restriction either: the kinds list already
+                    // asks for 30023, and long-form is rare enough that
+                    // scoping it to follows usually leaves an empty screen.
                 }
                 FeedMode.MEDIA -> {
                     val authors = when (_mediaFeedMode.value) {

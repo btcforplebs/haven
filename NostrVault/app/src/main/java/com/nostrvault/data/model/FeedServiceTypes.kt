@@ -406,6 +406,14 @@ enum class FeedMode(val displayName: String) {
     GLOBAL("Global"),
     POPULAR("Popular"),
     MEDIA("Media"),
+
+    /**
+     * Long-form articles (kind 30023). The events were already arriving — the
+     * feed subscription has asked for kind 30023 all along and the dashboard
+     * counts them — so this mode is a lens on what the relay already holds,
+     * not a new fetch.
+     */
+    ARTICLES("Articles"),
 }
 
 enum class MediaFeedMode(val displayName: String) {
