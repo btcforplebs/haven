@@ -167,7 +167,10 @@ fun LiveStreamScreen(
                     .fillMaxWidth()
                     .navigationBarsPadding()
                     .imePadding()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                    // The player is an overlay inside the feed screen, which
+                    // draws its own floating tab bar underneath everything
+                    // here — without this the message box sits behind it.
+                    .padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 80.dp),
             ) {
                 OutlinedTextField(
                     value = chatInput,
@@ -241,7 +244,9 @@ private fun LiveChat(
             ) {
                 if (entry.zapSats != null) {
                     Text(
-                        text = "⚡ ${entry.zapSats}",
+                        // A zap whose amount the receipt did not carry still
+                        // happened — show the bolt, not a zero.
+                        text = if (entry.zapSats > 0) "⚡ ${entry.zapSats}" else "⚡",
                         color = colors.primary,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,

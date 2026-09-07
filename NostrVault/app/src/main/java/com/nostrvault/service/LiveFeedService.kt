@@ -40,8 +40,15 @@ class LiveFeedService @Inject constructor(
     companion object {
         private const val TAG = "LiveFeedService"
         private const val LIMIT = 300
-        /** Long enough for slow relays, short enough that the spinner ends. */
-        private const val COLLECT_WINDOW_MS = 6_000L
+        /**
+         * How long to hold the relay connections open for one refresh.
+         *
+         * 6s was too short on the phone: five sockets each have to do DNS, TLS
+         * and a subscription, and the window closed with an empty list on a
+         * connection that was working fine — the relays connected at t+5s and
+         * were disconnected at t+6s before any of them answered.
+         */
+        private const val COLLECT_WINDOW_MS = 20_000L
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

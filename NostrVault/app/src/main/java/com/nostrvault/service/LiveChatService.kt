@@ -68,7 +68,11 @@ class LiveChatService @Inject constructor(
         val pubkey: String,
         val content: String,
         val createdAt: Long,
-        /** Non-null for a zap receipt: the amount in sats, when it could be read. */
+        /**
+         * Non-null for a zap receipt. 0 means the receipt carried no readable
+         * amount — a real case, since the amount lives in the embedded request
+         * and not every provider copies it onto the receipt.
+         */
         val zapSats: Long? = null,
     )
 
@@ -228,7 +232,11 @@ class LiveChatService @Inject constructor(
                             pubkey = request?.get("pubkey")?.jsonPrimitive?.content ?: pubkey,
                             content = request?.get("content")?.jsonPrimitive?.content.orEmpty(),
                             createdAt = createdAt,
-                            zapSats = msats?.let { it / 1000 } ?: 0L,
+                            // 0 means "this receipt did not say", not "zero
+                            // sats". Showing a 0 next to a bolt states an
+                            // amount that was never in the event; the UI shows
+                            // the bolt alone instead.
+                            zapSats = msats?.takeIf { it > 0 }?.let { it / 1000 } ?: 0L,
                         )
                     }
                     else -> null
