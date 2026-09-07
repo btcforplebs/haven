@@ -336,16 +336,24 @@ class FeedService: ObservableObject {
     /// filtered by minimum follower count) and persists it to disk.
     func loadWotPubkeys() {
         let cacheURL = ConfigService.shared.relayDataDir.appendingPathComponent("wot_cache.json")
-        let loaded = FeedFilterEngine.loadWotPubkeys(from: cacheURL)
-        if loaded.isEmpty {
+        // nil = could not read the cache; keep whatever graph we already have.
+        // Empty = read fine, but the graph names nobody but the owner (a new
+        // account with no follows). That is no trust data, and the Global feed
+        // treats an empty set as "show everything" rather than filtering the
+        // whole world out — so it must be applied, not skipped, or a previous
+        // account's graph would linger after a switch.
+        guard let loaded = FeedFilterEngine.loadWotPubkeys(
+            from: cacheURL,
+            ownerHex: ConfigService.shared.activeAccountHexPubkey
+        ) else {
             #if DEBUG
-            print("FeedService: Could not load WOT cache from \(cacheURL.path)")
+            print("FeedService: Could not read WOT cache from \(cacheURL.path)")
             #endif
             return
         }
         wotPubkeys = loaded
         #if DEBUG
-        print("FeedService: Loaded \(wotPubkeys.count) WOT pubkeys from cache")
+        print("FeedService: Loaded \(wotPubkeys.count) usable WOT pubkeys from cache")
         #endif
         // Re-filter if we're currently in global mode
         if feedMode == .global || (feedMode == .media && mediaFeedMode == .global) {

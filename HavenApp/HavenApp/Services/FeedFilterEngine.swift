@@ -174,13 +174,39 @@ enum FeedFilterEngine {
     /// Loads Web-of-Trust pubkeys from the relay's cached `wot_cache.json` file.
     /// The relay computes this graph (owner -> follows -> follows-of-follows) and
     /// persists it to disk. Returns an empty set on any failure.
-    static func loadWotPubkeys(from cacheURL: URL) -> Set<String> {
+    /// Loads the Web-of-Trust graph the relay persisted to `wot_cache.json`.
+    ///
+    /// `ownerHex` is the active account. A graph whose only member is the owner
+    /// carries no trust information — the relay seeds the graph with the owner
+    /// and then adds who they follow, so an account with no follows produces a
+    /// set of size one. Callers treat an empty set as "no trust data, do not
+    /// filter"; returning the owner-only set instead made the Global feed
+    /// filter every note by anyone else and render blank for every new user.
+    /// Normalising it here keeps one definition of "unusable graph" for both
+    /// the Global feed and the Global media grid.
+    /// Returns `nil` when the cache could not be read at all — the caller keeps
+    /// whatever graph it already had rather than throwing it away over a
+    /// transient read failure. An empty set means the cache read fine and holds
+    /// no usable graph, which the caller should apply (it clears a previous
+    /// account's graph on a switch).
+    static func loadWotPubkeys(from cacheURL: URL, ownerHex: String) -> Set<String>? {
         guard let data = try? Data(contentsOf: cacheURL),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let pubkeys = json["pubkeys"] as? [String: Bool] else {
-            return []
+            return nil
         }
-        return Set(pubkeys.keys)
+        let loaded = Set(pubkeys.keys)
+        guard hasUsableWot(loaded, ownerHex: ownerHex) else { return [] }
+        return loaded
+    }
+
+    /// True when the graph names somebody other than the owner. An empty
+    /// graph and a graph of just yourself are the same amount of evidence
+    /// about who to trust: none.
+    static func hasUsableWot(_ pubkeys: Set<String>, ownerHex: String) -> Bool {
+        guard !pubkeys.isEmpty else { return false }
+        if ownerHex.isEmpty { return true }
+        return pubkeys.contains { $0 != ownerHex }
     }
 
     // MARK: - Relay URL Normalization
