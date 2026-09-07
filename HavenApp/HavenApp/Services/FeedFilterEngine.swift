@@ -56,7 +56,15 @@ enum FeedFilterEngine {
                 return !note.isReply
             }
             if mode == .global {
-                if !wotPubkeys.isEmpty && !wotPubkeys.contains(note.pubkey) { return false }
+                // Fail CLOSED. `wotPubkeys` empty used to mean "no trust data,
+                // so admit everyone", which handed a brand-new account the open
+                // firehose — measured at two thirds spam on the default seed
+                // relays. An unusable graph now shows nothing and the caller
+                // says so, rather than quietly showing the worst of Nostr.
+                // The graph is seeded from the starter pack for an owner who
+                // follows nobody, so empty here means "not built yet", not
+                // "this user has no friends".
+                if !wotPubkeys.contains(note.pubkey) { return false }
                 return !note.isReply
             }
             if mode == .following {
@@ -107,7 +115,8 @@ enum FeedFilterEngine {
     ) -> [FeedNote] {
         var media = notes.filter { note in
             if blocked.contains(note.pubkey) { return false }
-            if isGlobalMedia && !wotPubkeys.isEmpty && !wotPubkeys.contains(note.pubkey) { return false }
+            // Fail closed for the same reason as the Global feed above.
+            if isGlobalMedia && !wotPubkeys.contains(note.pubkey) { return false }
             return !note.mediaURLs.isEmpty
         }.sorted {
             if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
