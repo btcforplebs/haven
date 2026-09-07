@@ -422,6 +422,14 @@ enum class FeedMode(val displayName: String) {
      * alike even though the wire format is identical.
      */
     RECIPES("Recipes"),
+
+    /**
+     * NIP-53 live streams (kind 30311). Unlike every other mode this is not a
+     * view of the note list — live events are replaceable announcements
+     * fetched fresh each time, because one that ended two minutes ago still
+     * says "live" in anything cached.
+     */
+    LIVE("Live"),
 }
 
 /** `t` topics zap.cooking publishes recipes under; category tags are `zapcooking-<category>`. */

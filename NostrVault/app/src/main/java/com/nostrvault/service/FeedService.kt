@@ -814,7 +814,10 @@ class FeedService @Inject constructor(
                     FeedMode.POPULAR -> "popular"
                     FeedMode.ARTICLES -> "articles"
             FeedMode.RECIPES -> "recipes"
+            FeedMode.LIVE -> "live"
                     FeedMode.RECIPES -> "recipes"
+            FeedMode.LIVE -> "live"
+                    FeedMode.LIVE -> "live"
                 }
                 sendPrimaryFeedSubscription(relayUrl, "feed-$label")
                 continue
@@ -866,6 +869,7 @@ class FeedService @Inject constructor(
             FeedMode.POPULAR -> "popular"
             FeedMode.ARTICLES -> "articles"
             FeedMode.RECIPES -> "recipes"
+            FeedMode.LIVE -> "live"
         }
         return "feed-$label"
     }
@@ -931,6 +935,7 @@ class FeedService @Inject constructor(
             FeedMode.POPULAR -> return
             FeedMode.ARTICLES -> "articles"
             FeedMode.RECIPES -> "recipes"
+            FeedMode.LIVE -> "live"
         }
         for ((relayUrl, client) in feedClients) {
             if (client.connectionState.value == WebSocketClient.ConnectionState.CONNECTED) {
@@ -967,6 +972,10 @@ class FeedService @Inject constructor(
                     // No author restriction either: the kinds list already
                     // asks for 30023, and long-form is rare enough that
                     // scoping it to follows usually leaves an empty screen.
+                }
+                FeedMode.LIVE -> {
+                    // Handled entirely by LiveFeedService; this subscription
+                    // never runs for it.
                 }
                 FeedMode.RECIPES -> {
                     // Ask the relays for the topic rather than pulling every

@@ -67,6 +67,8 @@ object FeedFilterEngine {
                 // set, and they are already in the vault either way.
                 FeedMode.ARTICLES -> note.kind == LONG_FORM_KIND
                 FeedMode.RECIPES -> note.kind == LONG_FORM_KIND && RecipeTopics.matches(note.tags)
+                // Live streams are not notes; LiveFeedService supplies them.
+                FeedMode.LIVE -> false
             }
         }
 

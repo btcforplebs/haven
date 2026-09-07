@@ -49,8 +49,10 @@ import coil.compose.AsyncImage
 import com.nostrvault.data.model.ArticleMeta
 import com.nostrvault.data.model.FeedMode
 import com.nostrvault.data.model.FeedProfile
+import com.nostrvault.data.model.LiveStream
 import com.nostrvault.data.model.FeedNote
 import com.nostrvault.data.model.PopularFilter
+import com.nostrvault.ui.screens.LiveStreamScreen
 import com.nostrvault.ui.components.CustomZapSheet
 import com.nostrvault.ui.components.FullScreenMediaRouter
 import com.nostrvault.ui.components.RetryableAsyncImage
@@ -85,6 +87,12 @@ fun FeedScreen(
     viewModel: FeedViewModel = hiltViewModel(),
 ) {
     val feedMode by viewModel.feedMode.collectAsState()
+    val liveStreams by viewModel.liveStreams.collectAsState()
+    val liveLoading by viewModel.liveLoading.collectAsState()
+    // The tapped stream is held rather than looked up again by id: a kind-30311
+    // event is replaceable and short-lived, so the copy the grid was showing is
+    // the one to play.
+    var playingStream by remember { mutableStateOf<LiveStream?>(null) }
     val notes by viewModel.filteredNotes.collectAsState()
     val mediaNotes by viewModel.mediaNotes.collectAsState()
     val isRefreshing by viewModel.isRefreshing.collectAsState()
@@ -363,7 +371,16 @@ fun FeedScreen(
             onRefresh = viewModel::refresh,
             modifier = Modifier.fillMaxSize(),
         ) {
-            if (feedMode == FeedMode.ARTICLES || feedMode == FeedMode.RECIPES) {
+            if (feedMode == FeedMode.LIVE) {
+                LiveGrid(
+                    streams = liveStreams,
+                    profiles = allProfiles,
+                    isLoading = liveLoading,
+                    contentPadding = padding,
+                    onStreamClick = { playingStream = it },
+                    onRefresh = viewModel::refreshLive,
+                )
+            } else if (feedMode == FeedMode.ARTICLES || feedMode == FeedMode.RECIPES) {
                 ArticleList(
                     mode = feedMode,
                     notes = notes,
@@ -581,6 +598,17 @@ fun FeedScreen(
         )
     }
 
+    // The live player takes over the screen rather than living on a nav route:
+    // it needs the LiveStream object it was opened with, and a route argument
+    // would mean re-resolving a replaceable event that may already be gone.
+    playingStream?.let { stream ->
+        LiveStreamScreen(
+            stream = stream,
+            hostName = allProfiles[stream.hostPubkey]?.bestName,
+            onBack = { playingStream = null },
+        )
+    }
+
     // Delete confirmation dialog
     if (deleteNoteId != null) {
         AlertDialog(
@@ -735,6 +763,74 @@ private fun ArticleList(
                 )
             }
             HorizontalDivider(color = colors.primary.copy(alpha = 0.10f))
+        }
+    }
+}
+
+/**
+ * Live streams (NIP-53). Only playable ones reach here — LiveFeedService drops
+ * anything that has ended or whose URL the player cannot open, because a tile
+ * for one of those can only disappoint.
+ */
+@Composable
+private fun LiveGrid(
+    streams: List<LiveStream>,
+    profiles: Map<String, FeedProfile>,
+    isLoading: Boolean,
+    contentPadding: PaddingValues,
+    onStreamClick: (LiveStream) -> Unit,
+    onRefresh: () -> Unit,
+) {
+    val colors = LocalNostrVaultColors.current
+    if (streams.isEmpty()) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+            if (isLoading) {
+                CircularProgressIndicator(color = colors.primary)
+            } else {
+                EmptyFeedPlaceholder(FeedMode.LIVE, onRefresh = onRefresh)
+            }
+        }
+        return
+    }
+
+    LazyColumn(contentPadding = contentPadding, modifier = Modifier.fillMaxSize()) {
+        items(streams, key = { it.address }) { stream ->
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onStreamClick(stream) }
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+            ) {
+                stream.imageUrl?.let { url ->
+                    AsyncImage(
+                        model = url,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(16f / 9f)
+                            .clip(RoundedCornerShape(10.dp)),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                Text(
+                    text = stream.title ?: "Untitled stream",
+                    color = PrimaryText,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = buildString {
+                        append(profiles[stream.hostPubkey]?.bestName ?: stream.hostPubkey.take(8))
+                        stream.participants?.let { append(" · $it watching") }
+                    },
+                    color = TertiaryText,
+                    fontSize = 12.sp,
+                )
+            }
         }
     }
 }
@@ -986,7 +1082,7 @@ private fun FeedTopBar(
             // replies and auto-load are all about kind-1 traffic, and a
             // long-form list is short enough not to need them.
             when (feedMode) {
-                FeedMode.ARTICLES, FeedMode.RECIPES -> Unit
+                FeedMode.ARTICLES, FeedMode.RECIPES, FeedMode.LIVE -> Unit
                 FeedMode.FOLLOWING, FeedMode.DISCOVERY, FeedMode.GLOBAL -> {
                     // Auto-load posts
                     IconButton(onClick = onToggleAutoLoad, modifier = Modifier.size(32.dp)) {
@@ -1108,6 +1204,7 @@ private fun EmptyFeedPlaceholder(mode: FeedMode, onRefresh: (() -> Unit)? = null
                     FeedMode.MEDIA -> NostrVaultIcons.Media
                     FeedMode.ARTICLES -> NostrVaultIcons.Articles
                     FeedMode.RECIPES -> NostrVaultIcons.Recipes
+                    FeedMode.LIVE -> NostrVaultIcons.Live
                 },
                 contentDescription = null,
                 tint = colors.primaryLight,
@@ -1123,6 +1220,7 @@ private fun EmptyFeedPlaceholder(mode: FeedMode, onRefresh: (() -> Unit)? = null
                     FeedMode.MEDIA -> "No Media Found"
                     FeedMode.ARTICLES -> "No Articles Yet"
                     FeedMode.RECIPES -> "No Recipes Yet"
+                    FeedMode.LIVE -> "Nothing Live"
                 },
                 color = PrimaryText,
                 fontSize = 22.sp,
@@ -1139,6 +1237,7 @@ private fun EmptyFeedPlaceholder(mode: FeedMode, onRefresh: (() -> Unit)? = null
                     FeedMode.MEDIA -> "Photos and videos from your feed show up here"
                     FeedMode.ARTICLES -> "Long-form posts in your vault show up here"
                     FeedMode.RECIPES -> "Recipes from zap.cooking show up here"
+                    FeedMode.LIVE -> "Streams that are running right now show up here"
                 },
                 color = SecondaryText,
                 fontSize = 13.sp,

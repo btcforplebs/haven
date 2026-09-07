@@ -156,6 +156,8 @@ dependencies {
     // ---- Video (ExoPlayer / Media3) ----
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")
+    // Live streams are HLS (.m3u8); ExoPlayer needs this to open one.
+    implementation("androidx.media3:media3-exoplayer-hls:1.5.1")
 
     // ---- JSON ----
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")

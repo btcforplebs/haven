@@ -9,6 +9,7 @@ import com.nostrvault.data.model.FeedProfile
 import com.nostrvault.data.model.MediaFeedMode
 import com.nostrvault.data.model.NoteStats
 import com.nostrvault.data.model.PopularFilter
+import com.nostrvault.service.LiveFeedService
 import com.nostrvault.service.FeedService
 import com.nostrvault.service.NostrService
 import com.nostrvault.service.ScrollPosition
@@ -33,7 +34,21 @@ class FeedViewModel @Inject constructor(
     private val configStore: ConfigStore,
     private val notificationManager: NotificationManager,
     private val zapSendService: ZapSendService,
+    private val liveFeedService: LiveFeedService,
 ) : ViewModel() {
+
+    /**
+     * Live streams come from their own service rather than the note list: a
+     * kind-30311 event is a replaceable announcement, and one that ended two
+     * minutes ago still says "live" in anything cached, so Live always
+     * refetches on entry.
+     */
+    val liveStreams = liveFeedService.streams
+    val liveLoading = liveFeedService.isLoading
+
+    fun refreshLive() = liveFeedService.refresh()
+
+    fun liveStream(address: String) = liveFeedService.streams.value.firstOrNull { it.address == address }
 
     // Zap result feedback for the UI (toast)
     private val _zapMessage = MutableSharedFlow<String>(extraBufferCapacity = 4)
@@ -171,6 +186,11 @@ class FeedViewModel @Inject constructor(
 
     fun setFeedMode(mode: FeedMode) {
         _feedMode.value = mode
+        if (mode == FeedMode.LIVE) {
+            // Nothing to switch on the note subscription — Live has its own.
+            liveFeedService.refresh()
+            return
+        }
         viewModelScope.launch {
             feedService.switchFeedMode(mode)
         }
