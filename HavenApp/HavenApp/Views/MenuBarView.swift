@@ -879,15 +879,18 @@ struct MenuBarView: View {
                 .environmentObject(configService)
         }
         .onReceive(NotificationCenter.default.publisher(for: .composeFromTabBar)) { note in
+            // Clear the pending-compose flag before the tab guard, not after.
+            // The window is on screen if this fires, so `onAppear` will not run
+            // again to consume it — and when the Search tab is showing,
+            // SearchView answers this notification instead of us. Clearing after
+            // the guard left the flag set in exactly that case, so the next time
+            // the window was closed and reopened it mounted with a composer
+            // nobody asked for.
+            guard (note.object as? Int) == 1 else { return }
+            MacWindow.pendingCompose = false
             // SearchView owns object == 1 while it's on screen (selectedTab == .search);
             // for every other tab this is the only listener, so ⌘N works app-wide.
-            guard (note.object as? Int) == 1, selectedTab != .search else { return }
-            #if os(macOS)
-            // Consume the flag too: the window was already open, so onAppear
-            // will not run, and a flag left set would compose spuriously the
-            // next time this view mounts.
-            MacWindow.pendingCompose = false
-            #endif
+            guard selectedTab != .search else { return }
             showingCompose = true
         }
         .onAppear {
