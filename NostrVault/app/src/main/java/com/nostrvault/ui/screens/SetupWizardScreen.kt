@@ -52,6 +52,8 @@ import com.nostrvault.relay.HavenBridge
 import com.nostrvault.relay.HavenConfig
 import com.nostrvault.relay.RelayConfiguration
 import com.nostrvault.service.AmberSignerService
+import com.nostrvault.service.NIP46Service
+import com.nostrvault.relay.AccountBunkerConfig
 import com.nostrvault.service.BlossomService
 import com.nostrvault.service.NIP49Service
 import com.nostrvault.service.NostrService
@@ -93,7 +95,7 @@ enum class WizardStep {
     WELCOME, CHOOSE_PATH, NOSTR_INTRO, INITIAL_FOLLOWS, ACCOUNT, RELAYS, IMPORT_NOTES, MIRROR_MEDIA, WALLET, COMPLETE
 }
 
-enum class AccountMode { GENERATE, IMPORT, AMBER }
+enum class AccountMode { GENERATE, IMPORT, AMBER, REMOTE_SIGNER }
 enum class SetupPath { NONE, FULL, BROWSE, NEW_TO_NOSTR }
 
 // ── ViewModel ────────────────────────────────────────────────────
@@ -124,6 +126,9 @@ class SetupWizardViewModel @Inject constructor(
 
     private val _nsecInput = MutableStateFlow("")
     val nsecInput = _nsecInput.asStateFlow()
+
+    private val _bunkerInput = MutableStateFlow("")
+    val bunkerInput = _bunkerInput.asStateFlow()
 
     private val _passphrase = MutableStateFlow("")
     val passphrase = _passphrase.asStateFlow()
@@ -223,6 +228,8 @@ class SetupWizardViewModel @Inject constructor(
     fun setAccountMode(mode: AccountMode) { _accountMode.value = mode }
     fun setNpubInput(value: String) { _npubInput.value = value; _error.value = null }
     fun setNsecInput(value: String) { _nsecInput.value = value; _error.value = null }
+
+    fun setBunkerInput(value: String) { _bunkerInput.value = value; _error.value = null }
     fun setPassphrase(value: String) { _passphrase.value = value }
     fun setConfirmPassphrase(value: String) { _confirmPassphrase.value = value }
     fun setNewRelayInput(value: String) { _newRelayInput.value = value }
@@ -495,6 +502,48 @@ class SetupWizardViewModel @Inject constructor(
                                 amberSignerPackage = amberSignerService.signerPackage,
                             ) }
                             configStore.setActiveAccount(hexPubkey)
+                        }
+                        AccountMode.REMOTE_SIGNER -> {
+                            // Same connect this app already offered in
+                            // Settings -> Accounts, just reachable at the point
+                            // where someone actually says who they are. Anyone
+                            // whose key lives in a bunker had to pick one of
+                            // the other three, finish setup, then go find the
+                            // setting.
+                            val uri = _bunkerInput.value.trim()
+                            if (!uri.startsWith("bunker://")) {
+                                _error.value = "Connection string must start with bunker://"
+                                _isLoading.value = false
+                                return@launch
+                            }
+                            val keypair = HavenBridge.generateKeyPair()?.split(":")
+                            if (keypair == null || keypair.size != 2) {
+                                _error.value = "Could not create a client key for the signer"
+                                _isLoading.value = false
+                                return@launch
+                            }
+                            val signerPubkey = NIP46Service.connect(keypair[0], uri)
+                            if (signerPubkey == null) {
+                                _error.value = "Could not reach that signer. Check the string and that the signer is online."
+                                _isLoading.value = false
+                                return@launch
+                            }
+                            val npub = HavenBridge.hexToNpub(signerPubkey) ?: signerPubkey
+                            configStore.setBunkerConfig(
+                                npub,
+                                AccountBunkerConfig(
+                                    bunkerURI = uri,
+                                    signerPubkey = signerPubkey,
+                                    clientSecretKey = keypair[0],
+                                    clientPubkey = keypair[1],
+                                ),
+                            )
+                            configStore.update { it.copy(
+                                ownerNpub = npub,
+                                signingMode = "nip46",
+                                setupMode = "full",
+                            ) }
+                            configStore.setActiveAccount(signerPubkey)
                         }
                     }
                     _step.value = WizardStep.RELAYS
@@ -1338,6 +1387,15 @@ private fun AccountStep(viewModel: SetupWizardViewModel) {
     val isAmberAvailable by viewModel.isAmberAvailable.collectAsState()
     val focusManager = LocalFocusManager.current
 
+    val bunkerInput by viewModel.bunkerInput.collectAsState()
+
+    // A bunker string is long and arrives as a QR code from the signer;
+    // scanning it is the difference between the option being usable and being
+    // theoretical.
+    val bunkerScanner = rememberLauncherForActivityResult(ScanContract()) { result ->
+        result.contents?.trim()?.let { viewModel.setBunkerInput(it) }
+    }
+
     // QR scanner launcher
     val qrLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         result.contents?.let { scanned ->
@@ -1436,6 +1494,15 @@ private fun AccountStep(viewModel: SetupWizardViewModel) {
                 )
             }
 
+            Spacer(Modifier.height(12.dp))
+            WizardOptionCard(
+                title = "Connect Remote Signer",
+                subtitle = "Any NIP-46 signer — nsec.app, a bunker, your own",
+                selected = mode == AccountMode.REMOTE_SIGNER,
+                onClick = { viewModel.setAccountMode(AccountMode.REMOTE_SIGNER) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+
             Spacer(Modifier.height(24.dp))
 
             AnimatedVisibility(visible = mode == AccountMode.IMPORT) {
@@ -1448,6 +1515,50 @@ private fun AccountStep(viewModel: SetupWizardViewModel) {
                         isError = error != null,
                         supportingText = error?.let { { Text(it, color = ErrorRed) } },
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
+                        colors = wizardTextFieldColors(),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(16.dp))
+                }
+            }
+
+            AnimatedVisibility(visible = mode == AccountMode.REMOTE_SIGNER) {
+                Column {
+                    Text(
+                        text = "Paste or scan the bunker:// string your signer gives you. Your key stays with the signer -- Nostr Vault never sees it.",
+                        color = SecondaryText,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        textAlign = TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = bunkerInput,
+                        onValueChange = viewModel::setBunkerInput,
+                        label = { Text("bunker://...") },
+                        isError = error != null,
+                        supportingText = error?.let { { Text(it, color = ErrorRed) } },
+                        singleLine = true,
+                        trailingIcon = {
+                            IconButton(onClick = {
+                                bunkerScanner.launch(
+                                    ScanOptions().apply {
+                                        setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                                        setPrompt("Scan your signer's bunker:// code")
+                                        setBeepEnabled(false)
+                                        setOrientationLocked(true)
+                                    }
+                                )
+                            }) {
+                                Icon(
+                                    Icons.Default.QrCodeScanner,
+                                    contentDescription = "Scan bunker QR code",
+                                    tint = WizardAccent,
+                                )
+                            }
+                        },
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }),
                         colors = wizardTextFieldColors(),
@@ -1482,8 +1593,13 @@ private fun AccountStep(viewModel: SetupWizardViewModel) {
                     AccountMode.GENERATE -> "Generate Keypair"
                     AccountMode.IMPORT -> "Import Key"
                     AccountMode.AMBER -> "Connect Amber"
+                    AccountMode.REMOTE_SIGNER -> "Connect Signer"
                 },
-                enabled = !isLoading && (mode != AccountMode.IMPORT || nsecInput.isNotBlank()),
+                enabled = !isLoading && when (mode) {
+                    AccountMode.IMPORT -> nsecInput.isNotBlank()
+                    AccountMode.REMOTE_SIGNER -> bunkerInput.trim().startsWith("bunker://")
+                    else -> true
+                },
                 isLoading = isLoading,
                 onClick = viewModel::advanceFromAccount,
             )
