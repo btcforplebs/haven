@@ -801,11 +801,11 @@ struct MenuBarView: View {
                         .foregroundColor(.orange)
 
                     VStack(spacing: 6) {
-                        Text("Startup Error")
+                        Text(String(localized: "relay.error.processKill.title"))
                             .font(.appTitle2.bold())
                             .foregroundColor(.white)
 
-                        Text("A previous Nostr Vault process is still running. Retry will stop it and start the relay again. If that does not work, run this in Terminal and relaunch the app.")
+                        Text(String(localized: "relay.error.processKill.message"))
                             .multilineTextAlignment(.center)
                             .foregroundColor(.white.opacity(0.9))
                             .fixedSize(horizontal: false, vertical: true)
@@ -844,7 +844,7 @@ struct MenuBarView: View {
                         relayManager.showProcessKillAlert = false
                         relayManager.forceCleanAndRestart()
                     }) {
-                        Text("Retry")
+                        Text(String(localized: "relay.error.processKill.retry"))
                             .font(.appHeadline)
                             .foregroundColor(.white)
                             .frame(width: 140, height: 36)
