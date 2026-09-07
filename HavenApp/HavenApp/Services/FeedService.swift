@@ -22,10 +22,10 @@ class FeedService: ObservableObject {
         let stored = ConfigService.shared.config.defaultFeedMode.lowercased()
         return FeedMode.allCases.first { $0.rawValue.lowercased() == stored } ?? .following
     }()
-    /// True when the feed was auto-switched from Following → Popular because
+    /// True when the feed was auto-switched from Following → curated Global because
     /// the user has no follows yet. Cleared on the first follow action so the
     /// feed reverts to Following automatically.
-    private var didAutoSwitchToPopular = false
+    private var didAutoSwitchToCurated = false
     @Published var mediaFeedMode: MediaFeedMode = .following
     @Published var notes: [FeedNote] = []
     /// O(1) lookup index for notes by ID. Maintained alongside `notes` mutations.
@@ -336,21 +336,92 @@ class FeedService: ObservableObject {
     /// filtered by minimum follower count) and persists it to disk.
     func loadWotPubkeys() {
         let cacheURL = ConfigService.shared.relayDataDir.appendingPathComponent("wot_cache.json")
-        let loaded = FeedFilterEngine.loadWotPubkeys(from: cacheURL)
-        if loaded.isEmpty {
+        // nil = could not read the cache; keep whatever graph we already have.
+        // Empty = read fine, but the graph names nobody but the owner (a new
+        // account with no follows). That is no trust data, and the Global feed
+        // treats an empty set as "show everything" rather than filtering the
+        // whole world out — so it must be applied, not skipped, or a previous
+        // account's graph would linger after a switch.
+        guard let loaded = FeedFilterEngine.loadWotPubkeys(
+            from: cacheURL,
+            ownerHex: ConfigService.shared.activeAccountHexPubkey
+        ) else {
             #if DEBUG
-            print("FeedService: Could not load WOT cache from \(cacheURL.path)")
+            print("FeedService: Could not read WOT cache from \(cacheURL.path)")
             #endif
             return
         }
         wotPubkeys = loaded
         #if DEBUG
-        print("FeedService: Loaded \(wotPubkeys.count) WOT pubkeys from cache")
+        print("FeedService: Loaded \(wotPubkeys.count) usable WOT pubkeys from cache")
         #endif
         // Re-filter if we're currently in global mode
         if feedMode == .global || (feedMode == .media && mediaFeedMode == .global) {
             recomputeFilteredNotes()
         }
+    }
+
+    /// True when the Global feed has a trust graph to filter against. The
+    /// relay writes `wot_cache.json` shortly after first launch, seeded from
+    /// the starter pack for an owner who follows nobody — so on a brand-new
+    /// install this is false for a few seconds and the feed legitimately has
+    /// nothing to show yet.
+    var curatedGraphReady: Bool { !wotPubkeys.isEmpty }
+
+    /// Status text for a Global feed with no graph yet. Global fails closed, so
+    /// without this the user would sit in front of an empty screen labelled
+    /// "No notes found" and reasonably conclude the app is broken.
+    private var curatedGraphPendingStatus: String { "Building your starter feed…" }
+
+    private var curatedGraphPollAttempts = 0
+    private var curatedGraphPollTimer: Timer?
+
+    /// Re-read the trust graph until the relay has written one, then re-filter.
+    /// Only runs while it would change what is on screen: a Global feed with an
+    /// empty graph shows nothing at all.
+    private func pollForCuratedGraph() {
+        curatedGraphPollTimer?.invalidate()
+        curatedGraphPollAttempts = 0
+        guard isGlobalLikeMode, !curatedGraphReady else { return }
+
+        connectionStatus = curatedGraphPendingStatus
+        curatedGraphPollTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] timer in
+            Task { @MainActor [weak self] in
+                guard let self = self else {
+                    timer.invalidate()
+                    return
+                }
+                self.curatedGraphPollAttempts += 1
+                // ~2 minutes. If the graph has not appeared by then the relay
+                // could not reach its seed relays, and retrying forever just
+                // burns battery behind a screen that is already honest.
+                guard self.isGlobalLikeMode, self.curatedGraphPollAttempts <= 40 else {
+                    timer.invalidate()
+                    self.curatedGraphPollTimer = nil
+                    return
+                }
+                self.loadWotPubkeys()
+                if self.curatedGraphReady {
+                    timer.invalidate()
+                    self.curatedGraphPollTimer = nil
+                    self.recomputeFilteredNotes()
+                    self.connectionStatus = self.filteredNotes.isEmpty ? "No notes found" : "Live"
+                }
+            }
+        }
+    }
+
+    /// "No notes found" is a lie while the Global feed is waiting for its
+    /// trust graph — there are plenty of notes, we just will not show notes we
+    /// cannot vouch for.
+    private func emptyFeedStatus() -> String {
+        if !filteredNotes.isEmpty { return "Live" }
+        if isGlobalLikeMode && !curatedGraphReady { return curatedGraphPendingStatus }
+        return "No notes found"
+    }
+
+    private var isGlobalLikeMode: Bool {
+        feedMode == .global || (feedMode == .media && mediaFeedMode == .global)
     }
 
 /// In-memory per-account feed snapshots keyed by `activeAccountNpub`
@@ -861,17 +932,31 @@ class FeedService: ObservableObject {
         loadContactList { [weak self] in
             guard let self = self else { return }
 
-            // Auto-switch to Popular ONLY for a genuinely new Nostr user — no
-            // follows AND no local following backup to seed from. Returning users
-            // whose contact fetch was merely slow/empty were already seeded from
-            // backup by handleContactLoadResolved() (seed-and-stay), so their
-            // followedPubkeys is non-empty here and they stay on Following.
+            // Route a genuinely new Nostr user — no follows AND no local
+            // following backup to seed from — to the curated Global feed.
+            // Returning users whose contact fetch was merely slow/empty were
+            // already seeded from backup by handleContactLoadResolved()
+            // (seed-and-stay), so their followedPubkeys is non-empty here and
+            // they stay on Following.
+            //
+            // This used to send them to Popular, which ranks raw engagement
+            // from open relays: measured on the shipped seed relays, two thirds
+            // of that traffic was one spam campaign, and it was the first thing
+            // a new user ever saw. Global is now filtered by a trust graph the
+            // relay seeds from the starter pack, and it fails closed while that
+            // graph is still being built. Popular remains available as an
+            // explicit choice in the feed menu.
+            //
+            // Nothing here publishes a contact list — the user's follows stay
+            // empty until they choose to follow someone.
             let hasBackup = !(FollowingBackupService.shared.snapshots.last?.pubkeys.isEmpty ?? true)
             if self.followedPubkeys.isEmpty && self.isFollowSetMode && !hasBackup {
-                self.didAutoSwitchToPopular = true
-                self.feedMode = .popular
+                self.didAutoSwitchToCurated = true
+                self.feedMode = .global
+                self.loadWotPubkeys()
                 self.recomputeFilteredNotes()
-                self.loadPopularFeed()
+                self.pollForCuratedGraph()
+                self.subscribeToAllRelays()
                 return
             }
 
@@ -1014,6 +1099,7 @@ class FeedService: ObservableObject {
         } else if isGlobal {
             // Global mode doesn't need contacts — subscribe directly
             loadWotPubkeys()
+            pollForCuratedGraph()
             subscribeToAllRelays()
         } else {
             refresh()
@@ -2048,8 +2134,8 @@ class FeedService: ObservableObject {
             resubscribePrimaryIfNeeded()
 
             // Auto-switch back to Following now that the user has follows.
-            if didAutoSwitchToPopular {
-                didAutoSwitchToPopular = false
+            if didAutoSwitchToCurated {
+                didAutoSwitchToCurated = false
                 switchMode(.following)
             }
 
@@ -2194,7 +2280,7 @@ class FeedService: ObservableObject {
                 self.flushNoteBuffer()
                 self.isLoadingFeed = false
                 self.isSyncing = false
-                self.connectionStatus = self.notes.isEmpty ? "No notes found" : "Live"
+                self.connectionStatus = self.emptyFeedStatus()
                 self.processingQueue.async { [weak self] in
                     self?.bgAccumulator.isInitialLoad = false
                 }
@@ -2303,7 +2389,7 @@ class FeedService: ObservableObject {
                             self.flushNoteBuffer()
                             self.isLoadingFeed = false
                             self.isSyncing = false
-                            self.connectionStatus = self.notes.isEmpty ? "No notes found" : "Live"
+                            self.connectionStatus = self.emptyFeedStatus()
                             self.processingQueue.async { [weak self] in
                                 self?.bgAccumulator.isInitialLoad = false
                             }
