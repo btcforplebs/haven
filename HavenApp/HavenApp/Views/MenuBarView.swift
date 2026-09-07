@@ -805,7 +805,7 @@ struct MenuBarView: View {
                             .font(.appTitle2.bold())
                             .foregroundColor(.white)
 
-                        Text("A previous Nostr Vault process is still running. Run the following command in Terminal to stop it, then relaunch the app.")
+                        Text("A previous Nostr Vault process is still running. Retry will stop it and start the relay again. If that does not work, run this in Terminal and relaunch the app.")
                             .multilineTextAlignment(.center)
                             .foregroundColor(.white.opacity(0.9))
                             .fixedSize(horizontal: false, vertical: true)
