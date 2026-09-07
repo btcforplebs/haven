@@ -306,6 +306,10 @@ struct WalletLightningTab: View {
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(3)
 
+            if !invoiceToPay.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                invoiceAmountLine
+            }
+
             Button(action: { payInvoice() }) {
                 HStack(spacing: 6) {
                     if isSending {
@@ -366,6 +370,35 @@ struct WalletLightningTab: View {
                     isLoadingBalance = false
                 }
             }
+        }
+    }
+
+    /// What you are about to spend.
+    ///
+    /// The button pays whatever is in the box, and a bolt11 invoice states its
+    /// amount in a form nobody can read at a glance, so without this the sats
+    /// leave before you ever see the number.
+    ///
+    /// Reading only — an invoice this app cannot parse is still payable, since
+    /// the wallet on the other end is the authority on that, not us.
+    @ViewBuilder
+    private var invoiceAmountLine: some View {
+        switch Bolt11.amount(invoiceToPay) {
+        case .sats(let sats):
+            Text("Paying \(sats.formatted()) sats")
+                .font(.appSystem(size: 13, weight: .semibold))
+                .foregroundColor(.orange)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        case .unspecified:
+            Text("This invoice names no amount, and Nostr Vault cannot set one — your wallet will probably refuse it.")
+                .font(.appCaption)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        case .unreadable:
+            Text("Not an invoice this app can read. Check it before you pay.")
+                .font(.appCaption)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
