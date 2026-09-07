@@ -124,11 +124,12 @@ struct MenuBarStatusView: View {
             }
         }
 
+        @MainActor
         var tint: Color {
             switch self {
-            case .booting: return .orange
-            case .syncing: return .orange
-            case .online: return Color(red: 0.2, green: 0.85, blue: 0.5)
+            case .booting: return .havenPurple
+            case .syncing: return .havenPurple
+            case .online: return .havenOnline
             case .offline: return .red
             }
         }
@@ -194,7 +195,7 @@ struct MenuBarStatusView: View {
                     title: relayManager.isBooting
                         ? "Booting…"
                         : (relayManager.isRunning ? "Restart Relay" : "Start Relay"),
-                    tint: relayManager.isRunning ? .orange : .green
+                    tint: relayManager.isRunning ? .havenPurple : .havenOnline
                 )
             }
             .buttonStyle(.plain)
@@ -336,7 +337,7 @@ struct MenuBarStatusView: View {
             .id(activeHex)
             .overlay(
                 Circle().stroke(
-                    isOwner ? Color.havenPurple.opacity(0.4) : Color.orange.opacity(0.8),
+                    isOwner ? Color.havenPurple.opacity(0.4) : Color.havenPurple.opacity(0.8),
                     lineWidth: isOwner ? 1.5 : 2
                 )
             )
