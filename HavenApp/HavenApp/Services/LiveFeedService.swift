@@ -187,6 +187,8 @@ struct LiveStream: Identifiable, Equatable {
     let streamingURL: URL?
     let status: String?
     let participants: Int?
+    /// Relays the stream itself says its chat is on (NIP-53 `relays` tag).
+    let chatRelays: [String]
     /// Who a zap pays. Usually the author, but zap.stream publishes on the
     /// host's behalf, and then the author is the service.
     let zapPubkey: String
@@ -223,6 +225,9 @@ struct LiveStream: Identifiable, Equatable {
         self.summary = value("summary")
         self.imageURL = value("image").flatMap { URL(string: $0) }
         self.status = value("status")
+        // The whole tag is the list, not just its first value.
+        self.chatRelays = (tags.first { $0.count >= 2 && $0[0] == "relays" }?.dropFirst())
+            .map { $0.compactMap(LiveChat.normalizedRelay) } ?? []
         self.participants = value("current_participants").flatMap { Int($0) }
 
         // AVPlayer speaks HTTP(S). The sample also carried rtmp, ftp and a

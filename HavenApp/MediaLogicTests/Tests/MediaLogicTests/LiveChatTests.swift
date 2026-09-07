@@ -32,6 +32,41 @@ final class LiveChatTests: XCTestCase {
         XCTAssertEqual(LiveChat.hostPubkey(authorPubkey: host, tags: []), host)
     }
 
+    // MARK: - Where the chat is
+
+    /// zap.stream is the documented relay and, measured across every live
+    /// stream on 2026-09-07, carries none of the chat. It stays in the list
+    /// because it is the address other clients look for, but it is asked last.
+    func testChatRelaysPreferTheStreamsOwnAnswerAndNeverLeadWithZapStream() {
+        let ordered = LiveChat.chatRelays(streamRelays: ["wss://relay.snort.social"],
+                                          userRelays: ["wss://my.relay"])
+        XCTAssertEqual(ordered.first, "wss://relay.snort.social")
+        XCTAssertEqual(Array(ordered.dropFirst(1).prefix(3)), LiveChat.defaultChatRelays)
+        XCTAssertEqual(ordered.last, "wss://my.relay")
+        // Five sockets is the budget, and zap.stream is the first thing cut:
+        // it is asked only when nothing better filled the list.
+        XCTAssertFalse(ordered.contains(LiveChat.streamRelay))
+        XCTAssertEqual(LiveChat.chatRelays(streamRelays: [], userRelays: []).last, LiveChat.streamRelay)
+    }
+
+    /// Hosts advertise both forms. Two sockets to one relay prints every
+    /// message twice.
+    func testTrailingSlashAndCaseDoNotOpenTheSameRelayTwice() {
+        let ordered = LiveChat.chatRelays(streamRelays: ["wss://nos.lol/", "WSS://NOS.LOL"],
+                                          userRelays: [], limit: 10)
+        XCTAssertEqual(ordered.filter { $0.lowercased().contains("nos.lol") }.count, 1)
+        XCTAssertEqual(ordered.first, "wss://nos.lol")
+    }
+
+    func testChatRelaysDropUnusableEntriesAndRespectTheLimit() {
+        let ordered = LiveChat.chatRelays(streamRelays: ["", "https://example.com", "not a url"],
+                                          userRelays: ["wss://a.relay", "wss://b.relay"], limit: 3)
+        XCTAssertEqual(ordered.count, 3)
+        XCTAssertEqual(ordered, LiveChat.defaultChatRelays)
+        XCTAssertNil(LiveChat.normalizedRelay("https://example.com"))
+        XCTAssertEqual(LiveChat.normalizedRelay(" wss://relay.example.com/ "), "wss://relay.example.com")
+    }
+
     // MARK: - Chat messages
 
     func testChatMessageKeepsItsAuthorAndText() {

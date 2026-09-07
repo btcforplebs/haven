@@ -32,7 +32,7 @@ final class LiveChatService: ObservableObject {
         collected.removeAll()
         messages = []
 
-        let relayURLs = LiveFeedService.relayURLs
+        let relayURLs = Self.relayURLs(for: stream)
         guard !relayURLs.isEmpty else { return }
 
         let subId = "livechat-\(UUID().uuidString.prefix(8))"
@@ -116,7 +116,7 @@ final class LiveChatService: ObservableObject {
             reached = true
         }
         if !reached {
-            for url in LiveFeedService.relayURLs {
+            for url in Self.relayURLs(for: stream) {
                 let client = WebSocketClient()
                 client.isTemporary = true
                 client.$connectionState
@@ -146,6 +146,14 @@ final class LiveChatService: ObservableObject {
     }
 
     // MARK: - Private
+
+    /// The stream's own answer first, then the relays that actually carry live
+    /// chat. Reaching for the documented relay first shows an empty room.
+    private static func relayURLs(for stream: LiveStream) -> [URL] {
+        LiveChat.chatRelays(streamRelays: stream.chatRelays,
+                            userRelays: ConfigService.shared.config.activeFeedRelays)
+            .compactMap { URL(string: $0) }
+    }
 
     private func handle(message: String, blocked: Set<String>) {
         guard let address,

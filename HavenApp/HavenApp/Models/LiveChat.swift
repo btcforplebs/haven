@@ -29,9 +29,55 @@ struct LiveChatMessage: Identifiable, Equatable {
 }
 
 enum LiveChat {
-    /// Where live events and their chat live, and the relay hint every chat
-    /// message and stream zap carries so other clients know where to look.
+    /// The relay hint every chat message and stream zap carries. Kept because
+    /// it is the address other clients look for, *not* because chat is there.
     static let streamRelay = "wss://relay.zap.stream"
+
+    /// Where live chat actually is, measured 2026-09-07 against the 19 live
+    /// playable streams on the network: zap.stream returned 0 chat events for
+    /// all 19, while nos.lol returned 200 (140 chat, 60 zaps) across 4 of them,
+    /// relay.damus.io 200 across 3, and relay.primal.net 200 across 2.
+    /// Following the documented relay alone shows an empty room for a stream
+    /// that is busy.
+    static let defaultChatRelays = [
+        "wss://nos.lol",
+        "wss://relay.damus.io",
+        "wss://relay.primal.net"
+    ]
+
+    /// Who to ask for a stream's chat, best source first.
+    ///
+    /// The stream can say where its chat is (`relays` tag) and that answer
+    /// beats any list of ours — but only 6 of those 19 streams published one,
+    /// so it cannot be the only rung.
+    static func chatRelays(streamRelays: [String], userRelays: [String], limit: Int = 5) -> [String] {
+        var ordered: [String] = []
+        var seen = Set<String>()
+
+        for candidate in streamRelays + defaultChatRelays + userRelays + [streamRelay] {
+            guard let normalized = normalizedRelay(candidate) else { continue }
+            // Hosts advertise both `wss://nos.lol` and `wss://nos.lol/`; without
+            // folding those together we open two sockets to the same relay and
+            // print every message twice.
+            let key = normalized.lowercased()
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            ordered.append(normalized)
+            if ordered.count == limit { break }
+        }
+        return ordered
+    }
+
+    /// A relay URL we can open, with the trailing slash folded away, or nil.
+    static func normalizedRelay(_ raw: String) -> String? {
+        var trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        while trimmed.hasSuffix("/") { trimmed.removeLast() }
+        guard let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(), scheme == "wss" || scheme == "ws",
+              url.host?.isEmpty == false
+        else { return nil }
+        return trimmed
+    }
 
     /// The `a` tag every chat message and stream zap is addressed to.
     static func address(hostPubkey: String, identifier: String) -> String {
