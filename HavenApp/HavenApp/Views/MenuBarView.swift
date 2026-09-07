@@ -882,36 +882,35 @@ struct MenuBarView: View {
             // SearchView owns object == 1 while it's on screen (selectedTab == .search);
             // for every other tab this is the only listener, so ⌘N works app-wide.
             guard (note.object as? Int) == 1, selectedTab != .search else { return }
+            #if os(macOS)
+            // Consume the flag too: the window was already open, so onAppear
+            // will not run, and a flag left set would compose spuriously the
+            // next time this view mounts.
+            MacWindow.pendingCompose = false
+            #endif
             showingCompose = true
         }
         .onAppear {
             FloatingArrowController.shared.dismiss()
             DMService.shared.startListening()
+            #if os(macOS)
+            // The status panel asks for a composer by setting this before the
+            // window exists; this is the first moment a receiver could hear it.
+            if MacWindow.consumePendingCompose() {
+                showingCompose = true
+            }
+            #endif
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            // Service pausing moved to AppDelegate.startFocusLifecycleObservers().
+            // This view is now mounted only by the window scene, so an app sitting
+            // in the menu bar had no owner for it at all. Only the tab reset —
+            // which is genuinely this view's concern — stays here.
             startInactivityTimer()
-            // Pause the feed when the app loses focus to reduce background
-            // CPU/memory usage from relay traffic and note accumulation.
-            FeedService.shared.pauseFeed()
-            // Pause network sync to stop external relay traffic and event
-            // injection while the app is inactive — reduces log volume, CPU,
-            // and prevents pipe backpressure from Go stdout.
-            NetworkSyncService.shared.stop()
-            // Throttle Swift-side background work: stop log parsing into
-            // UI entries, pause the profile-fetch timer, and halt the
-            // LogStore 1-second publishing timer.
-            RelayProcessManager.shared.enterBackground()
-            NostrService.shared.enterBackground()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            // Service resuming moved to AppDelegate — see the resign handler above.
             stopInactivityTimer()
-            // Resume feed connections when the app becomes active again.
-            FeedService.shared.resumeFeed()
-            // Resume external relay syncing.
-            NetworkSyncService.shared.start()
-            // Resume full log processing and profile fetching.
-            RelayProcessManager.shared.enterForeground()
-            NostrService.shared.enterForeground()
         }
         .onReceive(NotificationCenter.default.publisher(for: .havenOpenFeedRelaySettings)) { _ in
             selectedTab = .settings

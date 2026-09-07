@@ -372,6 +372,12 @@ struct MenuBarStatusView: View {
     private func newPost() {
         // Compose is a 500pt-wide sheet; it cannot be raised from a 340pt panel
         // that dismisses on resign-key. Open the window and let it compose there.
+        //
+        // Two mechanisms on purpose, and they are not redundant: the flag covers
+        // a window that has yet to mount (cold start), the notification covers a
+        // window already on screen, whose view tree will not appear again.
+        // Whichever lands first consumes the flag, so it cannot compose twice.
+        MacWindow.pendingCompose = true
         openMainWindow()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             NotificationCenter.default.post(name: .composeFromTabBar, object: 1)
@@ -394,6 +400,23 @@ struct MenuBarStatusView: View {
 enum MacWindow {
     static let mainWindowID = "viewer-window"
     static let mainWindowTitle = "Nostr Vault"
+
+    /// Set when something outside the window asks it to open *composing*.
+    ///
+    /// The panel used to open the window and post `.composeFromTabBar` 150ms
+    /// later. Every receiver of that notification lives inside the window's own
+    /// view tree, and NotificationCenter does not replay — so on a cold start,
+    /// or any launch where creating the window takes longer than the timer, the
+    /// window appeared with no composer and the click was silently lost. A flag
+    /// the window consumes when it mounts cannot miss.
+    @MainActor static var pendingCompose = false
+
+    /// Reads and clears the pending compose intent.
+    @MainActor
+    static func consumePendingCompose() -> Bool {
+        defer { pendingCompose = false }
+        return pendingCompose
+    }
 
     /// Opens and fronts the main window, then dismisses the menu bar panel.
     ///
