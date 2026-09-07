@@ -1,14 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive-icon foreground: the lit arch from the Mac/iOS app icon
+  (HavenApp/Resources/AppIcon-source.svg). Path data is copied verbatim from
+  that file's 1024 viewport; the group transform is what fits it to Android's
+  canvas.
+
+  The SVG places the arch low in the tile (the mark's bbox is x 262..762,
+  y 220..876 — the arc tops at 220, above its own start point — so its centre
+  is y=548, not 512) and scales it 1.15x about that centre. The group below
+  recentres the mark on the canvas and sizes it so its bottom corners, the far
+  points of the shape at 412 from centre, land on the 72dp circle a launcher
+  mask may crop to: 412 x 0.827 = 341, and that circle's radius here is 341.
+
+  Two effects from the SVG are deliberately dropped: the fractal-noise grain
+  and the blurred drop shadow. VectorDrawable has no filter primitives, and
+  at launcher size neither is visible.
+-->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <!-- Orange circle background -->
-    <path
-        android:fillColor="#E67326"
-        android:pathData="M54,54m-40,0a40,40 0,1 1,80 0a40,40 0,1 1,-80 0"/>
-    <!-- Simple relay/vault icon (lock shape) -->
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,34c-6.63,0 -12,5.37 -12,12v4h-2c-1.1,0 -2,0.9 -2,2v16c0,1.1 0.9,2 2,2h28c1.1,0 2,-0.9 2,-2v-16c0,-1.1 -0.9,-2 -2,-2h-2v-4c0,-6.63 -5.37,-12 -12,-12zM54,38c4.42,0 8,3.58 8,8v4h-16v-4c0,-4.42 3.58,-8 8,-8zM54,58c2.21,0 4,1.79 4,4s-1.79,4 -4,4 -4,-1.79 -4,-4 1.79,-4 4,-4z"/>
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+    <group
+        android:pivotX="512" android:pivotY="548"
+        android:scaleX="0.827" android:scaleY="0.827"
+        android:translateY="-36">
+
+        <!-- Stone arch -->
+        <path android:pathData="M 262 876 L 262 470 A 250 250 0 0 1 762 470 L 762 876 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="302" android:startY="220"
+                    android:endX="622" android:endY="876">
+                    <item android:offset="0" android:color="#FFA8825A"/>
+                    <item android:offset="0.58" android:color="#FF33251A"/>
+                    <item android:offset="1" android:color="#FF33251A"/>
+                </gradient>
+            </aapt:attr>
+        </path>
+
+        <!-- Top-lit edge (SVG gradient "e", white .32 -> .10 -> 0) -->
+        <path
+            android:pathData="M 262 876 L 262 470 A 250 250 0 0 1 762 470 L 762 876 Z"
+            android:strokeWidth="10">
+            <aapt:attr name="android:strokeColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="512" android:startY="220"
+                    android:endX="512" android:endY="876">
+                    <item android:offset="0" android:color="#52FFFFFF"/>
+                    <item android:offset="0.5" android:color="#1AFFFFFF"/>
+                    <item android:offset="1" android:color="#00FFFFFF"/>
+                </gradient>
+            </aapt:attr>
+        </path>
+
+        <!-- The opening: near-black, then the sunset glow -->
+        <path android:pathData="M 352 876 L 352 488 A 160 160 0 0 1 672 488 L 672 876 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="512" android:startY="328"
+                    android:endX="512" android:endY="876">
+                    <item android:offset="0" android:color="#FF0A0602"/>
+                    <item android:offset="1" android:color="#8C0A0602"/>
+                </gradient>
+            </aapt:attr>
+        </path>
+        <path android:pathData="M 352 876 L 352 488 A 160 160 0 0 1 672 488 L 672 876 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="radial"
+                    android:centerX="512" android:centerY="700"
+                    android:gradientRadius="240">
+                    <item android:offset="0" android:color="#F2FA9447"/>
+                    <item android:offset="0.5" android:color="#57E67326"/>
+                    <item android:offset="1" android:color="#00E67326"/>
+                </gradient>
+            </aapt:attr>
+        </path>
+        <path
+            android:pathData="M 352 876 L 352 488 A 160 160 0 0 1 672 488 L 672 876 Z"
+            android:strokeColor="#80FA9447"
+            android:strokeWidth="7"/>
+
+        <!-- The keyhole -->
+        <path
+            android:pathData="M 472 742 a 40 40 0 1 0 80 0 a 40 40 0 1 0 -80 0 Z"
+            android:fillColor="#B30A0602"
+            android:strokeColor="#D9FA9447"
+            android:strokeWidth="7"/>
+    </group>
 </vector>

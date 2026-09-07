@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Themed-icon layer (Android 13+). The system tints this by alpha, so it has
+  to read as one silhouette: outer arch, opening cut out, keyhole solid. All
+  three subpaths live in one path with evenOdd fill — the keyhole is nested
+  two deep, so evenOdd fills it back in, which is exactly the mark.
+  Same group transform as the foreground so the two line up.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+    <group
+        android:pivotX="512" android:pivotY="548"
+        android:scaleX="0.827" android:scaleY="0.827"
+        android:translateY="-36">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="M 262 876 L 262 470 A 250 250 0 0 1 762 470 L 762 876 Z
+                              M 352 876 L 352 488 A 160 160 0 0 1 672 488 L 672 876 Z
+                              M 472 742 a 40 40 0 1 0 80 0 a 40 40 0 1 0 -80 0 Z"/>
+    </group>
+</vector>

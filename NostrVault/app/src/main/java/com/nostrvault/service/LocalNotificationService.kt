@@ -253,7 +253,10 @@ class LocalNotificationService @Inject constructor(
         scope.launch {
             val largeIcon = loadAvatar(pictureUrl)
             val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                // Status-bar icons are drawn from alpha only, so use the
+                // monochrome layer — the arch as one silhouette — rather than
+                // the full-colour foreground, which flattens to a solid blob.
+                .setSmallIcon(R.drawable.ic_launcher_monochrome)
                 .setContentTitle(title)
                 .setContentText(text)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(text))
