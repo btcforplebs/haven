@@ -44,6 +44,9 @@ class LiveChatService @Inject constructor(
         private const val ZAP_RECEIPT_KIND = 9735
         private const val BACKLOG = 100
 
+        /** `lnbc<amount><multiplier>1…` — the amount lives in the prefix. */
+        private val BOLT11_PREFIX = Regex("""^ln(?:bc|tb|bcrt)(\d+)([munp]?)1""")
+
         /**
          * Fallback chat relays, for a stream that names none of its own.
          *
@@ -85,6 +88,34 @@ class LiveChatService @Inject constructor(
     private val clients = mutableListOf<WebSocketClient>()
     private var job: Job? = null
     private var address: String? = null
+
+    /**
+     * Sats from a BOLT-11 invoice's human-readable prefix.
+     *
+     * Needed because zap receipts mostly do not say the amount anywhere else.
+     * Sampled 12 stream zap receipts off nos.lol (2026-09-07): none carried an
+     * `amount` tag, 5 of the 12 had no amount in the embedded request either,
+     * and all 12 carried a bolt11 whose prefix gives the number —
+     * `lnbc330n…` is 330 nano-BTC, which is 33 sats.
+     *
+     * Integer msat throughout: in floating point 90n comes out as
+     * 9.000000000000002 sats.
+     */
+    internal fun satsFromBolt11(invoice: String): Long? {
+        val match = BOLT11_PREFIX.find(invoice.trim().lowercase()) ?: return null
+        val amount = match.groupValues[1].toLongOrNull() ?: return null
+        // 1 BTC = 100_000_000_000 msat.
+        val msat = when (match.groupValues[2]) {
+            "m" -> amount * 100_000_000L
+            "u" -> amount * 100_000L
+            "n" -> amount * 100L
+            // pico-BTC is a tenth of a msat; a valid pico amount is a multiple of 10.
+            "p" -> amount / 10L
+            "" -> amount * 100_000_000_000L
+            else -> return null
+        }
+        return (msat / 1000L).takeIf { it > 0 }
+    }
 
     /**
      * Relays to talk to, most authoritative first: the stream's own `relays`
@@ -224,9 +255,17 @@ class LiveChatService @Inject constructor(
                         val requestTags = request?.get("tags")?.jsonArray
                             ?.map { t -> t.jsonArray.map { it.jsonPrimitive.content } }
                             ?: emptyList()
-                        val msats = (requestTags + tags)
+                        // Rung order: the request's amount tag, then the
+                        // receipt's, then the invoice itself. The invoice is
+                        // the one that actually answers most of the time.
+                        val sats = (requestTags + tags)
                             .firstOrNull { it.size >= 2 && it[0] == "amount" }
                             ?.get(1)?.toLongOrNull()
+                            ?.takeIf { it > 0 }
+                            ?.let { it / 1000 }
+                            ?: tags.firstOrNull { it.size >= 2 && it[0] == "bolt11" }
+                                ?.get(1)
+                                ?.let { satsFromBolt11(it) }
                         ChatEntry(
                             id = id,
                             pubkey = request?.get("pubkey")?.jsonPrimitive?.content ?: pubkey,
@@ -236,7 +275,7 @@ class LiveChatService @Inject constructor(
                             // sats". Showing a 0 next to a bolt states an
                             // amount that was never in the event; the UI shows
                             // the bolt alone instead.
-                            zapSats = msats?.takeIf { it > 0 }?.let { it / 1000 } ?: 0L,
+                            zapSats = sats ?: 0L,
                         )
                     }
                     else -> null
