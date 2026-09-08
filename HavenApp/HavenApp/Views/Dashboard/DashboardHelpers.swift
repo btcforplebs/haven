@@ -61,13 +61,26 @@ struct StorageRow: View {
     let color: Color
     let size: Int64
     let total: Int64
+    /// Buckets that have a detail view of their own become tappable rows.
+    var action: (() -> Void)? = nil
 
     private var sizePercent: Double {
         guard total > 0 else { return 0 }
         return Double(size) / Double(total)
     }
 
+    @ViewBuilder
     var body: some View {
+        if let action {
+            Button(action: action) { content }
+                .buttonStyle(.plain)
+                .accessibilityHint(Text("Shows what is stored here"))
+        } else {
+            content
+        }
+    }
+
+    private var content: some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
                 .font(.appSystem(size: 16, weight: .semibold))
@@ -87,6 +100,12 @@ struct StorageRow: View {
                 Text(String(format: "%.1f%%", sizePercent * 100))
                     .font(.appSystem(size: 10, design: .monospaced))
                     .foregroundColor(.secondary)
+            }
+
+            if action != nil {
+                Image(systemName: "chevron.right")
+                    .font(.appSystem(size: 10, weight: .semibold))
+                    .foregroundColor(.secondary.opacity(0.6))
             }
         }
         .padding(.horizontal, 12)
