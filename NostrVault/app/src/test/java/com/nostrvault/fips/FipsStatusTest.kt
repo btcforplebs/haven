@@ -46,12 +46,45 @@ class FipsStatusTest {
         // The Rust side may add counters; a strict parser would turn that into
         // "bridge stopped" on a bridge that is running.
         val status = json.decodeFromString<FipsStatus>(
-            """{"running":true,"npub":"npub1x","address":"fd00::2","uptime_s":1,"peers":3}"""
+            """{"running":true,"npub":"npub1x","address":"fd00::2","uptime_s":1,"bytes_relayed":4096}"""
         )
 
         assertTrue(status.running)
         assertEquals("npub1x", status.npub)
         assertEquals(1L, status.uptimeSeconds)
+    }
+
+    @Test fun `a bound endpoint with no transit is not a working one`() {
+        // The state that reads as success and is not: bound, advertising, and
+        // unreachable from any other network. hasTransit is what the screen
+        // warns on, so it must not be satisfied by merely being up.
+        val reaching = json.decodeFromString<FipsStatus>(
+            """{"running":true,"npub":"npub1x","address":"fd00::3","uptime_s":4,"peers":[]}"""
+        )
+        assertTrue(reaching.running)
+        assertFalse(reaching.hasTransit)
+
+        val seedDown = json.decodeFromString<FipsStatus>(
+            """{"running":true,"npub":"npub1x","address":"fd00::3","uptime_s":9,"peers":[{"npub":"npub1seed","alias":"test-us01","connected":false,"addr":null,"rtt_ms":null}]}"""
+        )
+        assertFalse(seedDown.hasTransit)
+
+        val up = json.decodeFromString<FipsStatus>(
+            """{"running":true,"npub":"npub1x","address":"fd00::3","uptime_s":9,"peers":[{"npub":"npub1seed","alias":"test-us02","connected":true,"addr":"23.182.128.74:2121","rtt_ms":47}]}"""
+        )
+        assertTrue(up.hasTransit)
+        assertEquals(47L, up.peers.first().rttMs)
+        assertEquals("23.182.128.74:2121", up.peers.first().addr)
+    }
+
+    @Test fun `a connected peer that is not a seed is not transit`() {
+        // A phone on the same wifi connects without proving anything about
+        // reachability from outside it. Only an aliased seed is transit, and
+        // the alias is filled in by the Rust side from the seed table.
+        val lanOnly = json.decodeFromString<FipsStatus>(
+            """{"running":true,"npub":"npub1x","address":"fd00::4","uptime_s":30,"peers":[{"npub":"npub1neighbour","alias":null,"connected":true,"addr":"192.168.4.99:52184","rtt_ms":4}]}"""
+        )
+        assertFalse(lanOnly.hasTransit)
     }
 
     @Test fun `uptime reads as a duration, not a number of seconds`() {

@@ -108,8 +108,34 @@ data class FipsStatus(
     val npub: String? = null,
     val address: String? = null,
     @SerialName("uptime_s") val uptimeSeconds: Long = 0,
+    val peers: List<FipsPeer> = emptyList(),
 ) {
+    /**
+     * Whether anything publicly reachable has answered.
+     *
+     * This, not [running], is the state worth showing. A bound endpoint with no
+     * transit peer binds, advertises, and can never cross a second NAT — from
+     * the outside it is indistinguishable from a working one.
+     */
+    val hasTransit: Boolean get() = peers.any { it.connected && it.alias != null }
+
     companion object {
         val stopped = FipsStatus()
     }
 }
+
+/**
+ * One peer as the bridge sees it.
+ *
+ * [alias] is non-null only for the built-in transit seeds, and it is filled in
+ * on the Rust side from the same table that supplies their addresses — so a
+ * name shown here always belongs to an address actually being dialled.
+ */
+@Serializable
+data class FipsPeer(
+    val npub: String,
+    val alias: String? = null,
+    val connected: Boolean = false,
+    val addr: String? = null,
+    @SerialName("rtt_ms") val rttMs: Long? = null,
+)

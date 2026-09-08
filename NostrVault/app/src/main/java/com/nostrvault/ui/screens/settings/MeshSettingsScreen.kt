@@ -18,6 +18,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nostrvault.fips.FipsMeshManager
+import com.nostrvault.fips.FipsPeer
 import com.nostrvault.fips.FipsStatus
 import com.nostrvault.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -162,6 +163,8 @@ fun MeshSettingsScreen(
                     status = status,
                     onCopy = { clipboard.setText(AnnotatedString(it)) },
                 )
+                Spacer(Modifier.height(12.dp))
+                TransitCard(status = status)
             }
 
             lastError?.let { error ->
@@ -173,12 +176,12 @@ fun MeshSettingsScreen(
 
             Text(
                 // Said plainly on the screen because it is the difference
-                // between "my address is published" and "someone can reach me",
-                // and only the first of those is true today.
+                // between "my address is published" and "someone can reach me".
                 text = "Your address is published to the discovery relays while this " +
-                    "is on. Two devices that are both behind home or mobile NAT " +
-                    "still cannot connect to each other yet — that needs a " +
-                    "reachable node in the middle, which is not wired up.",
+                    "is on, and the app dials public transit nodes so a peer " +
+                    "behind another NAT has something in the middle to reach you " +
+                    "through. Whether that is enough for two NAT'd devices is " +
+                    "still being tested.",
                 color = SecondaryText,
                 fontSize = 13.sp,
                 lineHeight = 18.sp,
@@ -239,6 +242,84 @@ private fun AddressCard(status: FipsStatus, onCopy: (String) -> Unit) {
                 fontSize = 12.sp,
             )
         }
+    }
+}
+
+/**
+ * Transit nodes, which is the part that decides whether anyone unreachable can
+ * reach you. Peers with no alias are ordinary mesh peers (LAN, or someone who
+ * dialled us) and are counted rather than listed.
+ */
+@Composable
+private fun TransitCard(status: FipsStatus) {
+    val seeds = status.peers.filter { it.alias != null }
+    val others = status.peers.size - seeds.size
+
+    Surface(
+        color = CardBackground,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Text("TRANSIT", color = SecondaryText, fontSize = 11.sp, letterSpacing = 1.sp)
+            Spacer(Modifier.height(8.dp))
+
+            if (seeds.isEmpty()) {
+                Text(
+                    "Reaching out…",
+                    color = SecondaryText,
+                    fontSize = 13.sp,
+                )
+            } else {
+                seeds.forEach { peer -> TransitRow(peer) }
+            }
+
+            if (!status.hasTransit) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    // The state that looks like success and is not: bound,
+                    // advertising, and unreachable from outside this network.
+                    "No transit node has answered. People on other networks " +
+                        "cannot reach you yet.",
+                    color = SecondaryText,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                )
+            }
+
+            if (others > 0) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    if (others == 1) "1 other peer" else "$others other peers",
+                    color = SecondaryText,
+                    fontSize = 12.sp,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TransitRow(peer: FipsPeer) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(vertical = 3.dp),
+    ) {
+        Text(
+            text = peer.alias ?: peer.npub,
+            color = PrimaryText,
+            fontSize = 13.sp,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = when {
+                peer.connected && peer.rttMs != null -> "connected · ${peer.rttMs} ms"
+                peer.connected -> "connected"
+                else -> "no answer"
+            },
+            color = if (peer.connected) SuccessGreen else SecondaryText,
+            fontSize = 12.sp,
+        )
     }
 }
 

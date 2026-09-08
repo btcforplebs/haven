@@ -14,8 +14,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use fips_bridge_core::proxy::{egress, Ingress};
-use fips_bridge_core::{bind_endpoint, EndpointOptions, FipsQuic};
-use fips_endpoint::PeerIdentity;
+use fips_bridge_core::{bind_endpoint, seed_alias, EndpointOptions, FipsQuic};
+use fips_endpoint::{FipsEndpoint, PeerIdentity};
 use tokio::net::TcpListener;
 use tokio::runtime::Runtime;
 
@@ -23,6 +23,7 @@ const SCOPE: &str = "nostr-vault-fips";
 
 struct Bridge {
     runtime: Runtime,
+    endpoint: Arc<FipsEndpoint>,
     quic: Arc<FipsQuic>,
     npub: String,
     address: String,
@@ -121,14 +122,15 @@ fn start(nsec: Option<String>) -> c_int {
             let endpoint = bind_endpoint(options).await?;
             let npub = endpoint.npub().to_string();
             let address = endpoint.address().to_ipv6().to_string();
-            let quic = Arc::new(FipsQuic::new(endpoint).await?);
-            Ok::<_, anyhow::Error>((quic, npub, address))
+            let quic = Arc::new(FipsQuic::new(endpoint.clone()).await?);
+            Ok::<_, anyhow::Error>((endpoint, quic, npub, address))
         });
 
         match result {
-            Ok((quic, npub, address)) => {
+            Ok((endpoint, quic, npub, address)) => {
                 *guard = Some(Bridge {
                     runtime,
+                    endpoint,
                     quic,
                     npub,
                     address,
@@ -147,6 +149,11 @@ fn start(nsec: Option<String>) -> c_int {
 /// Polled rather than pushed: callbacks from Rust threads would need
 /// `@convention(c)` trampolines on Swift and `AttachCurrentThread` on Android.
 /// One serialize per second buys us neither.
+///
+/// The peer list is the whole diagnostic. A bound endpoint that has reached no
+/// transit node looks identical to a working one from the outside — it binds,
+/// it advertises, and it can never cross a second NAT — so "running" on its own
+/// is not a state anyone can act on.
 #[no_mangle]
 pub extern "C" fn FipsBridgeStatusJSON() -> *mut c_char {
     std::panic::catch_unwind(|| {
@@ -154,15 +161,53 @@ pub extern "C" fn FipsBridgeStatusJSON() -> *mut c_char {
         let json = match guard.as_ref() {
             None => r#"{"running":false}"#.to_string(),
             Some(bridge) => format!(
-                r#"{{"running":true,"npub":"{}","address":"{}","uptime_s":{}}}"#,
+                r#"{{"running":true,"npub":"{}","address":"{}","uptime_s":{},"peers":[{}]}}"#,
                 json_escape(&bridge.npub),
                 json_escape(&bridge.address),
-                bridge.started.elapsed().as_secs()
+                bridge.started.elapsed().as_secs(),
+                peers_json(bridge)
             ),
         };
         to_c_string(json)
     })
     .unwrap_or(std::ptr::null_mut())
+}
+
+/// The peer array for [`FipsBridgeStatusJSON`].
+///
+/// An error here is reported as an empty list rather than as no bridge: the
+/// endpoint is demonstrably up, and turning a failed query into "stopped" would
+/// make the UI lie about the one thing it knows for certain.
+fn peers_json(bridge: &Bridge) -> String {
+    let endpoint = bridge.endpoint.clone();
+    let peers = bridge
+        .runtime
+        .block_on(async move { endpoint.peers().await })
+        .unwrap_or_default();
+
+    peers
+        .iter()
+        .map(|peer| {
+            format!(
+                r#"{{"npub":"{}","alias":{},"connected":{},"addr":{},"rtt_ms":{}}}"#,
+                json_escape(&peer.npub),
+                match seed_alias(&peer.npub) {
+                    Some(alias) => format!(r#""{alias}""#),
+                    None => "null".to_string(),
+                },
+                peer.connected,
+                match &peer.transport_addr {
+                    Some(addr) => format!(r#""{}""#, json_escape(addr)),
+                    None => "null".to_string(),
+                },
+                match peer.srtt_ms {
+                    Some(rtt) => rtt.to_string(),
+                    None => "null".to_string(),
+                }
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// Export a local TCP port to the mesh (provider role).
