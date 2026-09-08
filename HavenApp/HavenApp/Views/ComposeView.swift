@@ -796,8 +796,7 @@ struct ComposeView: View {
                 // npubs into the preview, so replying to a quote-post buried
                 // the actual words under a wall of bech32.
                 let parentPreview = NostrContentFormatter.format(parent.content,
-                                                                 mediaURLs: parent.mediaURLs,
-                                                                 hideQuotes: true)
+                                                                 mediaURLs: parent.mediaURLs)
                 // A note that is nothing but a quote strips to empty; the
                 // "Replying to …" line above already carries the context, so
                 // an empty row with padding is worse than no row.
