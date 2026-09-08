@@ -38,6 +38,7 @@ import com.nostrvault.ui.theme.PrimaryText
 import com.nostrvault.ui.theme.SecondaryGroupedBg
 import com.nostrvault.ui.theme.SecondaryText
 import com.nostrvault.ui.theme.WindowBackground
+import com.nostrvault.ui.theme.ZapOrange
 
 /**
  * Account switcher bottom sheet matching the iOS AccountSwitcherView.
@@ -162,7 +163,7 @@ private fun AccountRow(
                     .border(
                         width = if (account.isActive) 2.dp else 0.dp,
                         color = if (account.isActive) {
-                            if (account.isOwner) themeColor else Color(0xFFFF9500)
+                            if (account.isOwner) themeColor else ZapOrange
                         } else Color.Transparent,
                         shape = CircleShape,
                     ),
@@ -217,7 +218,7 @@ private fun AccountRow(
         Icon(
             imageVector = NostrVaultIcons.Accounts,
             contentDescription = null,
-            tint = if (account.hasKey) SecondaryText.copy(alpha = 0.4f) else Color(0xFFFF9500),
+            tint = if (account.hasKey) SecondaryText.copy(alpha = 0.4f) else ZapOrange,
             modifier = Modifier.size(14.dp),
         )
 

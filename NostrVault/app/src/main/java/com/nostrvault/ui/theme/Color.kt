@@ -5,7 +5,7 @@ import androidx.compose.ui.graphics.Color
 /**
  * Port of Theming.swift + PlatformCompat.swift color definitions.
  * The elevation ramp (surface0-3, borderHairline, borderStrong) matches
- * Theming.swift exactly. The rest is Android-specific and drifts from iOS.
+ * Theming.swift exactly.
  */
 
 // ---------------------------------------------------------------------------

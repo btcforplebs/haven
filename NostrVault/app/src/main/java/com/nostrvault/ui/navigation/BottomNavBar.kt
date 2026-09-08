@@ -48,6 +48,7 @@ import com.nostrvault.ui.theme.LocalOledMode
 import com.nostrvault.ui.theme.Motion
 import com.nostrvault.ui.theme.NostrVaultIcons
 import com.nostrvault.ui.theme.SecondaryGroupedBg
+import com.nostrvault.ui.theme.ZapOrange
 
 /**
  * Floating pill-shaped bottom navigation bar matching the iOS tab structure.
@@ -244,7 +245,7 @@ private fun CondensedNavCluster(
     onAccountSwitcher: () -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
-    val ringColor = if (isOwner) primaryColor else Color(0xFFFF9500)
+    val ringColor = if (isOwner) primaryColor else ZapOrange
 
     Row(
         modifier = Modifier
@@ -385,7 +386,7 @@ private fun ProfileTab(
         animationSpec = Motion.control(),
         label = "profileScale",
     )
-    val ringColor = if (isOwner) selectedColor else Color(0xFFFF9500)
+    val ringColor = if (isOwner) selectedColor else ZapOrange
 
     Column(
         modifier = modifier

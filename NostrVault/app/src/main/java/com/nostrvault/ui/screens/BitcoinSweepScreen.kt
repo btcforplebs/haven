@@ -288,7 +288,7 @@ private fun SweepDisclaimerPage(balanceLoaded: Boolean, onBack: () -> Unit, onPr
                     "Cold wallets may not handle single sweeps correctly",
                     "This defeats the privacy purpose of the address",
                 ),
-                bg = Color(0x1AFF3B30), border = Color(0x4DFF3B30),
+                bg = ErrorRed.copy(alpha = 0.10f), border = ErrorRed.copy(alpha = 0.30f),
             )
             Spacer(Modifier.height(16.dp))
             SweepWarningCard(
@@ -300,7 +300,7 @@ private fun SweepDisclaimerPage(balanceLoaded: Boolean, onBack: () -> Unit, onPr
                     "Creates a permanent transaction record linking you to these coins",
                     "Future regulatory actions could affect your funds",
                 ),
-                bg = Color(0x1AFF3B30), border = Color(0x4DFF3B30),
+                bg = ErrorRed.copy(alpha = 0.10f), border = ErrorRed.copy(alpha = 0.30f),
             )
             Spacer(Modifier.height(16.dp))
             SweepWarningCard(
@@ -310,14 +310,14 @@ private fun SweepDisclaimerPage(balanceLoaded: Boolean, onBack: () -> Unit, onPr
                     "Private self-custody address you control (not KYC-linked)",
                     "Another Nostr key you own that you've verified as a Taproot address",
                 ),
-                bg = Color(0x1434C759), border = Color(0x4D34C759),
+                bg = SuccessGreen.copy(alpha = 0.078f), border = SuccessGreen.copy(alpha = 0.30f),
             )
             Spacer(Modifier.height(16.dp))
             SweepWarningCard(
                 title = "🔒 Privacy Notice",
                 description = "Sweeping your wallet reveals the entire balance on the blockchain at that moment. Consider the timing and implications for your privacy.",
                 highlights = emptyList(),
-                bg = Color(0x14007AFF), border = Color(0x4D007AFF),
+                bg = InfoBlue.copy(alpha = 0.078f), border = InfoBlue.copy(alpha = 0.30f),
             )
         }
         HorizontalDivider(color = SecondaryText.copy(alpha = 0.2f))
@@ -391,7 +391,7 @@ private fun SweepForm(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Color(0x1AFF9500), RoundedCornerShape(12.dp))
+                .background(ZapOrange.copy(alpha = 0.10f), RoundedCornerShape(12.dp))
                 .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -462,7 +462,7 @@ private fun SweepForm(
             Spacer(Modifier.height(12.dp))
             Text(error, color = ErrorRed, fontSize = 13.sp, modifier = Modifier
                 .fillMaxWidth()
-                .background(Color(0x14FF3B30), RoundedCornerShape(8.dp))
+                .background(ErrorRed.copy(alpha = 0.078f), RoundedCornerShape(8.dp))
                 .padding(10.dp))
         }
 

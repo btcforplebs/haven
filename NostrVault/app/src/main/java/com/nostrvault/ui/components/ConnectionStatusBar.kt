@@ -12,8 +12,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.nostrvault.ui.theme.ErrorRed
 import com.nostrvault.ui.theme.Motion
 import com.nostrvault.ui.theme.SecondaryText
+import com.nostrvault.ui.theme.SuccessGreen
+import com.nostrvault.ui.theme.WarningYellow
 
 /**
  * Compact connection status indicator with colored dot and label.
@@ -26,9 +29,9 @@ fun ConnectionStatusBar(
     modifier: Modifier = Modifier,
 ) {
     val dotColor = when (color) {
-        "green" -> Color(0xFF34C759)
-        "yellow" -> Color(0xFFFFCC00)
-        "red" -> Color(0xFFFF3B30)
+        "green" -> SuccessGreen
+        "yellow" -> WarningYellow
+        "red" -> ErrorRed
         else -> Color(0xFF8E8E93)
     }
 
@@ -77,7 +80,7 @@ fun SyncingPill(
                 modifier = Modifier
                     .size(6.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFFFFCC00)),
+                    .background(WarningYellow),
             )
             Spacer(Modifier.width(4.dp))
             Text(
