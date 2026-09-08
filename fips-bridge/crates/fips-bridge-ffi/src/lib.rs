@@ -48,9 +48,52 @@ fn json_escape(value: &str) -> String {
 
 /// Bind the embedded FIPS endpoint and stand up QUIC over it.
 ///
+/// Uses a throwaway identity: a peer that knew this endpoint's npub cannot find
+/// it again after a restart. Kept for the probes, which pair two endpoints
+/// inside one process. An app that wants to be findable calls
+/// [`FipsBridgeStartWithIdentity`].
+///
 /// Returns 0 on success, negative on failure.
 #[no_mangle]
 pub extern "C" fn FipsBridgeStart() -> c_int {
+    start(None)
+}
+
+/// Bind the embedded FIPS endpoint under a caller-supplied network identity.
+///
+/// `nsec` is bech32 or hex; NULL or empty means "generate a throwaway one", so
+/// this is a strict superset of [`FipsBridgeStart`] and there is exactly one
+/// implementation underneath. This is the entry point an app uses: an address
+/// a peer can find twice has to survive a restart, and only the caller can
+/// persist it.
+///
+/// Returns 0 on success, negative on failure.
+#[no_mangle]
+pub extern "C" fn FipsBridgeStartWithIdentity(nsec: *const c_char) -> c_int {
+    let nsec = if nsec.is_null() {
+        None
+    } else {
+        match unsafe { CStr::from_ptr(nsec) }.to_str() {
+            Ok(s) if !s.trim().is_empty() => Some(s.trim().to_string()),
+            Ok(_) => None,
+            Err(_) => return -3,
+        }
+    };
+    start(nsec)
+}
+
+/// Generate a network identity the caller can persist and hand back to
+/// [`FipsBridgeStartWithIdentity`]. Caller frees.
+///
+/// Deliberately separate from the user's Nostr identity: the mesh address
+/// should be rotatable without touching the social one.
+#[no_mangle]
+pub extern "C" fn FipsBridgeGenerateNsec() -> *mut c_char {
+    std::panic::catch_unwind(|| to_c_string(EndpointOptions::generate_nsec()))
+        .unwrap_or(std::ptr::null_mut())
+}
+
+fn start(nsec: Option<String>) -> c_int {
     std::panic::catch_unwind(|| {
         let mut guard = slot().lock().unwrap();
         if guard.is_some() {
@@ -69,8 +112,13 @@ pub extern "C" fn FipsBridgeStart() -> c_int {
             Err(_) => return -1,
         };
 
+        let options = match nsec {
+            Some(nsec) => EndpointOptions::with_identity(nsec, SCOPE),
+            None => EndpointOptions::ephemeral(SCOPE),
+        };
+
         let result = runtime.block_on(async {
-            let endpoint = bind_endpoint(EndpointOptions::ephemeral(SCOPE)).await?;
+            let endpoint = bind_endpoint(options).await?;
             let npub = endpoint.npub().to_string();
             let address = endpoint.address().to_ipv6().to_string();
             let quic = Arc::new(FipsQuic::new(endpoint).await?);

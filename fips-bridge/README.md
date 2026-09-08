@@ -12,7 +12,19 @@ ios-probe/                a throwaway SwiftUI harness that links the static lib
 ```
 
 This is a separate Cargo workspace. Nothing in `HavenApp.xcodeproj` references
-it, so building the app neither builds nor needs it.
+it, so building the Mac or iOS app neither builds nor needs it.
+
+**Android does consume it**, through the same C ABI:
+`NostrVault/build_fips_android.sh` cross-compiles the cdylib into
+`app/src/main/jniLibs/`, `FipsBridgeJNI.c` wraps it, and Settings -> Mesh turns
+it on. The Rust artifact is gitignored and the CMake entry is conditional, so a
+checkout without it still builds and the app reports the mesh as unavailable —
+which also means a release can ship without the mesh if nobody runs the script.
+
+`armeabi-v7a` does not build at all: `nvpn-fips-core` 0.4.72 assigns a `u32` to
+`msg_namelen` (`upper/dns.rs:277`), which is `i32` on 32-bit Android. The app
+ships `arm64-v8a` only, so this costs nothing today, and `x86_64` builds fine
+for the emulator.
 
 ## The dependency pin, and why it keeps moving
 

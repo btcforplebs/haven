@@ -315,6 +315,10 @@ data class HavenConfig(
     // Haven Relay (wss:// URL to a remote Haven relay to sync missed notes)
     val macRelayURL: String = "",
 
+    // FIPS mesh. The preference only; the identity itself is a private key and
+    // lives in CredentialStore, not in this file, which is plaintext JSON.
+    val fipsMeshEnabled: Boolean = false,
+
     // Blossom
     val blossomMirrors: List<String> = emptyList(),
 
