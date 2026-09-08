@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Notification small icon. Android tints small icons to a flat silhouette
+    everywhere they appear, reading only the alpha channel, so this carries no
+    colour: one even-odd path where the arch wall fills, the opening cuts out,
+    and the lock — nested one level deeper — fills again.
+
+    20dp of mark on the 24dp canvas, matching the 2dp padding Material icons
+    use. Scaled from AppIcon-source.svg by 20/656 about the mark's bounding box
+    (x 262..762, y 220..876).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M4.378,22 L4.378,9.622 A7.622,7.622 0 0 1 19.622,9.622 L19.622,22 Z M7.122,22 L7.122,10.171 A4.878,4.878 0 0 1 16.878,10.171 L16.878,22 Z M12,16.695 a1.22,1.22 0 1 1 0,2.44 a1.22,1.22 0 1 1 0,-2.44 Z"/>
+</vector>

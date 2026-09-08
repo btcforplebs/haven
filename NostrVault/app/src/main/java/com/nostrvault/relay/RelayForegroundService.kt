@@ -647,7 +647,7 @@ class RelayForegroundService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(getString(R.string.relay_notification_title))
             .setContentText(statusText)
-            .setSmallIcon(android.R.drawable.ic_dialog_info) // TODO: Custom icon
+            .setSmallIcon(R.drawable.ic_notification)
             .setOngoing(true)
             .setShowWhen(false)
             .setSilent(true)
