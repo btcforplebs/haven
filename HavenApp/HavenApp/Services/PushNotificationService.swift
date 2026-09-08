@@ -86,7 +86,8 @@ class PushNotificationService: ObservableObject {
         let content = UNMutableNotificationContent()
         content.title = newCount == 1 ? "New note in your feed" : "\(newCount) new notes in your feed"
         content.body = "People you follow posted while you were away."
-        content.sound = UNNotificationSound(named: UNNotificationSoundName("notification.mp3"))
+        let sound = NotificationSound(rawValue: ConfigService.shared.config.notificationSoundName) ?? .defaultSound
+        content.sound = UNNotificationSound(named: UNNotificationSoundName(sound.systemSoundName))
         content.badge = NSNumber(value: newCount)
         content.categoryIdentifier = "FEED"
         content.userInfo = ["destination": "feed"]

@@ -75,6 +75,7 @@ struct HavenConfig: Codable, Equatable {
     var enableRemotePushServer: Bool = false // Kept for migration only
     var enablePushNotifications: Bool = false
     var notificationPrefsPerAccount: [String: NotificationPreferences] = [:]
+    var notificationSoundName: String = NotificationSound.defaultSound.rawValue
     
     // Private Relay
     var privateRelayName: String = "Nostr Vault Private"
@@ -237,7 +238,7 @@ struct HavenConfig: Codable, Equatable {
         case launchAtLogin, autoStartRelay, hasCompletedSetup, hasSeenWelcome, hasAcceptedToS, setupMode, hasCompletedInitialImport, disableMediaCache, autoplayVideos, cacheTTLDays, prefetchProfilePictures, ownerNcryptsec, ownerNsec, showReplies, nwcURI, defaultZapAmount, themeColor, autoLoadNewPosts, showReposts, showBitcoinWallet, cashuMintURL
         case useOLED, textSizeScale, useFeedCompactMode, feedCompactModes, noteDetailCompactView, noteDetailExpandedEngagement, defaultReactionEmoji, appIcon, zapsOnlyMode, disableTabBarAnimation
         case signingMode, nip46BunkerURI, nip46SignerPubkey, nip46RelayURL, nip46Secret, nip46ClientSecretKey, nip46ClientPubkey
-        case enableRemotePushServer, enablePushNotifications, notificationPrefsPerAccount
+        case enableRemotePushServer, enablePushNotifications, notificationPrefsPerAccount, notificationSoundName
         case macRelayURL
         case privateRelayName, privateRelayDescription, privateRelayIcon
         case chatRelayName, chatRelayDescription, chatRelayIcon, chatRelayWotDepth, chatRelayWotRefreshHours, wotRefreshInterval, chatRelayMinFollowers
@@ -330,6 +331,11 @@ struct HavenConfig: Codable, Equatable {
             enablePushNotifications = enableRemotePushServer
         }
         notificationPrefsPerAccount = try container.decodeIfPresent([String: NotificationPreferences].self, forKey: .notificationPrefsPerAccount) ?? defaults.notificationPrefsPerAccount
+        // Falls back to the default whenever the saved value doesn't match a known
+        // sound — covers both a fresh install and an existing config still carrying
+        // the retired "notification" name from before sounds became selectable.
+        let savedSound = try container.decodeIfPresent(String.self, forKey: .notificationSoundName) ?? defaults.notificationSoundName
+        notificationSoundName = NotificationSound(rawValue: savedSound)?.rawValue ?? NotificationSound.defaultSound.rawValue
         
         privateRelayName = try container.decodeIfPresent(String.self, forKey: .privateRelayName) ?? defaults.privateRelayName
         privateRelayDescription = try container.decodeIfPresent(String.self, forKey: .privateRelayDescription) ?? defaults.privateRelayDescription
