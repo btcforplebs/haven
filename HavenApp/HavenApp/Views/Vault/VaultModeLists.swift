@@ -120,6 +120,10 @@ extension VaultView {
                                 reposterPubkeys: showEngagement ? repostMap[event.id] : nil,
                                 quoterPubkeys: showEngagement ? quoteMap[event.id] : nil
                             )
+                            // Likes and Zaps rows carry this same inset; Notes rows
+                            // were flush to the pane edges, the one filter that read
+                            // differently from the other two.
+                            .padding(.horizontal, 16)
                         }
                         .buttonStyle(.plain)
                         #else
@@ -132,6 +136,7 @@ extension VaultView {
                             reposterPubkeys: showEngagement ? repostMap[event.id] : nil,
                             quoterPubkeys: showEngagement ? quoteMap[event.id] : nil
                         )
+                        .padding(.horizontal, 16)
                         .contentShape(Rectangle())
                         .onTapGesture {
                             self.openNote(event.id)

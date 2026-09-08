@@ -164,15 +164,100 @@ extension VaultView {
         .overlay(RoundedRectangle(cornerRadius: 20).stroke(Color(red: 0.2, green: 0.2, blue: 0.25), lineWidth: 0.8))
     }
 
+    // `ModeButton` (labeled, filled-pill-when-selected) is the language for
+    // *navigation*: which of Notes/Likes/Zaps you're looking at. This is a
+    // display option, not a destination, so it used to read as a fourth mode
+    // sitting in the same row — `IconFilterButton` is the icon-only language
+    // the rest of the toolbar already uses for exactly that distinction (see
+    // `trailingToolbarInline`'s condensed-view toggle on iOS).
     var compactToggleButton: some View {
-        ModeButton(
-            title: "Compact",
-            icon: "rectangle.compress.vertical",
-            isSelected: noteLayoutMode == .compact
+        IconFilterButton(
+            icon: noteLayoutMode == .compact ? "rectangle.expand.vertical" : "rectangle.compress.vertical",
+            tooltip: noteLayoutMode == .compact ? "Expanded View" : "Condensed View",
+            isSelected: noteLayoutMode == .compact,
+            color: .havenPurple
         ) {
             withAnimation(Motion.toggle) {
                 noteLayoutMode = noteLayoutMode == .compact ? .expanded : .compact
             }
+        }
+    }
+
+    // MARK: - Search
+
+    /// The one control that opens the pane's search — `committedSearch` and
+    /// `searchScope` already drove real filtering (`applySearchFilter`,
+    /// `profileSearchResults`) with nothing anywhere in the UI that could set
+    /// them.
+    var searchToggleButton: some View {
+        IconFilterButton(
+            icon: isSearchActive ? "xmark" : "magnifyingglass",
+            tooltip: isSearchActive ? "Close Search" : "Search",
+            isSelected: isSearchActive,
+            color: .havenPurple
+        ) {
+            withAnimation(Motion.toggle) {
+                isSearchActive.toggle()
+                if !isSearchActive {
+                    searchQueryDraft = ""
+                    committedSearch = ""
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    var searchBar: some View {
+        if isSearchActive {
+            HStack(spacing: 8) {
+                Menu {
+                    ForEach(SearchScope.allCases, id: \.self) { scope in
+                        Button {
+                            searchScope = scope
+                        } label: {
+                            Label(scope.label, systemImage: scope.icon)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: searchScope.icon)
+                        Image(systemName: "chevron.down")
+                            .font(.appSystem(size: 8, weight: .bold))
+                    }
+                    .font(.appSystem(size: 13, weight: .semibold))
+                    .foregroundColor(.havenPurple)
+                }
+                #if os(macOS)
+                .menuStyle(.borderlessButton)
+                #endif
+                .fixedSize()
+                .accessibilityLabel("Search scope: \(searchScope.label)")
+
+                TextField("Search \(searchScope.label.lowercased())", text: $searchQueryDraft)
+                    .textFieldStyle(.plain)
+                    .font(.appSystem(size: 14))
+                    .onSubmit {
+                        committedSearch = searchQueryDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+
+                if !searchQueryDraft.isEmpty {
+                    Button {
+                        searchQueryDraft = ""
+                        committedSearch = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear search")
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color(red: 0.15, green: 0.15, blue: 0.2))
+            .cornerRadius(8)
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(red: 0.2, green: 0.2, blue: 0.25), lineWidth: 0.8))
+            .transition(.opacity.combined(with: .move(edge: .top)))
         }
     }
 

@@ -31,11 +31,13 @@ struct QuotedNoteView: View {
         .background(Color.platformTertiaryGroupedBackground)
         .cornerRadius(8)
         .overlay(
+            // The fill step alone (tertiary sitting on the note card's secondary)
+            // is 1.10-1.22:1 — a seam, not a boundary — and the old purple accent
+            // stroke it wore instead only reached 1.17-1.55:1. `borderStrong` is
+            // the ramp's token for exactly this: a border that is the only real
+            // cue a card is nested inside another. 3.16-3.22:1 here.
             RoundedRectangle(cornerRadius: 8)
-                .stroke(
-                    Color.havenPurple.opacity(ConfigService.shared.config.useOLED ? 0.30 : 0.12),
-                    lineWidth: ConfigService.shared.config.useOLED ? 1.2 : 0.5
-                )
+                .stroke(Color.borderStrong, lineWidth: 1)
         )
     }
     
