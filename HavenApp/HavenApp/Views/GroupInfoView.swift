@@ -14,7 +14,20 @@ struct GroupInfoView: View {
     @State private var editPicture = ""
     @State private var showingLeaveConfirm = false
     @State private var showingDeleteConfirm = false
+    /// The member whose remove button was hit. Removal is published to the
+    /// relay immediately, so it asks first — and names who.
+    @State private var memberPendingRemoval: GroupMember? = nil
     @State private var actionError: String?
+
+    /// Names for the confirmation copy — a confirmation that says "this member"
+    /// is not one you can check before you act on it.
+    private var groupName: String {
+        conversation?.displayName ?? identifier.groupId
+    }
+
+    private func displayName(for member: GroupMember) -> String {
+        nostrService.profiles[member.pubkey]?.bestName ?? String(member.pubkey.prefix(8)) + "..."
+    }
 
     private var conversation: GroupConversation? {
         groupService.conversations.first(where: { $0.identifier == identifier })
@@ -124,9 +137,7 @@ struct GroupInfoView: View {
 
                                 if isAdmin && member.pubkey != NostrService.shared.activeHexPubkey {
                                     Button(action: {
-                                        Task {
-                                            try? await groupService.removeUser(member.pubkey, fromGroup: identifier)
-                                        }
+                                        memberPendingRemoval = member
                                     }) {
                                         Image(systemName: "minus.circle")
                                             .foregroundColor(.red)
@@ -188,41 +199,43 @@ struct GroupInfoView: View {
                 }
             }
             #endif
-            .alert(String(localized: "group.info.leaveConfirmTitle"), isPresented: $showingLeaveConfirm) {
-                Button(String(localized: "group.info.leaveConfirmAction"), role: .destructive) {
+            .confirmDestructive(
+                "Remove Member",
+                item: $memberPendingRemoval,
+                consequence: { member in
+                    "This removes \(displayName(for: member)) from \(groupName). They lose access to the group until an admin adds them back."
+                },
+                confirmTitle: "Remove",
+                action: { member in
+                    Task {
+                        try? await groupService.removeUser(member.pubkey, fromGroup: identifier)
+                    }
+                }
+            )
+            .confirmDestructive(
+                "Leave Group",
+                isPresented: $showingLeaveConfirm,
+                consequence: "This leaves \(groupName). Its messages are removed from this device, and a closed group needs a new invite to rejoin.",
+                confirmTitle: "Leave",
+                action: {
                     Task {
                         try? await groupService.leaveGroup(identifier)
                         dismiss()
                     }
                 }
-                Button(String(localized: "group.info.cancel"), role: .cancel) {}
-            } message: {
-                Text(String(localized: "group.info.leaveConfirmMessage"))
-            }
-            .alert(String(localized: "group.info.deleteConfirmTitle"), isPresented: $showingDeleteConfirm) {
-                Button(String(localized: "group.info.deleteConfirmAction"), role: .destructive) {
+            )
+            .confirmDestructive(
+                "Delete Group",
+                isPresented: $showingDeleteConfirm,
+                consequence: "This asks the relay to delete \(groupName) for everyone, not just you. It cannot be undone.",
+                confirmTitle: "Delete Group",
+                action: {
                     Task {
-                        guard let event = await NostrService.shared.signEventAsync(
-                            kind: 9008, content: "", tags: [["h", identifier.groupId]]
-                        ) else { return }
-                        let eventDict: [String: Any] = [
-                            "id": event.id, "pubkey": event.pubkey,
-                            "created_at": event.created_at, "kind": event.kind,
-                            "tags": event.tags, "content": event.content, "sig": event.sig
-                        ]
-                        let msg = ["EVENT", eventDict] as [Any]
-                        if let data = try? JSONSerialization.data(withJSONObject: msg),
-                           let _ = String(data: data, encoding: .utf8) {
-                            // Use the relay client directly
-                        }
-                        try? await groupService.leaveGroup(identifier)
+                        try? await groupService.deleteGroup(identifier)
                         dismiss()
                     }
                 }
-                Button(String(localized: "group.info.cancel"), role: .cancel) {}
-            } message: {
-                Text(String(localized: "group.info.deleteConfirmMessage"))
-            }
+            )
             .sheet(isPresented: $isEditing) {
                 GroupEditView(
                     identifier: identifier,

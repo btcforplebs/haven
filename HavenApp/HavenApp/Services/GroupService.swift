@@ -568,6 +568,35 @@ class GroupService: ObservableObject {
         }
     }
 
+    /// NIP-29 kind:9008 — asks the relay to delete the group itself.
+    ///
+    /// This used to live in `GroupInfoView`, where it signed the event,
+    /// serialised it, dropped it on the floor and fell through to
+    /// `leaveGroup`. The button said Delete Group and only ever left it, so
+    /// the group stayed up for everyone else.
+    func deleteGroup(_ identifier: GroupIdentifier) async throws {
+        let tags: [[String]] = [["h", identifier.groupId]]
+
+        guard let event = await NostrService.shared.signEventAsync(
+            kind: 9008, content: "", tags: tags
+        ) else {
+            throw GroupError.signingFailed
+        }
+
+        publishToRelay(event, relayURL: identifier.relayURL)
+
+        // The relay decides whether the group is really gone, but there is
+        // nothing left to show here either way, so drop it locally exactly as
+        // leaving does.
+        ConfigService.shared.config.joinedGroups.removeAll {
+            $0.relayURL == identifier.relayURL && $0.groupId == identifier.groupId
+        }
+        ConfigService.shared.save()
+
+        conversations.removeAll { $0.identifier == identifier }
+        saveConversations()
+    }
+
     func createInvite(forGroup identifier: GroupIdentifier) async throws {
         let tags: [[String]] = [["h", identifier.groupId]]
 

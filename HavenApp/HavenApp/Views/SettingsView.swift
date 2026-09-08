@@ -851,6 +851,12 @@ struct AccountDetailView: View {
     var onRevealKey: () -> Void
     var onRemoveAccount: () -> Void
 
+    // Every account action below is one-way: the key material is gone, or the
+    // signer link is, and nothing here can put it back.
+    @State private var showingRemoveKeyConfirm = false
+    @State private var showingDisconnectSignerConfirm = false
+    @State private var showingRemoveAccountConfirm = false
+
     private var isOwner: Bool { npub == configService.config.ownerNpub }
     private var activeNpub: String {
         let a = configService.config.activeAccountNpub.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -937,17 +943,7 @@ struct AccountDetailView: View {
                         }
 
                         Button(role: .destructive) {
-                            if isOwner {
-                                configService.config.ownerNcryptsec = ""
-                                configService.config.ownerNsec = ""
-                            } else {
-                                configService.removeCredential(forNpub: npub)
-                            }
-                            // If was using local and now removed, switch to bunker if available
-                            if currentMode == "local" && hasBunker {
-                                configService.setSigningMode("nip46", forNpub: npub)
-                            }
-                            configService.save()
+                            showingRemoveKeyConfirm = true
                         } label: {
                             Label("Remove Local Key", systemImage: "trash")
                         }
@@ -982,14 +978,7 @@ struct AccountDetailView: View {
                         }
 
                         Button(role: .destructive) {
-                            if nip46Service.isConnected && isActive {
-                                nip46Service.disconnect()
-                            }
-                            configService.removeBunkerConfig(forNpub: npub)
-                            // If was using nip46 and now removed, switch to local
-                            if currentMode == "nip46" {
-                                configService.setSigningMode("local", forNpub: npub)
-                            }
+                            showingDisconnectSignerConfirm = true
                         } label: {
                             Label("Disconnect Remote Signer", systemImage: "link.badge.plus")
                         }
@@ -1028,8 +1017,7 @@ struct AccountDetailView: View {
                 if !isOwner {
                     Section {
                         Button(role: .destructive) {
-                            onRemoveAccount()
-                            dismiss()
+                            showingRemoveAccountConfirm = true
                         } label: {
                             Label("Remove Account", systemImage: "person.badge.minus")
                         }
@@ -1037,6 +1025,30 @@ struct AccountDetailView: View {
                 }
             }
             .groupedFormStyleCompat()
+            .confirmDestructive(
+                "Remove Local Key",
+                isPresented: $showingRemoveKeyConfirm,
+                consequence: removeKeyConsequence,
+                confirmTitle: "Remove Key",
+                action: removeLocalKey
+            )
+            .confirmDestructive(
+                "Disconnect Remote Signer",
+                isPresented: $showingDisconnectSignerConfirm,
+                consequence: disconnectSignerConsequence,
+                confirmTitle: "Disconnect",
+                action: disconnectRemoteSigner
+            )
+            .confirmDestructive(
+                "Remove Account",
+                isPresented: $showingRemoveAccountConfirm,
+                consequence: "This removes \(npub.prefix(12))… from Nostr Vault, along with any key or signer stored for it. Nothing on the relays changes, but you will need the key again to sign back in.",
+                confirmTitle: "Remove Account",
+                action: {
+                    onRemoveAccount()
+                    dismiss()
+                }
+            )
             .navigationTitle("Account")
             #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -1052,6 +1064,48 @@ struct AccountDetailView: View {
                 }
             }
             #endif
+        }
+    }
+
+    /// What removing the local key costs, stated before it happens. Nostr Vault
+    /// holds the only copy it knows about — if this was never written down,
+    /// the account is unrecoverable.
+    private var removeKeyConsequence: String {
+        if hasBunker {
+            return "This deletes the private key stored on this device. Signing falls back to the remote signer. If you have no backup of the key elsewhere, it cannot be recovered."
+        }
+        return "This deletes the private key stored on this device, and nothing else here can sign for this account afterwards. If you have no backup of the key elsewhere, it cannot be recovered."
+    }
+
+    private var disconnectSignerConsequence: String {
+        if hasLocalKey {
+            return "This drops the remote signer connection and its stored session. Signing falls back to the local key on this device; reconnecting needs a fresh bunker URI."
+        }
+        return "This drops the remote signer connection and its stored session, and nothing else here can sign for this account afterwards. Reconnecting needs a fresh bunker URI."
+    }
+
+    private func removeLocalKey() {
+        if isOwner {
+            configService.config.ownerNcryptsec = ""
+            configService.config.ownerNsec = ""
+        } else {
+            configService.removeCredential(forNpub: npub)
+        }
+        // If was using local and now removed, switch to bunker if available
+        if currentMode == "local" && hasBunker {
+            configService.setSigningMode("nip46", forNpub: npub)
+        }
+        configService.save()
+    }
+
+    private func disconnectRemoteSigner() {
+        if nip46Service.isConnected && isActive {
+            nip46Service.disconnect()
+        }
+        configService.removeBunkerConfig(forNpub: npub)
+        // If was using nip46 and now removed, switch to local
+        if currentMode == "nip46" {
+            configService.setSigningMode("local", forNpub: npub)
         }
     }
 
