@@ -95,7 +95,6 @@ fun VaultNoteCard(
                 quotedNotes = quotedNotes,
                 profile = profile,
                 profiles = profiles,
-                quotedNotes = quotedNotes,
                 onArticleClick = onArticleClick,
                 onNoteClick = onNoteClick,
                 reactors = effectiveReactors,
