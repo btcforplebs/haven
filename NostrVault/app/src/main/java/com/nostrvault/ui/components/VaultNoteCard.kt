@@ -200,8 +200,8 @@ private fun CompactLayout(
             if (note.content.isNotBlank()) {
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = remember(note.content, profiles) {
-                        NostrMentions.toPlainText(note.content, profiles).replace("\n", " ")
+                    text = remember(note.content, profiles, note.mediaURLs) {
+                        NostrMentions.toPlainText(note.content, profiles, note.mediaURLs.toSet()).replace("\n", " ")
                     },
                     color = PrimaryText,
                     fontSize = 14.sp,

@@ -114,8 +114,8 @@ fun QuotedNoteCard(
                 if (note.content.isNotBlank()) {
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        text = remember(note.content, profiles) {
-                            NostrMentions.toPlainText(note.content, profiles)
+                        text = remember(note.content, profiles, note.mediaURLs) {
+                            NostrMentions.toPlainText(note.content, profiles, note.mediaURLs.toSet())
                         },
                         color = SecondaryText,
                         fontSize = 13.sp,

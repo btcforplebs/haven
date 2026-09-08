@@ -121,7 +121,7 @@ fun CompactNoteCard(
                 if (note.content.isNotBlank()) {
                     Spacer(Modifier.height(2.dp))
                     val plainText = remember(note.id, note.content, profiles) {
-                        NostrMentions.toPlainText(note.content, profiles).replace("\n", " ").trim()
+                        NostrMentions.toPlainText(note.content, profiles, note.mediaURLs.toSet()).replace("\n", " ").trim()
                     }
                     Text(
                         text = plainText,
