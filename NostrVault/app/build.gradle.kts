@@ -18,12 +18,22 @@ android {
     namespace = "com.nostrvault"
     compileSdk = 35
 
+    // Only wire the release signer when local.properties actually carries the
+    // keystore. The unconditional `as String` casts here threw at configuration
+    // time on any checkout without it, which failed even `compileDebugKotlin` —
+    // a debug build has no business needing the release keystore.
+    val hasReleaseKeystore = listOf(
+        "KEYSTORE_PATH", "KEYSTORE_PASSWORD", "KEY_ALIAS", "KEY_PASSWORD",
+    ).all { localProps[it] != null }
+
     signingConfigs {
-        create("release") {
-            storeFile = file(localProps["KEYSTORE_PATH"] as String)
-            storePassword = localProps["KEYSTORE_PASSWORD"] as String
-            keyAlias = localProps["KEY_ALIAS"] as String
-            keyPassword = localProps["KEY_PASSWORD"] as String
+        if (hasReleaseKeystore) {
+            create("release") {
+                storeFile = file(localProps["KEYSTORE_PATH"] as String)
+                storePassword = localProps["KEYSTORE_PASSWORD"] as String
+                keyAlias = localProps["KEY_ALIAS"] as String
+                keyPassword = localProps["KEY_PASSWORD"] as String
+            }
         }
     }
 
@@ -49,7 +59,9 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("release")
+            // Unsigned without a keystore; `assembleRelease` then produces an
+            // unsigned APK instead of failing the whole configuration phase.
+            if (hasReleaseKeystore) signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

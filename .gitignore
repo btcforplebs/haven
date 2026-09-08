@@ -2,7 +2,10 @@
 *.bak2
 /HavenApp/build
 /HavenApp/build_data
-*.txt
+# Root-level scratch notes only. A blanket *.txt swallowed
+# NostrVault/app/src/main/CMakeLists.txt, which app/build.gradle.kts
+# requires, so a fresh clone could not assemble the Android APK.
+/*.txt
 /build
 /build_data
 *.build

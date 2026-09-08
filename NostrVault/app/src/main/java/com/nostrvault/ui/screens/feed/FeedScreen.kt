@@ -63,6 +63,7 @@ import com.nostrvault.ui.components.CompactNoteCard
 import com.nostrvault.ui.components.GlassPill
 import com.nostrvault.ui.components.GlassScaffold
 import com.nostrvault.ui.components.NoteCard
+import com.nostrvault.ui.components.NostrMentions
 import com.nostrvault.ui.components.ScrollCondenseEffect
 import com.nostrvault.ui.components.SkeletonFeed
 import com.nostrvault.service.ScrollPosition
@@ -99,7 +100,10 @@ fun FeedScreen(
     val isLoadingMore by viewModel.isLoadingMore.collectAsState()
     val connectionStatus by viewModel.connectionStatus.collectAsState()
     val connectionColor by viewModel.connectionColor.collectAsState()
-    val allProfiles by viewModel.profiles.collectAsState()
+    // Read straight off the ViewModel's snapshot map. Collecting it here would
+    // subscribe the whole screen to every metadata batch; each feed row narrows
+    // its own read below instead.
+    val allProfiles = viewModel.profileState
     val isCompact by viewModel.compactModeEnabled.collectAsState()
     val autoLoad by viewModel.autoLoadEnabled.collectAsState()
     val showReposts by viewModel.showReposts.collectAsState()
@@ -423,21 +427,32 @@ fun FeedScreen(
                         val isExpanded = isCompact && expandedNoteId == note.id
                         val showCompact = isCompact && !isExpanded
 
-                        // Cache profile lookups to avoid redundant map reads during recomposition
-                        val noteProfile = remember(note.id, note.pubkey) {
-                            viewModel.profileFor(note.pubkey)
-                        }
-                        val repostedByProfile = remember(note.id, note.repostedBy) {
-                            note.repostedBy?.let { viewModel.profileFor(it) }
+                        // Exactly the pubkeys this card can render: its author, the
+                        // reposter, the reply target, and anyone the text mentions.
+                        // Quoted notes and the parent are added below where they resolve.
+                        val headPubkeys = remember(note.id) {
+                            buildList {
+                                add(note.pubkey)
+                                note.repostedBy?.let(::add)
+                                note.replyToPubkey?.let(::add)
+                                addAll(NostrMentions.mentionedPubkeys(note.content))
+                            }.distinct()
                         }
 
                         // Remove expensive Crossfade animation for better scroll performance
                         if (showCompact) {
+                            // derivedStateOf, not a plain read: the computation re-runs on
+                            // every metadata batch, but this row only recomposes when one of
+                            // *its* profiles actually changed. Reading allProfiles directly
+                            // here would rebuild every visible card per batch instead.
+                            val cardProfiles by remember(headPubkeys) {
+                                derivedStateOf { headPubkeys.resolveAgainst(allProfiles) }
+                            }
                             CompactNoteCard(
                                 note = note,
-                                profile = noteProfile,
-                                profiles = allProfiles,
-                                repostedByProfile = repostedByProfile,
+                                profile = cardProfiles[note.pubkey],
+                                profiles = cardProfiles,
+                                repostedByProfile = note.repostedBy?.let { cardProfiles[it] },
                                 onNoteClick = { id ->
                                     // Expand inline first instead of navigating
                                     expandedNoteId = id
@@ -446,10 +461,6 @@ fun FeedScreen(
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
                             )
                         } else {
-                            val replyToProfile = remember(note.id, note.replyToPubkey) {
-                                note.replyToPubkey?.let { viewModel.profileFor(it) }
-                            }
-
                             val parentEventId = note.parentEventId
                             val parentNote = parentEventId?.let { viewModel.parentNoteFor(it) }
                             val isParentNext = parentEventId?.let { viewModel.isParentNext(note.id) } ?: false
@@ -467,17 +478,29 @@ fun FeedScreen(
                                 }
                             }
 
+                            // See the compact branch: derivedStateOf keeps a metadata
+                            // batch from recomposing cards it did not touch. The parent and
+                            // quoted authors join the set once those notes resolve.
+                            val cardPubkeys = remember(headPubkeys, parentNote?.pubkey, quotedNotesMap) {
+                                (headPubkeys +
+                                    listOfNotNull(parentNote?.pubkey) +
+                                    quotedNotesMap.values.map { it.pubkey }).distinct()
+                            }
+                            val cardProfiles by remember(cardPubkeys) {
+                                derivedStateOf { cardPubkeys.resolveAgainst(allProfiles) }
+                            }
+
                             NoteCard(
                                 note = note,
-                                profile = noteProfile,
+                                profile = cardProfiles[note.pubkey],
                                 stats = viewModel.statsFor(note.id),
-                                profiles = allProfiles,
+                                profiles = cardProfiles,
                                 quotedNotes = quotedNotesMap,
                                 isLiked = viewModel.isLiked(note.id),
                                 isZapped = viewModel.isZapped(note.id),
                                 isReposted = note.effectiveEventId in repostedIds,
-                                repostedByProfile = repostedByProfile,
-                                replyToProfile = replyToProfile,
+                                repostedByProfile = note.repostedBy?.let { cardProfiles[it] },
+                                replyToProfile = note.replyToPubkey?.let { cardProfiles[it] },
                                 parentNote = parentNote,
                                 parentIsNext = isParentNext,
                                 showReplyContext = true,
@@ -1313,4 +1336,19 @@ private fun NewPostsPill(count: Int, onClick: () -> Unit, modifier: Modifier = M
             color = PrimaryText,
         )
     }
+}
+
+/**
+ * The subset of [profiles] this list of pubkeys names, dropping the ones the
+ * relay has not answered yet. Small by construction — a handful of entries per
+ * feed row — so a card is handed only what it can draw rather than the whole
+ * profile cache.
+ */
+private fun List<String>.resolveAgainst(
+    profiles: Map<String, FeedProfile>,
+): Map<String, FeedProfile> {
+    if (isEmpty()) return emptyMap()
+    val resolved = HashMap<String, FeedProfile>(size)
+    for (pubkey in this) profiles[pubkey]?.let { resolved[pubkey] = it }
+    return resolved
 }

@@ -1,5 +1,7 @@
 package com.nostrvault.ui.screens.feed
 
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.nostrvault.data.local.ConfigStore
@@ -16,17 +18,20 @@ import com.nostrvault.service.ScrollPosition
 import com.nostrvault.service.ZapSendService
 import com.nostrvault.ui.notification.NotificationManager
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 /**
  * ViewModel for the main feed screen.
  * Bridges FeedService + NostrService state into composable-friendly flows.
  */
+@OptIn(FlowPreview::class)
 @HiltViewModel
 class FeedViewModel @Inject constructor(
     private val feedService: FeedService,
@@ -36,6 +41,11 @@ class FeedViewModel @Inject constructor(
     private val zapSendService: ZapSendService,
     private val liveFeedService: LiveFeedService,
 ) : ViewModel() {
+
+    private companion object {
+        /** Relays answer metadata in bursts; three UI passes a second is plenty. */
+        const val PROFILE_SAMPLE_MS = 300L
+    }
 
     /**
      * Live streams come from their own service rather than the note list: a
@@ -57,14 +67,23 @@ class FeedViewModel @Inject constructor(
     // ── Feed state ───────────────────────────────────────────────
 
     val notes: StateFlow<List<FeedNote>> = feedService.notes
-    // Profiles stream in continuously as notes are fetched. Emitting on every
-    // single insertion recomposed the whole visible feed per-profile while
-    // scrolling. Sample so bursts coalesce to ~3/sec; mentions/avatars still
-    // resolve within a frame or two. profileFor() below still reads the live map.
-    @OptIn(FlowPreview::class)
-    val profiles: StateFlow<Map<String, FeedProfile>> = nostrService.profiles
-        .sample(300L) // coalesce profile bursts to ~3/sec while scrolling
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), nostrService.profiles.value)
+
+    /**
+     * Profiles as Compose state rather than a `StateFlow` the screen collects.
+     *
+     * This alone is not the win — `SnapshotStateMap` has one state record, so
+     * any write invalidates every scope that read the map, exactly like a new
+     * `Map` instance would. What it buys is *where* the read happens: the
+     * screen no longer holds a `collectAsState` at the top of the composition,
+     * so each feed row can wrap its own lookups in `derivedStateOf` and be
+     * invalidated only when the profiles that row actually shows change. See
+     * `FeedScreen`'s per-row `cardProfiles`.
+     *
+     * Still sampled, because the relay answers a metadata batch in bursts and
+     * three UI passes a second is plenty for a name appearing.
+     */
+    val profileState: SnapshotStateMap<String, FeedProfile> =
+        mutableStateMapOf<String, FeedProfile>().apply { putAll(nostrService.profiles.value) }
     val noteStats: StateFlow<Map<String, NoteStats>> = feedService.noteStats
     val likedEventIds: StateFlow<Set<String>> = feedService.likedEventIds
     val zappedEventIds: StateFlow<Map<String, Int>> = feedService.zappedEventIds
@@ -87,6 +106,29 @@ class FeedViewModel @Inject constructor(
     }
 
     init {
+        // Diff the profile map off the main thread and write only what changed:
+        // the cache holds up to 5,000 entries, and scanning that on the main
+        // thread three times a second would cost more than the recompositions
+        // this is here to avoid.
+        viewModelScope.launch(Dispatchers.Default) {
+            nostrService.profiles.sample(PROFILE_SAMPLE_MS).collect { snapshot ->
+                val changed = snapshot.filterTo(HashMap()) { (pubkey, profile) ->
+                    profileState[pubkey] != profile
+                }
+                // Entries only disappear when the service trims its cache.
+                val dropped = if (snapshot.size < profileState.size) {
+                    profileState.keys.filterTo(ArrayList()) { it !in snapshot }
+                } else {
+                    emptyList()
+                }
+                if (changed.isEmpty() && dropped.isEmpty()) return@collect
+                withContext(Dispatchers.Main) {
+                    profileState.putAll(changed)
+                    dropped.forEach { profileState.remove(it) }
+                }
+            }
+        }
+
         // Staggered startup: wait for relay to be ready before loading feed
         // to avoid OOM from relay + feed + media all starting simultaneously.
         viewModelScope.launch {

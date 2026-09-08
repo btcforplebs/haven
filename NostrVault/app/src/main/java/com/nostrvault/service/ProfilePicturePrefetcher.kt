@@ -44,6 +44,8 @@ class ProfilePicturePrefetcher @Inject constructor(
         private const val DEBOUNCE_MS = 12L * 60 * 60 * 1000 // 12 hours
         private const val STARTUP_DELAY_MS = 10_000L // Wait for contacts to load
         private const val PROFILE_FETCH_WAIT_MS = 5_000L // Wait for Kind 0 metadata
+        private const val METADATA_CHUNK_SIZE = 100 // Follows per metadata REQ
+        private const val METADATA_CHUNK_DELAY_MS = 750L // Breathing room between them
         private const val PREFS_NAME = "avatar_prefetch"
         private const val PREF_LAST_RUN = "last_run_timestamp"
     }
@@ -127,12 +129,19 @@ class ProfilePicturePrefetcher @Inject constructor(
 
             Log.d(TAG, "Starting avatar prefetch for ${pubkeys.size} followed accounts")
 
-            // Fetch missing profile metadata first
+            // Fetch missing profile metadata first, paced. Handing the whole
+            // follow list over at once became a single metadata REQ for every
+            // follow, and the kind-0 flood it answered with landed on the feed
+            // while the user was scrolling it. Chunking spreads that over the
+            // sweep instead; the avatars are wanted eventually, not this second.
             val profiles = nostrService.profiles.value
             val missingProfiles = pubkeys.filter { profiles[it] == null }
             if (missingProfiles.isNotEmpty()) {
                 Log.d(TAG, "Fetching ${missingProfiles.size} missing profiles")
-                nostrService.fetchMissingProfiles(missingProfiles)
+                for (chunk in missingProfiles.chunked(METADATA_CHUNK_SIZE)) {
+                    nostrService.fetchMissingProfiles(chunk)
+                    delay(METADATA_CHUNK_DELAY_MS)
+                }
                 delay(PROFILE_FETCH_WAIT_MS)
             }
 
