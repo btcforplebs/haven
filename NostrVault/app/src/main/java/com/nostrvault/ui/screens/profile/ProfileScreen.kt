@@ -44,6 +44,8 @@ import com.nostrvault.ui.theme.*
 fun ProfileScreen(
     pubkey: String,
     onNoteClick: (String) -> Unit,
+    /** Where a quoted long-form post opens; the note screen would show its Markdown source. */
+    onArticleClick: (String) -> Unit,
     onProfileClick: (String) -> Unit,
     onEditProfile: () -> Unit,
     onCompose: () -> Unit = {},
@@ -297,6 +299,7 @@ fun ProfileScreen(
                         isReposted = note.effectiveEventId in repostedIds,
                         repostedByProfile = note.repostedBy?.let { allProfiles[it] },
                         onNoteClick = onNoteClick,
+                        onArticleClick = onArticleClick,
                         onProfileClick = onProfileClick,
                         onLike = viewModel::likeNote,
                         onRepost = viewModel::repostNote,

@@ -2,6 +2,7 @@ package com.nostrvault.service
 
 import android.util.Log
 import android.util.LruCache
+import androidx.core.text.HtmlCompat
 import kotlinx.coroutines.*
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -177,13 +178,32 @@ class LinkPreviewService @Inject constructor() {
         // Guard the image URL too — it is later handed to Coil to load.
         }?.takeIf { com.nostrvault.util.UrlSafety.isSafeRemoteUrl(it) }
 
+        // OpenGraph values are HTML attribute contents, so they arrive encoded
+        // ("Bob&#39;s blog"). Decode before they reach a Text composable.
         return LinkPreviewMetadata(
             url = sourceURL,
-            title = title ?: ogTags["title"],
-            description = ogTags["description"],
+            title = decodeEntities(title ?: ogTags["title"]),
+            description = decodeEntities(ogTags["description"]),
             imageURL = imageURL,
-            siteName = ogTags["site_name"],
+            siteName = decodeEntities(ogTags["site_name"]),
         )
+    }
+
+    /**
+     * Decode the HTML character references in an OpenGraph value.
+     *
+     * The platform parser handles both named and numeric forms, so there is no
+     * table to keep. It also collapses whitespace and drops any stray markup,
+     * which is what a one-line preview wants anyway. Blank after decoding is
+     * treated as absent rather than shown as an empty line.
+     */
+    private fun decodeEntities(value: String?): String? {
+        if (value.isNullOrBlank()) return null
+        if (!value.contains('&')) return value
+        return HtmlCompat.fromHtml(value, HtmlCompat.FROM_HTML_MODE_LEGACY)
+            .toString()
+            .trim()
+            .ifBlank { null }
     }
 
     // ══════════════════════════════════════════════════════════════════

@@ -81,6 +81,11 @@ fun NoteCard(
     repostedByProfile: FeedProfile? = null,
     replyToProfile: FeedProfile? = null,
     onNoteClick: (String) -> Unit,
+    /**
+     * Where a quoted long-form post opens. Null falls back to [onNoteClick],
+     * which lands on the note screen and would show the Markdown source.
+     */
+    onArticleClick: ((String) -> Unit)? = null,
     onProfileClick: (String) -> Unit,
     onLike: ((String) -> Unit)? = null,
     onRepost: ((String) -> Unit)? = null,
@@ -317,6 +322,7 @@ fun NoteCard(
                             profile = profiles[quotedNote.pubkey],
                             profiles = profiles,
                             onClick = onNoteClick,
+                            onArticleClick = onArticleClick,
                             modifier = Modifier.padding(start = 50.dp),
                         )
                     } else {

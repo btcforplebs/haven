@@ -137,6 +137,30 @@ class FeedService @Inject constructor(
     private val _parentNotesCache = MutableStateFlow<Map<String, FeedNote>>(emptyMap())
     val parentNotesCache: StateFlow<Map<String, FeedNote>> = _parentNotesCache.asStateFlow()
 
+    /**
+     * Quoted addressable events (long-form articles, live streams), keyed by
+     * their `naddr:<kind>:<pubkey>:<d>` coordinate.
+     *
+     * Separate from [_parentNotesCache] because these are not addressed by id:
+     * an article is edited in place, so the coordinate is stable while the id
+     * of the newest revision is not.
+     */
+    private val _quotedAddressCache = MutableStateFlow<Map<String, FeedNote>>(emptyMap())
+
+    /**
+     * Every fetched quoted event, keyed by the lookup key its quoting note
+     * holds — a hex id or an `naddr:` coordinate, whichever is in
+     * `FeedNote.quotedEventIds`.
+     *
+     * Screens observe this one map rather than the two caches behind it, so a
+     * card cannot be looked up by a key the fetcher never stored under, and a
+     * screen cannot miss the arrival of a quoted article by watching only the
+     * by-id cache.
+     */
+    val quotedNotes: StateFlow<Map<String, FeedNote>> =
+        combine(_parentNotesCache, _quotedAddressCache) { byId, byAddress -> byId + byAddress }
+            .stateIn(scope, SharingStarted.Eagerly, emptyMap())
+
     private val _followedPubkeys = MutableStateFlow<List<String>>(emptyList())
     val followedPubkeys: StateFlow<List<String>> = _followedPubkeys.asStateFlow()
 
@@ -1656,6 +1680,10 @@ class FeedService @Inject constructor(
     fun findNote(id: String): FeedNote? {
         return _notes.value.firstOrNull { it.id == id || it.effectiveEventId == id }
             ?: _parentNotesCache.value[id]
+            // Quoted addressable events are keyed by coordinate, so a lookup by
+            // id has to scan them — without this, opening a quoted article
+            // refetches an event already in memory.
+            ?: _quotedAddressCache.value.values.firstOrNull { it.id == id }
     }
 
     /**
@@ -1906,26 +1934,113 @@ class FeedService @Inject constructor(
     // ══════════════════════════════════════════════════════════════════
 
     /**
-     * Decode a quoted-note bech32 identifier to a hex event id.
-     * `naddr1` is an addressable-event coordinate (not a single event id),
-     * so it can't be fetched this way and returns null.
+     * Resolve a quoted-event lookup key to a cached note, if already fetched.
+     *
+     * [identifier] is what `FeedNote.quotedEventIds` holds: a hex event id, or
+     * an `naddr:` coordinate. It used to be decoded from bech32 here as well,
+     * which meant that once the parser started handing out hex this rejected
+     * every key it was given and no quoted note ever resolved. [QuoteRef.key]
+     * is now the only thing that reads a key, on both sides.
      */
-    private fun decodeQuotedId(identifier: String): String? = when {
-        identifier.startsWith("note1", ignoreCase = true) -> HavenBridge.decodeNote(identifier)
-        identifier.startsWith("nevent1", ignoreCase = true) -> HavenBridge.decodeNevent(identifier)
-        else -> null
-    }
+    fun quotedNoteFor(identifier: String): FeedNote? =
+        when (val key = QuoteRef.key(identifier)) {
+            is QuoteRef.Key.Event -> _parentNotesCache.value[key.hexId] ?: findNote(key.hexId)
+            is QuoteRef.Key.Address -> _quotedAddressCache.value[identifier]
+            null -> null
+        }
 
-    /** Resolve a quoted-note identifier to a cached note, if already fetched. */
-    fun quotedNoteFor(identifier: String): FeedNote? {
-        val hex = decodeQuotedId(identifier) ?: return null
-        return _parentNotesCache.value[hex] ?: findNote(hex)
-    }
-
-    /** Batch-fetch quoted notes (by hex id) that aren't cached yet. */
+    /** Batch-fetch quoted events that aren't cached yet. */
     fun fetchMissingQuotedNotes(identifiers: List<String>) {
-        val hexIds = identifiers.mapNotNull { decodeQuotedId(it) }.distinct()
+        val keys = identifiers.distinct().mapNotNull { id -> QuoteRef.key(id)?.let { id to it } }
+
+        val hexIds = keys.mapNotNull { (_, key) -> (key as? QuoteRef.Key.Event)?.hexId }
         if (hexIds.isNotEmpty()) fetchMissingNotesBatch(hexIds)
+
+        val coordinates = keys.mapNotNull { (raw, key) ->
+            (key as? QuoteRef.Key.Address)?.let { raw to it.coordinate }
+        }.filter { (raw, _) -> !_quotedAddressCache.value.containsKey(raw) }
+        if (coordinates.isNotEmpty()) fetchQuotedAddressesBatch(coordinates)
+    }
+
+    /**
+     * Fetch addressable events by kind + author + `d` tag.
+     *
+     * One REQ per coordinate rather than one merged filter: a filter carrying
+     * several kinds, authors and `d` tags matches every *combination* of them,
+     * so two quoted articles by different authors would each pull the other
+     * author's article too. The count here is the number of quoted articles on
+     * screen, which is small.
+     */
+    private fun fetchQuotedAddressesBatch(coordinates: List<Pair<String, QuoteRef.Coordinate>>) {
+        scope.launch(Dispatchers.IO) {
+            val config = configStore.config.value
+            val relayUrls = buildList {
+                config.nostrURL?.let { add(it) }
+                config.inboxRelays?.let { addAll(it) }
+                addAll(config.activeFeedRelays)
+                addAll(config.activeBlastrRelays)
+            }.distinct()
+
+            val tempClients = mutableListOf<WebSocketClient>()
+            val collectors = mutableListOf<Job>()
+
+            for (relayUrl in relayUrls) {
+                val existingClient = feedClients[relayUrl]
+                val client: WebSocketClient
+                if (existingClient != null) {
+                    client = existingClient
+                } else {
+                    client = WebSocketClient(url = relayUrl, scope = scope, trustLocalhost = relayUrl.contains("localhost") || relayUrl.contains("127.0.0.1"))
+                    tempClients.add(client)
+                    client.connect()
+                }
+
+                collectors.add(scope.launch {
+                    client.messages.collect { msg ->
+                        try {
+                            val parsed = json.parseToJsonElement(msg).jsonArray
+                            if (parsed.size < 3 || parsed[0].jsonPrimitive.contentOrNull != "EVENT") return@collect
+                            val eventObj = parsed[2].jsonObject
+                            val eventId = eventObj["id"]?.jsonPrimitive?.contentOrNull ?: return@collect
+                            val pubkey = eventObj["pubkey"]?.jsonPrimitive?.contentOrNull ?: return@collect
+                            val content = eventObj["content"]?.jsonPrimitive?.contentOrNull ?: ""
+                            val tags = eventObj["tags"]?.jsonArray?.map { t -> t.jsonArray.map { it.jsonPrimitive.contentOrNull ?: "" } } ?: emptyList()
+                            val createdAt = eventObj["created_at"]?.jsonPrimitive?.longOrNull ?: return@collect
+                            val kind = eventObj["kind"]?.jsonPrimitive?.intOrNull ?: return@collect
+                            val dTag = tags.firstOrNull { it.size >= 2 && it[0] == "d" }?.get(1) ?: ""
+
+                            // Match on what was asked for rather than on the
+                            // subscription id: these share connections with the
+                            // live feed, so unrelated events arrive here too.
+                            val raw = QuoteRef.format(QuoteRef.Coordinate(kind, pubkey, dTag))
+                            if (coordinates.none { it.first == raw }) return@collect
+
+                            val note = FeedNote.fromEvent(eventId, pubkey, content, tags, createdAt, kind)
+                            withContext(Dispatchers.Main.immediate) {
+                                // An addressable event is replaceable, so a
+                                // relay may answer with an older revision after
+                                // a newer one. Keep the newest.
+                                val existing = _quotedAddressCache.value[raw]
+                                if (existing == null || existing.createdAt < note.createdAt) {
+                                    _quotedAddressCache.value = _quotedAddressCache.value + (raw to note)
+                                }
+                            }
+                        } catch (_: Exception) {}
+                    }
+                })
+
+                for ((_, coordinate) in coordinates) {
+                    val subId = "qaddr-${UUID.randomUUID().toString().take(8)}"
+                    val dTagJson = json.encodeToString(JsonPrimitive.serializer(), JsonPrimitive(coordinate.dTag))
+                    val filter = """{"kinds":[${coordinate.kind}],"authors":["${coordinate.pubkey}"],"#d":[$dTagJson],"limit":1}"""
+                    client.send("[\"REQ\",\"$subId\",$filter]")
+                }
+            }
+
+            delay(NOTE_FETCH_TIMEOUT_MS)
+            collectors.forEach { it.cancel() }
+            tempClients.forEach { it.disconnect() }
+        }
     }
 
     /** Fetch profiles for the authors of resolved quoted notes that lack one. */

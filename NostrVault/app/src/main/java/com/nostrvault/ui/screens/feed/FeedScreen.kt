@@ -113,6 +113,7 @@ fun FeedScreen(
     val showEngagementStats by viewModel.showEngagementStats.collectAsState()
     val pendingCount by viewModel.pendingNoteCount.collectAsState()
     val parentNotes by viewModel.parentNotesCache.collectAsState()
+    val quotedNotes by viewModel.quotedNotesCache.collectAsState()
     // Collected so the repost button re-highlights instantly after you repost.
     val repostedIds by viewModel.repostedEventIds.collectAsState()
     val parentIsNext by viewModel.parentIsNextNote.collectAsState()
@@ -465,10 +466,11 @@ fun FeedScreen(
                             val parentNote = parentEventId?.let { viewModel.parentNoteFor(it) }
                             val isParentNext = parentEventId?.let { viewModel.isParentNext(note.id) } ?: false
 
-                            // Resolve embedded quoted notes, keyed by their original
-                            // bech32 identifier (matches NoteCard's lookup). Keyed on
-                            // parentNotes so the map rebuilds when a quoted note arrives.
-                            val quotedNotesMap = remember(note.id, note.quotedEventIds, parentNotes) {
+                            // Resolve embedded quoted events, keyed by the same
+                            // lookup key NoteCard reads. Keyed on quotedNotes so
+                            // the map rebuilds when one arrives — including an
+                            // article, which lands in the by-coordinate cache.
+                            val quotedNotesMap = remember(note.id, note.quotedEventIds, quotedNotes) {
                                 if (note.quotedEventIds.isEmpty()) {
                                     emptyMap()
                                 } else {
@@ -505,6 +507,7 @@ fun FeedScreen(
                                 parentIsNext = isParentNext,
                                 showReplyContext = true,
                                 onNoteClick = onNoteClick,
+                                onArticleClick = onArticleClick,
                                 onProfileClick = onProfileClick,
                                 onLike = viewModel::likeNote,
                                 onRepost = viewModel::repostNote,

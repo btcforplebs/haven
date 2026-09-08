@@ -232,7 +232,7 @@ class SearchViewModel @Inject constructor(
 
     // ── Quoted note resolution (embedded nostr:note1/nevent1 previews) ──
 
-    val quotedNotesCache = feedService.parentNotesCache
+    val quotedNotesCache = feedService.quotedNotes
 
     fun quotedNoteFor(identifier: String): FeedNote? = feedService.quotedNoteFor(identifier)
 
@@ -319,6 +319,8 @@ class SearchViewModel @Inject constructor(
 @Composable
 fun SearchScreen(
     onNoteClick: (String) -> Unit,
+    /** Where a quoted long-form post opens; the note screen would show its Markdown source. */
+    onArticleClick: (String) -> Unit,
     onProfileClick: (String) -> Unit,
     viewModel: SearchViewModel = hiltViewModel(),
 ) {
@@ -632,6 +634,7 @@ fun SearchScreen(
                             profiles = profiles,
                             quotedNotes = quotedNotesMap,
                             onNoteClick = onNoteClick,
+                            onArticleClick = onArticleClick,
                             onProfileClick = onProfileClick,
                         )
                         HorizontalDivider(color = SeparatorColor, thickness = 0.5.dp)

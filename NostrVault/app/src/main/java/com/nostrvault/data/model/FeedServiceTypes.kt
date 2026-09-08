@@ -2,7 +2,7 @@ package com.nostrvault.data.model
 
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
-import com.nostrvault.relay.HavenBridge
+import com.nostrvault.relay.HavenQuoteDecoder
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -157,10 +157,6 @@ data class FeedNote(
             """https?://\S+/[a-f0-9]{64}(?=\s|$)""",
             RegexOption.IGNORE_CASE,
         )
-        private val QUOTE_REGEX = Regex(
-            """nostr:(note1[a-z0-9]+|nevent1[a-z0-9]+|naddr1[a-z0-9]+)""",
-            RegexOption.IGNORE_CASE,
-        )
         private val HTTP_URL_REGEX = Regex(
             """https?://[^\s<>")\]]*[^\s<>")\].,;:!?'"]""",
             RegexOption.IGNORE_CASE,
@@ -269,28 +265,25 @@ data class FeedNote(
         }
 
         /**
-         * Hex event ids for the notes this one quotes.
+         * The lookup keys for the events this note quotes: a hex event id for
+         * `note1`/`nevent1`, and an `naddr:<kind>:<pubkey>:<d>` coordinate for
+         * `naddr1`.
          *
-         * Callers fetch by id, so what comes out has to be hex: this used to
-         * pass the bech32 string straight through, which meant every quoted
-         * note lookup asked the relay for an id that cannot exist and no quote
-         * ever rendered. The decoders were already here, just never called.
+         * Callers fetch by these, so what comes out has to be what the fetcher
+         * accepts — which is why the decode lives in [QuoteRef] and not here.
+         * This used to pass the bech32 string straight through; then it was
+         * changed to hand out hex while FeedService still expected bech32, so
+         * every lookup was rejected and no quote rendered either way. One
+         * definition, used by both ends, is the fix for both bugs.
          *
-         * naddr points at a replaceable event (long-form articles, live
-         * streams) — addressed by kind/pubkey/identifier, not by id, and with
-         * no screen on Android yet. Dropping it is better than emitting
-         * something id-shaped that will never resolve.
+         * naddr points at a replaceable event — a long-form article, a live
+         * stream — addressed by kind/author/identifier rather than by id.
+         * Dropping it used to mean a quoted article vanished with no card, no
+         * placeholder and no text, because the reference is stripped out of the
+         * body as well.
          */
-        private fun parseQuotedEventIds(content: String): List<String> {
-            return QUOTE_REGEX.findAll(content).mapNotNull { match ->
-                val identifier = match.groupValues[1]
-                when {
-                    identifier.startsWith("note1") -> HavenBridge.decodeNote(identifier)
-                    identifier.startsWith("nevent1") -> HavenBridge.decodeNevent(identifier)
-                    else -> null
-                }
-            }.distinct().toList()
-        }
+        private fun parseQuotedEventIds(content: String): List<String> =
+            QuoteRef.resolvedIdentifiers(content, HavenQuoteDecoder)
 
         /**
          * Factory from raw event fields (Long timestamp → Date).

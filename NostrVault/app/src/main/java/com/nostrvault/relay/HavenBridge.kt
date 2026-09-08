@@ -2,6 +2,7 @@ package com.nostrvault.relay
 
 import android.system.Os
 import android.util.Log
+import com.nostrvault.data.model.QuoteRef
 
 /**
  * JNI bridge to the Haven Go relay shared library (libhaven.so).
@@ -449,6 +450,42 @@ object HavenBridge {
             i += length
         }
         return null
+    }
+
+    /**
+     * Decode an naddr1 bech32 string to the address it names (NIP-19 TLV).
+     *
+     * TLV: type 0 = the "d" tag (UTF-8), 1 = relay hint, 2 = author pubkey
+     * (32 bytes), 3 = kind (4 bytes, big-endian). Kind and author are both
+     * required — without them the reference names no event, so it is rejected
+     * rather than half-read. An empty "d" is legal and means the empty
+     * identifier, so it is not treated as missing.
+     */
+    fun decodeNaddr(naddr1: String): QuoteRef.Coordinate? {
+        val (hrp, payload) = bech32Decode(naddr1) ?: return null
+        if (hrp != "naddr") return null
+        var dTag: String? = null
+        var pubkey: String? = null
+        var kind: Int? = null
+        var i = 0
+        while (i + 2 <= payload.size) {
+            val type = payload[i].toInt() and 0xFF
+            val length = payload[i + 1].toInt() and 0xFF
+            i += 2
+            // A truncated entry ends the walk rather than being read past: a
+            // malformed reference should yield nothing, not garbage.
+            if (i + length > payload.size) break
+            val value = payload.copyOfRange(i, i + length)
+            when {
+                type == 0 -> dTag = String(value, Charsets.UTF_8)
+                type == 2 && length == 32 -> pubkey = value.toHex()
+                type == 3 && length == 4 -> kind = value.fold(0) { acc, b -> (acc shl 8) or (b.toInt() and 0xFF) }
+            }
+            i += length
+        }
+        val resolvedKind = kind ?: return null
+        val resolvedPubkey = pubkey ?: return null
+        return QuoteRef.Coordinate(resolvedKind, resolvedPubkey, dTag ?: "")
     }
 
     // -----------------------------------------------------------------------

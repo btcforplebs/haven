@@ -398,7 +398,7 @@ class NoteDetailViewModel @Inject constructor(
 
     // ── Quoted note resolution (embedded nostr:note1/nevent1 previews) ──
 
-    val quotedNotesCache: StateFlow<Map<String, FeedNote>> = feedService.parentNotesCache
+    val quotedNotesCache: StateFlow<Map<String, FeedNote>> = feedService.quotedNotes
 
     fun quotedNoteFor(identifier: String): FeedNote? = feedService.quotedNoteFor(identifier)
 
@@ -417,6 +417,8 @@ fun NoteDetailScreen(
     noteId: String,
     onProfileClick: (String) -> Unit,
     onNoteClick: (String) -> Unit,
+    /** Where a quoted long-form post opens; the note screen would show its Markdown source. */
+    onArticleClick: (String) -> Unit,
     onReply: (String) -> Unit,
     onQuote: (String) -> Unit,
     onBack: () -> Unit,
@@ -740,6 +742,7 @@ fun NoteDetailScreen(
                                 isFocused = parent.id == focusedNoteId,
                                 parentIsNext = true,
                                 onNoteClick = { scrollToNote(parent.id) },
+                                onArticleClick = onArticleClick,
                                 onProfileClick = onProfileClick,
                                 onLike = viewModel::likeNote,
                                 onRepost = viewModel::repostNote,
@@ -831,6 +834,7 @@ fun NoteDetailScreen(
                         profiles = profiles,
                         onProfileClick = onProfileClick,
                         onNoteClick = onNoteClick,
+                        onArticleClick = onArticleClick,
                         onFocus = { id -> scrollToNote(id) },
                         onReply = onReply,
                         onQuote = onQuote,
@@ -1060,6 +1064,8 @@ private fun ThreadedReplyNode(
     profiles: Map<String, FeedProfile>,
     onProfileClick: (String) -> Unit,
     onNoteClick: (String) -> Unit,
+    /** Where a quoted long-form post opens; the note screen would show its Markdown source. */
+    onArticleClick: (String) -> Unit,
     onFocus: (String) -> Unit,
     onReply: (String) -> Unit,
     onQuote: (String) -> Unit,
@@ -1112,6 +1118,7 @@ private fun ThreadedReplyNode(
                             profiles = profiles,
                             onProfileClick = onProfileClick,
                             onNoteClick = onNoteClick,
+                            onArticleClick = onArticleClick,
                             onFocus = onFocus,
                             onReply = onReply,
                             onQuote = onQuote,
@@ -1135,6 +1142,7 @@ private fun ThreadedReplyNode(
                 isReposted = viewModel.isReposted(reply.effectiveEventId),
                 isFocused = isFocusedReply,
                 onNoteClick = { onFocus(reply.id) },
+                onArticleClick = onArticleClick,
                 onProfileClick = onProfileClick,
                 onLike = viewModel::likeNote,
                 onRepost = viewModel::repostNote,
@@ -1240,6 +1248,7 @@ private fun ThreadedReplyNode(
                                     profiles = profiles,
                                     onProfileClick = onProfileClick,
                                     onNoteClick = onNoteClick,
+                                    onArticleClick = onArticleClick,
                                     onFocus = onFocus,
                                     onReply = onReply,
                                     onQuote = onQuote,

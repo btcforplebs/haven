@@ -1,6 +1,7 @@
 package com.nostrvault.ui.components
 
 import com.nostrvault.data.model.FeedProfile
+import com.nostrvault.data.model.QuoteRef
 import com.nostrvault.relay.HavenBridge
 import java.util.concurrent.ConcurrentHashMap
 
@@ -17,11 +18,12 @@ object NostrMentions {
         RegexOption.IGNORE_CASE,
     )
 
-    /** `nostr:note1...` / `nostr:nevent1...` / `nostr:naddr1...` event references. */
-    val QUOTE_REGEX = Regex(
-        """nostr:(note1[a-z0-9]+|nevent1[a-z0-9]+|naddr1[a-z0-9]+)""",
-        RegexOption.IGNORE_CASE,
-    )
+    /**
+     * `nostr:note1...` / `nostr:nevent1...` / `nostr:naddr1...` event references.
+     * Aliases [QuoteRef.REGEX] rather than restating it, so what the renderer
+     * strips out of the text is exactly what the note parser turned into a card.
+     */
+    val QUOTE_REGEX = QuoteRef.REGEX
 
     // npub/nprofile → hex is an immutable mapping, so cache decodes for the whole
     // process. The same npub is mentioned across many notes/frames; a full bech32
