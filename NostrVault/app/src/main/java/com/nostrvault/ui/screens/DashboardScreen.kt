@@ -1994,6 +1994,28 @@ fun DashboardScreen(
             }
         },
     ) { padding ->
+        // Whatever the visible notes quote. The relay tab strips the nostr:
+        // reference out of the body text and, until now, drew nothing in its
+        // place — so a quoted note or article left no trace here at all.
+        val visibleNotes = when (viewMode) {
+            VaultViewMode.NOTES -> displayNotes
+            VaultViewMode.LIKES -> displayLikedNotes
+            VaultViewMode.ZAPS -> displayZappedNotes
+        }
+        val quotedIds = remember(visibleNotes) {
+            visibleNotes.flatMap { it.quotedEventIds }.distinct()
+        }
+        LaunchedEffect(quotedIds) {
+            if (quotedIds.isNotEmpty()) {
+                feedService.fetchMissingQuotedNotes(quotedIds)
+                feedService.fetchMissingQuotedProfiles(quotedIds)
+            }
+        }
+        val resolvedQuotes by feedService.parentNotesCache.collectAsState()
+        val quotedNotes = remember(quotedIds, resolvedQuotes) {
+            quotedIds.mapNotNull { id -> feedService.quotedNoteFor(id)?.let { id to it } }.toMap()
+        }
+
         PullToRefreshBox(
             isRefreshing = isRefreshing,
             onRefresh = viewModel::loadLocalRelayNotes,
@@ -2002,6 +2024,7 @@ fun DashboardScreen(
             when (viewMode) {
                 VaultViewMode.NOTES -> NotesContent(
                     notes = displayNotes,
+                    quotedNotes = quotedNotes,
                     reactionMap = reactionMap,
                     zapMap = zapMap,
                     repostMap = repostMap,
@@ -2019,6 +2042,7 @@ fun DashboardScreen(
                 )
                 VaultViewMode.LIKES -> LikesContent(
                     notes = displayLikedNotes,
+                    quotedNotes = quotedNotes,
                     reactionMap = reactionMap,
                     hasLoadedOnce = likesHasLoadedOnce,
                     isRefreshing = isRefreshing,
@@ -2033,6 +2057,7 @@ fun DashboardScreen(
                 )
                 VaultViewMode.ZAPS -> ZapsContent(
                     notes = displayZappedNotes,
+                    quotedNotes = quotedNotes,
                     zapMap = zapMap,
                     hasLoadedOnce = zapsHasLoadedOnce,
                     isRefreshing = isRefreshing,
@@ -2155,6 +2180,7 @@ fun DashboardScreen(
 @Composable
 private fun NotesContent(
     notes: List<FeedNote>,
+    quotedNotes: Map<String, FeedNote>,
     reactionMap: Map<String, List<Pair<String, String>>>,
     zapMap: Map<String, List<Pair<String, Long>>>,
     repostMap: Map<String, List<String>>,
@@ -2220,6 +2246,7 @@ private fun NotesContent(
                 }
                 VaultNoteCard(
                     note = note,
+                    quotedNotes = quotedNotes,
                     profile = viewModel.profileFor(note.pubkey),
                     profiles = allProfiles,
                     reactors = reactionMap[note.id] ?: emptyList(),
@@ -2261,6 +2288,7 @@ private fun NotesContent(
 @Composable
 private fun LikesContent(
     notes: List<FeedNote>,
+    quotedNotes: Map<String, FeedNote>,
     reactionMap: Map<String, List<Pair<String, String>>>,
     hasLoadedOnce: Boolean,
     isRefreshing: Boolean,
@@ -2347,6 +2375,7 @@ private fun LikesContent(
                 }
                 VaultNoteCard(
                     note = note,
+                    quotedNotes = quotedNotes,
                     profile = viewModel.profileFor(note.pubkey),
                     profiles = allProfiles,
                     reactors = reactionMap[note.id] ?: emptyList(),
@@ -2369,6 +2398,7 @@ private fun LikesContent(
 @Composable
 private fun ZapsContent(
     notes: List<FeedNote>,
+    quotedNotes: Map<String, FeedNote>,
     zapMap: Map<String, List<Pair<String, Long>>>,
     hasLoadedOnce: Boolean,
     isRefreshing: Boolean,
@@ -2457,6 +2487,7 @@ private fun ZapsContent(
                 }
                 VaultNoteCard(
                     note = note,
+                    quotedNotes = quotedNotes,
                     profile = viewModel.profileFor(note.pubkey),
                     profiles = allProfiles,
                     zappers = zapMap[note.id] ?: emptyList(),

@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.sp
 import android.util.LruCache
 import coil.compose.AsyncImage
 import com.nostrvault.ui.theme.*
+import com.nostrvault.util.HtmlEntities
 import com.nostrvault.util.UrlSafety
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -207,16 +208,18 @@ private suspend fun fetchOgMetadata(url: String): OgMetadata = withContext(Dispa
         }
         activeConn.disconnect()
 
-        val title = extractMetaContent(html, "og:title")
+        // OG values are HTML attribute values, so they arrive with character
+        // references intact — an untouched title renders as "Bob&#39;s blog".
+        val title = (extractMetaContent(html, "og:title")
             ?: extractMetaContent(html, "twitter:title")
-            ?: extractHtmlTitle(html)
-        val description = extractMetaContent(html, "og:description")
-            ?: extractMetaContent(html, "twitter:description")
+            ?: extractHtmlTitle(html))?.let { HtmlEntities.decode(it) }
+        val description = (extractMetaContent(html, "og:description")
+            ?: extractMetaContent(html, "twitter:description"))?.let { HtmlEntities.decode(it) }
         val rawImageUrl = extractMetaContent(html, "og:image")
             ?: extractMetaContent(html, "twitter:image")
         // Guard the image URL too — it is handed to Coil, a second internal-fetch vector.
         val imageUrl = rawImageUrl?.takeIf { UrlSafety.isSafeRemoteUrl(it) }
-        val siteName = extractMetaContent(html, "og:site_name")
+        val siteName = extractMetaContent(html, "og:site_name")?.let { HtmlEntities.decode(it) }
 
         OgMetadata(title, description, imageUrl, siteName)
     } catch (_: Exception) {

@@ -465,8 +465,8 @@ fun FeedScreen(
                             val parentNote = parentEventId?.let { viewModel.parentNoteFor(it) }
                             val isParentNext = parentEventId?.let { viewModel.isParentNext(note.id) } ?: false
 
-                            // Resolve embedded quoted notes, keyed by their original
-                            // bech32 identifier (matches NoteCard's lookup). Keyed on
+                            // Resolve embedded quoted events, keyed by the identifier
+                            // in quotedEventIds (matches NoteCard's lookup). Keyed on
                             // parentNotes so the map rebuilds when a quoted note arrives.
                             val quotedNotesMap = remember(note.id, note.quotedEventIds, parentNotes) {
                                 if (note.quotedEventIds.isEmpty()) {
@@ -506,6 +506,7 @@ fun FeedScreen(
                                 showReplyContext = true,
                                 onNoteClick = onNoteClick,
                                 onProfileClick = onProfileClick,
+                                onArticleClick = onArticleClick,
                                 onLike = viewModel::likeNote,
                                 onRepost = viewModel::repostNote,
                                 onZap = { id -> zapNoteId = id },

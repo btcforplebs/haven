@@ -82,9 +82,11 @@ object DeepLinkRouter {
         return when {
             e.startsWith("note1") || e.startsWith("nevent1") -> noteRoute(e, decoder)
             e.startsWith("npub1") || e.startsWith("nprofile1") -> profileRoute(e, decoder)
-            // naddr points at a replaceable event (articles, live streams); there
-            // is no screen to open one on Android yet, so say so by returning
-            // null instead of dumping the user on the feed.
+            // naddr points at a replaceable event (articles, live streams).
+            // ArticleReader can show one, but it is routed by event id and an
+            // naddr carries a kind/author/d coordinate instead, so opening one
+            // from outside the app needs a relay round trip this router cannot
+            // make. Returning null beats dumping the user on the feed.
             else -> null
         }
     }

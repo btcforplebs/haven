@@ -1832,101 +1832,183 @@ class FeedService @Inject constructor(
         if (missing.isEmpty()) return
 
         scope.launch(Dispatchers.IO) {
-            val config = configStore.config.value
-            val relayUrls = buildList {
-                config.nostrURL?.let { add(it) }
-                config.inboxRelays?.let { addAll(it) }
-                // Quoted/parent notes are often from external authors who publish
-                // to feed/blastr relays, not the local+inbox set. Match the live
-                // feed relay set (relay-set parity) so these actually resolve.
-                addAll(config.activeFeedRelays)
-                addAll(config.activeBlastrRelays)
-            }.distinct()
-
             // Chunk to stay within relay filter limits
             for (chunk in missing.chunked(50)) {
                 val chunkSet = chunk.toSet()
-                val subId = "pnbatch-${UUID.randomUUID().toString().take(8)}"
                 val idsJson = chunk.joinToString(",") { "\"$it\"" }
-                val filter = """{"ids":[$idsJson]}"""
-
-                val tempClients = mutableListOf<WebSocketClient>()
-                val collectors = mutableListOf<Job>()
-                for (relayUrl in relayUrls) {
-                    val existingClient = feedClients[relayUrl]
-                    val client: WebSocketClient
-                    if (existingClient != null) {
-                        client = existingClient
-                    } else {
-                        client = WebSocketClient(url = relayUrl, scope = scope, trustLocalhost = relayUrl.contains("localhost") || relayUrl.contains("127.0.0.1"))
-                        tempClients.add(client)
-                        client.connect()
-                    }
-
-                    collectors.add(scope.launch {
-                        client.messages.collect { msg ->
-                            try {
-                                val parsed = json.parseToJsonElement(msg).jsonArray
-                                if (parsed.size >= 3 && parsed[0].jsonPrimitive.contentOrNull == "EVENT") {
-                                    val eventObj = parsed[2].jsonObject
-                                    val eventId = eventObj["id"]?.jsonPrimitive?.contentOrNull ?: return@collect
-                                    if (eventId !in chunkSet) return@collect
-                                    val pubkey = eventObj["pubkey"]?.jsonPrimitive?.contentOrNull ?: return@collect
-                                    val content = eventObj["content"]?.jsonPrimitive?.contentOrNull ?: ""
-                                    val tags = eventObj["tags"]?.jsonArray?.map { t -> t.jsonArray.map { it.jsonPrimitive.contentOrNull ?: "" } } ?: emptyList()
-                                    val createdAt = eventObj["created_at"]?.jsonPrimitive?.longOrNull ?: return@collect
-                                    val kind = eventObj["kind"]?.jsonPrimitive?.intOrNull ?: return@collect
-
-                                    val note = FeedNote.fromEvent(eventId, pubkey, content, tags, createdAt, kind)
-                                    withContext(Dispatchers.Main.immediate) {
-                                        var updated = _parentNotesCache.value + (eventId to note)
-                                        if (updated.size > 500) {
-                                            val referencedIds = _notes.value.mapNotNull { it.parentEventId }.toSet()
-                                            updated = updated.filter { it.key in referencedIds }
-                                        }
-                                        _parentNotesCache.value = updated
-                                    }
-                                }
-                            } catch (_: Exception) {}
-                        }
-                    })
-
-                    client.send("[\"REQ\",\"$subId\",$filter]")
-                }
-
-                delay(NOTE_FETCH_TIMEOUT_MS)
-                collectors.forEach { it.cancel() }
-                tempClients.forEach { it.disconnect() }
+                requestEvents(
+                    filters = listOf("""{"ids":[$idsJson]}"""),
+                    accepts = { id, _, _ -> id in chunkSet },
+                    keyFor = { it.id },
+                )
             }
         }
     }
 
+    /**
+     * Open a REQ carrying [filters] on the feed relay set, cache whatever comes
+     * back under the key [keyFor] gives it, and close everything down after the
+     * usual fetch timeout.
+     *
+     * Extracted so the addressable (naddr) fetch below runs the same relay
+     * selection, chunk lifecycle and cache eviction as the by-id fetch instead
+     * of a second copy of them.
+     */
+    private suspend fun requestEvents(
+        filters: List<String>,
+        /**
+         * Cheap first pass on the raw id/kind/pubkey, run before the event is
+         * parsed into a [FeedNote]. These collectors sit on the shared feed
+         * sockets, so without it every unrelated event streaming past would pay
+         * for a full parse — content regexes included.
+         */
+        accepts: (id: String, kind: Int, pubkey: String) -> Boolean,
+        keyFor: (FeedNote) -> String?,
+    ) {
+        if (filters.isEmpty()) return
+
+        val config = configStore.config.value
+        val relayUrls = buildList {
+            config.nostrURL?.let { add(it) }
+            config.inboxRelays?.let { addAll(it) }
+            // Quoted/parent notes are often from external authors who publish
+            // to feed/blastr relays, not the local+inbox set. Match the live
+            // feed relay set (relay-set parity) so these actually resolve.
+            addAll(config.activeFeedRelays)
+            addAll(config.activeBlastrRelays)
+        }.distinct()
+
+        val subId = "pnbatch-${UUID.randomUUID().toString().take(8)}"
+        val tempClients = mutableListOf<WebSocketClient>()
+        val collectors = mutableListOf<Job>()
+
+        for (relayUrl in relayUrls) {
+            val existingClient = feedClients[relayUrl]
+            val client: WebSocketClient
+            if (existingClient != null) {
+                client = existingClient
+            } else {
+                client = WebSocketClient(url = relayUrl, scope = scope, trustLocalhost = relayUrl.contains("localhost") || relayUrl.contains("127.0.0.1"))
+                tempClients.add(client)
+                client.connect()
+            }
+
+            collectors.add(scope.launch {
+                client.messages.collect { msg ->
+                    try {
+                        val parsed = json.parseToJsonElement(msg).jsonArray
+                        if (parsed.size >= 3 && parsed[0].jsonPrimitive.contentOrNull == "EVENT") {
+                            val eventObj = parsed[2].jsonObject
+                            val eventId = eventObj["id"]?.jsonPrimitive?.contentOrNull ?: return@collect
+                            val pubkey = eventObj["pubkey"]?.jsonPrimitive?.contentOrNull ?: return@collect
+                            val kind = eventObj["kind"]?.jsonPrimitive?.intOrNull ?: return@collect
+                            if (!accepts(eventId, kind, pubkey)) return@collect
+                            val content = eventObj["content"]?.jsonPrimitive?.contentOrNull ?: ""
+                            val tags = eventObj["tags"]?.jsonArray?.map { t -> t.jsonArray.map { it.jsonPrimitive.contentOrNull ?: "" } } ?: emptyList()
+                            val createdAt = eventObj["created_at"]?.jsonPrimitive?.longOrNull ?: return@collect
+
+                            val note = FeedNote.fromEvent(eventId, pubkey, content, tags, createdAt, kind)
+                            val key = keyFor(note) ?: return@collect
+                            withContext(Dispatchers.Main.immediate) {
+                                // An addressable event can arrive more than once
+                                // (every edit is a new event under the same
+                                // coordinate); keep the newest.
+                                val existing = _parentNotesCache.value[key]
+                                if (existing != null && existing.createdAt >= note.createdAt) return@withContext
+                                var updated = _parentNotesCache.value + (key to note)
+                                if (updated.size > 500) {
+                                    // Quote identifiers are retained alongside parent
+                                    // ids: dropping them here would blank a card the
+                                    // user is looking at and re-request it on the
+                                    // next scroll.
+                                    val referenced = _notes.value.mapNotNull { it.parentEventId }.toSet() +
+                                        _notes.value.flatMap { it.quotedEventIds }.toSet()
+                                    updated = updated.filter { it.key in referenced }
+                                }
+                                _parentNotesCache.value = updated
+                            }
+                        }
+                    } catch (_: Exception) {}
+                }
+            })
+
+            client.send("[\"REQ\",\"$subId\",${filters.joinToString(",")}]")
+        }
+
+        delay(NOTE_FETCH_TIMEOUT_MS)
+        collectors.forEach { it.cancel() }
+        tempClients.forEach { it.disconnect() }
+    }
+
     // ══════════════════════════════════════════════════════════════════
-    // Quoted note resolution (embedded nostr:note1/nevent1 previews)
+    // Quoted event resolution (embedded nostr:note1/nevent1/naddr1 previews)
     // ══════════════════════════════════════════════════════════════════
 
     /**
-     * Decode a quoted-note bech32 identifier to a hex event id.
-     * `naddr1` is an addressable-event coordinate (not a single event id),
-     * so it can't be fetched this way and returns null.
+     * Resolve a quote identifier to a note already in hand, if there is one.
+     *
+     * The identifier is whatever [QuoteReference] produced: a hex event id, or
+     * an `naddr:` coordinate. Both are looked up under their own key in the same
+     * cache. A coordinate additionally checks the loaded feed, because an
+     * article the user already has (their own, or one the Articles tab loaded)
+     * needs no round trip.
      */
-    private fun decodeQuotedId(identifier: String): String? = when {
-        identifier.startsWith("note1", ignoreCase = true) -> HavenBridge.decodeNote(identifier)
-        identifier.startsWith("nevent1", ignoreCase = true) -> HavenBridge.decodeNevent(identifier)
-        else -> null
-    }
-
-    /** Resolve a quoted-note identifier to a cached note, if already fetched. */
     fun quotedNoteFor(identifier: String): FeedNote? {
-        val hex = decodeQuotedId(identifier) ?: return null
-        return _parentNotesCache.value[hex] ?: findNote(hex)
+        _parentNotesCache.value[identifier]?.let { return it }
+        val coordinate = QuoteReference.parseCoordinate(identifier)
+            ?: return findNote(identifier)
+        return _notes.value.firstOrNull { note ->
+            note.kind == coordinate.kind &&
+                note.pubkey == coordinate.pubkey &&
+                note.dTag == coordinate.dTag
+        }
     }
 
-    /** Batch-fetch quoted notes (by hex id) that aren't cached yet. */
+    /** Batch-fetch whatever a set of quote identifiers names and isn't cached yet. */
     fun fetchMissingQuotedNotes(identifiers: List<String>) {
-        val hexIds = identifiers.mapNotNull { decodeQuotedId(it) }.distinct()
+        val unresolved = identifiers.distinct().filter { quotedNoteFor(it) == null }
+        val (coordinates, hexIds) = unresolved.partition { QuoteReference.isCoordinate(it) }
         if (hexIds.isNotEmpty()) fetchMissingNotesBatch(hexIds)
+        if (coordinates.isNotEmpty()) fetchMissingAddressableEvents(coordinates)
     }
+
+    /**
+     * Fetch addressable (NIP-33) events named by `naddr:` coordinates.
+     *
+     * These cannot go through [fetchMissingNotesBatch]: an naddr names an event
+     * by kind, author and `d` tag, and the id it will turn out to have is not
+     * knowable in advance. One filter per coordinate, all in a single REQ.
+     */
+    private fun fetchMissingAddressableEvents(coordinates: List<String>) {
+        val wanted = coordinates.mapNotNull { id ->
+            QuoteReference.parseCoordinate(id)?.let { id to it }
+        }
+        if (wanted.isEmpty()) return
+
+        scope.launch(Dispatchers.IO) {
+            for (chunk in wanted.chunked(10)) {
+                val byCoordinate = chunk.toMap()
+                val filters = chunk.map { (_, c) ->
+                    """{"kinds":[${c.kind}],"authors":["${c.pubkey}"],"#d":["${escapeJson(c.dTag)}"],"limit":1}"""
+                }
+                val wantedKinds = chunk.map { it.second.kind }.toSet()
+                val wantedAuthors = chunk.map { it.second.pubkey }.toSet()
+                requestEvents(
+                    filters = filters,
+                    // The d-tag is in the tags, so this narrows rather than
+                    // decides; keyFor below is what confirms the coordinate.
+                    accepts = { _, kind, pubkey -> kind in wantedKinds && pubkey in wantedAuthors },
+                    keyFor = { note ->
+                        QuoteReference.coordinate(note.kind, note.pubkey, note.dTag)
+                            .takeIf { it in byCoordinate }
+                    },
+                )
+            }
+        }
+    }
+
+    private fun escapeJson(value: String): String =
+        value.replace("\\", "\\\\").replace("\"", "\\\"")
 
     /** Fetch profiles for the authors of resolved quoted notes that lack one. */
     fun fetchMissingQuotedProfiles(identifiers: List<String>) {

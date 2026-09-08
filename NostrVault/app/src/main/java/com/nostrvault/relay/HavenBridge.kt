@@ -2,6 +2,8 @@ package com.nostrvault.relay
 
 import android.system.Os
 import android.util.Log
+import com.nostrvault.data.model.QuoteReference
+import com.nostrvault.util.Bech32
 
 /**
  * JNI bridge to the Haven Go relay shared library (libhaven.so).
@@ -235,100 +237,14 @@ object HavenBridge {
     // Bech32 encoding/decoding (pure Kotlin — no JNI needed)
     // -----------------------------------------------------------------------
 
-    private const val BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+    // Bech32 itself lives in [com.nostrvault.util.Bech32]. It is pure Kotlin, and
+    // this object cannot be loaded by a JVM unit test — its initializer calls
+    // Os.setenv and System.loadLibrary — so while the algorithm sat in here every
+    // NIP-19 decode below was untestable off a device.
 
-    private fun bech32Polymod(values: IntArray): Int {
-        var chk = 1
-        for (v in values) {
-            val b = chk ushr 25
-            chk = ((chk and 0x1FFFFFF) shl 5) xor v
-            if (b and 1 != 0) chk = chk xor 0x3B6A57B2.toInt()
-            if (b and 2 != 0) chk = chk xor 0x26508E6D
-            if (b and 4 != 0) chk = chk xor 0x1EA119FA
-            if (b and 8 != 0) chk = chk xor 0x3D4233DD.toInt()
-            if (b and 16 != 0) chk = chk xor 0x2A1462B3
-        }
-        return chk
-    }
+    private fun bech32Encode(hrp: String, payload: ByteArray): String = Bech32.encode(hrp, payload)
 
-    private fun bech32HRPExpand(hrp: String): IntArray {
-        val ret = IntArray(hrp.length * 2 + 1)
-        for (i in hrp.indices) {
-            ret[i] = hrp[i].code ushr 5
-            ret[i + hrp.length + 1] = hrp[i].code and 31
-        }
-        return ret
-    }
-
-    private fun convertBits8to5(data: ByteArray): ByteArray {
-        var acc = 0
-        var bits = 0
-        val result = mutableListOf<Byte>()
-        for (b in data) {
-            acc = (acc shl 8) or (b.toInt() and 0xFF)
-            bits += 8
-            while (bits >= 5) {
-                bits -= 5
-                result.add(((acc ushr bits) and 31).toByte())
-            }
-        }
-        if (bits > 0) {
-            result.add(((acc shl (5 - bits)) and 31).toByte())
-        }
-        return result.toByteArray()
-    }
-
-    private fun convertBits5to8(data: ByteArray): ByteArray {
-        var acc = 0
-        var bits = 0
-        val result = mutableListOf<Byte>()
-        for (v in data) {
-            acc = (acc shl 5) or (v.toInt() and 31)
-            bits += 5
-            while (bits >= 8) {
-                bits -= 8
-                result.add(((acc ushr bits) and 0xFF).toByte())
-            }
-        }
-        return result.toByteArray()
-    }
-
-    private fun bech32Encode(hrp: String, payload: ByteArray): String {
-        val data5 = convertBits8to5(payload)
-        val expanded = bech32HRPExpand(hrp)
-        val values = IntArray(expanded.size + data5.size + 6)
-        expanded.copyInto(values)
-        for (i in data5.indices) values[expanded.size + i] = data5[i].toInt()
-        val polymod = bech32Polymod(values) xor 1
-        val checksum = ByteArray(6) { ((polymod ushr (5 * (5 - it))) and 31).toByte() }
-        val combined = data5 + checksum
-        return buildString(hrp.length + 1 + combined.size) {
-            append(hrp)
-            append('1')
-            for (b in combined) append(BECH32_CHARSET[b.toInt() and 31])
-        }
-    }
-
-    private fun bech32Decode(bech: String): Pair<String, ByteArray>? {
-        val lower = bech.lowercase()
-        val pos = lower.lastIndexOf('1')
-        if (pos < 1 || pos + 7 > lower.length) return null
-        val hrp = lower.substring(0, pos)
-        val dataStr = lower.substring(pos + 1)
-        val data5 = ByteArray(dataStr.length)
-        for (i in dataStr.indices) {
-            val idx = BECH32_CHARSET.indexOf(dataStr[i])
-            if (idx < 0) return null
-            data5[i] = idx.toByte()
-        }
-        val expanded = bech32HRPExpand(hrp)
-        val values = IntArray(expanded.size + data5.size)
-        expanded.copyInto(values)
-        for (i in data5.indices) values[expanded.size + i] = data5[i].toInt()
-        if (bech32Polymod(values) != 1) return null
-        val payload = convertBits5to8(data5.copyOfRange(0, data5.size - 6))
-        return Pair(hrp, payload)
-    }
+    private fun bech32Decode(bech: String): Pair<String, ByteArray>? = Bech32.decode(bech)
 
     private fun ByteArray.toHex(): String =
         joinToString("") { "%02x".format(it) }
@@ -449,6 +365,20 @@ object HavenBridge {
             i += length
         }
         return null
+    }
+
+    /**
+     * Decode an naddr1 bech32 string to a `naddr:<kind>:<pubkey>:<d-tag>`
+     * coordinate — see [QuoteReference].
+     *
+     * An naddr names a replaceable event (a NIP-23 article, a live stream) by
+     * kind, author and `d` tag rather than by id, so unlike the decoders above
+     * there is no event id to return.
+     */
+    fun decodeNaddr(naddr1: String): String? {
+        val (hrp, payload) = bech32Decode(naddr1) ?: return null
+        if (hrp != "naddr") return null
+        return QuoteReference.coordinateFromNaddrTLV(payload)
     }
 
     // -----------------------------------------------------------------------

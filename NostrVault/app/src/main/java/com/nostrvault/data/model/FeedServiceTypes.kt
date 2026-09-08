@@ -2,7 +2,6 @@ package com.nostrvault.data.model
 
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
-import com.nostrvault.relay.HavenBridge
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -136,6 +135,15 @@ data class FeedNote(
         }
 
     /**
+     * The `d` tag that, with kind and author, addresses a replaceable (NIP-33)
+     * event — an article's slug, for instance. Empty for an ordinary note,
+     * which is also what an naddr with no d-tag entry coordinates to, so the
+     * two compare equal without a special case.
+     */
+    val dTag: String
+        get() = tags.firstOrNull { it.size >= 2 && it[0] == "d" }?.get(1) ?: ""
+
+    /**
      * The event id engagement and replies actually target: for a kind-6
      * repost this is the reposted (inner) event, never the wrapper —
      * replies/zaps/reactions tag the original note, not the repost.
@@ -155,10 +163,6 @@ data class FeedNote(
         )
         private val BLOSSOM_REGEX = Regex(
             """https?://\S+/[a-f0-9]{64}(?=\s|$)""",
-            RegexOption.IGNORE_CASE,
-        )
-        private val QUOTE_REGEX = Regex(
-            """nostr:(note1[a-z0-9]+|nevent1[a-z0-9]+|naddr1[a-z0-9]+)""",
             RegexOption.IGNORE_CASE,
         )
         private val HTTP_URL_REGEX = Regex(
@@ -269,28 +273,21 @@ data class FeedNote(
         }
 
         /**
-         * Hex event ids for the notes this one quotes.
+         * Identifiers for the events this note quotes, in [QuoteReference]'s
+         * form: a hex event id, or an `naddr:` coordinate for an addressable
+         * event such as a long-form article.
          *
-         * Callers fetch by id, so what comes out has to be hex: this used to
-         * pass the bech32 string straight through, which meant every quoted
-         * note lookup asked the relay for an id that cannot exist and no quote
-         * ever rendered. The decoders were already here, just never called.
-         *
-         * naddr points at a replaceable event (long-form articles, live
-         * streams) — addressed by kind/pubkey/identifier, not by id, and with
-         * no screen on Android yet. Dropping it is better than emitting
-         * something id-shaped that will never resolve.
+         * This used to return the bech32 string, was changed to return hex, and
+         * the change was never carried to the two consumers in `FeedService` —
+         * which still required a `note1`/`nevent1` prefix and so returned null
+         * for every hex id they were handed. The result was that no quoted note
+         * resolved at all: each one sat on its "Loading quoted note…"
+         * placeholder and was never even requested from a relay. There is one
+         * definition of the identifier form now, and it lives in
+         * [QuoteReference] alongside the code that reads it back.
          */
-        private fun parseQuotedEventIds(content: String): List<String> {
-            return QUOTE_REGEX.findAll(content).mapNotNull { match ->
-                val identifier = match.groupValues[1]
-                when {
-                    identifier.startsWith("note1") -> HavenBridge.decodeNote(identifier)
-                    identifier.startsWith("nevent1") -> HavenBridge.decodeNevent(identifier)
-                    else -> null
-                }
-            }.distinct().toList()
-        }
+        private fun parseQuotedEventIds(content: String): List<String> =
+            QuoteReference.identifiers(content)
 
         /**
          * Factory from raw event fields (Long timestamp → Date).

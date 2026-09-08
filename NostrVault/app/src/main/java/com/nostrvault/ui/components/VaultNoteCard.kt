@@ -38,6 +38,8 @@ fun VaultNoteCard(
     note: FeedNote,
     profile: FeedProfile?,
     profiles: Map<String, FeedProfile> = emptyMap(),
+    /** Resolved quoted events, keyed by the identifier in [FeedNote.quotedEventIds]. */
+    quotedNotes: Map<String, FeedNote> = emptyMap(),
     reactors: List<Pair<String, String>> = emptyList(),
     latestReactionDate: Date? = null,
     reposterPubkeys: List<String> = emptyList(),
@@ -88,6 +90,7 @@ fun VaultNoteCard(
         } else {
             ExpandedLayout(
                 note = note,
+                quotedNotes = quotedNotes,
                 profile = profile,
                 profiles = profiles,
                 onNoteClick = onNoteClick,
@@ -256,6 +259,7 @@ private fun ExpandedLayout(
     note: FeedNote,
     profile: FeedProfile?,
     profiles: Map<String, FeedProfile>,
+    quotedNotes: Map<String, FeedNote>,
     reactors: List<Pair<String, String>>,
     latestReactionDate: Date?,
     reposterPubkeys: List<String>,
@@ -398,6 +402,28 @@ private fun ExpandedLayout(
         // Media previews (iOS lines 314-330)
         if (note.mediaURLs.isNotEmpty()) {
             MediaPreviewRow(urls = note.mediaURLs)
+        }
+
+        // Quoted notes and articles. NostrContentText strips the nostr:
+        // reference from the body above on the assumption that a card is drawn
+        // here; without this the quote vanished with nothing shown in its place.
+        if (note.quotedEventIds.isNotEmpty()) {
+            for (qid in note.quotedEventIds) {
+                val quoted = quotedNotes[qid]
+                if (quoted != null) {
+                    QuotedNoteCard(
+                        note = quoted,
+                        profile = profiles[quoted.pubkey],
+                        profiles = profiles,
+                        onClick = onNoteClick,
+                    )
+                } else {
+                    QuotedNotePlaceholder(
+                        identifier = qid,
+                        onClick = onNoteClick,
+                    )
+                }
+            }
         }
 
         // Link preview (iOS lines 332-335)
