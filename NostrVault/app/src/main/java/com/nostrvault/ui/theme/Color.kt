@@ -67,9 +67,12 @@ val BorderStrong = Color.White.copy(alpha = 0.36f)
 // Platform background colors (port of PlatformCompat.swift)
 // ---------------------------------------------------------------------------
 
+// platformSecondaryGroupedBackground -> surface1, platformTertiaryGroupedBackground
+// -> surface2 on the Swift side (PlatformCompat.swift) — "Secondary"/"Tertiary" name
+// UIKit's own grouped-background tiers, not ramp step numbers.
 val WindowBackground = Surface0
-val SecondaryGroupedBg = Surface2
-val TertiaryGroupedBg = Surface3
+val SecondaryGroupedBg = Surface1
+val TertiaryGroupedBg = Surface2
 val SeparatorColor = Color(0xFF333338)
 
 // Standard card
@@ -80,8 +83,8 @@ val CardBorder = BorderHairline
 val OledCardBackground = Surface1
 val OledCardBorder = BorderHairline
 
-// Console / dashboard
-val ConsoleHeaderBg = Color(0xFF1F1F26)
+// Console / dashboard — matches platformConsoleHeaderBackground -> surface2.
+val ConsoleHeaderBg = Surface2
 
 // Text colors
 val PrimaryText = Color.White
