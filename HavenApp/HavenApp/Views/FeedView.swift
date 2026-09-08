@@ -636,8 +636,22 @@ struct FeedView: View {
                 // are no cached notes to render. Once a snapshot has been
                 // restored (or notes have streamed in), the background sync
                 // is surfaced via the inline `syncingPill` instead.
-                let showLoadingContacts = (feedService.isFollowSetMode || (feedService.feedMode == .media && feedService.mediaFeedMode == .following)) && feedService.isLoadingContacts && feedService.notes.isEmpty
-                let showEmptyState = (feedService.isFollowSetMode || (feedService.feedMode == .media && feedService.mediaFeedMode == .following)) && feedService.followedPubkeys.isEmpty && !feedService.isLoadingFeed && !feedService.isLoadingContacts
+                // "You aren't following anyone" is a conclusion, and it needs a
+                // finished contact load behind it. Deriving it from the loading
+                // flags alone made it true for the first seconds of every
+                // launch, before anything had started. FollowingFeedState owns
+                // that rule and is unit-tested; the view only asks.
+                let isFollowSetFeed = feedService.isFollowSetMode
+                    || (feedService.feedMode == .media && feedService.mediaFeedMode == .following)
+                let placeholder = FollowingFeedState.decide(
+                    followCount: feedService.followedPubkeys.count,
+                    hasAttemptedContactLoad: feedService.hasAttemptedContactLoad,
+                    isLoadingContacts: feedService.isLoadingContacts,
+                    isLoadingFeed: feedService.isLoadingFeed,
+                    hasNotes: !feedService.notes.isEmpty
+                )
+                let showLoadingContacts = isFollowSetFeed && placeholder == .loading
+                let showEmptyState = isFollowSetFeed && placeholder == .empty
 
                 if showLoadingContacts {
                     loadingContactsView

@@ -32,4 +32,8 @@ extension Notification.Name {
     /// nothing else needed to open them programmatically.
     static let havenOpenSearch = Notification.Name("com.haven.openSearch")
     static let havenOpenMedia = Notification.Name("com.haven.openMedia")
+    /// Run the Media tab's Magic Paste. Posted after `havenOpenMedia` when the
+    /// Mosaic widget's wand is tapped, so one tap gets the same result as
+    /// Media tab -> + -> Magic Paste.
+    static let havenMagicPaste = Notification.Name("com.haven.magicPaste")
 }

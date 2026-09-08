@@ -64,8 +64,10 @@ class FeedService: ObservableObject {
     private static let extendedNetworkCacheAge: TimeInterval = 3600 // 1 hour
     @Published var isLoadingContacts = false
     /// True once contact loading has completed at least once (success, empty, or timeout).
-    /// Used to gate follow/unfollow so we don't publish before the kind-3 has had a chance to arrive.
-    private var hasAttemptedContactLoad = false
+    /// Used to gate follow/unfollow so we don't publish before the kind-3 has had a chance to arrive,
+    /// and — published, because the view needs it — to keep the Following feed from telling you that
+    /// you follow nobody before it has ever asked. See `FollowingFeedState`.
+    @Published private(set) var hasAttemptedContactLoad = false
     @Published var isLoadingExtendedNetwork = false
     @Published var isLoadingPopular = false
     @Published var popularFilter: PopularFilter = .all
@@ -479,11 +481,23 @@ class FeedService: ObservableObject {
     /// Throttles the `.feedInjectionComplete` notification.
     private var lastInjectionNotification: Date = .distantPast
 
+    /// The cached feed has been restored from disk for the current account.
+    private var didRestoreCachedFeed = false
+    /// The one-time cold-start load has been kicked off for this launch.
+    private var didStartInitialLoad = false
+
     private init() {
         // FeedService no longer manages profiles; NostrService does.
         loadedSnapshotNpub = currentSnapshotKey()
         loadInteractionState(forKey: loadedSnapshotNpub)
         FollowingBackupService.shared.loadSnapshots(forAccountKey: loadedSnapshotNpub)
+
+        // Put the cached feed on screen now, not in three seconds. Restoring a
+        // disk snapshot is a local read with no relay in it, but it used to wait
+        // behind `isReadyForConnections`, which fires three seconds after the
+        // relay reports running — three seconds of launch with an empty feed.
+        // The relay-dependent half still waits; see the readiness sink below.
+        DispatchQueue.main.async { [weak self] in self?.prewarmFromCache() }
 
         // Listen to active account changes to reload the feed automatically.
         // We snapshot the previous account's state into memory and either
@@ -516,8 +530,12 @@ class FeedService: ObservableObject {
             .removeDuplicates()
             .sink { [weak self] ready in
                 guard let self = self, ready, !self.isPaused else { return }
-                if self.notes.isEmpty && !self.isLoadingContacts && !self.isLoadingFeed {
-                    // Cold start: restore snapshot (instant) then top-up / cold-load.
+                if !self.didStartInitialLoad {
+                    // Cold start: top-up on whatever `prewarmFromCache` restored,
+                    // or cold-load when there was nothing to restore. Keyed off
+                    // "have we started yet" rather than "is the feed empty",
+                    // because the prewarm above may already have filled it — and
+                    // a restored feed still needs its top-up.
                     self.startInitialLoad()
                 } else {
                     // Already showing content: just reconcile the live subscriptions
@@ -735,16 +753,44 @@ class FeedService: ObservableObject {
     /// position and shows the inline "Syncing…" pill). Falls back to a full cold
     /// `refresh()` on first-ever launch or when no snapshot is available.
     func startInitialLoad() {
+        didStartInitialLoad = true
         if feedMode == .popular {
             // Popular feed is ephemeral — never restored from a snapshot.
             refresh()
             return
         }
-        if restoreFromDiskIfAvailable() {
+        if didRestoreCachedFeed || restoreFromDiskIfAvailable() {
+            didRestoreCachedFeed = true
             topUpFromRelays()
         } else {
             refresh()
         }
+    }
+
+    /// Restore the cached feed at launch, before the relay is ready.
+    ///
+    /// Everything here is a local read — a disk snapshot, or the follow set from
+    /// the following backup. None of it needs a relay, and holding it back until
+    /// `isReadyForConnections` (three seconds after the relay reports running) is
+    /// what made every launch flash an empty Following feed with a Refresh
+    /// button. Subscribing is still the readiness sink's job.
+    func prewarmFromCache() {
+        guard !didRestoreCachedFeed, !didStartInitialLoad, !isPaused, feedMode != .popular else { return }
+
+        if restoreFromDiskIfAvailable() {
+            didRestoreCachedFeed = true
+            return
+        }
+
+        // No cached notes, but a known follow set still turns the launch screen
+        // from an accusation into a feed that is merely still filling.
+        guard followedPubkeys.isEmpty,
+              let backup = FollowingBackupService.shared.snapshots.last,
+              !backup.pubkeys.isEmpty else { return }
+        contactListPTags = backup.pTags
+        followedPubkeys = backup.pubkeys
+        contactListContent = backup.contactListContent
+        lastFetchedContactCount = backup.pubkeys.count
     }
 
     /// Persist the current feed to disk so the next cold launch can restore it
@@ -803,6 +849,8 @@ class FeedService: ObservableObject {
         //    Wrapped in withAnimation so SwiftUI cross-fades the content
         //    transition instead of hard-cutting between accounts.
         var restored = false
+        didStartInitialLoad = true
+        didRestoreCachedFeed = false
         withAnimation(Motion.fade) {
             loadedSnapshotNpub = newKey
             restored = restoreSnapshot(forKey: newKey)
@@ -820,6 +868,7 @@ class FeedService: ObservableObject {
             }
             newNoteCount = 0
             newSinceLastView = Date()
+            didRestoreCachedFeed = restored
         }
 
         // 5. Kick off relay traffic.

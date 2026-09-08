@@ -74,6 +74,15 @@ targets:
       - path: Resources/templates
         type: folder
       - path: HavenApp/App/PrivacyInfo.xcprivacy
+      # The notification sound. Listed explicitly because `sources` here names
+      # individual paths — a loose file next to them is invisible to the
+      # generator, and regenerating silently drops it from Resources. That has
+      # already happened twice.
+      - path: HavenApp/notification.mp3
+      # Starter packs for the setup wizard. Loaded at runtime with
+      # Bundle.main.url(forResource:), so it has to be in Resources or the
+      # Initial Follows step silently shows nothing.
+      - path: HavenApp/Resources/starter_packs.json
 
     settings:
       base:
@@ -149,6 +158,15 @@ targets:
       - path: Resources/templates
         type: folder
       - path: HavenApp/App/PrivacyInfo.xcprivacy
+      # The notification sound. Listed explicitly because `sources` here names
+      # individual paths — a loose file next to them is invisible to the
+      # generator, and regenerating silently drops it from Resources. That has
+      # already happened twice.
+      - path: HavenApp/notification.mp3
+      # Starter packs for the setup wizard. Loaded at runtime with
+      # Bundle.main.url(forResource:), so it has to be in Resources or the
+      # Initial Follows step silently shows nothing.
+      - path: HavenApp/Resources/starter_packs.json
 
     settings:
       base:

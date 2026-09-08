@@ -102,9 +102,15 @@ extension NVWidgetSnapshot {
                       text: "nice work on the vault", createdAt: now.addingTimeInterval(-1_800), imageURL: nil),
             ],
             wallet: .init(cashuSats: 21_400, lightningSats: 8_600, zapsReceived24h: 12, btcPriceUSD: 98_400),
-            media: [],
-            unreadDMCount: 3,
-            eventsPerHour: [4, 6, 3, 8, 12, 9, 14, 11, 7, 5, 9, 16, 22, 18, 13, 9, 11, 15, 24, 19, 12, 8, 6, 10]
+            // The gallery renders this before the app has ever published, and
+            // an empty grid there reads as a broken widget. These have no bytes
+            // behind them, so they draw as the tinted tiles Mosaic falls back to.
+            media: (0..<18).map { i in
+                .init(id: "preview-\(i)",
+                      url: URL(string: "https://example.invalid/\(i)")!,
+                      kind: i % 6 == 0 ? .video : .image)
+            },
+            unreadDMCount: 3
         )
     }()
 }

@@ -25,7 +25,42 @@ struct MediaGalleryView: View {
     @State var mediaSourceFilter: MediaSourceFilter = .all
     @State var mediaLocationFilter: MediaLocationFilter = .all
     @State var contentFilter: ContentFilter = .all
-    @State var mediaTypeFilter: Set<MediaTypeFilter> = Set(MediaTypeFilter.allCases)
+
+    // Type filter, layout and sort survive leaving the tab and relaunching.
+    // Stored as raw strings because AppStorage cannot hold a Set or a bare enum.
+    @AppStorage("mediaGallery.typeFilter") var mediaTypeFilterRaw: String =
+        MediaTypeFilter.allCases.map(\.rawValue).joined(separator: ",")
+    @AppStorage("mediaGallery.layoutMode") var mediaLayoutModeRaw: String = MediaLayoutMode.grid.rawValue
+    @AppStorage("mediaGallery.sortOption") var sortOptionRaw: String = MediaSortOption.newestFirst.rawValue
+
+    /// Selected media types. Reading rebuilds the set from storage; writing
+    /// normalises to `allCases` order so the stored string is stable.
+    var mediaTypeFilter: Set<MediaTypeFilter> {
+        get {
+            let stored = Set(mediaTypeFilterRaw
+                .split(separator: ",")
+                .compactMap { MediaTypeFilter(rawValue: String($0)) })
+            // An empty selection shows nothing at all and there is no UI path
+            // back from it, so treat "none stored" as "everything".
+            return stored.isEmpty ? Set(MediaTypeFilter.allCases) : stored
+        }
+        nonmutating set {
+            mediaTypeFilterRaw = MediaTypeFilter.allCases
+                .filter { newValue.contains($0) }
+                .map(\.rawValue)
+                .joined(separator: ",")
+        }
+    }
+
+    var mediaLayoutMode: MediaLayoutMode {
+        get { MediaLayoutMode(rawValue: mediaLayoutModeRaw) ?? .grid }
+        nonmutating set { mediaLayoutModeRaw = newValue.rawValue }
+    }
+
+    var sortOption: MediaSortOption {
+        get { MediaSortOption(rawValue: sortOptionRaw) ?? .newestFirst }
+        nonmutating set { sortOptionRaw = newValue.rawValue }
+    }
 
     // Cached display data (computed in background)
     @State var displayMedia: [MediaItem] = []
@@ -39,7 +74,6 @@ struct MediaGalleryView: View {
     #endif
 
     @State var dragOffset: CGSize = .zero
-    @State var mediaLayoutMode: MediaLayoutMode = .grid
 
     // Blossom dashboard
     @State var showingBlossomMediaList = false
@@ -155,6 +189,7 @@ struct MediaGalleryView: View {
             }
         }
         .modifier(mediaChangeHandlers)
+        .modifier(MagicPasteFromWidget { handlePasteFromClipboard() })
         .modifier(mediaSheetsAndPickers)
     }
 
@@ -272,6 +307,7 @@ struct MediaGalleryView: View {
             }
         }
         .modifier(mediaChangeHandlers)
+        .modifier(MagicPasteFromWidget { handlePasteFromClipboard() })
         .modifier(mediaSheetsAndPickers)
     }
 
@@ -345,6 +381,8 @@ struct MediaGalleryView: View {
 
                 Spacer()
 
+                sortMenu
+
                 desktopUploadMenu
             }
         }
@@ -363,6 +401,7 @@ struct MediaGalleryView: View {
             mediaSourceFilter: mediaSourceFilter,
             mediaLocationFilter: mediaLocationFilter,
             mediaTypeFilter: mediaTypeFilter,
+            sortOption: sortOption,
             blossomItemsCount: blossomCache.items.count,
             noteMediaCount: nostrService.noteMedia.count,
             wotCount: feedService.wotPubkeys.count,
@@ -402,6 +441,23 @@ struct MediaGalleryView: View {
     }
 }
 
+// MARK: - Magic Paste from the widget
+
+/// Runs the Media tab's Magic Paste when the Mosaic widget's wand is tapped.
+///
+/// Its own modifier rather than a twelfth `onReceive` on
+/// `MediaGalleryChangeHandlers`: that chain is already at the size where the
+/// Swift type-checker starts refusing the file.
+struct MagicPasteFromWidget: ViewModifier {
+    let paste: () -> Void
+
+    func body(content: Content) -> some View {
+        content.onReceive(NotificationCenter.default.publisher(for: .havenMagicPaste)) { _ in
+            paste()
+        }
+    }
+}
+
 // MARK: - MediaGalleryChangeHandlers
 
 /// Extracted onChange / onReceive modifiers to reduce type-checker complexity in MediaGalleryView.
@@ -410,6 +466,7 @@ struct MediaGalleryChangeHandlers: ViewModifier {
     let mediaSourceFilter: MediaSourceFilter
     let mediaLocationFilter: MediaLocationFilter
     let mediaTypeFilter: Set<MediaTypeFilter>
+    let sortOption: MediaSortOption
     let blossomItemsCount: Int
     let noteMediaCount: Int
     let wotCount: Int
@@ -428,6 +485,7 @@ struct MediaGalleryChangeHandlers: ViewModifier {
             .onChange(of: mediaSourceFilter) { _, _ in onScheduleUpdate() }
             .onChange(of: mediaLocationFilter) { _, _ in onScheduleUpdate() }
             .onChange(of: mediaTypeFilter) { _, _ in onScheduleUpdate() }
+            .onChange(of: sortOption) { _, _ in onScheduleUpdate() }
             .onChange(of: blossomItemsCount) { _, _ in onScheduleUpdate() }
             .onChange(of: noteMediaCount) { _, _ in onScheduleUpdate() }
             .onChange(of: wotCount) { _, _ in onScheduleUpdate() }

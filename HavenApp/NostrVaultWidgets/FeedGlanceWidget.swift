@@ -44,21 +44,43 @@ struct FeedGlanceIntent: WidgetConfigurationIntent {
 struct FeedGlanceEntry: TimelineEntry {
     let date: Date
     let snapshot: NVWidgetSnapshot
+    /// Avatar bytes keyed by picture URL, fetched before the body runs.
+    let avatars: [String: Data]
     let config: FeedGlanceIntent
 }
 
 struct FeedGlanceProvider: AppIntentTimelineProvider {
     func placeholder(in context: Context) -> FeedGlanceEntry {
-        FeedGlanceEntry(date: Date(), snapshot: .preview, config: FeedGlanceIntent())
+        FeedGlanceEntry(date: Date(), snapshot: .preview, avatars: [:], config: FeedGlanceIntent())
     }
 
     func snapshot(for configuration: FeedGlanceIntent, in context: Context) async -> FeedGlanceEntry {
-        FeedGlanceEntry(date: Date(), snapshot: NVSharedStore.load() ?? .preview, config: configuration)
+        await entry(for: configuration, fallback: .preview)
     }
 
     func timeline(for configuration: FeedGlanceIntent, in context: Context) async -> Timeline<FeedGlanceEntry> {
-        let entry = FeedGlanceEntry(date: Date(), snapshot: NVSharedStore.load() ?? .empty, config: configuration)
+        let entry = await entry(for: configuration, fallback: .empty)
         return Timeline(entries: [entry], policy: .after(Date().addingTimeInterval(15 * 60)))
+    }
+
+    private func entry(for configuration: FeedGlanceIntent, fallback: NVWidgetSnapshot) async -> FeedGlanceEntry {
+        let snapshot = NVSharedStore.load() ?? fallback
+        let notes = configuration.source == .mentions ? snapshot.mentions : snapshot.feed
+
+        // Avatars have to exist before the body runs: a widget draws in one
+        // static pass, so the AsyncImage this used to use never resolved and
+        // every row fell back to its gradient. Keyed by URL, so two notes from
+        // the same author cost one download.
+        var wanted: [(id: String, url: URL)] = []
+        var seen = Set<String>()
+        for note in notes {
+            guard configuration.showAvatars, let url = note.authorPictureURL,
+                  seen.insert(url.absoluteString).inserted else { continue }
+            wanted.append((url.absoluteString, url))
+        }
+
+        let avatars = await NVTileFetcher.fetch(wanted, maxPixel: 64, limit: 10)
+        return FeedGlanceEntry(date: Date(), snapshot: snapshot, avatars: avatars, config: configuration)
     }
 }
 
@@ -67,23 +89,26 @@ struct FeedGlanceView: View {
     let entry: FeedGlanceEntry
 
     private var notes: [NVWidgetSnapshot.Note] {
-        let all = entry.config.source == .mentions ? entry.snapshot.mentions : entry.snapshot.feed
-        return Array(all.prefix(rowCount))
+        entry.config.source == .mentions ? entry.snapshot.mentions : entry.snapshot.feed
     }
 
-    /// Row budget per family, halved-ish for compact density. These are tuned to
-    /// fill the box without the last row being clipped -- a clipped final row is
-    /// the single most common way a feed widget looks broken.
-    private var rowCount: Int {
-        let base: Int
-        switch family {
-        case .systemMedium: base = 2
-        case .systemLarge: base = 5
-        case .systemExtraLarge: base = 6
-        default: base = 1
-        }
-        return entry.config.density == .compact ? base + (base >= 5 ? 3 : 1) : base
+    /// One size for everything in this widget -- author, age, body and header.
+    /// Mixing three sizes in a box this small reads as clutter rather than
+    /// hierarchy; weight and colour carry the hierarchy instead.
+    private static let textSize: CGFloat = 12
+    private static let lineHeight: CGFloat = 15
+
+    private var bodyLines: Int { entry.config.density == .compact ? 1 : 2 }
+
+    /// A row is the author line plus the body lines. Measured from the one text
+    /// size above rather than guessed per family, so the fill maths below stays
+    /// true if the size ever changes.
+    private var rowHeight: CGFloat {
+        Self.lineHeight * CGFloat(1 + bodyLines)
     }
+
+    /// Header, its divider, and the padding around them.
+    private static let headerHeight: CGFloat = 26
 
     private var deepLink: URL {
         entry.config.source == .mentions ? NVDeepLink.mentions.url : NVDeepLink.feed.url
@@ -96,17 +121,31 @@ struct FeedGlanceView: View {
             NVEmptyState(icon: entry.config.source == .mentions ? "at" : "person.2.wave.2",
                          message: entry.config.source == .mentions ? "No recent mentions" : "No recent notes")
         } else {
-            VStack(alignment: .leading, spacing: 0) {
-                header
-                Divider().overlay(Color.white.opacity(0.08)).padding(.vertical, 5)
-                VStack(alignment: .leading, spacing: entry.config.density == .compact ? 6 : 10) {
-                    ForEach(notes) { note in
-                        NoteRow(note: note,
-                                showAvatar: entry.config.showAvatars,
-                                compact: entry.config.density == .compact)
+            // The row count comes from the measured height rather than a table
+            // of per-family constants: the families are not the only variable
+            // (density and the accessibility text size move the row height too),
+            // and a fixed count either clips the last row or leaves a hole under
+            // it. See NVFeedLayout, which is unit-tested.
+            GeometryReader { geo in
+                let plan = NVFeedLayout.plan(availableHeight: geo.size.height,
+                                             headerHeight: Self.headerHeight,
+                                             rowHeight: rowHeight,
+                                             minSpacing: 6,
+                                             maxSpacing: 18,
+                                             noteCount: notes.count)
+                VStack(alignment: .leading, spacing: 0) {
+                    header
+                    Divider().overlay(Color.white.opacity(0.08)).padding(.vertical, 5)
+                    VStack(alignment: .leading, spacing: plan.spacing) {
+                        ForEach(notes.prefix(plan.rows)) { note in
+                            NoteRow(note: note,
+                                    showAvatar: entry.config.showAvatars,
+                                    avatar: note.authorPictureURL.flatMap { entry.avatars[$0.absoluteString] },
+                                    size: Self.textSize,
+                                    bodyLines: bodyLines)
+                        }
                     }
                 }
-                Spacer(minLength: 0)
             }
             .widgetURL(deepLink)
         }
@@ -118,7 +157,7 @@ struct FeedGlanceView: View {
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundStyle(NV.purple)
             Text(entry.config.source == .mentions ? "Mentions" : "Following")
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: Self.textSize, weight: .semibold))
                 .foregroundStyle(.secondary)
             Spacer()
             if entry.snapshot.isStale {
@@ -133,54 +172,64 @@ struct FeedGlanceView: View {
 private struct NoteRow: View {
     let note: NVWidgetSnapshot.Note
     let showAvatar: Bool
-    let compact: Bool
+    /// Bytes for this author's picture, or nil when there is no picture, the
+    /// host did not answer, or it is served by the local relay.
+    let avatar: Data?
+    /// One size for the whole row. Name, age and body differ by weight and
+    /// colour only -- see FeedGlanceView.textSize.
+    let size: CGFloat
+    let bodyLines: Int
 
     var body: some View {
         HStack(alignment: .top, spacing: 7) {
             if showAvatar {
-                Avatar(url: note.authorPictureURL, seed: note.id)
-                    .frame(width: compact ? 16 : 22, height: compact ? 16 : 22)
+                Avatar(data: avatar, seed: note.id, size: size + 8)
             }
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
                     Text(note.authorName)
-                        .font(.system(size: compact ? 10 : 11, weight: .semibold))
+                        .font(.system(size: size, weight: .semibold))
                         .foregroundStyle(.white)
                         .lineLimit(1)
                     Text(NV.shortAge(note.createdAt))
-                        .font(.system(size: compact ? 9 : 10))
+                        .font(.system(size: size))
                         .foregroundStyle(.secondary)
                 }
                 Text(note.text)
-                    .font(.system(size: compact ? 10 : 12))
+                    .font(.system(size: size))
                     .foregroundStyle(.white.opacity(0.82))
-                    .lineLimit(compact ? 1 : 2)
+                    .lineLimit(bodyLines)
             }
             Spacer(minLength: 0)
         }
     }
 }
 
-/// Avatars are fetched by the widget rather than shipped in the snapshot -- a
-/// keychain item is the wrong place for image bytes. When there is no picture,
-/// the pubkey-derived hue keeps rows visually distinct instead of a row of
+/// Avatars are fetched by the timeline provider rather than shipped in the
+/// snapshot -- a keychain item is the wrong place for image bytes -- and never
+/// by the body, which has no way to finish a download. When there is no
+/// picture, the seeded hue keeps rows visually distinct instead of a column of
 /// identical grey circles.
 private struct Avatar: View {
-    let url: URL?
+    let data: Data?
     let seed: String
+    let size: CGFloat
 
     var body: some View {
         Group {
-            if let url {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    fallback
-                }
+            if let data, let image = UIImage(data: data) {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
             } else {
                 fallback
             }
         }
+        // Size first, then clip. A `scaledToFill` image reports the size it
+        // wants, not the size it was offered, so without the frame the row
+        // grows to fit the photo and pushes everything beside it out.
+        .frame(width: size, height: size)
+        .clipped()
         .clipShape(Circle())
     }
 
