@@ -92,6 +92,7 @@ fun VaultNoteCard(
         } else {
             ExpandedLayout(
                 note = note,
+                quotedNotes = quotedNotes,
                 profile = profile,
                 profiles = profiles,
                 quotedNotes = quotedNotes,

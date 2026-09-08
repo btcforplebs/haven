@@ -2012,6 +2012,29 @@ fun DashboardScreen(
             }
         },
     ) { padding ->
+        // Whatever the visible notes quote. The relay tab strips the nostr:
+        // reference out of the body text and drew nothing in its place, so a
+        // quoted note or article left no trace here at all — the feed and
+        // thread screens already resolve theirs this way.
+        val visibleNotes = when (viewMode) {
+            VaultViewMode.NOTES -> displayNotes
+            VaultViewMode.LIKES -> displayLikedNotes
+            VaultViewMode.ZAPS -> displayZappedNotes
+        }
+        val quotedIds = remember(visibleNotes) {
+            visibleNotes.flatMap { it.quotedEventIds }.distinct()
+        }
+        LaunchedEffect(quotedIds) {
+            if (quotedIds.isNotEmpty()) {
+                feedService.fetchMissingQuotedNotes(quotedIds)
+                feedService.fetchMissingQuotedProfiles(quotedIds)
+            }
+        }
+        val resolvedQuotes by feedService.parentNotesCache.collectAsState()
+        val quotedNotes = remember(quotedIds, resolvedQuotes) {
+            quotedIds.mapNotNull { id -> feedService.quotedNoteFor(id)?.let { id to it } }.toMap()
+        }
+
         PullToRefreshBox(
             isRefreshing = isRefreshing,
             onRefresh = viewModel::loadLocalRelayNotes,
@@ -2246,6 +2269,7 @@ private fun NotesContent(
                 }
                 VaultNoteCard(
                     note = note,
+                    quotedNotes = quotedNotes,
                     profile = viewModel.profileFor(note.pubkey),
                     profiles = allProfiles,
                     quotedNotes = quotedNotes,
@@ -2377,6 +2401,7 @@ private fun LikesContent(
                 }
                 VaultNoteCard(
                     note = note,
+                    quotedNotes = quotedNotes,
                     profile = viewModel.profileFor(note.pubkey),
                     profiles = allProfiles,
                     quotedNotes = quotedNotes,
@@ -2491,6 +2516,7 @@ private fun ZapsContent(
                 }
                 VaultNoteCard(
                     note = note,
+                    quotedNotes = quotedNotes,
                     profile = viewModel.profileFor(note.pubkey),
                     profiles = allProfiles,
                     quotedNotes = quotedNotes,
