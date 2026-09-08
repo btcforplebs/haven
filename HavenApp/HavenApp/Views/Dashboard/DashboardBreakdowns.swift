@@ -489,7 +489,19 @@ struct MediaCacheBreakdownView: View {
 
 struct StorageBreakdownView: View {
     @EnvironmentObject var statsService: StatsService
+    @EnvironmentObject var configService: ConfigService
     @Environment(\.dismiss) private var dismiss
+
+    @State private var showingBlossomBreakdown = false
+    @State private var showingCacheBreakdown = false
+
+    /// Which detail view a bucket opens, if any. The dashboard used to give
+    /// Blossom and the media cache their own stat cards; they are reachable
+    /// from here now, one level down from the total they are part of.
+    private enum StorageDetail {
+        case blossom
+        case cache
+    }
 
     private struct StorageBucket: Identifiable {
         let id = UUID()
@@ -497,14 +509,15 @@ struct StorageBreakdownView: View {
         let icon: String
         let color: Color
         let size: Int64
+        var detail: StorageDetail? = nil
     }
 
     private var buckets: [StorageBucket] {
         let dbSize = max(0, statsService.storageSize - statsService.blossomSize - statsService.cacheSize - statsService.thumbnailSize)
         return [
             StorageBucket(label: "Database", icon: "cylinder.fill", color: .blue, size: dbSize),
-            StorageBucket(label: "Blossom Media", icon: "camera.macro", color: .green, size: statsService.blossomSize),
-            StorageBucket(label: "Media Cache", icon: "photo.stack.fill", color: .orange, size: statsService.cacheSize + statsService.thumbnailSize),
+            StorageBucket(label: "Blossom Media", icon: "camera.macro", color: .green, size: statsService.blossomSize, detail: .blossom),
+            StorageBucket(label: "Media Cache", icon: "photo.stack.fill", color: .orange, size: statsService.cacheSize + statsService.thumbnailSize, detail: .cache),
         ].filter { $0.size > 0 }
     }
 
@@ -539,7 +552,15 @@ struct StorageBreakdownView: View {
                                     icon: bucket.icon,
                                     color: bucket.color,
                                     size: bucket.size,
-                                    total: statsService.storageSize
+                                    total: statsService.storageSize,
+                                    action: bucket.detail.map { detail in
+                                        {
+                                            switch detail {
+                                            case .blossom: showingBlossomBreakdown = true
+                                            case .cache: showingCacheBreakdown = true
+                                            }
+                                        }
+                                    }
                                 )
                             }
                         }
@@ -566,6 +587,15 @@ struct StorageBreakdownView: View {
         #if os(macOS)
         .frame(minWidth: 520, idealWidth: 560, minHeight: 560, idealHeight: 640)
         #endif
+        .sheet(isPresented: $showingBlossomBreakdown) {
+            BlossomBreakdownView()
+                .environmentObject(statsService)
+                .environmentObject(configService)
+        }
+        .sheet(isPresented: $showingCacheBreakdown) {
+            MediaCacheBreakdownView()
+                .environmentObject(statsService)
+        }
     }
 }
 

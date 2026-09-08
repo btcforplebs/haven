@@ -65,5 +65,12 @@ struct StatsCard: View {
         .onHover { hovering in
             withAnimation(Motion.control) { isHovered = hovering && action != nil }
         }
+        // The card reads as icon + big number + caption, which VoiceOver would
+        // otherwise announce as three unrelated fragments in the wrong order.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(title))
+        .accessibilityValue(isLoading ? Text("Loading") : Text(value))
+        .accessibilityAddTraits(action != nil ? .isButton : [])
+        .accessibilityHint(action != nil ? Text("Shows a detailed breakdown") : Text(""))
     }
 }

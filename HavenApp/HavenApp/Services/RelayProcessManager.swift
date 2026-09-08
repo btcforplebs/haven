@@ -486,6 +486,9 @@ class RelayProcessManager: ObservableObject {
         state = .idle
         isRunning = false
         isWotSyncing = false
+        // Cleared so the dashboard's uptime readout does not keep counting
+        // against a run that has already ended.
+        startDate = nil
         isShuttingDown = false
         #if os(macOS)
         NetworkSyncService.shared.stop()
