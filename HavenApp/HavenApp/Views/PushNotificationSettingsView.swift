@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 
 struct PushNotificationSettingsView: View {
@@ -19,6 +20,8 @@ struct PushNotificationSettingsView: View {
             }
 
             if configService.config.enablePushNotifications {
+                NotificationSoundSection()
+
                 ForEach(configService.allAccountNpubs, id: \.self) { npub in
                     AccountNotificationSection(npub: npub)
                 }
@@ -27,6 +30,45 @@ struct PushNotificationSettingsView: View {
             Section {} // spacer for tab bar
         }
         .padding(.bottom, 60)
+    }
+}
+
+struct NotificationSoundSection: View {
+    @EnvironmentObject var configService: ConfigService
+    @State private var previewPlayer: AVAudioPlayer?
+
+    private var selectedSound: NotificationSound {
+        NotificationSound(rawValue: configService.config.notificationSoundName) ?? .defaultSound
+    }
+
+    var body: some View {
+        Section {
+            Picker("Sound", selection: Binding(
+                get: { selectedSound },
+                set: { newSound in
+                    configService.config.notificationSoundName = newSound.rawValue
+                    configService.save()
+                    preview(newSound)
+                }
+            )) {
+                ForEach(NotificationSound.allCases) { sound in
+                    Text(sound.displayName).tag(sound)
+                }
+            }
+        } header: {
+            Text("Sound")
+        }
+    }
+
+    private func preview(_ sound: NotificationSound) {
+        guard let url = Bundle.main.url(forResource: sound.rawValue, withExtension: "mp3") else { return }
+        do {
+            let player = try AVAudioPlayer(contentsOf: url)
+            previewPlayer = player // retain until playback finishes
+            player.play()
+        } catch {
+            // Best-effort preview — a failed play shouldn't block picking the sound.
+        }
     }
 }
 

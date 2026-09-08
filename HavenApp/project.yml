@@ -68,17 +68,19 @@ targets:
           - "*.rej"
           - "**/*.rej"
       - path: HavenApp/Localizable.xcstrings
-      - path: HavenApp/notification.mp3
       - path: Resources/Assets.xcassets
       - path: Resources/haven
       - path: Resources/templates
         type: folder
       - path: HavenApp/App/PrivacyInfo.xcprivacy
-      # The notification sound. Listed explicitly because `sources` here names
-      # individual paths — a loose file next to them is invisible to the
+      # Selectable notification sounds. Listed explicitly because `sources` here
+      # names individual paths — a loose folder next to them is invisible to the
       # generator, and regenerating silently drops it from Resources. That has
-      # already happened twice.
-      - path: HavenApp/notification.mp3
+      # already happened (see git history for HavenApp/notification.mp3).
+      - path: HavenApp/Sounds/Chime.mp3
+      - path: HavenApp/Sounds/Confident.mp3
+      - path: HavenApp/Sounds/Juntos.mp3
+      - path: HavenApp/Sounds/Ping.mp3
       # Starter packs for the setup wizard. Loaded at runtime with
       # Bundle.main.url(forResource:), so it has to be in Resources or the
       # Initial Follows step silently shows nothing.
@@ -152,17 +154,19 @@ targets:
           - "**/*.rej"
       - path: HavenApp/Shared
       - path: HavenApp/Localizable.xcstrings
-      - path: HavenApp/notification.mp3
       - path: Resources/Assets.xcassets
       - path: Resources/haven
       - path: Resources/templates
         type: folder
       - path: HavenApp/App/PrivacyInfo.xcprivacy
-      # The notification sound. Listed explicitly because `sources` here names
-      # individual paths — a loose file next to them is invisible to the
+      # Selectable notification sounds. Listed explicitly because `sources` here
+      # names individual paths — a loose folder next to them is invisible to the
       # generator, and regenerating silently drops it from Resources. That has
-      # already happened twice.
-      - path: HavenApp/notification.mp3
+      # already happened (see git history for HavenApp/notification.mp3).
+      - path: HavenApp/Sounds/Chime.mp3
+      - path: HavenApp/Sounds/Confident.mp3
+      - path: HavenApp/Sounds/Juntos.mp3
+      - path: HavenApp/Sounds/Ping.mp3
       # Starter packs for the setup wizard. Loaded at runtime with
       # Bundle.main.url(forResource:), so it has to be in Resources or the
       # Initial Follows step silently shows nothing.

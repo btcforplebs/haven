@@ -219,7 +219,8 @@ final class LocalNotificationService {
     }
 
     private func playSound() {
-        guard let url = Bundle.main.url(forResource: "notification", withExtension: "mp3") else { return }
+        let sound = NotificationSound(rawValue: ConfigService.shared.config.notificationSoundName) ?? .defaultSound
+        guard let url = Bundle.main.url(forResource: sound.rawValue, withExtension: "mp3") else { return }
         do {
             let player = try AVAudioPlayer(contentsOf: url)
             soundPlayer = player // retain until playback finishes
@@ -276,7 +277,8 @@ final class LocalNotificationService {
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
-        content.sound = UNNotificationSound(named: UNNotificationSoundName("notification.mp3"))
+        let sound = NotificationSound(rawValue: ConfigService.shared.config.notificationSoundName) ?? .defaultSound
+        content.sound = UNNotificationSound(named: UNNotificationSoundName(sound.systemSoundName))
         content.categoryIdentifier = "RELAY_EVENT"
         content.userInfo = ["notif_type": type, "notif_id": id, "notif_npub": npub]
 
