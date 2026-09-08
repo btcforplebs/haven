@@ -340,6 +340,9 @@ struct NoteRow: View {
                 if !links.isEmpty {
                     LinkPreviewCard(url: links[0])
                 }
+
+                // Quoted notes and articles
+                QuotedEventsView(identifiers: event.quotedEventIds)
             }
 
             // Compact inline engagement bar
@@ -657,6 +660,9 @@ struct RepostedNoteView: View {
             if !links.isEmpty {
                 LinkPreviewCard(url: links[0])
             }
+
+            // Quoted notes and articles
+            QuotedEventsView(identifiers: inner.quotedEventIds)
         }
         .padding(10)
         .background(Color(red: 0.1, green: 0.1, blue: 0.14))
@@ -676,5 +682,34 @@ struct RepostedNoteView: View {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
         return formatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+/// The cards for whatever a relay-tab note quotes.
+///
+/// The timeline hides `nostr:` quote references from the body text and renders
+/// the quoted event underneath; this is the same behaviour for the relay tab,
+/// which previously left the reference in the text as a bare "Quote" link and
+/// drew no card at all. An event the relay does not hold is requested once and
+/// occupies no space until it arrives.
+struct QuotedEventsView: View {
+    let identifiers: [String]
+    @EnvironmentObject var nostrService: NostrService
+
+    var body: some View {
+        if !identifiers.isEmpty {
+            VStack(spacing: 8) {
+                ForEach(identifiers, id: \.self) { identifier in
+                    if let quoted = nostrService.storedEvent(matching: identifier) {
+                        QuotedNoteView(note: quoted.asFeedNote)
+                            .environmentObject(nostrService)
+                    } else {
+                        Color.clear
+                            .frame(height: 0)
+                            .onAppear { nostrService.fetchQuotedEvent(identifier) }
+                    }
+                }
+            }
+        }
     }
 }

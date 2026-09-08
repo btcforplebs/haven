@@ -11,7 +11,7 @@ public struct NostrContentFormatter {
     /// Matches bare HTTP(S) URLs that are NOT already inside markdown link syntax.
     private static let httpURLRegex = try! NSRegularExpression(pattern: #"(?<![(\[])https?://[^\s<>\")\]]*[^\s<>\")\].,;:!?'\"]"#, options: .caseInsensitive)
 
-    // Result cache — keyed on content + mediaURLs count + hideQuotes. Note content is immutable
+    // Result cache — keyed on content + mediaURLs count. Note content is immutable
     // so the formatted result can be safely reused.
     private static let cache = NSCache<NSString, Box<AttributedString>>()
 
@@ -20,19 +20,26 @@ public struct NostrContentFormatter {
         init(_ value: T) { self.value = value }
     }
 
+    /// Formats note content for display.
+    ///
+    /// Quote references (`nostr:note1…`, `nevent1…`, `naddr1…`) are removed from
+    /// the text: every view that shows note content either renders the quoted
+    /// event as its own card underneath, or is a two-line preview with no room
+    /// for one. Leaving the reference in the text produced a bare blue "Quote"
+    /// word beside — or instead of — the card.
     @MainActor
-    public static func format(_ content: String, mediaURLs: [URL] = [], hideQuotes: Bool = false) -> AttributedString {
-        let key = "\(content.hashValue)_\(mediaURLs.count)_\(hideQuotes)" as NSString
+    public static func format(_ content: String, mediaURLs: [URL] = []) -> AttributedString {
+        let key = "\(content.hashValue)_\(mediaURLs.count)" as NSString
         if let cached = cache.object(forKey: key) {
             return cached.value
         }
-        let result = formatUncached(content, mediaURLs: mediaURLs, hideQuotes: hideQuotes)
+        let result = formatUncached(content, mediaURLs: mediaURLs)
         cache.setObject(Box(result), forKey: key)
         return result
     }
 
     @MainActor
-    private static func formatUncached(_ content: String, mediaURLs: [URL], hideQuotes: Bool) -> AttributedString {
+    private static func formatUncached(_ content: String, mediaURLs: [URL]) -> AttributedString {
         var text = content
 
         // Strip bare image/video URLs from text (they'll show as thumbnails)
@@ -45,16 +52,8 @@ public struct NostrContentFormatter {
         text = replaceWithLinks(in: text, regex: npubRegex, template: "nostr:$1")
         text = replaceWithLinks(in: text, regex: nprofileRegex, template: "nostr:$1")
 
-        // Resolve nostr:note, nostr:nevent, and nostr:naddr
-        if hideQuotes {
-            text = noteRegex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "")
-            text = neventRegex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "")
-            text = naddrRegex.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: "")
-        } else {
-            text = replaceWithLinks(in: text, regex: noteRegex, template: "nostr:$1", label: "Quote")
-            text = replaceWithLinks(in: text, regex: neventRegex, template: "nostr:$1", label: "Quote")
-            text = replaceWithLinks(in: text, regex: naddrRegex, template: "nostr:$1", label: "Quote")
-        }
+        // Quote references are rendered as cards by the view, not as text.
+        text = stripQuoteReferences(from: text)
 
         // Convert bare HTTP(S) URLs to clickable markdown links
         text = linkifyURLs(in: text)
@@ -127,12 +126,31 @@ public struct NostrContentFormatter {
 
     /// Replaces nostr:npub and nostr:nprofile with @ProfileName as plain text,
     /// without generating markdown links or AttributedStrings.
+    ///
+    /// Quote references are dropped rather than shown: this feeds two-line
+    /// compact previews, which have no room for a quoted card, and the raw
+    /// `nostr:nevent1…` bech32 is unreadable in a preview.
     @MainActor
     public static func resolveMentionsPlainText(_ content: String) -> String {
         var text = content
         text = resolveMentionNames(in: text, regex: npubRegex)
         text = resolveMentionNames(in: text, regex: nprofileRegex)
+        text = stripQuoteReferences(from: text)
         return text
+    }
+
+    private static func stripQuoteReferences(from text: String) -> String {
+        var result = text
+        for regex in [noteRegex, neventRegex, naddrRegex] {
+            result = regex.stringByReplacingMatches(
+                in: result,
+                range: NSRange(result.startIndex..., in: result),
+                withTemplate: ""
+            )
+        }
+        return result
+            .replacingOccurrences(of: #"[ \t]{2,}"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     @MainActor
@@ -186,7 +204,7 @@ public struct NostrContentFormatter {
     }
 
     @MainActor
-    private static func replaceWithLinks(in text: String, regex: NSRegularExpression, template: String, label: String? = nil) -> String {
+    private static func replaceWithLinks(in text: String, regex: NSRegularExpression, template: String) -> String {
         let nsString = text as NSString
         let matches = regex.matches(in: text, options: [], range: NSRange(location: 0, length: nsString.length))
 
@@ -225,9 +243,7 @@ public struct NostrContentFormatter {
             }
 
             var displayLabel: String
-            if let label = label {
-                displayLabel = label
-            } else if let hex = hexPubkey {
+            if let hex = hexPubkey {
                 if let name = NostrService.shared.profiles[hex]?.bestName {
                     displayLabel = "@\(name)"
                 } else {
@@ -237,7 +253,7 @@ public struct NostrContentFormatter {
                     NostrService.shared.fetchMissingProfiles(for: [hex])
                 }
             } else {
-                // Fallback for failed decodes OR note1/nevent1
+                // Fallback for a mention whose bech32 will not decode.
                 let preview = matchedValue.prefix(12)
                 displayLabel = "@\(preview)..."
             }

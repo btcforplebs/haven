@@ -130,6 +130,13 @@ struct NostrEvent: Codable, Identifiable {
         return (urls + imetaURLs).filter { seen.insert($0.absoluteString).inserted }
     }
 
+    /// Ids of the events this note quotes (`nostr:note1…`, `nevent1…`, `naddr1…`),
+    /// in content order. Same rule as `FeedNote.quotedEventIds` — one definition,
+    /// so the relay tab and the timeline agree about what a note quotes.
+    var quotedEventIds: [String] {
+        QuoteReference.resolvedIdentifiers(in: content)
+    }
+
     var linkURLs: [URL] {
         guard let regex = Self.httpURLRegex else { return [] }
         let ns = content as NSString
@@ -141,5 +148,21 @@ struct NostrEvent: Codable, Identifiable {
             .compactMap { URL(string: ns.substring(with: $0.range)) }
             .filter { !mediaSet.contains($0.absoluteString) }
             .filter { seen.insert($0.absoluteString).inserted }
+    }
+}
+
+extension NostrEvent {
+    /// This event as the feed's note model, so relay-tab rows can reuse the
+    /// timeline's cards (`QuotedNoteView`, `NoteDetailView`) instead of growing
+    /// a second set that renders the same thing differently.
+    var asFeedNote: FeedNote {
+        FeedNote(
+            id: id,
+            pubkey: pubkey,
+            content: content,
+            createdAt: createdAtDate,
+            tags: tags,
+            kind: kind
+        )
     }
 }

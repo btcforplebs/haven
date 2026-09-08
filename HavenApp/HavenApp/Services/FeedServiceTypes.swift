@@ -145,10 +145,6 @@ struct FeedNote: Identifiable, Hashable, Equatable, Codable {
         try? NSRegularExpression(pattern: #"https?://\S+/[a-f0-9]{64}(?=\s|$)"#, options: .caseInsensitive)
     }()
 
-    private static let quoteRegex: NSRegularExpression? = {
-        try? NSRegularExpression(pattern: #"nostr:(note1[a-z0-9]+|nevent1[a-z0-9]+|naddr1[a-z0-9]+)"#, options: .caseInsensitive)
-    }()
-
     /// Matches any HTTP(S) URL in content for link preview extraction.
     private static let httpURLRegex: NSRegularExpression? = {
         try? NSRegularExpression(pattern: #"https?://[^\s<>\")\]]*[^\s<>\")\].,;:!?'\"]"#, options: .caseInsensitive)
@@ -174,57 +170,7 @@ struct FeedNote: Identifiable, Hashable, Equatable, Codable {
     }
 
     private static func parseQuotedEventIds(from content: String) -> [String] {
-        guard let regex = quoteRegex else { return [] }
-        let ns = content as NSString
-        return regex.matches(in: content, range: NSRange(location: 0, length: ns.length))
-            .compactMap { match -> String? in
-                let identifier = ns.substring(with: match.range(at: 1))
-                if identifier.hasPrefix("note1") {
-                    return Bech32.decode(identifier)?.hexString
-                } else if identifier.hasPrefix("nevent1") {
-                    guard let decoded = Bech32.decode(identifier) else { return nil }
-                    var data = decoded.data
-                    while data.count >= 2 {
-                        let type = data.removeFirst()
-                        let length = Int(data.removeFirst())
-                        if data.count >= length {
-                            let value = data.prefix(length)
-                            if type == 0 && length == 32 {
-                                return value.map { String(format: "%02x", $0) }.joined()
-                            }
-                            data.removeFirst(length)
-                        } else {
-                            break
-                        }
-                    }
-                } else if identifier.hasPrefix("naddr1") {
-                    // NIP-19 naddr TLV: type 0 = d-tag (UTF-8), type 1 = relay, type 2 = pubkey (32 bytes), type 3 = kind (4 bytes BE)
-                    guard let decoded = Bech32.decode(identifier) else { return nil }
-                    var data = decoded.data
-                    var dTag: String?
-                    var pubkey: String?
-                    var kind: UInt32?
-                    while data.count >= 2 {
-                        let tlvType = data.removeFirst()
-                        let length = Int(data.removeFirst())
-                        guard data.count >= length else { break }
-                        let value = data.prefix(length)
-                        switch tlvType {
-                        case 0: dTag = String(data: Data(value), encoding: .utf8)
-                        case 2 where length == 32: pubkey = value.map { String(format: "%02x", $0) }.joined()
-                        case 3 where length == 4:
-                            kind = Data(value).withUnsafeBytes { $0.load(as: UInt32.self).bigEndian }
-                        default: break
-                        }
-                        data.removeFirst(length)
-                    }
-                    if let k = kind, let p = pubkey {
-                        // Coordinate format: "naddr:<kind>:<pubkey>:<d-tag>"
-                        return "naddr:\(k):\(p):\(dTag ?? "")"
-                    }
-                }
-                return nil
-            }
+        QuoteReference.resolvedIdentifiers(in: content)
     }
 
     /// Extracts non-media HTTP(S) URLs from content for link preview cards.

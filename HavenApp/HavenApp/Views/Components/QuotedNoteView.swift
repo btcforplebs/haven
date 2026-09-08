@@ -21,23 +21,10 @@ struct QuotedNoteView: View {
                     .foregroundColor(.secondary.opacity(0.7))
             }
 
-            let formattedContent = NostrContentFormatter.format(note.content, mediaURLs: note.mediaURLs, hideQuotes: true)
-            if !formattedContent.characters.isEmpty {
-                Text(formattedContent)
-                    .font(.appSystem(size: 13, weight: .regular))
-                    .foregroundColor(.secondary)
-                    .lineLimit(3)
-                    .multilineTextAlignment(.leading)
-            }
-            
-            if !note.mediaURLs.isEmpty {
-                FeedMediaView(
-                    url: note.mediaURLs[0],
-                    maxHeight: 180,
-                    portraitMaxHeight: 220,
-                    isThumbnail: false
-                )
-                .allowsHitTesting(false)
+            if isLongForm {
+                articleBody
+            } else {
+                noteBody
             }
         }
         .padding(10)
@@ -52,6 +39,75 @@ struct QuotedNoteView: View {
         )
     }
     
+    /// A NIP-23 article. Its `content` is a whole markdown document, so showing
+    /// the first three lines of it shows `##` markup rather than the article —
+    /// the headline, cover and summary live in tags instead.
+    private var isLongForm: Bool { note.kind == 30023 }
+
+    @ViewBuilder
+    private var articleBody: some View {
+        HStack(alignment: .top, spacing: 10) {
+            if let imageURL = note.longFormMetadata.imageURL {
+                CachedAsyncImage(url: imageURL) { image in
+                    image.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    Color.platformTertiaryGroupedBackground
+                }
+                .frame(width: 56, height: 56)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Article")
+                    .font(.appSystem(size: 10, weight: .semibold))
+                    .foregroundColor(.havenPurple.opacity(0.8))
+
+                Text(note.longFormDisplayTitle)
+                    .font(.appSystem(size: 13, weight: .semibold))
+                    .foregroundColor(.primary.opacity(0.9))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+
+                if let summary = articleSummary {
+                    Text(summary)
+                        .font(.appSystem(size: 12, weight: .regular))
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var articleSummary: String? {
+        if let summary = note.longFormMetadata.summary { return summary }
+        let plain = MarkdownParser.plainText(note.content, limit: 200)
+        return plain.isEmpty ? nil : plain
+    }
+
+    @ViewBuilder
+    private var noteBody: some View {
+        let formattedContent = NostrContentFormatter.format(note.content, mediaURLs: note.mediaURLs)
+        if !formattedContent.characters.isEmpty {
+            Text(formattedContent)
+                .font(.appSystem(size: 13, weight: .regular))
+                .foregroundColor(.secondary)
+                .lineLimit(3)
+                .multilineTextAlignment(.leading)
+        }
+
+        if !note.mediaURLs.isEmpty {
+            FeedMediaView(
+                url: note.mediaURLs[0],
+                maxHeight: 180,
+                portraitMaxHeight: 220,
+                isThumbnail: false
+            )
+            .allowsHitTesting(false)
+        }
+    }
+
     private func relativeTime(_ date: Date) -> String {
         let diff = Date().timeIntervalSince(date)
         switch diff {

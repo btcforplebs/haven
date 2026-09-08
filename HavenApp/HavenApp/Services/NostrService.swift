@@ -1939,6 +1939,88 @@ class NostrService: ObservableObject {
         scheduleBufferFlush()
     }
 
+    // MARK: - Quoted Events
+
+    /// Identifiers already requested by `fetchQuotedEvent`, so a row that keeps
+    /// reappearing does not re-request the same missing note.
+    private var quotedEventsInFlight = Set<String>()
+
+    /// The event a quote reference points at, if this relay already holds it.
+    /// Accepts either a 64-hex event id or an `"naddr:<kind>:<pubkey>:<d-tag>"`
+    /// coordinate, matching `FeedService.findNote(id:)`.
+    func storedEvent(matching identifier: String) -> NostrEvent? {
+        // `events` is sorted newest first, so for an addressable event the first
+        // match is the current one.
+        let matcher = QuoteReference.matcher(for: identifier)
+        return events.first {
+            matcher.matches(id: $0.id, kind: $0.kind, pubkey: $0.pubkey, tags: $0.tags)
+        }
+    }
+
+    /// Requests a quoted event this relay does not hold, from the local relay and
+    /// the configured feed relays. Safe to call from a view's `onAppear`: each
+    /// identifier is requested once per session.
+    func fetchQuotedEvent(_ identifier: String) {
+        guard storedEvent(matching: identifier) == nil,
+              !quotedEventsInFlight.contains(identifier) else { return }
+        quotedEventsInFlight.insert(identifier)
+
+        let config = ConfigService.shared.config
+        var urls = [config.nostrURL].compactMap { URL(string: $0) }
+        let externals = config.activeFeedRelays.isEmpty
+            ? ["wss://relay.primal.net", "wss://nos.lol"]
+            : config.activeFeedRelays
+        urls.append(contentsOf: externals.compactMap { URL(string: $0) })
+        guard !urls.isEmpty else { return }
+
+        if let (kind, pubkey, dTag) = QuoteReference.parseCoordinate(identifier) {
+            fetchAddressableEvent(kind: kind, pubkey: pubkey, dTag: dTag, from: urls)
+        } else {
+            fetchNotesByIds([identifier], from: urls)
+        }
+    }
+
+    /// Fetches an addressable (NIP-33) event by its coordinate. `fetchNotesByIds`
+    /// cannot serve these — a coordinate is not an event id, so an `ids` filter
+    /// would match nothing.
+    private func fetchAddressableEvent(kind: Int, pubkey: String, dTag: String, from relayURLs: [URL]) {
+        let filter: [String: Any] = ["kinds": [kind], "authors": [pubkey], "#d": [dTag], "limit": 1]
+
+        for url in relayURLs {
+            let urlString = url.absoluteString
+            if isLocalRelay(url) && !isLocalRelayReady { continue }
+
+            let subId = "addr-\(UUID().uuidString.prefix(6))"
+            let req = ["REQ", subId, filter] as [Any]
+            guard let data = try? JSONSerialization.data(withJSONObject: req),
+                  let reqString = String(data: data, encoding: .utf8) else { continue }
+
+            if let existing = clients[urlString], existing.connectionState == .connected {
+                existing.send(text: reqString)
+                continue
+            }
+
+            let client = WebSocketClient()
+            client.isTemporary = true
+            client.messageSubject
+                .receive(on: processingQueue)
+                .sink { [weak self] message in
+                    self?.processMessage(message, from: urlString)
+                }
+                .store(in: &cancellables)
+            client.$connectionState
+                .first(where: { $0 == .connected })
+                .receive(on: DispatchQueue.main)
+                .sink { [weak client] _ in
+                    guard let client = client else { return }
+                    client.send(text: reqString)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 8) { client.disconnect() }
+                }
+                .store(in: &cancellables)
+            client.connect(url: url)
+        }
+    }
+
     /// Fetch specific events by their IDs from the given relays.
     /// Results are merged into the shared `events` array via the normal processing pipeline.
     func fetchNotesByIds(_ ids: [String], from relayURLs: [URL]) {
