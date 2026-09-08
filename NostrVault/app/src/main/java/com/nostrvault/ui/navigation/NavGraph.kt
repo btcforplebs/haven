@@ -598,6 +598,9 @@ fun NostrVaultNavHost(
                     onNoteClick = { noteId ->
                         navController.navigate(Screen.NoteDetail.createRoute(noteId))
                     },
+                    onArticleClick = { noteId ->
+                        navController.navigate(Screen.ArticleReader.createRoute(noteId))
+                    },
                     onProfileClick = { pubkey ->
                         navController.navigate(Screen.Profile.createRoute(pubkey))
                     },

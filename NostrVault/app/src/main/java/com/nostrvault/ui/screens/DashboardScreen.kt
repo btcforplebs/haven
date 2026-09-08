@@ -1713,6 +1713,8 @@ private fun IconFilterButton(
 fun DashboardScreen(
     onNavigate: (Screen) -> Unit,
     onNoteClick: (String) -> Unit,
+    /** Where a quoted long-form post opens; the note screen shows Markdown source. */
+    onArticleClick: (String) -> Unit,
     onProfileClick: (String) -> Unit,
     onCompose: () -> Unit,
     onReply: (String) -> Unit,
@@ -1747,6 +1749,22 @@ fun DashboardScreen(
     val displayNotes by viewModel.displayNotes.collectAsState()
     val displayLikedNotes by viewModel.displayLikedNotes.collectAsState()
     val displayZappedNotes by viewModel.displayZappedNotes.collectAsState()
+
+    // Quoted events for the cards below. This tab never asked for them at all,
+    // so a quote here was dropped twice over: never fetched, and never drawn.
+    val quotedNotes by feedService.quotedNotes.collectAsState()
+    LaunchedEffect(displayNotes, displayLikedNotes, displayZappedNotes) {
+        val ids = (displayNotes + displayLikedNotes + displayZappedNotes)
+            .flatMap { it.quotedEventIds }
+            .distinct()
+        if (ids.isNotEmpty()) feedService.fetchMissingQuotedNotes(ids)
+    }
+    LaunchedEffect(displayNotes, displayLikedNotes, displayZappedNotes, quotedNotes) {
+        val ids = (displayNotes + displayLikedNotes + displayZappedNotes)
+            .flatMap { it.quotedEventIds }
+            .distinct()
+        if (ids.isNotEmpty()) feedService.fetchMissingQuotedProfiles(ids)
+    }
     val reactionMap by viewModel.reactionMap.collectAsState()
     val zapMap by viewModel.zapMap.collectAsState()
     val repostMap by viewModel.repostMap.collectAsState()
@@ -2002,6 +2020,7 @@ fun DashboardScreen(
             when (viewMode) {
                 VaultViewMode.NOTES -> NotesContent(
                     notes = displayNotes,
+                    quotedNotes = quotedNotes,
                     reactionMap = reactionMap,
                     zapMap = zapMap,
                     repostMap = repostMap,
@@ -2015,10 +2034,12 @@ fun DashboardScreen(
                     padding = padding,
                     viewModel = viewModel,
                     onNoteClick = onNoteClick,
+                    onArticleClick = onArticleClick,
                     onProfileClick = onProfileClick,
                 )
                 VaultViewMode.LIKES -> LikesContent(
                     notes = displayLikedNotes,
+                    quotedNotes = quotedNotes,
                     reactionMap = reactionMap,
                     hasLoadedOnce = likesHasLoadedOnce,
                     isRefreshing = isRefreshing,
@@ -2029,10 +2050,12 @@ fun DashboardScreen(
                     padding = padding,
                     viewModel = viewModel,
                     onNoteClick = onNoteClick,
+                    onArticleClick = onArticleClick,
                     onProfileClick = onProfileClick,
                 )
                 VaultViewMode.ZAPS -> ZapsContent(
                     notes = displayZappedNotes,
+                    quotedNotes = quotedNotes,
                     zapMap = zapMap,
                     hasLoadedOnce = zapsHasLoadedOnce,
                     isRefreshing = isRefreshing,
@@ -2043,6 +2066,7 @@ fun DashboardScreen(
                     padding = padding,
                     viewModel = viewModel,
                     onNoteClick = onNoteClick,
+                    onArticleClick = onArticleClick,
                     onProfileClick = onProfileClick,
                 )
             }
@@ -2155,6 +2179,7 @@ fun DashboardScreen(
 @Composable
 private fun NotesContent(
     notes: List<FeedNote>,
+    quotedNotes: Map<String, FeedNote>,
     reactionMap: Map<String, List<Pair<String, String>>>,
     zapMap: Map<String, List<Pair<String, Long>>>,
     repostMap: Map<String, List<String>>,
@@ -2168,6 +2193,7 @@ private fun NotesContent(
     padding: PaddingValues,
     viewModel: DashboardViewModel,
     onNoteClick: (String) -> Unit,
+    onArticleClick: (String) -> Unit,
     onProfileClick: (String) -> Unit,
 ) {
     val colors = LocalNostrVaultColors.current
@@ -2222,6 +2248,7 @@ private fun NotesContent(
                     note = note,
                     profile = viewModel.profileFor(note.pubkey),
                     profiles = allProfiles,
+                    quotedNotes = quotedNotes,
                     reactors = reactionMap[note.id] ?: emptyList(),
                     latestReactionDate = latestReactionDates[note.id]?.let { java.util.Date(it * 1000) },
                     reposterPubkeys = repostMap[note.id] ?: emptyList(),
@@ -2230,6 +2257,7 @@ private fun NotesContent(
                     noteType = noteType,
                     layoutMode = if (isCompact) VaultNoteLayoutMode.COMPACT else VaultNoteLayoutMode.EXPANDED,
                     onNoteClick = onNoteClick,
+                    onArticleClick = onArticleClick,
                     onProfileClick = onProfileClick,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = if (isCompact) 2.dp else 4.dp),
                 )
@@ -2261,6 +2289,7 @@ private fun NotesContent(
 @Composable
 private fun LikesContent(
     notes: List<FeedNote>,
+    quotedNotes: Map<String, FeedNote>,
     reactionMap: Map<String, List<Pair<String, String>>>,
     hasLoadedOnce: Boolean,
     isRefreshing: Boolean,
@@ -2271,6 +2300,7 @@ private fun LikesContent(
     padding: PaddingValues,
     viewModel: DashboardViewModel,
     onNoteClick: (String) -> Unit,
+    onArticleClick: (String) -> Unit,
     onProfileClick: (String) -> Unit,
 ) {
     val colors = LocalNostrVaultColors.current
@@ -2349,11 +2379,13 @@ private fun LikesContent(
                     note = note,
                     profile = viewModel.profileFor(note.pubkey),
                     profiles = allProfiles,
+                    quotedNotes = quotedNotes,
                     reactors = reactionMap[note.id] ?: emptyList(),
                     latestReactionDate = latestReactionDates[note.id]?.let { java.util.Date(it * 1000) },
                     noteType = noteType,
                     layoutMode = if (isCompact) VaultNoteLayoutMode.COMPACT else VaultNoteLayoutMode.EXPANDED,
                     onNoteClick = onNoteClick,
+                    onArticleClick = onArticleClick,
                     onProfileClick = onProfileClick,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = if (isCompact) 2.dp else 4.dp),
                 )
@@ -2369,6 +2401,7 @@ private fun LikesContent(
 @Composable
 private fun ZapsContent(
     notes: List<FeedNote>,
+    quotedNotes: Map<String, FeedNote>,
     zapMap: Map<String, List<Pair<String, Long>>>,
     hasLoadedOnce: Boolean,
     isRefreshing: Boolean,
@@ -2379,6 +2412,7 @@ private fun ZapsContent(
     padding: PaddingValues,
     viewModel: DashboardViewModel,
     onNoteClick: (String) -> Unit,
+    onArticleClick: (String) -> Unit,
     onProfileClick: (String) -> Unit,
 ) {
     val colors = LocalNostrVaultColors.current
@@ -2459,10 +2493,12 @@ private fun ZapsContent(
                     note = note,
                     profile = viewModel.profileFor(note.pubkey),
                     profiles = allProfiles,
+                    quotedNotes = quotedNotes,
                     zappers = zapMap[note.id] ?: emptyList(),
                     noteType = noteType,
                     layoutMode = if (isCompact) VaultNoteLayoutMode.COMPACT else VaultNoteLayoutMode.EXPANDED,
                     onNoteClick = onNoteClick,
+                    onArticleClick = onArticleClick,
                     onProfileClick = onProfileClick,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = if (isCompact) 2.dp else 4.dp),
                 )

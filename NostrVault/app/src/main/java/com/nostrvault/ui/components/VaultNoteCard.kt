@@ -38,6 +38,8 @@ fun VaultNoteCard(
     note: FeedNote,
     profile: FeedProfile?,
     profiles: Map<String, FeedProfile> = emptyMap(),
+    /** Quoted events keyed by the lookup key `note.quotedEventIds` holds. */
+    quotedNotes: Map<String, FeedNote> = emptyMap(),
     reactors: List<Pair<String, String>> = emptyList(),
     latestReactionDate: Date? = null,
     reposterPubkeys: List<String> = emptyList(),
@@ -46,6 +48,8 @@ fun VaultNoteCard(
     noteType: VaultNoteType = VaultNoteType.TAGGED,
     layoutMode: VaultNoteLayoutMode = VaultNoteLayoutMode.EXPANDED,
     onNoteClick: (String) -> Unit,
+    /** Where a quoted long-form post opens; the note screen shows Markdown source. */
+    onArticleClick: ((String) -> Unit)? = null,
     onProfileClick: (String) -> Unit,
     onReactorsClick: (() -> Unit)? = null,
     onRepostersClick: (() -> Unit)? = null,
@@ -90,6 +94,8 @@ fun VaultNoteCard(
                 note = note,
                 profile = profile,
                 profiles = profiles,
+                quotedNotes = quotedNotes,
+                onArticleClick = onArticleClick,
                 onNoteClick = onNoteClick,
                 reactors = effectiveReactors,
                 latestReactionDate = latestReactionDate,
@@ -256,6 +262,8 @@ private fun ExpandedLayout(
     note: FeedNote,
     profile: FeedProfile?,
     profiles: Map<String, FeedProfile>,
+    quotedNotes: Map<String, FeedNote>,
+    onArticleClick: ((String) -> Unit)?,
     reactors: List<Pair<String, String>>,
     latestReactionDate: Date?,
     reposterPubkeys: List<String>,
@@ -398,6 +406,24 @@ private fun ExpandedLayout(
         // Media previews (iOS lines 314-330)
         if (note.mediaURLs.isNotEmpty()) {
             MediaPreviewRow(urls = note.mediaURLs)
+        }
+
+        // Quoted events. This card already knew a quote existed — it suppressed
+        // the link preview below on exactly that condition — and then drew
+        // nothing for it, so on the relay tab a quote was silently dropped.
+        for (qid in note.quotedEventIds) {
+            val quoted = quotedNotes[qid]
+            if (quoted != null) {
+                QuotedNoteCard(
+                    note = quoted,
+                    profile = profiles[quoted.pubkey],
+                    profiles = profiles,
+                    onClick = onNoteClick,
+                    onArticleClick = onArticleClick,
+                )
+            } else {
+                QuotedNotePlaceholder(identifier = qid, onClick = onNoteClick)
+            }
         }
 
         // Link preview (iOS lines 332-335)
