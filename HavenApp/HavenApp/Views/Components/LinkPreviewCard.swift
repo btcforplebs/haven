@@ -17,7 +17,11 @@ struct LinkPreviewCard: View {
             }
             // If fetch failed or no title, render nothing (graceful degradation)
         }
-        .onAppear { loadMetadata() }
+        // Keyed on the URL, not on appearance: SwiftUI reuses a view's state
+        // when it reuses its identity, and a card that only ever loaded once
+        // would keep showing the first link's preview if its row were ever
+        // handed a second URL.
+        .task(id: url) { await loadMetadata() }
     }
 
     // MARK: - Card Content
@@ -132,16 +136,14 @@ struct LinkPreviewCard: View {
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 
-    private func loadMetadata() {
-        guard metadata == nil, isLoading else { return }
-        Task {
-            let result = await LinkPreviewService.shared.fetchMetadata(for: url)
-            await MainActor.run {
-                withAnimation(Motion.media) {
-                    self.metadata = result
-                    self.isLoading = false
-                }
-            }
+    private func loadMetadata() async {
+        metadata = nil
+        isLoading = true
+        let result = await LinkPreviewService.shared.fetchMetadata(for: url)
+        guard !Task.isCancelled else { return }
+        withAnimation(Motion.media) {
+            metadata = result
+            isLoading = false
         }
     }
 }

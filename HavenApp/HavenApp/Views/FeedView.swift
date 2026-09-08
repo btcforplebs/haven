@@ -2533,45 +2533,26 @@ struct FeedNoteRow: View {
         return note
     }
 
+    /// True while an empty-content repost is waiting for the note it reposted.
+    private var isWaitingForRepostedNote: Bool {
+        note.kind == 6 && note.content.isEmpty && note.repostedEventId != nil
+            && rowData.resolvedOriginal == nil
+    }
+
     @ViewBuilder
     private var noteBodyContent: some View {
-        // Content Body — for empty-content reposts, show the referenced note
-        if note.kind == 6 && note.content.isEmpty, note.repostedEventId != nil {
-            if let original = rowData.resolvedOriginal {
-                let formattedOriginal = NostrContentFormatter.format(original.content, mediaURLs: original.mediaURLs)
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(formattedOriginal)
-                        .font(.appSystem(size: 17, weight: .regular, design: .default))
-                        .foregroundColor(Color(red: 1, green: 1, blue: 1))
-                        .lineSpacing(2)
-                        .lineLimit(nil)
-                        .textSelection(.enabled)
-                }
-                .padding(.top, 4)
-
-                if !original.mediaURLs.isEmpty {
-                    feedMediaCarousel(urls: original.mediaURLs)
-                        .padding(.top, 4)
-                }
-
-                // Link Preview
-                if !original.linkURLs.isEmpty {
-                    LinkPreviewCard(url: original.linkURLs[0])
-                        .padding(.top, 4)
-                }
-            } else {
-                // Still loading the referenced note
-                HStack(spacing: 6) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text(String(localized: "feed.note.loadingRepost"))
-                        .font(.appSystem(size: 13))
-                        .foregroundColor(.secondary)
-                }
-                .padding(.top, 4)
+        // Content Body — for empty-content reposts this is the reposted note.
+        if isWaitingForRepostedNote {
+            HStack(spacing: 6) {
+                ProgressView()
+                    .controlSize(.small)
+                Text(String(localized: "feed.note.loadingRepost"))
+                    .font(.appSystem(size: 13))
+                    .foregroundColor(.secondary)
             }
+            .padding(.top, 4)
         } else {
-            let formattedContent = NostrContentFormatter.format(note.content, mediaURLs: note.mediaURLs)
+            let formattedContent = NostrContentFormatter.format(bodySource.content, mediaURLs: bodySource.mediaURLs)
             VStack(alignment: .leading, spacing: 8) {
                 Text(formattedContent)
                     .font(.appSystem(size: 17, weight: .regular, design: .default))
@@ -2583,14 +2564,14 @@ struct FeedNoteRow: View {
             .padding(.top, 4)
 
             // Media previews
-            if !note.mediaURLs.isEmpty {
-                feedMediaCarousel(urls: note.mediaURLs)
+            if !bodySource.mediaURLs.isEmpty {
+                feedMediaCarousel(urls: bodySource.mediaURLs)
                     .padding(.top, 4)
             }
 
             // Link Preview
-            if !note.linkURLs.isEmpty {
-                LinkPreviewCard(url: note.linkURLs[0])
+            if !bodySource.linkURLs.isEmpty {
+                LinkPreviewCard(url: bodySource.linkURLs[0])
                     .padding(.top, 4)
             }
         }
