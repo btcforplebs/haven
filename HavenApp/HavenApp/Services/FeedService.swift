@@ -1579,7 +1579,7 @@ class FeedService: ObservableObject {
         fetchingNoteIds.insert(id)
         fetchingNoteTimestamps[id] = Date()
 
-        if id.hasPrefix("naddr:") {
+        if id.hasPrefix(QuoteReference.coordinatePrefix) {
             fetchMissingNoteByNaddr(coordinate: id)
         } else {
             noteFetchQueue.insert(id)
@@ -1589,11 +1589,7 @@ class FeedService: ObservableObject {
 
     /// Fetches an addressable event by its naddr coordinate ("naddr:<kind>:<pubkey>:<d-tag>").
     private func fetchMissingNoteByNaddr(coordinate: String) {
-        let parts = coordinate.split(separator: ":", maxSplits: 3).map(String.init)
-        guard parts.count >= 3,
-              let kind = Int(parts[1]) else { return }
-        let pubkey = parts[2]
-        let dTag = parts.count > 3 ? parts[3] : ""
+        guard let (kind, pubkey, dTag) = QuoteReference.parseCoordinate(coordinate) else { return }
 
         let filter: [String: Any] = ["kinds": [kind], "authors": [pubkey], "#d": [dTag], "limit": 1]
         let subId = "naddr-\(UUID().uuidString.prefix(6))"
@@ -1641,7 +1637,7 @@ class FeedService: ObservableObject {
     /// Looks up a note in the local parent notes cache or in the main feed list.
     /// Also handles naddr coordinate strings ("naddr:<kind>:<pubkey>:<d-tag>").
     func findNote(id: String) -> FeedNote? {
-        if id.hasPrefix("naddr:") {
+        if id.hasPrefix(QuoteReference.coordinatePrefix) {
             return findNoteByNaddrCoordinate(id)
         }
         if let cached = parentNotesCache[id] {
@@ -1652,11 +1648,7 @@ class FeedService: ObservableObject {
 
     /// Finds a note matching an naddr coordinate ("naddr:<kind>:<pubkey>:<d-tag>").
     private func findNoteByNaddrCoordinate(_ coordinate: String) -> FeedNote? {
-        let parts = coordinate.split(separator: ":", maxSplits: 3).map(String.init)
-        guard parts.count >= 3,
-              let kind = Int(parts[1]) else { return nil }
-        let pubkey = parts[2]
-        let dTag = parts.count > 3 ? parts[3] : ""
+        guard let (kind, pubkey, dTag) = QuoteReference.parseCoordinate(coordinate) else { return nil }
 
         let match: (FeedNote) -> Bool = { note in
             note.kind == kind && note.pubkey == pubkey &&

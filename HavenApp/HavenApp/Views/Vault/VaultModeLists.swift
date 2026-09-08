@@ -25,6 +25,27 @@ extension VaultView {
         .contentShape(Rectangle())
     }
 
+    // MARK: - nostr: links
+
+    /// Opens a `nostr:` link tapped inside note text. One definition for every
+    /// list in this tab — the notes list used to be missing `naddr1`, so tapping
+    /// a quoted article there fell through to the system and did nothing.
+    var nostrLinkAction: OpenURLAction {
+        OpenURLAction { url in
+            guard url.scheme == "nostr" else { return .systemAction }
+            let id = url.absoluteString.replacingOccurrences(of: "nostr:", with: "")
+            if id.hasPrefix("npub1") || id.hasPrefix("nprofile1") {
+                self.showingProfilePubkey = id
+                return .handled
+            }
+            if id.hasPrefix("note1") || id.hasPrefix("nevent1") || id.hasPrefix("naddr1") {
+                self.openNote(id)
+                return .handled
+            }
+            return .systemAction
+        }
+    }
+
     // MARK: - Notes List
 
     var notesList: some View {
@@ -118,19 +139,7 @@ extension VaultView {
                         #endif
                     }
                 }
-                .environment(\.openURL, OpenURLAction { url in
-                    if url.scheme == "nostr" {
-                        let id = url.absoluteString.replacingOccurrences(of: "nostr:", with: "")
-                        if id.hasPrefix("npub1") || id.hasPrefix("nprofile1") {
-                            self.showingProfilePubkey = id
-                            return .handled
-                        } else if id.hasPrefix("note1") || id.hasPrefix("nevent1") {
-                            self.openNote(id)
-                            return .handled
-                        }
-                    }
-                    return .systemAction
-                })
+                .environment(\.openURL, nostrLinkAction)
                 .frame(maxWidth: .infinity)
             }
         }
@@ -229,19 +238,7 @@ extension VaultView {
                         }
                     }
                 }
-                .environment(\.openURL, OpenURLAction { url in
-                    if url.scheme == "nostr" {
-                        let id = url.absoluteString.replacingOccurrences(of: "nostr:", with: "")
-                        if id.hasPrefix("npub1") || id.hasPrefix("nprofile1") {
-                            self.showingProfilePubkey = id
-                            return .handled
-                        } else if id.hasPrefix("note1") || id.hasPrefix("nevent1") || id.hasPrefix("naddr1") {
-                            self.openNote(id)
-                            return .handled
-                        }
-                    }
-                    return .systemAction
-                })
+                .environment(\.openURL, nostrLinkAction)
                 .frame(maxWidth: .infinity)
             }
         }
@@ -337,19 +334,7 @@ extension VaultView {
                         }
                     }
                 }
-                .environment(\.openURL, OpenURLAction { url in
-                    if url.scheme == "nostr" {
-                        let id = url.absoluteString.replacingOccurrences(of: "nostr:", with: "")
-                        if id.hasPrefix("npub1") || id.hasPrefix("nprofile1") {
-                            self.showingProfilePubkey = id
-                            return .handled
-                        } else if id.hasPrefix("note1") || id.hasPrefix("nevent1") || id.hasPrefix("naddr1") {
-                            self.openNote(id)
-                            return .handled
-                        }
-                    }
-                    return .systemAction
-                })
+                .environment(\.openURL, nostrLinkAction)
                 .frame(maxWidth: .infinity)
             }
         }

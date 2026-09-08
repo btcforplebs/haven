@@ -235,12 +235,14 @@ class LinkPreviewService {
             }
         }
 
+        // OG values are HTML attribute contents, so they arrive encoded
+        // ("Bob&#39;s blog"). Decode before they reach a Text view.
         return LinkPreviewMetadata(
             url: sourceURL,
-            title: title,
-            description: description,
+            title: title.map(HTMLEntities.decode),
+            description: description.map(HTMLEntities.decode),
             imageURL: imageURL,
-            siteName: siteName
+            siteName: siteName.map(HTMLEntities.decode)
         )
     }
 

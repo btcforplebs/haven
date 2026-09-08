@@ -2523,7 +2523,7 @@ struct FeedNoteRow: View {
         // Content Body — for empty-content reposts, show the referenced note
         if note.kind == 6 && note.content.isEmpty, note.repostedEventId != nil {
             if let original = rowData.resolvedOriginal {
-                let formattedOriginal = NostrContentFormatter.format(original.content, mediaURLs: original.mediaURLs, hideQuotes: true)
+                let formattedOriginal = NostrContentFormatter.format(original.content, mediaURLs: original.mediaURLs)
                 VStack(alignment: .leading, spacing: 8) {
                     Text(formattedOriginal)
                         .font(.appSystem(size: 17, weight: .regular, design: .default))
@@ -2556,7 +2556,7 @@ struct FeedNoteRow: View {
                 .padding(.top, 4)
             }
         } else {
-            let formattedContent = NostrContentFormatter.format(note.content, mediaURLs: note.mediaURLs, hideQuotes: true)
+            let formattedContent = NostrContentFormatter.format(note.content, mediaURLs: note.mediaURLs)
             VStack(alignment: .leading, spacing: 8) {
                 Text(formattedContent)
                     .font(.appSystem(size: 17, weight: .regular, design: .default))
