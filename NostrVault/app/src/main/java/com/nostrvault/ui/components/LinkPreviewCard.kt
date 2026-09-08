@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.sp
 import android.util.LruCache
 import coil.compose.AsyncImage
 import com.nostrvault.ui.theme.*
+import androidx.core.text.HtmlCompat
 import com.nostrvault.util.UrlSafety
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -207,21 +208,42 @@ private suspend fun fetchOgMetadata(url: String): OgMetadata = withContext(Dispa
         }
         activeConn.disconnect()
 
-        val title = extractMetaContent(html, "og:title")
-            ?: extractMetaContent(html, "twitter:title")
-            ?: extractHtmlTitle(html)
-        val description = extractMetaContent(html, "og:description")
-            ?: extractMetaContent(html, "twitter:description")
+        val title = decodeEntities(
+            extractMetaContent(html, "og:title")
+                ?: extractMetaContent(html, "twitter:title")
+                ?: extractHtmlTitle(html)
+        )
+        val description = decodeEntities(
+            extractMetaContent(html, "og:description")
+                ?: extractMetaContent(html, "twitter:description")
+        )
         val rawImageUrl = extractMetaContent(html, "og:image")
             ?: extractMetaContent(html, "twitter:image")
         // Guard the image URL too — it is handed to Coil, a second internal-fetch vector.
         val imageUrl = rawImageUrl?.takeIf { UrlSafety.isSafeRemoteUrl(it) }
-        val siteName = extractMetaContent(html, "og:site_name")
+        val siteName = decodeEntities(extractMetaContent(html, "og:site_name"))
 
         OgMetadata(title, description, imageUrl, siteName)
     } catch (_: Exception) {
         empty
     }
+}
+
+/**
+ * Decode the HTML character references in an OpenGraph value.
+ *
+ * OpenGraph values are HTML attribute contents, so they arrive encoded
+ * ("Bob&#39;s blog"). The platform parser handles both named and numeric forms,
+ * so there is no table to keep. It also collapses whitespace and drops any
+ * stray markup, which is what a one-line preview wants anyway. Blank after
+ * decoding is treated as absent rather than shown as an empty line.
+ */
+private fun decodeEntities(value: String?): String? {
+    if (value.isNullOrBlank()) return null
+    return HtmlCompat.fromHtml(value, HtmlCompat.FROM_HTML_MODE_LEGACY)
+        .toString()
+        .trim()
+        .takeIf { it.isNotEmpty() }
 }
 
 private val META_REGEX = Regex(

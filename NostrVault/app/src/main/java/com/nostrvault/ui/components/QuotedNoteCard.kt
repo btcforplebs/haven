@@ -21,6 +21,7 @@ import coil.request.ImageRequest
 import com.nostrvault.data.model.ArticleMeta
 import com.nostrvault.data.model.FeedNote
 import com.nostrvault.data.model.FeedProfile
+import com.nostrvault.data.model.QuoteRef
 import com.nostrvault.ui.theme.*
 
 /**
@@ -219,6 +220,10 @@ fun QuotedNotePlaceholder(
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalNostrVaultColors.current
+    // An unresolved naddr is a coordinate, not an event id, so handing it to
+    // the note screen opens a route that can never load. Once it resolves the
+    // card replaces this and is tappable.
+    val isCoordinate = QuoteRef.key(identifier) is QuoteRef.Key.Address
 
     Surface(
         shape = RoundedCornerShape(8.dp),
@@ -231,7 +236,7 @@ fun QuotedNotePlaceholder(
         ),
         modifier = modifier
             .fillMaxWidth()
-            .clickable { onClick(identifier) },
+            .then(if (isCoordinate) Modifier else Modifier.clickable { onClick(identifier) }),
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -245,7 +250,7 @@ fun QuotedNotePlaceholder(
             )
             Spacer(Modifier.width(6.dp))
             Text(
-                text = "Loading quoted note...",
+                text = if (isCoordinate) "Loading article..." else "Loading quoted note...",
                 color = TertiaryText,
                 fontSize = 12.sp,
             )
