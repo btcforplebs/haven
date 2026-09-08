@@ -53,6 +53,19 @@ object NostrMentions {
         }
     }
 
+    /**
+     * Every pubkey [content] mentions, hex, in appearance order.
+     *
+     * Lets a caller resolve exactly the profiles one note can display instead
+     * of reading the whole profile map, which is what makes a feed row's
+     * profile lookups narrowable to that row.
+     */
+    fun mentionedPubkeys(content: String): List<String> =
+        MENTION_REGEX.findAll(content)
+            .mapNotNull { resolvePubkey(it.groupValues[1]) }
+            .distinct()
+            .toList()
+
     /** Display label for a mention: the profile's best name, else a short pubkey. */
     private fun displayName(pubkey: String, profiles: Map<String, FeedProfile>): String =
         profiles[pubkey]?.bestName ?: "${pubkey.take(8)}…"
