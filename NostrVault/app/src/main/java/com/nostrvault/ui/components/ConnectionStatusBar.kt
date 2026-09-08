@@ -12,6 +12,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.nostrvault.ui.theme.Motion
 import com.nostrvault.ui.theme.SecondaryText
 
 /**
@@ -61,8 +62,8 @@ fun SyncingPill(
 ) {
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn() + expandVertically(),
-        exit = fadeOut() + shrinkVertically(),
+        enter = fadeIn(Motion.panel()) + expandVertically(Motion.panel()),
+        exit = fadeOut(Motion.panel()) + shrinkVertically(Motion.panel()),
         modifier = modifier,
     ) {
         Row(

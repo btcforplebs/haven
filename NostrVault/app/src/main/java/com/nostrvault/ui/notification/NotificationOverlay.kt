@@ -2,10 +2,6 @@ package com.nostrvault.ui.notification
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleOut
-import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,6 +14,7 @@ import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.nostrvault.ui.theme.Motion
 
 /**
  * Top-of-screen overlay that renders all active notification pills.
@@ -46,16 +43,15 @@ fun NotificationOverlay(
     ) {
         notifications.forEach { notification ->
             key(notification.id) {
+                // This exact drop-in / shrink-away pair is the app's one pill
+                // transition; it lives in Motion so the Reduce Motion variant —
+                // a cross-fade with neither the slide nor the scale — only had
+                // to be written once.
+                val (pillEnter, pillExit) = Motion.pillTransition
                 AnimatedVisibility(
                     visible = true,
-                    enter = slideInVertically(
-                        initialOffsetY = { -it },
-                        animationSpec = spring(
-                            dampingRatio = 0.75f,
-                            stiffness = 400f,
-                        ),
-                    ) + fadeIn(),
-                    exit = fadeOut() + scaleOut(targetScale = 0.8f),
+                    enter = pillEnter,
+                    exit = pillExit,
                 ) {
                     when (notification) {
                         is ZapNotification -> ZapPill(notification)

@@ -995,8 +995,8 @@ fun SetupWizardScreen(
             AnimatedContent(
                 targetState = step,
                 transitionSpec = {
-                    (slideInHorizontally { it } + fadeIn()).togetherWith(
-                        slideOutHorizontally { -it } + fadeOut()
+                    (slideInHorizontally(Motion.panel()) { it } + fadeIn(Motion.panel())).togetherWith(
+                        slideOutHorizontally(Motion.panel()) { -it } + fadeOut(Motion.panel())
                     )
                 },
                 label = "wizard_step",

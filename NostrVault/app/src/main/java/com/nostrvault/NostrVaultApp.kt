@@ -13,6 +13,7 @@ import com.nostrvault.di.ApplicationScope
 import com.nostrvault.relay.RelayForegroundService
 import com.nostrvault.service.MediaCacheService
 import com.nostrvault.service.ProfilePicturePrefetcher
+import com.nostrvault.ui.theme.Motion
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import javax.inject.Inject
@@ -37,6 +38,7 @@ class NostrVaultApp : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         ProfileRepository.init(this)
+        Motion.install(this)
         createNotificationChannels()
         profilePicturePrefetcher.start(applicationScope)
     }

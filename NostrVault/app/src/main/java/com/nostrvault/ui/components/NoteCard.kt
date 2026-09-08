@@ -2,7 +2,6 @@ package com.nostrvault.ui.components
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
@@ -51,6 +50,7 @@ import com.nostrvault.service.MediaCacheService
 import com.nostrvault.ui.theme.*
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -498,17 +498,46 @@ internal fun EngagementButton(
     } else {
         SecondaryText.copy(alpha = 0.10f)
     }
-    // Spring scale-up on active, mirroring the iOS .spring(response: 0.3, dampingFraction: 0.45)
+    // The pulse fires on the *tap*, not on `isActive`.
+    //
+    // Bound to state, it replayed on every reaction that arrived from backfill
+    // or from another client — icons bouncing unprompted down a scrolling feed.
+    // iOS routes this through `Motion.firePulse` for exactly that reason: the
+    // caller owns the tap, not the resulting state. The tint and background
+    // below still track `isActive`, because those carry the *meaning* and should
+    // update however the state arrived.
+    //
+    // Numbers come from the shared token now: 1.12 rather than the 1.2 this
+    // had, and damping 0.62 rather than 0.45 — the old inline comment was
+    // citing an iOS spec that has since been retired.
+    var pulsing by remember { mutableStateOf(false) }
+    LaunchedEffect(pulsing) {
+        if (pulsing) {
+            delay(Motion.PULSE_HOLD_MS)
+            pulsing = false
+        }
+    }
     val scale by animateFloatAsState(
-        targetValue = if (isActive) 1.2f else 1.0f,
-        animationSpec = spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessMediumLow),
+        targetValue = if (pulsing) Motion.PULSE_SCALE else 1f,
+        animationSpec = Motion.pop(),
         label = "engagementScale",
     )
 
+    // No pulse at all under Reduce Motion, matching `Motion.firePulse`'s early
+    // return — the icon's fill and colour already carry the confirmation.
+    //
+    // Only the tap pulses. A long press opens a picker sheet rather than
+    // publishing anything, so there is no signed event for the bounce to be
+    // confirming.
+    val tapAndPulse = {
+        if (!Motion.isReduced) pulsing = true
+        onClick()
+    }
+
     val clickModifier = if (onLongClick != null) {
-        Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+        Modifier.combinedClickable(onClick = tapAndPulse, onLongClick = onLongClick)
     } else {
-        Modifier.clickable(onClick = onClick)
+        Modifier.clickable(onClick = tapAndPulse)
     }
 
     Box(
@@ -650,10 +679,7 @@ internal fun FullScreenMediaPager(
                                 onDismiss()
                             } else {
                                 scope.launch {
-                                    dragOffsetY.animateTo(
-                                        0f,
-                                        spring(dampingRatio = 0.6f, stiffness = 400f),
-                                    )
+                                    dragOffsetY.animateTo(0f, Motion.snapBack())
                                 }
                             }
                             accumulatedDragY = 0f

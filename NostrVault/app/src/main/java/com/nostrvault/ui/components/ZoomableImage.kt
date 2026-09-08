@@ -23,6 +23,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntSize
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.nostrvault.ui.theme.Motion
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.max
@@ -78,9 +79,9 @@ fun ZoomableImage(
 
     fun resetToDefault() {
         scope.launch {
-            launch { animScale.animateTo(1f, spring(dampingRatio = 0.7f, stiffness = 300f)) }
-            launch { animOffsetX.animateTo(0f, spring(dampingRatio = 0.7f, stiffness = 300f)) }
-            launch { animOffsetY.animateTo(0f, spring(dampingRatio = 0.7f, stiffness = 300f)) }
+            launch { animScale.animateTo(1f, Motion.pick()) }
+            launch { animOffsetX.animateTo(0f, Motion.pick()) }
+            launch { animOffsetY.animateTo(0f, Motion.pick()) }
         }.invokeOnCompletion {
             scale = 1f
             offsetX = 0f
@@ -112,15 +113,15 @@ fun ZoomableImage(
                             scope.launch {
                                 launch {
                                     animScale.snapTo(scale)
-                                    animScale.animateTo(targetScale, spring(dampingRatio = 0.7f, stiffness = 300f))
+                                    animScale.animateTo(targetScale, Motion.pick())
                                 }
                                 launch {
                                     animOffsetX.snapTo(offsetX)
-                                    animOffsetX.animateTo(clampedX, spring(dampingRatio = 0.7f, stiffness = 300f))
+                                    animOffsetX.animateTo(clampedX, Motion.pick())
                                 }
                                 launch {
                                     animOffsetY.snapTo(offsetY)
-                                    animOffsetY.animateTo(clampedY, spring(dampingRatio = 0.7f, stiffness = 300f))
+                                    animOffsetY.animateTo(clampedY, Motion.pick())
                                 }
                             }.invokeOnCompletion {
                                 scale = targetScale
@@ -213,8 +214,8 @@ fun ZoomableImage(
                         val (clampedX, clampedY) = clampOffset(offsetX, offsetY)
                         if (clampedX != offsetX || clampedY != offsetY) {
                             scope.launch {
-                                launch { animOffsetX.snapTo(offsetX); animOffsetX.animateTo(clampedX, spring()) }
-                                launch { animOffsetY.snapTo(offsetY); animOffsetY.animateTo(clampedY, spring()) }
+                                launch { animOffsetX.snapTo(offsetX); animOffsetX.animateTo(clampedX, Motion.snapBack()) }
+                                launch { animOffsetY.snapTo(offsetY); animOffsetY.animateTo(clampedY, Motion.snapBack()) }
                             }.invokeOnCompletion {
                                 offsetX = clampedX
                                 offsetY = clampedY

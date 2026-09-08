@@ -1,10 +1,7 @@
 package com.nostrvault.ui.screens.dashboard
 
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -61,31 +58,32 @@ fun RelayStatusHeader(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(16.dp),
             ) {
-                // Pulsing status dot
-                if (isTransitioning) {
+                // Pulsing status dot. The pulse was 800ms here against the iOS
+                // ambientPulse's 1600ms — twice as fast for the same "relay is
+                // transitioning" signal — so it now takes the shared token.
+                // Under Reduce Motion that token is null and the dot holds at
+                // full opacity: still visibly the transitioning colour, just
+                // not moving. Holding at the 0.3 target instead would read as a
+                // dimmed, half-broken dot.
+                val pulseSpec = if (isTransitioning) Motion.ambientPulse else null
+                val dotAlpha = if (pulseSpec == null) {
+                    1f
+                } else {
                     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-                    val alpha by infiniteTransition.animateFloat(
+                    val animated by infiniteTransition.animateFloat(
                         initialValue = 1f,
                         targetValue = 0.3f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(800),
-                            repeatMode = RepeatMode.Reverse,
-                        ),
+                        animationSpec = pulseSpec,
                         label = "pulseAlpha",
                     )
-                    Box(
-                        modifier = Modifier
-                            .size(10.dp)
-                            .alpha(alpha)
-                            .background(statusColor, CircleShape),
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .size(10.dp)
-                            .background(statusColor, CircleShape),
-                    )
+                    animated
                 }
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .alpha(dotAlpha)
+                        .background(statusColor, CircleShape),
+                )
 
                 Spacer(Modifier.width(12.dp))
 

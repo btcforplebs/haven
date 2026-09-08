@@ -34,6 +34,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.nostrvault.MainActivity
+import com.nostrvault.ui.theme.Motion
 import com.nostrvault.ui.theme.NostrVaultIcons
 import kotlinx.coroutines.delay
 
@@ -147,8 +148,8 @@ fun VideoPlayer(
         // Control rail overlay (never shown while the activity is in a PiP window)
         AnimatedVisibility(
             visible = showControls && !isInPiP,
-            enter = fadeIn(),
-            exit = fadeOut(),
+            enter = fadeIn(Motion.fade()),
+            exit = fadeOut(Motion.fade()),
             modifier = Modifier.align(Alignment.BottomCenter),
         ) {
             Box(modifier = Modifier.fillMaxWidth()) {
@@ -273,6 +274,7 @@ private fun ThinSeekBar(
     var dragging by remember { mutableStateOf(false) }
     val trackHeight by animateDpAsState(
         targetValue = if (dragging) 6.dp else 3.dp,
+        animationSpec = Motion.control(),
         label = "seekbar-height",
     )
 

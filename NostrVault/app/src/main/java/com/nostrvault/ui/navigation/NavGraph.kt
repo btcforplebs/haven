@@ -1,7 +1,7 @@
 package com.nostrvault.ui.navigation
 
 import androidx.compose.animation.*
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FiniteAnimationSpec
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -14,6 +14,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.nostrvault.ui.theme.Motion
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import com.nostrvault.data.local.ConfigStore
@@ -64,8 +65,14 @@ import kotlinx.coroutines.flow.StateFlow
 import java.net.URLDecoder
 import java.net.URLEncoder
 
-/** Duration of page transitions — snappy but readable. */
-private const val NAV_MOTION_MS = 220
+/**
+ * Page transitions take the shared motion vocabulary: a lateral tab switch is a
+ * `toggle` (the same token the gallery's grid/list switch uses, so switching
+ * tabs and switching modes feel like the same gesture), and a hierarchical push
+ * is a `fade`.
+ */
+private fun <T> tabMotion(): FiniteAnimationSpec<T> = Motion.toggle()
+private fun <T> pushMotion(): FiniteAnimationSpec<T> = Motion.fade()
 
 /** The five bottom-nav destinations. Navigating between any two of these is a
  *  lateral "tab switch" (fade-through) rather than a hierarchical push. */
@@ -152,20 +159,20 @@ fun NostrVaultNavHost(
             // Material "fade-through" (fade + subtle scale), hierarchical pushes use
             // "shared-axis Z" (zoom into/out of depth). See navMotion() below.
             enterTransition = {
-                if (isTabSwitch()) fadeIn(tween(NAV_MOTION_MS)) + scaleIn(initialScale = 0.92f, animationSpec = tween(NAV_MOTION_MS))
-                else fadeIn(tween(NAV_MOTION_MS)) + scaleIn(initialScale = 0.80f, animationSpec = tween(NAV_MOTION_MS))
+                if (isTabSwitch()) fadeIn(tabMotion()) + scaleIn(initialScale = 0.92f, animationSpec = tabMotion())
+                else fadeIn(pushMotion()) + scaleIn(initialScale = 0.80f, animationSpec = pushMotion())
             },
             exitTransition = {
-                if (isTabSwitch()) fadeOut(tween(NAV_MOTION_MS))
-                else fadeOut(tween(NAV_MOTION_MS)) + scaleOut(targetScale = 1.10f, animationSpec = tween(NAV_MOTION_MS))
+                if (isTabSwitch()) fadeOut(tabMotion())
+                else fadeOut(pushMotion()) + scaleOut(targetScale = 1.10f, animationSpec = pushMotion())
             },
             popEnterTransition = {
-                if (isTabSwitch()) fadeIn(tween(NAV_MOTION_MS)) + scaleIn(initialScale = 0.92f, animationSpec = tween(NAV_MOTION_MS))
-                else fadeIn(tween(NAV_MOTION_MS)) + scaleIn(initialScale = 1.10f, animationSpec = tween(NAV_MOTION_MS))
+                if (isTabSwitch()) fadeIn(tabMotion()) + scaleIn(initialScale = 0.92f, animationSpec = tabMotion())
+                else fadeIn(pushMotion()) + scaleIn(initialScale = 1.10f, animationSpec = pushMotion())
             },
             popExitTransition = {
-                if (isTabSwitch()) fadeOut(tween(NAV_MOTION_MS))
-                else fadeOut(tween(NAV_MOTION_MS)) + scaleOut(targetScale = 0.80f, animationSpec = tween(NAV_MOTION_MS))
+                if (isTabSwitch()) fadeOut(tabMotion())
+                else fadeOut(pushMotion()) + scaleOut(targetScale = 0.80f, animationSpec = pushMotion())
             },
         ) {
             // ── Setup ─────────────────────────────────────────────
