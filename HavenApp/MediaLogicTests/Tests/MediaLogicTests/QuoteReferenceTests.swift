@@ -112,3 +112,38 @@ final class QuoteReferenceTests: XCTestCase {
         XCTAssertNil(QuoteReference.parseCoordinate("naddr:30023::d"))
     }
 }
+
+// MARK: - Matching an event to a reference
+
+extension QuoteReferenceTests {
+    private static let articleTags = [["d", "my-post"], ["title", "My Post"]]
+
+    func testPlainIdMatchesById() {
+        XCTAssertTrue(QuoteReference.event(id: "abc", kind: 1, pubkey: "pk", tags: [], matches: "abc"))
+        XCTAssertFalse(QuoteReference.event(id: "abc", kind: 1, pubkey: "pk", tags: [], matches: "def"))
+    }
+
+    func testCoordinateMatchesKindAuthorAndDTag() {
+        let coordinate = QuoteReference.coordinate(kind: 30023, pubkey: "pk", dTag: "my-post")
+        XCTAssertTrue(QuoteReference.event(id: "evt", kind: 30023, pubkey: "pk", tags: Self.articleTags, matches: coordinate))
+        // Right d-tag, wrong author.
+        XCTAssertFalse(QuoteReference.event(id: "evt", kind: 30023, pubkey: "other", tags: Self.articleTags, matches: coordinate))
+        // Right author, wrong kind.
+        XCTAssertFalse(QuoteReference.event(id: "evt", kind: 30024, pubkey: "pk", tags: Self.articleTags, matches: coordinate))
+        // Right author and kind, different article.
+        XCTAssertFalse(QuoteReference.event(id: "evt", kind: 30023, pubkey: "pk", tags: [["d", "other-post"]], matches: coordinate))
+    }
+
+    /// An event id is never matched by a coordinate and vice versa — the id
+    /// field of an addressable event is not what a coordinate names.
+    func testCoordinateDoesNotMatchOnIdAlone() {
+        let coordinate = QuoteReference.coordinate(kind: 30023, pubkey: "pk", dTag: "my-post")
+        XCTAssertFalse(QuoteReference.event(id: coordinate, kind: 30023, pubkey: "pk", tags: [], matches: coordinate))
+    }
+
+    func testEmptyDTagMatchesAnArticleWithNoDTagValue() {
+        let coordinate = QuoteReference.coordinate(kind: 30023, pubkey: "pk", dTag: "")
+        XCTAssertTrue(QuoteReference.event(id: "evt", kind: 30023, pubkey: "pk", tags: [["d", ""]], matches: coordinate))
+        XCTAssertFalse(QuoteReference.event(id: "evt", kind: 30023, pubkey: "pk", tags: [], matches: coordinate))
+    }
+}

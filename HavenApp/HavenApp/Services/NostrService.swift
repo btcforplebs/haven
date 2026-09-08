@@ -1949,14 +1949,12 @@ class NostrService: ObservableObject {
     /// Accepts either a 64-hex event id or an `"naddr:<kind>:<pubkey>:<d-tag>"`
     /// coordinate, matching `FeedService.findNote(id:)`.
     func storedEvent(matching identifier: String) -> NostrEvent? {
-        if let (kind, pubkey, dTag) = QuoteReference.parseCoordinate(identifier) {
-            // Addressable event: the newest one wins, and `events` is sorted newest first.
-            return events.first { event in
-                event.kind == kind && event.pubkey == pubkey &&
-                event.tags.contains { $0.count >= 2 && $0[0] == "d" && $0[1] == dTag }
-            }
+        // `events` is sorted newest first, so for an addressable event the first
+        // match is the current one.
+        let matcher = QuoteReference.matcher(for: identifier)
+        return events.first {
+            matcher.matches(id: $0.id, kind: $0.kind, pubkey: $0.pubkey, tags: $0.tags)
         }
-        return events.first { $0.id == identifier }
     }
 
     /// Requests a quoted event this relay does not hold, from the local relay and

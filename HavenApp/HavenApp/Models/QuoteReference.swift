@@ -79,6 +79,38 @@ enum QuoteReference {
         return (kind, parts[2], parts.count > 3 ? parts[3] : "")
     }
 
+    /// Whether events answer one quote reference.
+    ///
+    /// One definition for both stores: the feed keeps `FeedNote`s and the relay
+    /// tab keeps `NostrEvent`s, and they must not disagree about which event a
+    /// reference points at. A plain id matches by id; a coordinate matches an
+    /// addressable event by kind, author and `d` tag.
+    ///
+    /// It is a value rather than a free function because the callers scan a list:
+    /// the coordinate is parsed once here instead of once per event examined.
+    struct Matcher {
+        private let identifier: String
+        private let wanted: (kind: Int, pubkey: String, dTag: String)?
+
+        init(identifier: String) {
+            self.identifier = identifier
+            self.wanted = QuoteReference.parseCoordinate(identifier)
+        }
+
+        func matches(id: String, kind: Int, pubkey: String, tags: [[String]]) -> Bool {
+            guard let wanted = wanted else { return id == identifier }
+            return kind == wanted.kind && pubkey == wanted.pubkey
+                && tags.contains { $0.count >= 2 && $0[0] == "d" && $0[1] == wanted.dTag }
+        }
+    }
+
+    static func matcher(for identifier: String) -> Matcher { Matcher(identifier: identifier) }
+
+    /// Single-event convenience for callers that are not scanning.
+    static func event(id: String, kind: Int, pubkey: String, tags: [[String]], matches identifier: String) -> Bool {
+        matcher(for: identifier).matches(id: id, kind: kind, pubkey: pubkey, tags: tags)
+    }
+
     // MARK: - TLV
 
     private struct TLVEntry {

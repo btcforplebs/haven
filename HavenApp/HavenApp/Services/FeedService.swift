@@ -1648,11 +1648,9 @@ class FeedService: ObservableObject {
 
     /// Finds a note matching an naddr coordinate ("naddr:<kind>:<pubkey>:<d-tag>").
     private func findNoteByNaddrCoordinate(_ coordinate: String) -> FeedNote? {
-        guard let (kind, pubkey, dTag) = QuoteReference.parseCoordinate(coordinate) else { return nil }
-
+        let matcher = QuoteReference.matcher(for: coordinate)
         let match: (FeedNote) -> Bool = { note in
-            note.kind == kind && note.pubkey == pubkey &&
-            note.tags.contains(where: { $0.count >= 2 && $0[0] == "d" && $0[1] == dTag })
+            matcher.matches(id: note.id, kind: note.kind, pubkey: note.pubkey, tags: note.tags)
         }
 
         // Check parentNotesCache first
