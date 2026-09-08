@@ -40,7 +40,7 @@ import com.nostrvault.ui.navigation.PendingDeepLink
 import com.nostrvault.ui.notification.NotificationManager
 import com.nostrvault.ui.theme.AppTheme
 import com.nostrvault.ui.theme.NostrVaultTheme
-import com.nostrvault.ui.theme.WindowBackground
+import com.nostrvault.ui.theme.Surface0
 import com.nostrvault.widget.WidgetPublisher
 import androidx.fragment.app.FragmentActivity
 import dagger.hilt.android.AndroidEntryPoint
@@ -122,7 +122,7 @@ class MainActivity : FragmentActivity() {
             ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = WindowBackground,
+                    color = Surface0,
                 ) {
                     Box(modifier = Modifier.fillMaxSize()) {
                         NostrVaultNavHost(

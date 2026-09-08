@@ -4,7 +4,8 @@ import androidx.compose.ui.graphics.Color
 
 /**
  * Port of Theming.swift + PlatformCompat.swift color definitions.
- * All hex values match the iOS app exactly.
+ * The elevation ramp (surface0-3, borderHairline, borderStrong) matches
+ * Theming.swift exactly. The rest is Android-specific and drifts from iOS.
  */
 
 // ---------------------------------------------------------------------------
@@ -52,21 +53,32 @@ enum class AppTheme(
 }
 
 // ---------------------------------------------------------------------------
+// Elevation ramp (port of Theming.swift surface0-3 / borderHairline / borderStrong)
+// ---------------------------------------------------------------------------
+
+val Surface0 = Color(0xFF000000) // page
+val Surface1 = Color(0xFF1C1C1E) // resting card
+val Surface2 = Color(0xFF2C2C2E) // raised
+val Surface3 = Color(0xFF3A3A3C) // highest
+val BorderHairline = Color.White.copy(alpha = 0.14f)
+val BorderStrong = Color.White.copy(alpha = 0.36f)
+
+// ---------------------------------------------------------------------------
 // Platform background colors (port of PlatformCompat.swift)
 // ---------------------------------------------------------------------------
 
-val WindowBackground = Color(0xFF141419)
-val SecondaryGroupedBg = Color(0xFF1F1F29)
-val TertiaryGroupedBg = Color(0xFF262633)
+val WindowBackground = Surface0
+val SecondaryGroupedBg = Surface2
+val TertiaryGroupedBg = Surface3
 val SeparatorColor = Color(0xFF333338)
 
 // Standard card
-val CardBackground = Color(0xFF1F1F1F).copy(alpha = 0.60f)
-val CardBorder = Color.White.copy(alpha = 0.04f)
+val CardBackground = Surface1
+val CardBorder = BorderHairline
 
-// OLED variants (toggled by user preference)
-val OledCardBackground = Color(0xFF0F0F0F)
-val OledCardBorder = Color.White.copy(alpha = 0.08f)
+// OLED variants (toggled by user preference) — same ramp; page/card no longer invert.
+val OledCardBackground = Surface1
+val OledCardBorder = BorderHairline
 
 // Console / dashboard
 val ConsoleHeaderBg = Color(0xFF1F1F26)
