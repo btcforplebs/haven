@@ -1,6 +1,7 @@
 package com.nostrvault.ui.components
 
 import com.nostrvault.data.model.FeedProfile
+import com.nostrvault.data.model.QuoteRef
 import com.nostrvault.relay.HavenBridge
 import java.util.concurrent.ConcurrentHashMap
 
@@ -17,11 +18,12 @@ object NostrMentions {
         RegexOption.IGNORE_CASE,
     )
 
-    /** `nostr:note1...` / `nostr:nevent1...` / `nostr:naddr1...` event references. */
-    val QUOTE_REGEX = Regex(
-        """nostr:(note1[a-z0-9]+|nevent1[a-z0-9]+|naddr1[a-z0-9]+)""",
-        RegexOption.IGNORE_CASE,
-    )
+    /**
+     * `nostr:note1...` / `nostr:nevent1...` / `nostr:naddr1...` event references.
+     * Aliases [QuoteRef.REGEX] rather than restating it, so what the renderer
+     * strips out of the text is exactly what the note parser turned into a card.
+     */
+    val QUOTE_REGEX = QuoteRef.REGEX
 
     // npub/nprofile → hex is an immutable mapping, so cache decodes for the whole
     // process. The same npub is mentioned across many notes/frames; a full bech32
@@ -74,14 +76,25 @@ object NostrMentions {
      * Resolve nostr mentions in [content] to plain `@name` text and strip
      * `nostr:note/nevent/naddr` quote references (rendered separately as cards).
      * Used for single-line preview rows where a clickable renderer is overkill.
+     *
+     * Pass [mediaURLs] when the caller draws that media itself. The URL is then
+     * dropped from the text, because a raw
+     * `https://…/40051f70….mp4` sitting above its own thumbnail is noise — the
+     * full renderer already strips them, and this one used to not, so the same
+     * note read differently depending on which card drew it.
      */
-    fun toPlainText(content: String, profiles: Map<String, FeedProfile>): String {
+    fun toPlainText(
+        content: String,
+        profiles: Map<String, FeedProfile>,
+        mediaURLs: Set<String> = emptySet(),
+    ): String {
         var text = MENTION_REGEX.replace(content) { match ->
             val identifier = match.groupValues[1]
             val pubkey = resolvePubkey(identifier)
             if (pubkey != null) "@${displayName(pubkey, profiles)}" else "@${identifier.take(10)}…"
         }
         text = QUOTE_REGEX.replace(text, "")
+        for (url in mediaURLs) text = text.replace(url, "")
         return text.trim()
     }
 }

@@ -214,6 +214,9 @@ fun NostrVaultNavHost(
                     onNoteClick = { noteId ->
                         navController.navigate(Screen.NoteDetail.createRoute(noteId))
                     },
+                    onArticleClick = { noteId ->
+                        navController.navigate(Screen.ArticleReader.createRoute(noteId))
+                    },
                     onProfileClick = { pubkey ->
                         navController.navigate(Screen.Profile.createRoute(pubkey))
                     },
@@ -258,6 +261,9 @@ fun NostrVaultNavHost(
                     pubkey = pubkey,
                     onNoteClick = { noteId ->
                         navController.navigate(Screen.NoteDetail.createRoute(noteId))
+                    },
+                    onArticleClick = { noteId ->
+                        navController.navigate(Screen.ArticleReader.createRoute(noteId))
                     },
                     onProfileClick = { pk ->
                         navController.navigate(Screen.Profile.createRoute(pk))
@@ -312,6 +318,9 @@ fun NostrVaultNavHost(
                     },
                     onNoteClick = { id ->
                         navController.navigate(Screen.NoteDetail.createRoute(id))
+                    },
+                    onArticleClick = { id ->
+                        navController.navigate(Screen.ArticleReader.createRoute(id))
                     },
                     onReply = { id ->
                         navController.navigate(Screen.ComposeNote.createRoute(replyToNoteId = id))
@@ -588,6 +597,9 @@ fun NostrVaultNavHost(
                     onNavigate = { screen -> navController.navigate(screen.route) },
                     onNoteClick = { noteId ->
                         navController.navigate(Screen.NoteDetail.createRoute(noteId))
+                    },
+                    onArticleClick = { noteId ->
+                        navController.navigate(Screen.ArticleReader.createRoute(noteId))
                     },
                     onProfileClick = { pubkey ->
                         navController.navigate(Screen.Profile.createRoute(pubkey))

@@ -82,9 +82,11 @@ object DeepLinkRouter {
         return when {
             e.startsWith("note1") || e.startsWith("nevent1") -> noteRoute(e, decoder)
             e.startsWith("npub1") || e.startsWith("nprofile1") -> profileRoute(e, decoder)
-            // naddr points at a replaceable event (articles, live streams); there
-            // is no screen to open one on Android yet, so say so by returning
-            // null instead of dumping the user on the feed.
+            // naddr names an addressable event by kind/author/"d" tag, not by
+            // id, and every route here takes an id. Resolving one means asking
+            // a relay for it first, which a pure router cannot do — so it
+            // returns null rather than dumping the user on the feed. Quoted
+            // naddr references inside a note DO resolve; see QuoteRef.
             else -> null
         }
     }

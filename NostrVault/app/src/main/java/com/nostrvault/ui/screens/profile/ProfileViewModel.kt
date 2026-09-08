@@ -359,7 +359,7 @@ class ProfileViewModel @Inject constructor(
 
     // ── Quoted note resolution (embedded nostr:note1/nevent1 previews) ──
 
-    val quotedNotesCache: StateFlow<Map<String, FeedNote>> = feedService.parentNotesCache
+    val quotedNotesCache: StateFlow<Map<String, FeedNote>> = feedService.quotedNotes
 
     fun quotedNoteFor(identifier: String): FeedNote? = feedService.quotedNoteFor(identifier)
 

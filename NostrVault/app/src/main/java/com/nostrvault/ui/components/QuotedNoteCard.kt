@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.nostrvault.data.model.ArticleMeta
 import com.nostrvault.data.model.FeedNote
 import com.nostrvault.data.model.FeedProfile
 import com.nostrvault.ui.theme.*
@@ -31,6 +32,10 @@ import com.nostrvault.ui.theme.*
  * - Content (13sp, secondary, 3-line max)
  * - First media thumbnail (if present, 180dp max height)
  * - TertiaryGroupedBg background, themed border, 8dp corner radius
+ *
+ * A quoted long-form post gets a different body: its content is a whole
+ * Markdown document, so three lines of it shows `##` markup rather than the
+ * article. The headline, cover and summary live in tags instead.
  */
 @Composable
 fun QuotedNoteCard(
@@ -38,9 +43,18 @@ fun QuotedNoteCard(
     profile: FeedProfile?,
     profiles: Map<String, FeedProfile> = emptyMap(),
     onClick: (String) -> Unit,
+    /**
+     * Where a quoted article opens. Null falls back to [onClick], which lands
+     * on the note screen — that renders kind-1 threads and would show the
+     * Markdown source, so a screen with a reader should pass this.
+     */
+    onArticleClick: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val colors = LocalNostrVaultColors.current
+    val meta = if (note.kind == ArticleMeta.KIND) {
+        remember(note.id, note.tags) { ArticleMeta.from(note) }
+    } else null
 
     Surface(
         shape = RoundedCornerShape(8.dp),
@@ -53,7 +67,9 @@ fun QuotedNoteCard(
         ),
         modifier = modifier
             .fillMaxWidth()
-            .clickable { onClick(note.id) },
+            .clickable {
+                if (meta != null && onArticleClick != null) onArticleClick(note.id) else onClick(note.id)
+            },
     ) {
         Column(
             modifier = Modifier.padding(10.dp),
@@ -90,38 +106,103 @@ fun QuotedNoteCard(
                 )
             }
 
-            // Content
-            if (note.content.isNotBlank()) {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = remember(note.content, profiles) {
-                        NostrMentions.toPlainText(note.content, profiles)
-                    },
-                    color = SecondaryText,
-                    fontSize = 13.sp,
-                    lineHeight = 17.sp,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-
-            // First media thumbnail
-            if (note.mediaURLs.isNotEmpty()) {
-                val context = LocalContext.current
+            if (meta != null) {
                 Spacer(Modifier.height(6.dp))
-                AsyncImage(
-                    model = ImageRequest.Builder(context)
-                        .data(note.mediaURLs.first())
-                        .size(360) // Max 180dp at 2x density
-                        .crossfade(100)
-                        .build(),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 180.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(TertiaryGroupedBg),
+                QuotedArticleBody(meta)
+            } else {
+                // Content
+                if (note.content.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = remember(note.content, profiles, note.mediaURLs) {
+                            NostrMentions.toPlainText(note.content, profiles, note.mediaURLs.toSet())
+                        },
+                        color = SecondaryText,
+                        fontSize = 13.sp,
+                        lineHeight = 17.sp,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+
+                // First media thumbnail
+                if (note.mediaURLs.isNotEmpty()) {
+                    val context = LocalContext.current
+                    Spacer(Modifier.height(6.dp))
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(note.mediaURLs.first())
+                            .size(360) // Max 180dp at 2x density
+                            .crossfade(100)
+                            .build(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 180.dp)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(TertiaryGroupedBg),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The body of a quoted long-form post: cover thumbnail, an "Article" label so
+ * it is not mistaken for a note, headline and summary. Read entirely from
+ * [ArticleMeta], so a 20,000-word body is never laid out to draw a card.
+ */
+@Composable
+private fun QuotedArticleBody(meta: ArticleMeta) {
+    val colors = LocalNostrVaultColors.current
+    val context = LocalContext.current
+
+    Row(verticalAlignment = Alignment.Top) {
+        meta.imageUrl?.let { imageUrl ->
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(imageUrl)
+                    .size(112)
+                    .crossfade(100)
+                    .build(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(TertiaryGroupedBg),
+            )
+            Spacer(Modifier.width(10.dp))
+        }
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = "Article",
+                color = colors.primary.copy(alpha = 0.8f),
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 10.sp,
+            )
+            Spacer(Modifier.height(3.dp))
+            Text(
+                text = meta.title,
+                color = PrimaryText,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 13.sp,
+                lineHeight = 17.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            meta.summary?.let { summary ->
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = summary,
+                    color = SecondaryText,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
         }

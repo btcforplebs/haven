@@ -398,7 +398,7 @@ class NoteDetailViewModel @Inject constructor(
 
     // ── Quoted note resolution (embedded nostr:note1/nevent1 previews) ──
 
-    val quotedNotesCache: StateFlow<Map<String, FeedNote>> = feedService.parentNotesCache
+    val quotedNotesCache: StateFlow<Map<String, FeedNote>> = feedService.quotedNotes
 
     fun quotedNoteFor(identifier: String): FeedNote? = feedService.quotedNoteFor(identifier)
 
@@ -417,6 +417,8 @@ fun NoteDetailScreen(
     noteId: String,
     onProfileClick: (String) -> Unit,
     onNoteClick: (String) -> Unit,
+    /** Where a quoted long-form post opens; the note screen would show its Markdown source. */
+    onArticleClick: (String) -> Unit,
     onReply: (String) -> Unit,
     onQuote: (String) -> Unit,
     onBack: () -> Unit,
@@ -740,6 +742,7 @@ fun NoteDetailScreen(
                                 isFocused = parent.id == focusedNoteId,
                                 parentIsNext = true,
                                 onNoteClick = { scrollToNote(parent.id) },
+                                onArticleClick = onArticleClick,
                                 onProfileClick = onProfileClick,
                                 onLike = viewModel::likeNote,
                                 onRepost = viewModel::repostNote,
@@ -762,6 +765,11 @@ fun NoteDetailScreen(
                         note = focusedNote!!,
                         profile = viewModel.profileFor(focusedNote!!.pubkey),
                         profiles = profiles,
+                        quotedNotes = remember(focusedNote!!.id, focusedNote!!.quotedEventIds, quotedNotesCache) {
+                            focusedNote!!.quotedEventIds.mapNotNull { qid ->
+                                viewModel.quotedNoteFor(qid)?.let { qid to it }
+                            }.toMap()
+                        },
                         stats = viewModel.statsFor(focusedNote!!.id),
                         isLiked = viewModel.isLiked(focusedNote!!.id),
                         isReposted = viewModel.isReposted(focusedNote!!.effectiveEventId),
@@ -769,6 +777,8 @@ fun NoteDetailScreen(
                         isFollowing = viewModel.isFollowing(focusedNote!!.pubkey),
                         themeColor = colors.primary,
                         onProfileClick = onProfileClick,
+                        onNoteClick = onNoteClick,
+                        onArticleClick = onArticleClick,
                         onLike = { viewModel.likeNote(focusedNote!!.effectiveEventId) },
                         onLongPressLike = { emojiTargetNote = focusedNote },
                         onRepost = { viewModel.repostNote(focusedNote!!.effectiveEventId) },
@@ -831,6 +841,7 @@ fun NoteDetailScreen(
                         profiles = profiles,
                         onProfileClick = onProfileClick,
                         onNoteClick = onNoteClick,
+                        onArticleClick = onArticleClick,
                         onFocus = { id -> scrollToNote(id) },
                         onReply = onReply,
                         onQuote = onQuote,
@@ -1060,6 +1071,8 @@ private fun ThreadedReplyNode(
     profiles: Map<String, FeedProfile>,
     onProfileClick: (String) -> Unit,
     onNoteClick: (String) -> Unit,
+    /** Where a quoted long-form post opens; the note screen would show its Markdown source. */
+    onArticleClick: (String) -> Unit,
     onFocus: (String) -> Unit,
     onReply: (String) -> Unit,
     onQuote: (String) -> Unit,
@@ -1112,6 +1125,7 @@ private fun ThreadedReplyNode(
                             profiles = profiles,
                             onProfileClick = onProfileClick,
                             onNoteClick = onNoteClick,
+                            onArticleClick = onArticleClick,
                             onFocus = onFocus,
                             onReply = onReply,
                             onQuote = onQuote,
@@ -1135,6 +1149,7 @@ private fun ThreadedReplyNode(
                 isReposted = viewModel.isReposted(reply.effectiveEventId),
                 isFocused = isFocusedReply,
                 onNoteClick = { onFocus(reply.id) },
+                onArticleClick = onArticleClick,
                 onProfileClick = onProfileClick,
                 onLike = viewModel::likeNote,
                 onRepost = viewModel::repostNote,
@@ -1240,6 +1255,7 @@ private fun ThreadedReplyNode(
                                     profiles = profiles,
                                     onProfileClick = onProfileClick,
                                     onNoteClick = onNoteClick,
+                                    onArticleClick = onArticleClick,
                                     onFocus = onFocus,
                                     onReply = onReply,
                                     onQuote = onQuote,
@@ -1265,6 +1281,8 @@ private fun HeroNoteCard(
     note: FeedNote,
     profile: FeedProfile?,
     profiles: Map<String, FeedProfile> = emptyMap(),
+    /** Quoted events keyed by the lookup key `note.quotedEventIds` holds. */
+    quotedNotes: Map<String, FeedNote> = emptyMap(),
     stats: NoteStats?,
     isLiked: Boolean,
     isReposted: Boolean = false,
@@ -1272,6 +1290,8 @@ private fun HeroNoteCard(
     isFollowing: Boolean,
     themeColor: androidx.compose.ui.graphics.Color,
     onProfileClick: (String) -> Unit,
+    onNoteClick: (String) -> Unit,
+    onArticleClick: (String) -> Unit,
     onLike: () -> Unit,
     onLongPressLike: () -> Unit,
     onRepost: () -> Unit,
@@ -1395,6 +1415,25 @@ private fun HeroNoteCard(
             // Media
             if (note.mediaURLs.isNotEmpty()) {
                 MediaPreviewRow(urls = note.mediaURLs)
+                Spacer(Modifier.height(12.dp))
+            }
+
+            // Quoted events. The reference itself is stripped out of the text
+            // above, so without this the focused note silently loses whatever
+            // it was quoting — on the one screen opened to read it in full.
+            for (qid in note.quotedEventIds) {
+                val quoted = quotedNotes[qid]
+                if (quoted != null) {
+                    QuotedNoteCard(
+                        note = quoted,
+                        profile = profiles[quoted.pubkey],
+                        profiles = profiles,
+                        onClick = onNoteClick,
+                        onArticleClick = onArticleClick,
+                    )
+                } else {
+                    QuotedNotePlaceholder(identifier = qid, onClick = onNoteClick)
+                }
                 Spacer(Modifier.height(12.dp))
             }
 

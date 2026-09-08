@@ -327,6 +327,9 @@ class FeedViewModel @Inject constructor(
     // ── Parent note cache (for inline reply previews) ──────────
 
     val parentNotesCache: StateFlow<Map<String, FeedNote>> = feedService.parentNotesCache
+
+    /** Fetched quoted events, keyed by the lookup key `quotedEventIds` holds. */
+    val quotedNotesCache: StateFlow<Map<String, FeedNote>> = feedService.quotedNotes
     val parentIsNextNote: StateFlow<Set<String>> = feedService.parentIsNextNote
 
     fun parentNoteFor(eventId: String): FeedNote? = parentNotesCache.value[eventId]
