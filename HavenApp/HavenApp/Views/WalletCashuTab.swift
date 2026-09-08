@@ -86,6 +86,10 @@ struct WalletCashuTab: View {
     // Bearer instruments
     @State private var copiedProofId: String? = nil
 
+    /// The unclaimed token whose "Forget" was clicked. Forgetting drops the
+    /// only string that can still claim the sats, so it asks first.
+    @State private var tokenPendingForget: SentEcashToken? = nil
+
     // Recovery animation
     @State private var recoveredSats: UInt64 = 0
     @State private var showRecoveryBanner = false
@@ -694,7 +698,7 @@ struct WalletCashuTab: View {
                                 Spacer()
 
                                 Button {
-                                    cashuService.forgetSentToken(sent)
+                                    tokenPendingForget = sent
                                 } label: {
                                     Text("Forget")
                                         .font(.appSystem(size: 12))
@@ -716,6 +720,15 @@ struct WalletCashuTab: View {
                         .stroke(Color.orange.opacity(0.35), lineWidth: 1)
                 )
                 .padding(.horizontal, 16)
+                .confirmDestructive(
+                    "Forget Token",
+                    item: $tokenPendingForget,
+                    consequence: { sent in
+                        "This drops \(formatSats(sent.amountSats)) sats from the list without reclaiming them. The token string is the only thing that can still claim those sats, and Nostr Vault will no longer have a copy."
+                    },
+                    confirmTitle: "Forget",
+                    action: { cashuService.forgetSentToken($0) }
+                )
             }
         }
     }

@@ -139,6 +139,7 @@
 		54589E01037B327AFBF6A553 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 917FF6B76ACEFA8BD210FC37 /* ProfileView.swift */; };
 		54F97D972DBA6B8091D42A07 /* SilentPaymentsKit in Frameworks */ = {isa = PBXBuildFile; productRef = 1842DC25A3BD0352682A7B88 /* SilentPaymentsKit */; };
 		552053CBD5AFD1A42B1058FF /* VideoThumbnailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D0D1824D5ECD6975EAF3F98 /* VideoThumbnailView.swift */; };
+		55297482FC513EA6FB0BA212 /* DestructiveConfirmation.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3E27340575E9D1A230E2BDE /* DestructiveConfirmation.swift */; };
 		55403DCE5A8C2C213E21C620 /* RetryableAsyncImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8495489F7284415840FE673 /* RetryableAsyncImage.swift */; };
 		5686CC2CCACE6E4F7B59F892 /* MessageComposerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47E52CADA44AC55958A69E64 /* MessageComposerView.swift */; };
 		56D8A41A600A67ED8A290376 /* YarnGifPickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = D64CEB281CD04B4F50EE9E2E /* YarnGifPickerSheet.swift */; };
@@ -238,6 +239,7 @@
 		930D56184C661E35EEA0505B /* DashboardRelayRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 090FAA33204672CD9F7F6431 /* DashboardRelayRow.swift */; };
 		9348320A3C53301CF2A5C634 /* Juntos.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = B16BA3C0FD98FA86CA181B2C /* Juntos.mp3 */; };
 		93BE6200BD1B5D35735CF2DF /* MediaGalleryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E0FC14B3CEA24424481BBA3 /* MediaGalleryView.swift */; };
+		93F72291B6A98E1F385A65CA /* DestructiveConfirmation.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3E27340575E9D1A230E2BDE /* DestructiveConfirmation.swift */; };
 		96535432E1ED9D8B290B1CF5 /* NotificationSound.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F9B00BF5E1FFC589465ED7F /* NotificationSound.swift */; };
 		973373F27C99D359F4883EDE /* ModeButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA14EC3D2D24B98A94F93B56 /* ModeButton.swift */; };
 		98F3C8B40BF9B4F8F3C99EBD /* MediaGalleryDataProcessing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A5CB15E45E0E65A13FC6132 /* MediaGalleryDataProcessing.swift */; };
@@ -624,6 +626,7 @@
 		E21025C4F8626E1E4FFAB180 /* FeedFilterEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedFilterEngine.swift; sourceTree = "<group>"; };
 		E21346EC9370A887C801BCDB /* WalletCashuTab.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletCashuTab.swift; sourceTree = "<group>"; };
 		E3056CC16711F7E38B7FE86D /* HavenConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HavenConfig.swift; sourceTree = "<group>"; };
+		E3E27340575E9D1A230E2BDE /* DestructiveConfirmation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DestructiveConfirmation.swift; sourceTree = "<group>"; };
 		E465CC24BD21C2812171299B /* VaultTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultTypes.swift; sourceTree = "<group>"; };
 		E76B268D327BDC761BB5AC1E /* starter_packs.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = starter_packs.json; sourceTree = "<group>"; };
 		E7F41B7A5FACA30EA7AE9015 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
@@ -959,6 +962,7 @@
 			children = (
 				4757A74E31DFBA866003FD73 /* ActionButton.swift */,
 				6CFC29BEE8A95187513A3787 /* CustomZapSheet.swift */,
+				E3E27340575E9D1A230E2BDE /* DestructiveConfirmation.swift */,
 				558FCD15C2C7144DF3D20135 /* EmojiPickerView.swift */,
 				6F4A9C4C8BD9711513C84185 /* ErrorNotificationBanner.swift */,
 				FE65F95458326DF0C43FCEAC /* FilterButton.swift */,
@@ -1291,6 +1295,7 @@
 				7E1A5CA08F04AA8FA6158758 /* DashboardHelpers.swift in Sources */,
 				930D56184C661E35EEA0505B /* DashboardRelayRow.swift in Sources */,
 				DC0B0458630C076A2CFA0CA0 /* DashboardView.swift in Sources */,
+				55297482FC513EA6FB0BA212 /* DestructiveConfirmation.swift in Sources */,
 				250B9683C98FA15A0612455D /* DraftPickerView.swift in Sources */,
 				A2466D5E5282712286740FE2 /* DraftService.swift in Sources */,
 				7E49917398AC93A58178EE7F /* EmojiPickerView.swift in Sources */,
@@ -1502,6 +1507,7 @@
 				4E6FA86296F8D1B4C7144D4D /* DashboardHelpers.swift in Sources */,
 				15D25B08DF9BA8B3C49F13CC /* DashboardRelayRow.swift in Sources */,
 				D9E7BA0DDD562CAC60818FE6 /* DashboardView.swift in Sources */,
+				93F72291B6A98E1F385A65CA /* DestructiveConfirmation.swift in Sources */,
 				AF751CC952382B08B77E1EED /* DraftPickerView.swift in Sources */,
 				E363C397778EDA4BA29B9B7E /* DraftService.swift in Sources */,
 				3E1CF7FF7BF9CC321886CD3E /* EmojiPickerView.swift in Sources */,

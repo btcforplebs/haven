@@ -15,6 +15,7 @@ struct WalletLightningTab: View {
     @State private var isSending = false
     @State private var sendResult: String? = nil
     @State private var sendError: String? = nil
+    @State private var showingPayConfirm = false
 
     // Receive
     @State private var receiveAmountSats: String = ""
@@ -310,7 +311,7 @@ struct WalletLightningTab: View {
                 invoiceAmountLine
             }
 
-            Button(action: { payInvoice() }) {
+            Button(action: { showingPayConfirm = true }) {
                 HStack(spacing: 6) {
                     if isSending {
                         ProgressView()
@@ -325,6 +326,13 @@ struct WalletLightningTab: View {
             .buttonStyle(.bordered)
             .tint(.orange)
             .disabled(invoiceToPay.isEmpty || isSending)
+            .confirmDestructive(
+                "Pay Invoice",
+                isPresented: $showingPayConfirm,
+                consequence: payConfirmationMessage,
+                confirmTitle: "Pay",
+                action: payInvoice
+            )
 
             if let error = sendError {
                 Text(error)
@@ -399,6 +407,20 @@ struct WalletLightningTab: View {
                 .font(.appCaption)
                 .foregroundColor(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// The stakes, for the confirmation. `invoiceAmountLine` already shows this
+    /// next to the field, but the alert is the last surface before the sats
+    /// leave, so it repeats the number rather than assuming you read the line.
+    private var payConfirmationMessage: String {
+        switch Bolt11.amount(invoiceToPay.trimmingCharacters(in: .whitespacesAndNewlines)) {
+        case .sats(let sats):
+            return "This sends \(sats.formatted()) sats from your wallet. Lightning payments cannot be reversed."
+        case .unspecified:
+            return "This invoice names no amount, so your wallet decides what to send — and it may refuse it outright. Lightning payments cannot be reversed."
+        case .unreadable:
+            return "Nostr Vault cannot read this invoice, so it cannot tell you what it will cost. Your wallet will pay whatever it says. Lightning payments cannot be reversed."
         }
     }
 
