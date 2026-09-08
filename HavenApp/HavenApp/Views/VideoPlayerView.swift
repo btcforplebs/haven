@@ -14,6 +14,37 @@ class AudioSessionManager {
     static let shared = AudioSessionManager()
 
     #if os(iOS)
+    private var interruptionObserver: NSObjectProtocol?
+
+    private init() {
+        // A notification sound (or a phone call, Siri, etc.) posts .began and
+        // silently pauses our AVPlayer's audio. iOS doesn't resume it for us —
+        // without this observer a live stream's audio just stays dead once the
+        // interrupting sound finishes.
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: AVAudioSession.sharedInstance(),
+            queue: .main
+        ) { [weak self] notification in
+            self?.handleInterruption(notification)
+        }
+    }
+
+    private func handleInterruption(_ notification: Notification) {
+        guard let info = notification.userInfo,
+              let typeValue = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+              let type = AVAudioSession.InterruptionType(rawValue: typeValue),
+              type == .ended else { return }
+
+        let optionsValue = info[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+        guard AVAudioSession.InterruptionOptions(rawValue: optionsValue).contains(.shouldResume) else { return }
+
+        guard let url = VideoPlayerCache.shared.activeFullScreenURL,
+              let player = VideoPlayerCache.shared.storedPlayer(for: url) else { return }
+        try? AVAudioSession.sharedInstance().setActive(true)
+        player.play()
+    }
+
     /// Configure audio session to allow background music to continue (for muted videos)
     func enableMixingWithOthers() {
         // Never tear down the playback session while PiP is running — deactivating
