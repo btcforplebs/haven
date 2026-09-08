@@ -348,8 +348,10 @@ class FeedViewModel @Inject constructor(
 
     fun quotedNoteFor(identifier: String): FeedNote? = feedService.quotedNoteFor(identifier)
 
-    fun fetchMissingQuotedNotes(identifiers: List<String>) =
-        feedService.fetchMissingQuotedNotes(identifiers)
+    fun fetchMissingQuotedNotes(
+        identifiers: List<String>,
+        relayHints: Map<String, List<String>> = emptyMap(),
+    ) = feedService.fetchMissingQuotedNotes(identifiers, relayHints)
 
     fun fetchMissingQuotedProfiles(identifiers: List<String>) =
         feedService.fetchMissingQuotedProfiles(identifiers)

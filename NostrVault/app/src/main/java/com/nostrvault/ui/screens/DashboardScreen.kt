@@ -1751,10 +1751,11 @@ fun DashboardScreen(
     // so a quote here was dropped twice over: never fetched, and never drawn.
     val quotedNotes by feedService.quotedNotes.collectAsState()
     LaunchedEffect(displayNotes, displayLikedNotes, displayZappedNotes) {
-        val ids = (displayNotes + displayLikedNotes + displayZappedNotes)
-            .flatMap { it.quotedEventIds }
-            .distinct()
-        if (ids.isNotEmpty()) feedService.fetchMissingQuotedNotes(ids)
+        val quoting = displayNotes + displayLikedNotes + displayZappedNotes
+        val ids = quoting.flatMap { it.quotedEventIds }.distinct()
+        if (ids.isNotEmpty()) {
+            feedService.fetchMissingQuotedNotes(ids, FeedNote.mergedQuoteRelayHints(quoting))
+        }
     }
     LaunchedEffect(displayNotes, displayLikedNotes, displayZappedNotes, quotedNotes) {
         val ids = (displayNotes + displayLikedNotes + displayZappedNotes)
@@ -2022,9 +2023,12 @@ fun DashboardScreen(
         val quotedIds = remember(visibleNotes) {
             visibleNotes.flatMap { it.quotedEventIds }.distinct()
         }
+        val quotedHints = remember(visibleNotes) {
+            FeedNote.mergedQuoteRelayHints(visibleNotes)
+        }
         LaunchedEffect(quotedIds) {
             if (quotedIds.isNotEmpty()) {
-                feedService.fetchMissingQuotedNotes(quotedIds)
+                feedService.fetchMissingQuotedNotes(quotedIds, quotedHints)
                 feedService.fetchMissingQuotedProfiles(quotedIds)
             }
         }

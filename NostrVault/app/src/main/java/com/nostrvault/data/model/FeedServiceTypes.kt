@@ -117,6 +117,15 @@ data class FeedNote(
     val linkURLs: List<String>,
     val quotedEventIds: List<String>,
     val repostedEventId: String?,
+
+    /**
+     * Relay hints carried by this note's `naddr1` quotes, keyed the same way
+     * [quotedEventIds] is.
+     *
+     * Defaulted so an older cached note still decodes, and empty for every note
+     * that quotes nothing addressable — which is nearly all of them.
+     */
+    val quotedRelayHints: Map<String, List<String>> = emptyMap(),
 ) {
     /** Instance-level noise check delegating to companion. */
     fun isNoiseOrSpam(): Boolean = Companion.isNoiseOrSpam(content, tags)
@@ -148,6 +157,26 @@ data class FeedNote(
     override fun hashCode(): Int = id.hashCode()
 
     companion object {
+
+        /**
+         * The relay hints carried by all of [notes], merged into the one map a
+         * single fetch call takes.
+         *
+         * Merged rather than passed per note because the fetch is batched: the
+         * same article quoted by two notes is one lookup, and it should be able
+         * to use either note's hint.
+         */
+        fun mergedQuoteRelayHints(notes: Collection<FeedNote>): Map<String, List<String>> {
+            val merged = mutableMapOf<String, MutableList<String>>()
+            for (note in notes) {
+                for ((key, relays) in note.quotedRelayHints) {
+                    val bucket = merged.getOrPut(key) { mutableListOf() }
+                    for (relay in relays) if (relay !in bucket) bucket.add(relay)
+                }
+            }
+            return merged
+        }
+
         // Regex patterns (compiled once)
         private val MEDIA_REGEX = Regex(
             """https?://[^\s<>")\]]*\.(?:jpg|jpeg|png|gif|webp|svg|bmp|tiff|avif|mp4|mov|webm|avi|mkv|m4v|mp3|m4a|wav|ogg|aac|flac|opus)(?:[?#][^\s<>")\]]*[^\s<>")\].,;:!?'"])?""",
@@ -229,6 +258,7 @@ data class FeedNote(
 
             val linkURLs = parseLinkURLs(resolvedContent, mediaURLs.toSet())
             val quotedEventIds = parseQuotedEventIds(resolvedContent)
+            val quotedRelayHints = QuoteRef.relayHints(resolvedContent, HavenQuoteDecoder)
 
             return FeedNote(
                 id = id,
@@ -245,6 +275,7 @@ data class FeedNote(
                 linkURLs = linkURLs,
                 quotedEventIds = quotedEventIds,
                 repostedEventId = outerRepostedEventId,
+                quotedRelayHints = quotedRelayHints,
             )
         }
 

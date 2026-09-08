@@ -61,6 +61,18 @@ class FeedService @Inject constructor(
         private const val FEED_LOAD_TIMEOUT_MS = 20_000L
         private const val EXTENDED_NETWORK_TIMEOUT_MS = 15_000L
         private const val NOTE_FETCH_TIMEOUT_MS = 8_000L
+
+        /**
+         * How many relay hints one quoted article may pull in, and how many
+         * extra relays a whole batch may open.
+         *
+         * A hint is a stranger's relay: it costs a socket and it is attacker-
+         * supplied, since anyone can put any URL in an naddr. Both numbers are
+         * small on purpose — the first hint that has the article answers, and
+         * a note stuffed with references cannot make the app dial fifty hosts.
+         */
+        private const val MAX_HINT_RELAYS_PER_QUOTE = 2
+        private const val MAX_HINT_RELAYS_PER_BATCH = 4
         private const val SEARCH_TIMEOUT_MS = 10_000L
         private const val SEARCH_DEBOUNCE_MS = 400L
         private const val INTERACTION_SAVE_THROTTLE_MS = 2_000L
@@ -74,6 +86,27 @@ class FeedService @Inject constructor(
         private const val MAX_SEEN_IDS = 10_000
         private const val RECOMPUTE_DEBOUNCE_MS = 50L
         private const val AVATAR_PREWARM_COUNT = 80 // Warm cache for ~4 screens of visible notes
+
+        /**
+         * A relay hint reduced to a URL worth dialling, or null.
+         *
+         * Hints arrive as free text. A scheme-less `relay.example.com` is
+         * common and is read as `wss://`; anything that is not a plain
+         * `ws`/`wss` host is dropped rather than handed to the socket layer.
+         */
+        internal fun normalizedRelayUrl(hint: String): String? {
+            val trimmed = hint.trim().trimEnd('/')
+            if (trimmed.isEmpty() || trimmed.any { it.isWhitespace() }) return null
+            val withScheme = when {
+                trimmed.startsWith("wss://", ignoreCase = true) ||
+                    trimmed.startsWith("ws://", ignoreCase = true) -> trimmed
+                trimmed.contains("://") -> return null
+                else -> "wss://$trimmed"
+            }
+            val host = withScheme.substringAfter("://").substringBefore('/')
+            if (host.isEmpty() || !host.contains('.')) return null
+            return withScheme
+        }
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -1949,18 +1982,37 @@ class FeedService @Inject constructor(
             null -> null
         }
 
-    /** Batch-fetch quoted events that aren't cached yet. */
-    fun fetchMissingQuotedNotes(identifiers: List<String>) {
+    /**
+     * Batch-fetch quoted events that aren't cached yet.
+     *
+     * [relayHints] is what the quoting notes' `naddr1` references carried,
+     * keyed by lookup key — see [FeedNote.mergedQuoteRelayHints]. Empty is
+     * fine and means "ask the configured relays only", which is what every
+     * caller did before.
+     */
+    fun fetchMissingQuotedNotes(
+        identifiers: List<String>,
+        relayHints: Map<String, List<String>> = emptyMap(),
+    ) {
         val keys = identifiers.distinct().mapNotNull { id -> QuoteRef.key(id)?.let { id to it } }
 
         val hexIds = keys.mapNotNull { (_, key) -> (key as? QuoteRef.Key.Event)?.hexId }
         if (hexIds.isNotEmpty()) fetchMissingNotesBatch(hexIds)
 
         val coordinates = keys.mapNotNull { (raw, key) ->
-            (key as? QuoteRef.Key.Address)?.let { raw to it.coordinate }
-        }.filter { (raw, _) -> !_quotedAddressCache.value.containsKey(raw) }
+            (key as? QuoteRef.Key.Address)?.let {
+                QuotedAddress(raw, it.coordinate, relayHints[raw].orEmpty())
+            }
+        }.filter { !_quotedAddressCache.value.containsKey(it.key) }
         if (coordinates.isNotEmpty()) fetchQuotedAddressesBatch(coordinates)
     }
+
+    /** One addressable quote to fetch: its lookup key, its address, its hints. */
+    private data class QuotedAddress(
+        val key: String,
+        val coordinate: QuoteRef.Coordinate,
+        val hintRelays: List<String>,
+    )
 
     /**
      * Fetch addressable events by kind + author + `d` tag.
@@ -1970,21 +2022,43 @@ class FeedService @Inject constructor(
      * so two quoted articles by different authors would each pull the other
      * author's article too. The count here is the number of quoted articles on
      * screen, which is small.
+     *
+     * The configured relays are asked for everything; a relay named by an
+     * naddr's hint is asked only for the article that named it. Without the
+     * hints a quoted article that lives on its author's relays and not the
+     * reader's never arrives, and the card sits on "Loading quoted note..."
+     * with nothing wrong anywhere in the decode.
      */
-    private fun fetchQuotedAddressesBatch(coordinates: List<Pair<String, QuoteRef.Coordinate>>) {
+    private fun fetchQuotedAddressesBatch(addresses: List<QuotedAddress>) {
         scope.launch(Dispatchers.IO) {
             val config = configStore.config.value
-            val relayUrls = buildList {
+            val configured = buildList {
                 config.nostrURL?.let { add(it) }
                 config.inboxRelays?.let { addAll(it) }
                 addAll(config.activeFeedRelays)
                 addAll(config.activeBlastrRelays)
             }.distinct()
 
+            // A hinted relay is asked only for the article that named it. The
+            // hint says where *that* event lives; it is not an invitation to
+            // pull the rest of the batch from a relay the user never chose.
+            val hinted = LinkedHashMap<String, MutableList<QuotedAddress>>()
+            for (address in addresses) {
+                for (relay in address.hintRelays.mapNotNull { normalizedRelayUrl(it) }.distinct().take(MAX_HINT_RELAYS_PER_QUOTE)) {
+                    if (relay in configured) continue
+                    if (hinted.size >= MAX_HINT_RELAYS_PER_BATCH && relay !in hinted) continue
+                    hinted.getOrPut(relay) { mutableListOf() }.add(address)
+                }
+            }
+
+            val targets = LinkedHashMap<String, List<QuotedAddress>>()
+            for (relayUrl in configured) targets[relayUrl] = addresses
+            for ((relayUrl, subset) in hinted) targets.putIfAbsent(relayUrl, subset)
+
             val tempClients = mutableListOf<WebSocketClient>()
             val collectors = mutableListOf<Job>()
 
-            for (relayUrl in relayUrls) {
+            for ((relayUrl, wanted) in targets) {
                 val existingClient = feedClients[relayUrl]
                 val client: WebSocketClient
                 if (existingClient != null) {
@@ -2013,7 +2087,7 @@ class FeedService @Inject constructor(
                             // subscription id: these share connections with the
                             // live feed, so unrelated events arrive here too.
                             val raw = QuoteRef.format(QuoteRef.Coordinate(kind, pubkey, dTag))
-                            if (coordinates.none { it.first == raw }) return@collect
+                            if (addresses.none { it.key == raw }) return@collect
 
                             val note = FeedNote.fromEvent(eventId, pubkey, content, tags, createdAt, kind)
                             withContext(Dispatchers.Main.immediate) {
@@ -2029,7 +2103,8 @@ class FeedService @Inject constructor(
                     }
                 })
 
-                for ((_, coordinate) in coordinates) {
+                for (address in wanted) {
+                    val coordinate = address.coordinate
                     val subId = "qaddr-${UUID.randomUUID().toString().take(8)}"
                     val dTagJson = json.encodeToString(JsonPrimitive.serializer(), JsonPrimitive(coordinate.dTag))
                     val filter = """{"kinds":[${coordinate.kind}],"authors":["${coordinate.pubkey}"],"#d":[$dTagJson],"limit":1}"""

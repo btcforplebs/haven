@@ -401,8 +401,10 @@ class NoteDetailViewModel @Inject constructor(
 
     fun quotedNoteFor(identifier: String): FeedNote? = feedService.quotedNoteFor(identifier)
 
-    fun fetchMissingQuotedNotes(identifiers: List<String>) =
-        feedService.fetchMissingQuotedNotes(identifiers)
+    fun fetchMissingQuotedNotes(
+        identifiers: List<String>,
+        relayHints: Map<String, List<String>> = emptyMap(),
+    ) = feedService.fetchMissingQuotedNotes(identifiers, relayHints)
 
     fun fetchMissingQuotedProfiles(identifiers: List<String>) =
         feedService.fetchMissingQuotedProfiles(identifiers)
@@ -448,12 +450,15 @@ fun NoteDetailScreen(
     // Fetch any embedded quoted notes (nostr:note1.../nevent1...) referenced by
     // the focal note, its ancestors, or replies, plus their authors' profiles.
     LaunchedEffect(note, parentNotes, allReplies) {
-        val quotedIds = buildList {
-            note?.let { addAll(it.quotedEventIds) }
-            parentNotes.forEach { addAll(it.quotedEventIds) }
-            allReplies.forEach { addAll(it.quotedEventIds) }
-        }.distinct()
-        if (quotedIds.isNotEmpty()) viewModel.fetchMissingQuotedNotes(quotedIds)
+        val quoting = buildList {
+            note?.let { add(it) }
+            addAll(parentNotes)
+            addAll(allReplies)
+        }
+        val quotedIds = quoting.flatMap { it.quotedEventIds }.distinct()
+        if (quotedIds.isNotEmpty()) {
+            viewModel.fetchMissingQuotedNotes(quotedIds, FeedNote.mergedQuoteRelayHints(quoting))
+        }
     }
     LaunchedEffect(note, parentNotes, allReplies, quotedNotesCache) {
         val quotedIds = buildList {

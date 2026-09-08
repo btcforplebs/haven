@@ -10,6 +10,6 @@ import com.nostrvault.data.model.QuoteRef
 object HavenQuoteDecoder : QuoteRef.Decoder {
     override fun noteToHex(note1: String): String? = HavenBridge.decodeNote(note1)
     override fun neventToHex(nevent1: String): String? = HavenBridge.decodeNevent(nevent1)
-    override fun naddrToCoordinate(naddr1: String): QuoteRef.Coordinate? =
+    override fun naddrToAddress(naddr1: String): QuoteRef.Address? =
         HavenBridge.decodeNaddr(naddr1)
 }

@@ -82,18 +82,25 @@ object NostrMentions {
      * `https://…/40051f70….mp4` sitting above its own thumbnail is noise — the
      * full renderer already strips them, and this one used to not, so the same
      * note read differently depending on which card drew it.
+     *
+     * Pass `stripQuoteRefs = false` where no quoted card is drawn — direct
+     * messages, group chat, zap comments. Removing the reference there deletes
+     * the only thing the message said and leaves an empty bubble; the bech32
+     * is ugly, but it is what was sent. The rule is the same one [mediaURLs]
+     * follows: strip only what the caller is about to draw.
      */
     fun toPlainText(
         content: String,
         profiles: Map<String, FeedProfile>,
         mediaURLs: Set<String> = emptySet(),
+        stripQuoteRefs: Boolean = true,
     ): String {
         var text = MENTION_REGEX.replace(content) { match ->
             val identifier = match.groupValues[1]
             val pubkey = resolvePubkey(identifier)
             if (pubkey != null) "@${displayName(pubkey, profiles)}" else "@${identifier.take(10)}…"
         }
-        text = QUOTE_REGEX.replace(text, "")
+        if (stripQuoteRefs) text = QUOTE_REGEX.replace(text, "")
         for (url in mediaURLs) text = text.replace(url, "")
         return text.trim()
     }

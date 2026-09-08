@@ -143,7 +143,7 @@ fun FeedScreen(
     LaunchedEffect(notes) {
         val quotedIds = notes.flatMap { it.quotedEventIds }.distinct()
         if (quotedIds.isNotEmpty()) {
-            viewModel.fetchMissingQuotedNotes(quotedIds)
+            viewModel.fetchMissingQuotedNotes(quotedIds, FeedNote.mergedQuoteRelayHints(notes))
         }
     }
 

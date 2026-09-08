@@ -18,6 +18,8 @@ class NostrMentionsTest {
 
     private val video = "https://logen.btcforplebs.com/40051f70189f48d34b72b975273cc4f0b6da4a60f577da3598f67232b38d4a48.mp4"
 
+    private val nevent1 = "nevent1" + "gf2tvdw0s3jn54khce6mua7lqpzry9x8".repeat(2)
+
     @Test
     fun `a media url the caller renders is dropped from the text`() {
         val text = NostrMentions.toPlainText("look at this $video", emptyMap(), setOf(video))
@@ -49,7 +51,26 @@ class NostrMentionsTest {
 
     @Test
     fun `quote references are still stripped`() {
-        val text = NostrMentions.toPlainText("see nostr:nevent1abc for more", emptyMap())
+        val text = NostrMentions.toPlainText("see nostr:$nevent1 for more", emptyMap())
+        assertEquals("see  for more", text)
+    }
+
+    @Test
+    fun `a surface that draws no card keeps the reference`() {
+        // A DM or zap comment that is only a quote reference would otherwise
+        // render as an empty bubble: the text removed, and no card drawn to
+        // replace it.
+        assertEquals(
+            "see $nevent1 for more",
+            NostrMentions.toPlainText("see $nevent1 for more", emptyMap(), stripQuoteRefs = false),
+        )
+    }
+
+    @Test
+    fun `a bare reference is stripped too`() {
+        // The card draws it; leaving the bech32 in the text as well is the
+        // same duplication as a media link above its own thumbnail.
+        val text = NostrMentions.toPlainText("see $nevent1 for more", emptyMap())
         assertEquals("see  for more", text)
     }
 

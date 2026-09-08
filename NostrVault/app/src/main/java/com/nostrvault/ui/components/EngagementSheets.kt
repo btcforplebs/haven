@@ -177,7 +177,7 @@ fun ZappersSheet(
                                 if (zap.comment.isNotBlank()) {
                                     Text(
                                         text = remember(zap.comment, profiles) {
-                                            NostrMentions.toPlainText(zap.comment, profiles)
+                                            NostrMentions.toPlainText(zap.comment, profiles, stripQuoteRefs = false)
                                         },
                                         color = SecondaryText,
                                         fontSize = 13.sp,

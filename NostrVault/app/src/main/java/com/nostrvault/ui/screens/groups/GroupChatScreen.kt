@@ -239,7 +239,7 @@ private fun GroupMessageRow(
                 Column(modifier = Modifier.padding(10.dp)) {
                     Text(
                         text = remember(message.content, profiles) {
-                            NostrMentions.toPlainText(message.content, profiles)
+                            NostrMentions.toPlainText(message.content, profiles, stripQuoteRefs = false)
                         },
                         color = PrimaryText,
                         fontSize = 15.sp,

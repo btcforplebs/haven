@@ -236,8 +236,10 @@ class SearchViewModel @Inject constructor(
 
     fun quotedNoteFor(identifier: String): FeedNote? = feedService.quotedNoteFor(identifier)
 
-    fun fetchMissingQuotedNotes(identifiers: List<String>) =
-        feedService.fetchMissingQuotedNotes(identifiers)
+    fun fetchMissingQuotedNotes(
+        identifiers: List<String>,
+        relayHints: Map<String, List<String>> = emptyMap(),
+    ) = feedService.fetchMissingQuotedNotes(identifiers, relayHints)
 
     fun fetchMissingQuotedProfiles(identifiers: List<String>) =
         feedService.fetchMissingQuotedProfiles(identifiers)
@@ -340,7 +342,12 @@ fun SearchScreen(
     // plus their authors' profiles, so they resolve instead of spinning forever.
     LaunchedEffect(results) {
         val quotedIds = results.notes.flatMap { it.quotedEventIds }.distinct()
-        if (quotedIds.isNotEmpty()) viewModel.fetchMissingQuotedNotes(quotedIds)
+        if (quotedIds.isNotEmpty()) {
+            viewModel.fetchMissingQuotedNotes(
+                quotedIds,
+                FeedNote.mergedQuoteRelayHints(results.notes),
+            )
+        }
     }
     LaunchedEffect(results, quotedNotesCache) {
         val quotedIds = results.notes.flatMap { it.quotedEventIds }.distinct()

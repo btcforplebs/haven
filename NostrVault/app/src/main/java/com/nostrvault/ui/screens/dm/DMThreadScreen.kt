@@ -392,7 +392,7 @@ private fun MessageBubble(
             ) {
                 Text(
                     text = remember(message.content, profiles) {
-                        NostrMentions.toPlainText(message.content, profiles)
+                        NostrMentions.toPlainText(message.content, profiles, stripQuoteRefs = false)
                     },
                     color = Color.White,
                     fontSize = 15.sp,

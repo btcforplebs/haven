@@ -460,13 +460,21 @@ object HavenBridge {
      * required — without them the reference names no event, so it is rejected
      * rather than half-read. An empty "d" is legal and means the empty
      * identifier, so it is not treated as missing.
+     *
+     * The relay hints (type 1) are read and returned rather than skipped. They
+     * are the whole reason a quoted article can resolve at all: the author of
+     * a long-form article often publishes it to relays the reader does not
+     * follow, and asking only the reader's own relays leaves the card stuck on
+     * "Loading quoted note..." forever. They are hints, not identity, so they
+     * are kept beside the coordinate and never folded into it.
      */
-    fun decodeNaddr(naddr1: String): QuoteRef.Coordinate? {
+    fun decodeNaddr(naddr1: String): QuoteRef.Address? {
         val (hrp, payload) = bech32Decode(naddr1) ?: return null
         if (hrp != "naddr") return null
         var dTag: String? = null
         var pubkey: String? = null
         var kind: Int? = null
+        val relays = mutableListOf<String>()
         var i = 0
         while (i + 2 <= payload.size) {
             val type = payload[i].toInt() and 0xFF
@@ -478,6 +486,8 @@ object HavenBridge {
             val value = payload.copyOfRange(i, i + length)
             when {
                 type == 0 -> dTag = String(value, Charsets.UTF_8)
+                // Several hints are legal and each is a separate type-1 entry.
+                type == 1 && length > 0 -> relays.add(String(value, Charsets.UTF_8))
                 type == 2 && length == 32 -> pubkey = value.toHex()
                 type == 3 && length == 4 -> kind = value.fold(0) { acc, b -> (acc shl 8) or (b.toInt() and 0xFF) }
             }
@@ -485,7 +495,10 @@ object HavenBridge {
         }
         val resolvedKind = kind ?: return null
         val resolvedPubkey = pubkey ?: return null
-        return QuoteRef.Coordinate(resolvedKind, resolvedPubkey, dTag ?: "")
+        return QuoteRef.Address(
+            QuoteRef.Coordinate(resolvedKind, resolvedPubkey, dTag ?: ""),
+            relays.toList(),
+        )
     }
 
     // -----------------------------------------------------------------------
