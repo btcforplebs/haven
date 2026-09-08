@@ -790,11 +790,24 @@ struct ComposeView: View {
                     .font(.appSystem(size: 13, weight: .bold))
                     .foregroundColor(.secondary)
                 
-                Text(parent.content)
-                    .font(.appSystem(size: 13, weight: .regular))
-                    .foregroundColor(.secondary.opacity(0.7))
-                    .lineLimit(3)
-                    .padding(.bottom, 4)
+                // Same treatment the note gets everywhere else it is shown —
+                // FeedView, QuotedNoteView. Raw `parent.content` printed the
+                // `nostr:nevent1…` of a quoted note, bare media URLs and raw
+                // npubs into the preview, so replying to a quote-post buried
+                // the actual words under a wall of bech32.
+                let parentPreview = NostrContentFormatter.format(parent.content,
+                                                                 mediaURLs: parent.mediaURLs,
+                                                                 hideQuotes: true)
+                // A note that is nothing but a quote strips to empty; the
+                // "Replying to …" line above already carries the context, so
+                // an empty row with padding is worse than no row.
+                if !parentPreview.characters.isEmpty {
+                    Text(parentPreview)
+                        .font(.appSystem(size: 13, weight: .regular))
+                        .foregroundColor(.secondary.opacity(0.7))
+                        .lineLimit(3)
+                        .padding(.bottom, 4)
+                }
             }
         }
         .padding(12)
