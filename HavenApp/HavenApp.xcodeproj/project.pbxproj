@@ -204,6 +204,7 @@
 		870818EFD99EBF6D0E1F6C30 /* FeedDashboardSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5768CC5EF0D663BD7DBA800 /* FeedDashboardSheet.swift */; };
 		87D56536906D88D1C28BD2E2 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = D402A79FB4D7F03B9F67E1D2 /* PrivacyInfo.xcprivacy */; };
 		88FB85A8406DE6D5CB0F0113 /* BlossomDashboardModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41AFE9F84C0F2592990C1224 /* BlossomDashboardModels.swift */; };
+		8986B473114DB9BD028A9EAD /* Bolt11.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC971B12438093F727E8967F /* Bolt11.swift */; };
 		8A8A672CB3CA7E14FE8B7D6B /* NVWidgetKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BEA112FAABC73A446279BB0 /* NVWidgetKit.swift */; };
 		8ADB489FAB643EBB11BB577E /* WebSocketClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CB15AE080BDC0999543399A /* WebSocketClient.swift */; };
 		8B334441FF49DC33B053C484 /* NotificationNames.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7EC0F366EF1C957EF41DE12C /* NotificationNames.swift */; };
@@ -234,6 +235,7 @@
 		9E4F990C3C3F9CFFEBFF5DE8 /* GroupListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F96B3AB1550EC0A0833A140C /* GroupListView.swift */; };
 		9EBACE9543A3F1BC4C3C054D /* SwiftNIP46Handshake.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE2003F8C6D98618A746D1E7 /* SwiftNIP46Handshake.swift */; };
 		A2466D5E5282712286740FE2 /* DraftService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3800D9290BD369F4F26BC5C3 /* DraftService.swift */; };
+		A36D3F7A908A749F7B34206D /* LiveChat.swift in Sources */ = {isa = PBXBuildFile; fileRef = A21B9BEF9DAADA51C5B8C4D3 /* LiveChat.swift */; };
 		A48F920B274A38D5BD818EBB /* SilentPaymentsKit in Frameworks */ = {isa = PBXBuildFile; productRef = 34D407BB5082F01DD1EA2C1D /* SilentPaymentsKit */; };
 		A4CC418BB19F41A7C051EF00 /* EngagementTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 01EFA5F14E595113B47E8FC2 /* EngagementTracker.swift */; };
 		A5B06D91684942B06596203F /* QuickActionsWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38F0A09BAA2ED410A3EAD8AB /* QuickActionsWidget.swift */; };
@@ -269,8 +271,10 @@
 		BBADE21A4A5A36ACE752BE4A /* FeedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3041B6BA67CC97B2AC442E6D /* FeedView.swift */; };
 		BBD8C5A4D3CCA41A25E9B22D /* MirrorService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B03DACD65D976F80B315E19 /* MirrorService.swift */; };
 		BBEB6E9E824AA4B887755B8E /* EventBroadcastSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26251868EAC178C0BAF356A8 /* EventBroadcastSheet.swift */; };
+		BC149F5EF1080D3A330334B6 /* Bolt11.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC971B12438093F727E8967F /* Bolt11.swift */; };
 		BC8CE5C575A401691B4EA89A /* ArticleFeedViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8598C3DE3520434EAACE5072 /* ArticleFeedViews.swift */; };
 		BDA2EED14D678BC16890F89F /* BlossomDashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3B2353A9CF349D2A6B43DA8 /* BlossomDashboardView.swift */; };
+		BE62A6B14BFD12B691DE6D3F /* LiveChatService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BE879845BEF9A356B7CB5EB /* LiveChatService.swift */; };
 		BEAB1A49455D2E415783E4E1 /* GroupChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7491F74869677E43C247E1B4 /* GroupChatView.swift */; };
 		BEFE3D99EBF476B6AAA764C1 /* YarnClipService.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD258416653D3DE8614C5C5E /* YarnClipService.swift */; };
 		BF1F6EADB3CD222E4B0C6072 /* MediaGalleryToolbar.swift in Sources */ = {isa = PBXBuildFile; fileRef = FAC26E9FB9DE4AFA3840A2CB /* MediaGalleryToolbar.swift */; };
@@ -296,6 +300,7 @@
 		D140E2EA2C16AC28FAD5CD6B /* VaultSearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E82F3342C8C1BDDEF52BF87 /* VaultSearch.swift */; };
 		D17798B2BB014CC904A3D33F /* NWCService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19B6B870C61AB1313009408E /* NWCService.swift */; };
 		D1B024EAA1105FEC11699EC8 /* ErrorNotificationBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F4A9C4C8BD9711513C84185 /* ErrorNotificationBanner.swift */; };
+		D1D3E12AC752528895DC695F /* LiveChatService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BE879845BEF9A356B7CB5EB /* LiveChatService.swift */; };
 		D1FD56BEC02FCA184FCAECAA /* UGCReportingDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2181DC8AEE2B3F8376683F88 /* UGCReportingDialog.swift */; };
 		D20EC272280ECE651610D562 /* BlossomMediaListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 432CF90E26FEFB48B713C9F9 /* BlossomMediaListView.swift */; };
 		D25C2A65954161799317E919 /* VaultView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABD60255398375B7A8772D93 /* VaultView.swift */; };
@@ -322,6 +327,7 @@
 		DB68DA241565F5E69B9F2B43 /* RelayListEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AB6A6872532B023E705FC6C /* RelayListEditor.swift */; };
 		DBCCFF00BA486FD1B06E7BDB /* MediaGalleryTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EA2FCD67EDBE04915305C51 /* MediaGalleryTypes.swift */; };
 		DBD32E19582D9012E15F92AD /* VideoPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3DD3ED79F874383BC2F54F2 /* VideoPlayerView.swift */; };
+		DBE997AB3BEB7BE899BB88A9 /* LiveChat.swift in Sources */ = {isa = PBXBuildFile; fileRef = A21B9BEF9DAADA51C5B8C4D3 /* LiveChat.swift */; };
 		DC0B0458630C076A2CFA0CA0 /* DashboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41A8E188B7B23F83A3EA49AA /* DashboardView.swift */; };
 		DC564055F17E779B59E55881 /* FeedServiceTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A19809A765C51F397B19FD14 /* FeedServiceTypes.swift */; };
 		DD08085452DD20E55FC7796F /* VaultNoteRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F1498D793BB43A6EF6996AF /* VaultNoteRow.swift */; };
@@ -455,6 +461,7 @@
 		4A42F9EDFFD04EEBA4DDA772 /* VaultPulseWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultPulseWidget.swift; sourceTree = "<group>"; };
 		4AB6A6872532B023E705FC6C /* RelayListEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RelayListEditor.swift; sourceTree = "<group>"; };
 		4AF859BC17F21BAE82F4F75F /* ZapNotificationBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ZapNotificationBanner.swift; sourceTree = "<group>"; };
+		4BE879845BEF9A356B7CB5EB /* LiveChatService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveChatService.swift; sourceTree = "<group>"; };
 		4C6F73BF6DECD70643354714 /* FloatingArrowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FloatingArrowController.swift; sourceTree = "<group>"; };
 		4E0FC14B3CEA24424481BBA3 /* MediaGalleryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaGalleryView.swift; sourceTree = "<group>"; };
 		4E4EFE6422E6E0A896809308 /* ContactManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContactManager.swift; sourceTree = "<group>"; };
@@ -529,6 +536,7 @@
 		9FD2828F9DD6C5EB7FA5ADE4 /* BlossomDashboardMirrors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BlossomDashboardMirrors.swift; sourceTree = "<group>"; };
 		A0470608431CE649B6E55F7D /* QuotedNoteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuotedNoteView.swift; sourceTree = "<group>"; };
 		A19809A765C51F397B19FD14 /* FeedServiceTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedServiceTypes.swift; sourceTree = "<group>"; };
+		A21B9BEF9DAADA51C5B8C4D3 /* LiveChat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveChat.swift; sourceTree = "<group>"; };
 		A271B5E3364858651DC05603 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		A3192A668A74BAFF6F4B60FC /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		A385719722D447ECB47AA2D8 /* NVSharedStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVSharedStore.swift; sourceTree = "<group>"; };
@@ -578,6 +586,7 @@
 		EB0CF7D47686F1256BEF99DB /* VaultDataProcessing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultDataProcessing.swift; sourceTree = "<group>"; };
 		EC0AF323C6A978AA0E08E94A /* StatsCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsCard.swift; sourceTree = "<group>"; };
 		EC33568A91E5B5B737A03D1F /* FeedService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedService.swift; sourceTree = "<group>"; };
+		EC971B12438093F727E8967F /* Bolt11.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Bolt11.swift; sourceTree = "<group>"; };
 		ED0D438DE03F310940F4D19A /* EventPublisher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EventPublisher.swift; sourceTree = "<group>"; };
 		ED924B5483C85E11E4917120 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		F10FAB057E10D3468126BB35 /* VaultEngagement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VaultEngagement.swift; sourceTree = "<group>"; };
@@ -848,12 +857,14 @@
 		D2F039631F5DCD9EAE61B656 /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				EC971B12438093F727E8967F /* Bolt11.swift */,
 				702B73F5AC3EE620877BDAB0 /* BunkerURI.swift */,
 				1BFCB06C97973CF476E0D658 /* CashuModels.swift */,
 				FB04FF5ECC6BE85A9D783C18 /* FeedProfile.swift */,
 				BFE4FF1BF35D7CF7BEF59AD4 /* FollowingSnapshot.swift */,
 				0F7E39EC2E804B21B7832AC8 /* GroupModels.swift */,
 				E3056CC16711F7E38B7FE86D /* HavenConfig.swift */,
+				A21B9BEF9DAADA51C5B8C4D3 /* LiveChat.swift */,
 				42DB00CA3C4EA172D7C76C2A /* LongFormContent.swift */,
 				FE2060B412DD17816F0495D8 /* MediaItem.swift */,
 				C3D0631CF48FD1659E6F1005 /* NostrEvent.swift */,
@@ -922,6 +933,7 @@
 				C81B813614AC332D9C184C78 /* FollowingBackupService.swift */,
 				07BA4D14A6EEFD07DCB860B4 /* GroupService.swift */,
 				C3B2C3C269E23662DF825BFD /* LinkPreviewService.swift */,
+				4BE879845BEF9A356B7CB5EB /* LiveChatService.swift */,
 				51C29A25C6DBE37CB0202A7F /* LiveFeedService.swift */,
 				2B14053AFA5E916B43335BEE /* LNURLService.swift */,
 				48CA2811713E8B33E246FC55 /* LocalNotificationService.swift */,
@@ -1175,6 +1187,7 @@
 				E0A5461B68AE422C1589FC94 /* BlossomMediaCache.swift in Sources */,
 				D20EC272280ECE651610D562 /* BlossomMediaListView.swift in Sources */,
 				AB84ADE390F047D2226B293C /* BlossomService.swift in Sources */,
+				BC149F5EF1080D3A330334B6 /* Bolt11.swift in Sources */,
 				8669D5E967AF7E8F56DAB283 /* BunkerURI.swift in Sources */,
 				F22FA656E63FA88BF7E97461 /* CachedAsyncImage.swift in Sources */,
 				6C98A64C1944F2053F6E888D /* CashuModels.swift in Sources */,
@@ -1229,6 +1242,8 @@
 				2F88212E839A6FC462BB3C15 /* LightningAnimationView.swift in Sources */,
 				2DD420459ECE57ACDD5E1432 /* LinkPreviewCard.swift in Sources */,
 				0C8D6CA3BC04B268F580C95E /* LinkPreviewService.swift in Sources */,
+				A36D3F7A908A749F7B34206D /* LiveChat.swift in Sources */,
+				BE62A6B14BFD12B691DE6D3F /* LiveChatService.swift in Sources */,
 				20ACAB0CCDD35997C75B68B4 /* LiveFeedService.swift in Sources */,
 				270AF3B7649E919B87BC94ED /* LiveFeedViews.swift in Sources */,
 				D99028853E74DA3CE76AE9B7 /* LocalNotificationService.swift in Sources */,
@@ -1370,6 +1385,7 @@
 				8FEB6F24A3984B98CCF81E56 /* BlossomMediaCache.swift in Sources */,
 				EB9306A10F9E946F899CE34F /* BlossomMediaListView.swift in Sources */,
 				A9175BE3300E9CE097E14F26 /* BlossomService.swift in Sources */,
+				8986B473114DB9BD028A9EAD /* Bolt11.swift in Sources */,
 				EDCA08DB3ED399583C55F594 /* BunkerURI.swift in Sources */,
 				DDF232D616C179F4250BAA90 /* CachedAsyncImage.swift in Sources */,
 				18D631CF52FF1BAC3F2FB31B /* CashuModels.swift in Sources */,
@@ -1423,6 +1439,8 @@
 				EB507637E1020661C1CC0C16 /* LightningAnimationView.swift in Sources */,
 				79A7B0E3D32383C1DE4C7C92 /* LinkPreviewCard.swift in Sources */,
 				A5DC568CD5B2B92D554D9D22 /* LinkPreviewService.swift in Sources */,
+				DBE997AB3BEB7BE899BB88A9 /* LiveChat.swift in Sources */,
+				D1D3E12AC752528895DC695F /* LiveChatService.swift in Sources */,
 				81092C0D01D5FA1232A9E3A8 /* LiveFeedService.swift in Sources */,
 				F8F10B5EDE343C59B75BFB68 /* LiveFeedViews.swift in Sources */,
 				417A5B57E5552977F48B6B23 /* LocalNotificationService.swift in Sources */,
