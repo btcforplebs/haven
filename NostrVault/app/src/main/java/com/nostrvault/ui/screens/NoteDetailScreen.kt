@@ -765,6 +765,11 @@ fun NoteDetailScreen(
                         note = focusedNote!!,
                         profile = viewModel.profileFor(focusedNote!!.pubkey),
                         profiles = profiles,
+                        quotedNotes = remember(focusedNote!!.id, focusedNote!!.quotedEventIds, quotedNotesCache) {
+                            focusedNote!!.quotedEventIds.mapNotNull { qid ->
+                                viewModel.quotedNoteFor(qid)?.let { qid to it }
+                            }.toMap()
+                        },
                         stats = viewModel.statsFor(focusedNote!!.id),
                         isLiked = viewModel.isLiked(focusedNote!!.id),
                         isReposted = viewModel.isReposted(focusedNote!!.effectiveEventId),
@@ -772,6 +777,8 @@ fun NoteDetailScreen(
                         isFollowing = viewModel.isFollowing(focusedNote!!.pubkey),
                         themeColor = colors.primary,
                         onProfileClick = onProfileClick,
+                        onNoteClick = onNoteClick,
+                        onArticleClick = onArticleClick,
                         onLike = { viewModel.likeNote(focusedNote!!.effectiveEventId) },
                         onLongPressLike = { emojiTargetNote = focusedNote },
                         onRepost = { viewModel.repostNote(focusedNote!!.effectiveEventId) },
@@ -1274,6 +1281,8 @@ private fun HeroNoteCard(
     note: FeedNote,
     profile: FeedProfile?,
     profiles: Map<String, FeedProfile> = emptyMap(),
+    /** Quoted events keyed by the lookup key `note.quotedEventIds` holds. */
+    quotedNotes: Map<String, FeedNote> = emptyMap(),
     stats: NoteStats?,
     isLiked: Boolean,
     isReposted: Boolean = false,
@@ -1281,6 +1290,8 @@ private fun HeroNoteCard(
     isFollowing: Boolean,
     themeColor: androidx.compose.ui.graphics.Color,
     onProfileClick: (String) -> Unit,
+    onNoteClick: (String) -> Unit,
+    onArticleClick: (String) -> Unit,
     onLike: () -> Unit,
     onLongPressLike: () -> Unit,
     onRepost: () -> Unit,
@@ -1404,6 +1415,25 @@ private fun HeroNoteCard(
             // Media
             if (note.mediaURLs.isNotEmpty()) {
                 MediaPreviewRow(urls = note.mediaURLs)
+                Spacer(Modifier.height(12.dp))
+            }
+
+            // Quoted events. The reference itself is stripped out of the text
+            // above, so without this the focused note silently loses whatever
+            // it was quoting — on the one screen opened to read it in full.
+            for (qid in note.quotedEventIds) {
+                val quoted = quotedNotes[qid]
+                if (quoted != null) {
+                    QuotedNoteCard(
+                        note = quoted,
+                        profile = profiles[quoted.pubkey],
+                        profiles = profiles,
+                        onClick = onNoteClick,
+                        onArticleClick = onArticleClick,
+                    )
+                } else {
+                    QuotedNotePlaceholder(identifier = qid, onClick = onNoteClick)
+                }
                 Spacer(Modifier.height(12.dp))
             }
 
