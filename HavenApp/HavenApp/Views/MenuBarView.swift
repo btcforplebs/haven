@@ -18,7 +18,6 @@ struct MenuBarView: View {
     var isPoppedOut: Bool = false
     
     @ObservedObject private var nostrService = NostrService.shared
-    @State private var inactivityTask: Task<Void, Never>?
     @State private var statusPulse = false
     @State private var showingOwnProfile = false
     @State private var showingAccountSwitcher = false
@@ -904,17 +903,16 @@ struct MenuBarView: View {
             }
             #endif
         }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
-            // Service pausing moved to AppDelegate.startFocusLifecycleObservers().
-            // This view is now mounted only by the window scene, so an app sitting
-            // in the menu bar had no owner for it at all. Only the tab reset —
-            // which is genuinely this view's concern — stays here.
-            startInactivityTimer()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            // Service resuming moved to AppDelegate — see the resign handler above.
-            stopInactivityTimer()
-        }
+        // Service pausing/resuming on focus change is owned by
+        // AppDelegate.startFocusLifecycleObservers(); this view is mounted only
+        // by the window scene, so it is the wrong owner for app-wide lifecycle.
+        //
+        // The 60s "reset to the relay tab on resign" timer that used to live here
+        // is gone too. It was written for the menu bar dropdown, where returning
+        // to a status view after you look away is reasonable. That surface is now
+        // MenuBarStatusView and never used this timer. What was left was a window
+        // that silently threw away your tab if you spent a minute in another app —
+        // switch to Safari, come back, and Notes or Feed had become Relay.
         .onReceive(NotificationCenter.default.publisher(for: .havenOpenFeedRelaySettings)) { _ in
             selectedTab = .settings
         }
@@ -963,20 +961,6 @@ struct MenuBarView: View {
         }
     }
     
-    private func startInactivityTimer() {
-        inactivityTask?.cancel()
-        inactivityTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 60_000_000_000)
-            if !Task.isCancelled {
-                selectedTab = .relay
-            }
-        }
-    }
-
-    private func stopInactivityTimer() {
-        inactivityTask?.cancel()
-        inactivityTask = nil
-    }
 }
 
 struct SidebarTabButton: View {
