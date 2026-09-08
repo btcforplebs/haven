@@ -53,8 +53,12 @@ class LinkPreviewService {
         let dbDir = appSupport
             .appendingPathComponent("Haven", isDirectory: true)
             .appendingPathComponent("haven_database", isDirectory: true)
-        self.cacheDirectory = dbDir.appendingPathComponent("link_previews", isDirectory: true)
+        // v2: the v1 filenames were the first 32 characters of the URL, so every
+        // link sharing a prefix shared a cached preview. Those files can never be
+        // matched to a URL now, so the whole directory goes.
+        self.cacheDirectory = dbDir.appendingPathComponent("link_previews_v2", isDirectory: true)
         try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        try? FileManager.default.removeItem(at: dbDir.appendingPathComponent("link_previews", isDirectory: true))
 
         memoryCache.countLimit = 200
     }
@@ -249,10 +253,7 @@ class LinkPreviewService {
     // MARK: - Disk Cache
 
     private func cacheFilePath(for url: URL) -> URL {
-        let hash = url.absoluteString.data(using: .utf8)!
-            .map { String(format: "%02x", $0) }.joined()
-        let filename = String(hash.prefix(64)) // Truncate for filesystem sanity
-        return cacheDirectory.appendingPathComponent(filename + ".json")
+        cacheDirectory.appendingPathComponent(LinkPreviewCacheKey.filename(for: url))
     }
 
     private func loadFromDisk(for url: URL) -> LinkPreviewMetadata? {
