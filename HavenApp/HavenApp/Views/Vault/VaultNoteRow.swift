@@ -1,5 +1,18 @@
 import SwiftUI
 
+/// Measures a note body's fully unclamped height so `truncate` can tell
+/// whether its `lineLimit` actually cut anything, rather than guessing from
+/// character count.
+private struct FullTextHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+private struct ClampedTextHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
 struct NoteRow: View {
     let event: NostrEvent
     /// When true, clamp the body to a few lines and append a "Show more"
@@ -21,6 +34,16 @@ struct NoteRow: View {
     @State private var showingReposters = false
     @State private var showingQuoters = false
     @State private var isExpanded = false
+    // "Show more" used to key off `cleanContent.count > 240` — a proxy that
+    // disagreed with the real 8-line clamp in both directions: a short note
+    // with several newlines could wrap past 8 lines with no button, and a
+    // long one-paragraph note under the char threshold... no, over it but
+    // still fitting in 8 lines got a button that revealed nothing new.
+    // These track the note's actual rendered height clamped vs. unclamped,
+    // so the button only appears when the clamp is actually cutting text.
+    @State private var clampedContentHeight: CGFloat = 0
+    @State private var fullContentHeight: CGFloat = 0
+    private var isContentClamped: Bool { fullContentHeight > clampedContentHeight + 1 }
 
     var cleanContent: String {
         return event.content.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -216,6 +239,7 @@ struct NoteRow: View {
             ZStack {
                 Color.platformSecondaryGroupedBackground
                 Color.havenPurple.opacity(0.015)
+                Color.white.opacity(isHovered ? 0.04 : 0)
             }
         )
         .cornerRadius(10)
@@ -231,6 +255,11 @@ struct NoteRow: View {
                 )
         )
         .contentShape(Rectangle())
+        .animation(Motion.control, value: isHovered)
+        #if os(iOS)
+        .hoverEffect(.lift)
+        #endif
+        .onHover { isHovered = $0 }
     }
 
     // MARK: - Expanded Layout
@@ -301,14 +330,41 @@ struct NoteRow: View {
                 let links = event.linkURLs
 
                 if !cleanContent.isEmpty {
-                    Text(NostrContentFormatter.format(cleanContent, mediaURLs: urls))
-                        .font(.appSystem(size: contentFontSize, weight: .regular, design: .default))
-                        .foregroundColor(Color(red: 1, green: 1, blue: 1))
-                        .lineSpacing(2)
-                        .lineLimit(truncate && !isExpanded ? 8 : nil)
-                        .fixedSize(horizontal: false, vertical: true)
+                    let formattedContent = NostrContentFormatter.format(cleanContent, mediaURLs: urls)
+                    Group {
+                        if truncate {
+                            Text(formattedContent)
+                                .font(.appSystem(size: contentFontSize, weight: .regular, design: .default))
+                                .foregroundColor(Color(red: 1, green: 1, blue: 1))
+                                .lineSpacing(2)
+                                .lineLimit(isExpanded ? nil : 8)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .background(
+                                    Text(formattedContent)
+                                        .font(.appSystem(size: contentFontSize, weight: .regular, design: .default))
+                                        .lineSpacing(2)
+                                        .lineLimit(nil)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .hidden()
+                                        .background(GeometryReader { geo in
+                                            Color.clear.preference(key: FullTextHeightKey.self, value: geo.size.height)
+                                        })
+                                )
+                                .background(GeometryReader { geo in
+                                    Color.clear.preference(key: ClampedTextHeightKey.self, value: geo.size.height)
+                                })
+                                .onPreferenceChange(FullTextHeightKey.self) { fullContentHeight = $0 }
+                                .onPreferenceChange(ClampedTextHeightKey.self) { clampedContentHeight = $0 }
+                        } else {
+                            Text(formattedContent)
+                                .font(.appSystem(size: contentFontSize, weight: .regular, design: .default))
+                                .foregroundColor(Color(red: 1, green: 1, blue: 1))
+                                .lineSpacing(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
 
-                    if truncate && !isExpanded && cleanContent.count > 240 {
+                    if truncate && !isExpanded && isContentClamped {
                         Button(action: { withAnimation(Motion.panel) { isExpanded = true } }) {
                             Text("Show more")
                                 .font(.appSystem(size: 12, weight: .semibold, design: .monospaced))
@@ -360,6 +416,10 @@ struct NoteRow: View {
             ZStack {
                 Color.platformSecondaryGroupedBackground
                 Color.havenPurple.opacity(0.015)
+                // Zero mouse feedback on the app's densest, most-clicked element —
+                // `isHovered` was tracked and never read. Same tint level as
+                // ProfileResultRow's hover state, for one hover language app-wide.
+                Color.white.opacity(isHovered ? 0.04 : 0)
             }
         )
         .cornerRadius(12)
@@ -372,9 +432,11 @@ struct NoteRow: View {
                 )
         )
         .contentShape(RoundedRectangle(cornerRadius: 12))
+        .animation(Motion.control, value: isHovered)
         #if os(iOS)
         .hoverEffect(.lift)
         #endif
+        .onHover { isHovered = $0 }
         .clipped()
     }
 
@@ -480,8 +542,11 @@ struct NoteRow: View {
                                 .foregroundColor(.secondary.opacity(0.6))
                         }
                     }
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("\(uniqueReactors.count) reaction\(uniqueReactors.count == 1 ? "" : "s")")
             }
 
             // Reposts
@@ -505,8 +570,11 @@ struct NoteRow: View {
                             .font(.appSystem(size: 11, weight: .semibold, design: .monospaced))
                             .foregroundColor(.green.opacity(0.8))
                     }
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("\(uniqueReposters.count) repost\(uniqueReposters.count == 1 ? "" : "s")")
             }
 
             // Quotes
@@ -530,8 +598,11 @@ struct NoteRow: View {
                             .font(.appSystem(size: 11, weight: .semibold, design: .monospaced))
                             .foregroundColor(.blue.opacity(0.8))
                     }
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("\(uniqueQuoters.count) quote\(uniqueQuoters.count == 1 ? "" : "s")")
             }
 
             // Zaps
@@ -552,6 +623,8 @@ struct NoteRow: View {
                         .font(.appSystem(size: 11, weight: .semibold, design: .monospaced))
                         .foregroundColor(.orange.opacity(0.8))
                 }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Zapped \(Self.formatSats(totalSats)) by \(uniqueZapperPubkeys.count) \(uniqueZapperPubkeys.count == 1 ? "person" : "people")")
             }
 
             Spacer()

@@ -11,6 +11,10 @@ struct VaultView: View {
     @State var navigationPath = NavigationPath()
     @State var committedSearch = ""
     @State var searchScope: SearchScope = .notes
+    /// Whether the search field is showing. `committedSearch` had no control
+    /// anywhere that ever set it — the entire search feature was unreachable.
+    @State var isSearchActive = false
+    @State var searchQueryDraft = ""
     @State var displayProfileResults: [FeedProfile] = []
     @State var viewMode: ViewMode = .notes
 
@@ -570,8 +574,11 @@ struct VaultView: View {
                     zapsFilterView
                 }
 
+                searchToggleButton
                 compactToggleButton
             }
+
+            searchBar
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal)
@@ -590,6 +597,7 @@ struct VaultView: View {
                     HStack {
                         modeView
                         Spacer()
+                        searchToggleButton
                     }
                     if viewMode == .notes {
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -604,19 +612,24 @@ struct VaultView: View {
                             zapsFilterView
                         }
                     }
+                    searchBar
                 }
             } else {
-                HStack {
-                    modeView
-                    Spacer()
-                    if viewMode == .notes {
-                        filterView
-                    } else if viewMode == .likes {
-                        likesFilterView
-                    } else if viewMode == .zaps {
-                        zapsFilterView
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack {
+                        modeView
+                        Spacer()
+                        if viewMode == .notes {
+                            filterView
+                        } else if viewMode == .likes {
+                            likesFilterView
+                        } else if viewMode == .zaps {
+                            zapsFilterView
+                        }
+                        searchToggleButton
+                        compactToggleButton
                     }
-                    compactToggleButton
+                    searchBar
                 }
             }
             #endif
