@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"math"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/fiatjaf/eventstore"
 	"github.com/nbd-wtf/go-nostr"
+
+	"github.com/barrydeen/haven/pkg/wot"
 )
 
 // PopularNote holds a note with its computed popularity score.
@@ -37,9 +40,16 @@ var (
 )
 
 const (
-	// A note must have engagement from this many *different* pubkeys (not
-	// counting its own author) before it can appear in the Popular feed.
-	minDistinctReactors = 5
+	// A note must have engagement from this many *different* trusted pubkeys
+	// (not counting its own author) before it can appear in the Popular feed.
+	//
+	// It was 5 while any account's reaction counted. Now that only accounts
+	// inside the owner's web of trust do, the pool is far smaller — measured
+	// on the shipped seed relays, 7.7% of the accounts reacting to anything in
+	// a day were inside the graph — and the bar is harder to clear at the same
+	// number. Five strangers are trivial to manufacture; three people your
+	// follows follow are not.
+	minTrustedReactors = 3
 
 	// Most notes any one author may contribute to a single Popular result set.
 	maxNotesPerAuthor = 3
@@ -261,7 +271,7 @@ func missingIDs(ids []string, found map[string]*nostr.Event) []string {
 // scoreNotes applies the author-exclusion, floor, decay and per-author cap to
 // resolved notes. Split out of computePopularNotes so a test can drive the
 // exact scoring the app sees without a relay pool.
-func scoreNotes(events []*nostr.Event, tally map[string]map[string]float64, now time.Time) []PopularNote {
+func scoreNotes(events []*nostr.Event, tally map[string]map[string]float64, floor int, now time.Time) []PopularNote {
 	var results []PopularNote
 	seen := make(map[string]struct{}, len(events))
 	for _, ev := range events {
@@ -274,7 +284,7 @@ func scoreNotes(events []*nostr.Event, tally map[string]map[string]float64, now 
 		// dropping it can put the note back under the floor — an author plus
 		// four friends is not the same signal as five independent people.
 		rawScore, distinct := scoreExcludingAuthor(tally[ev.ID], ev.PubKey)
-		if distinct < minDistinctReactors {
+		if distinct < floor {
 			continue
 		}
 
@@ -312,6 +322,59 @@ func scoreNotes(events []*nostr.Event, tally map[string]map[string]float64, now 
 	return capPerAuthor(results, maxNotesPerAuthor)
 }
 
+// trustGraph returns the owner's web of trust when it is usable.
+//
+// Why the gate is on the reactors rather than the authors: measured against
+// the shipped seed relays on 2026-09-09, 95 of the top 100 Popular notes were
+// one campaign — 13 accounts posting "In this week's issue", boosted by 6,467
+// accounts of which **two** were inside the owner's graph, while 73 of the 75
+// accounts boosting the five genuine notes were. Gating on the author would
+// have caught half of it at best: 6 of those 13 authors are already inside the
+// graph, because somebody the owner follows follows them. What a manufactured
+// audience cannot fake is being known to the people you actually know.
+func trustGraph(ctx context.Context) (wot.Model, bool) {
+	model := wot.GetInstance()
+	if model == nil || !trustGraphUsable(ctx, model) {
+		return nil, false
+	}
+	return model, true
+}
+
+// filterToTrusted drops engagement from accounts outside the graph, and with
+// it any note left with no trusted engagement at all.
+func filterToTrusted(ctx context.Context, model wot.Model, tally map[string]map[string]float64) map[string]map[string]float64 {
+	trusted := make(map[string]map[string]float64, len(tally))
+	for target, reactors := range tally {
+		kept := make(map[string]float64, len(reactors))
+		for pk, w := range reactors {
+			if model.Has(ctx, pk) {
+				kept[pk] = w
+			}
+		}
+		if len(kept) > 0 {
+			trusted[target] = kept
+		}
+	}
+	return trusted
+}
+
+// trustGraphUsable reports whether the model can actually answer questions.
+//
+// Has() returns false for everything both when a pubkey is untrusted and when
+// the graph has not been built yet, so a size check is needed to tell a cold
+// start from a world of strangers. A model that answers true for a pubkey
+// nobody has ever seen is one with the graph disabled (WOT_DEPTH=0), which is
+// a deliberate configuration: the gate is then a no-op rather than a wall.
+func trustGraphUsable(ctx context.Context, model wot.Model) bool {
+	if sized, ok := model.(interface{ Size() int }); ok && sized.Size() > 0 {
+		return true
+	}
+	var nobody [32]byte
+	nobody[0] = 0x0f
+	nobody[31] = 0xf0
+	return model.Has(ctx, hex.EncodeToString(nobody[:]))
+}
+
 // computePopularNotes answers the Popular feed.
 //
 // It reads the rolling tally the always-on subscription has been filling
@@ -331,6 +394,17 @@ func computePopularNotes(ctx context.Context) ([]PopularNote, error) {
 	}
 	popularCacheMu.Unlock()
 
+	// Fails closed, and before anything expensive. An unusable graph means the
+	// only feed we could build is the open firehose, which is how the spam got
+	// in — the Global feed makes the same call, and its comment records that
+	// firehose as measuring two thirds spam. The relay writes a graph shortly
+	// after first launch.
+	model, gated := trustGraph(ctx)
+	if !gated {
+		log.Println("popular: trust graph not ready, withholding the feed")
+		return []PopularNote{}, nil
+	}
+
 	tally := popularTally.snapshot(now)
 	coverage := popularTally.coverage(now)
 
@@ -347,9 +421,19 @@ func computePopularNotes(ctx context.Context) ([]PopularNote, error) {
 		return []PopularNote{}, nil
 	}
 
-	ranked := rankTargets(tally, minDistinctReactors)
-	log.Printf("popular: %d candidate notes, %d eligible at %d distinct reactors (coverage %.0f%%, %s)",
-		len(tally), len(ranked), minDistinctReactors, coverage*100,
+	// Only engagement from inside the owner's web of trust counts. Without
+	// this the feed is whatever the largest bot pool decided to promote.
+	raw := len(tally)
+	tally = filterToTrusted(ctx, model, tally)
+	floor := minTrustedReactors
+
+	if len(tally) == 0 {
+		return []PopularNote{}, nil
+	}
+
+	ranked := rankTargets(tally, floor)
+	log.Printf("popular: %d candidate notes (%d before the trust gate), %d eligible at %d trusted reactors (coverage %.0f%%, %s)",
+		len(tally), raw, len(ranked), floor, coverage*100,
 		map[bool]string{true: "local", false: "backfilled"}[local])
 	if len(ranked) == 0 {
 		return []PopularNote{}, nil
@@ -363,7 +447,7 @@ func computePopularNotes(ctx context.Context) ([]PopularNote, error) {
 		topIDs[i] = r.id
 	}
 
-	results := scoreNotes(resolveNoteBodies(ctx, topIDs), tally, now)
+	results := scoreNotes(resolveNoteBodies(ctx, topIDs), tally, floor, now)
 
 	ttl := popularCacheTTL
 	if local {

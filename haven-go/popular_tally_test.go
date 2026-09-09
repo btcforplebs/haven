@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/nbd-wtf/go-nostr"
+
+	"github.com/barrydeen/haven/pkg/wot"
 )
 
 func engagement(kind int, reactor, target string, at time.Time) *nostr.Event {
@@ -65,8 +67,8 @@ func TestTallyRankingMatchesBatch(t *testing.T) {
 		t.Fatalf("bucketed tally disagrees with batch map:\n%d targets vs %d", len(batch), len(merged))
 	}
 
-	wantRanked := rankTargets(batch, minDistinctReactors)
-	gotRanked := rankTargets(merged, minDistinctReactors)
+	wantRanked := rankTargets(batch, minTrustedReactors)
+	gotRanked := rankTargets(merged, minTrustedReactors)
 	if !reflect.DeepEqual(wantRanked, gotRanked) {
 		t.Fatalf("ranking differs: batch %v vs tally %v", wantRanked, gotRanked)
 	}
@@ -207,8 +209,8 @@ func TestSnapshotRoundTripPreservesRanking(t *testing.T) {
 	restored := newEngagementTally()
 	restored.load(path, now)
 
-	want := rankTargets(original.snapshot(now), minDistinctReactors)
-	got := rankTargets(restored.snapshot(now), minDistinctReactors)
+	want := rankTargets(original.snapshot(now), minTrustedReactors)
+	got := rankTargets(restored.snapshot(now), minTrustedReactors)
 	if len(want) == 0 {
 		t.Fatal("test data produced no eligible notes — it would pass vacuously")
 	}
@@ -414,7 +416,7 @@ func TestTallyConcurrentAccess(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < 200; i++ {
-				_ = rankTargets(tally.snapshot(now), minDistinctReactors)
+				_ = rankTargets(tally.snapshot(now), minTrustedReactors)
 				_ = tally.coverage(now)
 				tally.stats(now)
 			}
@@ -484,6 +486,10 @@ func withStubbedFetch(t *testing.T, hours int) *bool {
 	popularTally = newEngagementTally()
 	pool = nil
 	config.ImportSeedRelays = nil
+	// Install a graph explicitly: the wot instance is process-wide and other
+	// test files install their own, so inheriting whatever ran first makes
+	// these tests pass or fail on ordering rather than on the code.
+	wot.MarkReady(wot.NewCycle(), stubWot{allow: true})
 	popularCacheMu.Lock()
 	popularCache, popularCacheExpiry = nil, time.Time{}
 	popularCacheMu.Unlock()
@@ -497,7 +503,7 @@ func withStubbedFetch(t *testing.T, hours int) *bool {
 	for hour := 0; hour < hours; hour++ {
 		at := now.Add(-time.Duration(hour)*time.Hour - time.Minute)
 		for target := 0; target < popularBucketMinTargets; target++ {
-			for reactor := 0; reactor < minDistinctReactors+1; reactor++ {
+			for reactor := 0; reactor < minTrustedReactors+1; reactor++ {
 				tgt := fmt.Sprintf("note%d-%d", hour, target)
 				popularTally.add(engagement(7, fmt.Sprintf("pk%d", reactor), tgt, at), now)
 			}

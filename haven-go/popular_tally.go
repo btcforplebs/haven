@@ -166,7 +166,7 @@ func (t *engagementTally) add(ev *nostr.Event, now time.Time) {
 
 // dropSingletonsLocked frees room by discarding targets only one person
 // engaged with, oldest hour first. Those are ~78% of the map and cannot reach
-// minDistinctReactors before their hour rolls out of the window anyway.
+// minTrustedReactors before their hour rolls out of the window anyway.
 // Reports whether it freed anything.
 func (t *engagementTally) dropSingletonsLocked() bool {
 	indexes := make([]int64, 0, len(t.buckets))
