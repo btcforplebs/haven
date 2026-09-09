@@ -1,8 +1,11 @@
 package com.nostrvault.ui.screens.dashboard
 
+import android.widget.Toast
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -12,6 +15,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -22,6 +30,7 @@ import com.nostrvault.ui.theme.*
 @Composable
 fun RelayStatusHeader(
     relayStatus: RelayStatus,
+    relayAddress: String?,
     isLocked: Boolean,
     isPortConflict: Boolean,
     onStartRelay: () -> Unit,
@@ -31,6 +40,8 @@ fun RelayStatusHeader(
     onClearLocks: () -> Unit,
 ) {
     val colors = LocalNostrVaultColors.current
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
 
     val statusColor = when (relayStatus) {
         RelayStatus.RUNNING -> SuccessGreen
@@ -100,6 +111,23 @@ fun RelayStatusHeader(
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace,
                     )
+
+                    // The single most useful thing on a screen named after the
+                    // relay: where it actually is. Was nowhere on this screen.
+                    if (relayAddress != null) {
+                        Text(
+                            text = relayAddress,
+                            color = SecondaryText,
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier
+                                .clickable {
+                                    clipboard.setText(AnnotatedString(relayAddress))
+                                    Toast.makeText(context, "Address copied", Toast.LENGTH_SHORT).show()
+                                }
+                                .semantics { contentDescription = "Relay address: $relayAddress. Tap to copy." },
+                        )
+                    }
                 }
 
                 // Control button
@@ -122,18 +150,36 @@ fun RelayStatusHeader(
                         }
                     }
                     RelayStatus.RUNNING -> {
-                        OutlinedButton(
-                            onClick = onRestartRelay,
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                        ) {
-                            Icon(
-                                NostrVaultIcons.Refresh,
-                                contentDescription = null,
-                                tint = colors.primary,
-                                modifier = Modifier.size(16.dp),
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text("Restart", fontSize = 13.sp, color = colors.primary)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            // Stop was already reachable from Advanced Settings and
+                            // the persistent notification, just not from the screen
+                            // named after the relay.
+                            OutlinedButton(
+                                onClick = onStopRelay,
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                            ) {
+                                Icon(
+                                    NostrVaultIcons.Stop,
+                                    contentDescription = null,
+                                    tint = SecondaryText,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text("Stop", fontSize = 13.sp, color = SecondaryText)
+                            }
+                            OutlinedButton(
+                                onClick = onRestartRelay,
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                            ) {
+                                Icon(
+                                    NostrVaultIcons.Refresh,
+                                    contentDescription = null,
+                                    tint = colors.primary,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text("Restart", fontSize = 13.sp, color = colors.primary)
+                            }
                         }
                     }
                     RelayStatus.BOOTING, RelayStatus.IMPORTING -> {
