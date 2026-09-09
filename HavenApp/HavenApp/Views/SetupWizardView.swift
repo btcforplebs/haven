@@ -11,7 +11,12 @@ enum WizardColors {
     static let textPrimary = Color(red: 0.980, green: 0.980, blue: 0.980)     // #FAFAFA
     static let textSecondary = Color(red: 0.631, green: 0.631, blue: 0.667)   // #A1A1AA
     static let textMuted = Color(red: 0.443, green: 0.443, blue: 0.478)       // #71717A
-    static let borderSubtle = Color(red: 0.153, green: 0.153, blue: 0.165)    // #27272A
+    /// Was #27272A — identical to `bgElevated`, so any control stroked in it while
+    /// sitting on an elevated row had 1:1 contrast and was invisible (the unselected
+    /// follow checkbox). `Color.borderStrong` (white 36%) is the token `Theming.swift`
+    /// defines for exactly this case: a border that is the only cue for a control.
+    /// 3.23:1 against `bgElevated`, 3.75:1 against `bgCard`.
+    static let borderSubtle = Color.borderStrong
     static let borderActive = Color(red: 0.961, green: 0.620, blue: 0.043).opacity(0.5)
     static let success = Color(red: 0.133, green: 0.773, blue: 0.369)         // #22C55E
     static let error = Color(red: 0.937, green: 0.267, blue: 0.267)           // #EF4444
@@ -78,7 +83,7 @@ struct WizardPrimaryButton: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 16, weight: .semibold))
+                .font(.appSystem(size: 16, weight: .semibold))
                 .foregroundColor(WizardColors.textPrimary)
                 .frame(maxWidth: isIOSDevice ? .infinity : nil, minHeight: 44)
                 .padding(.horizontal, isIOSDevice ? 0 : 32)
@@ -106,7 +111,7 @@ private struct WizardSkipLink: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 14))
+                .font(.appSystem(size: 14))
                 .foregroundColor(WizardColors.textMuted)
         }
         .buttonStyle(.plain)
@@ -143,7 +148,7 @@ private struct WizardInputField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(label)
-                .font(.system(size: 13))
+                .font(.appSystem(size: 13))
                 .foregroundColor(WizardColors.textSecondary)
 
             HStack(spacing: 8) {
@@ -155,7 +160,7 @@ private struct WizardInputField: View {
                     }
                 }
                 .textFieldStyle(.plain)
-                .font(.system(size: 15))
+                .font(.appSystem(size: 15))
                 .foregroundColor(WizardColors.textPrimary)
                 .focused($isFocused)
                 .disabled(isDisabled)
@@ -164,7 +169,7 @@ private struct WizardInputField: View {
                 if let onScan {
                     Button(action: onScan) {
                         Image(systemName: "qrcode.viewfinder")
-                            .font(.system(size: 20))
+                            .font(.appSystem(size: 20))
                             .foregroundColor(WizardColors.accentPrimary)
                             .frame(width: 36, height: 36)
                             .background(WizardColors.bgElevated)
@@ -248,28 +253,26 @@ struct SetupWizardView: View {
         case forward, backward
     }
 
-    // Compute visible steps based on path and platform
-    private var totalVisibleSteps: Int {
+    // Map of actual step numbers to dot positions, one array per path. Single
+    // source of truth for both the dot count and the highlighted index — they
+    // used to be maintained separately (a literal count here, a duplicate
+    // array in currentDotIndex) and drifted apart, undercounting the real
+    // step total by one on three of the four paths (browse: 4 vs 5 steps;
+    // full iOS: 8 vs 9; full macOS: 7 vs 8) so the dots ran out before the
+    // wizard did.
+    private var pathSteps: [Int] {
         switch setupPath {
-        case .none: return 3 // welcome, path, identity
-        case .browse: return 4 // welcome, path, identity, import, done (4 dots, last = complete)
-        case .newToNostr: return 5 // welcome, path, intro, follows, done
-        case .full: return isIOSDevice ? 8 : 7  // welcome, path, identity, relay, import, media, wallet, (notif), done
+        case .none: return [0, 1, 2] // welcome, path, identity
+        case .browse: return [0, 1, 2, 4, 8] // welcome, path, identity, import, done
+        case .newToNostr: return [0, 1, 9, 10, 8] // welcome, path, intro, follows, done
+        case .full: return isIOSDevice ? [0, 1, 2, 3, 4, 5, 6, 7, 8] : [0, 1, 2, 3, 4, 5, 6, 8]
         }
     }
 
+    private var totalVisibleSteps: Int { pathSteps.count }
+
     private var currentDotIndex: Int {
-        // Map actual step numbers to dot indices
-        let fullSteps: [Int] = isIOSDevice ? [0, 1, 2, 3, 4, 5, 6, 7, 8] : [0, 1, 2, 3, 4, 5, 6, 8]
-        let browseSteps: [Int] = [0, 1, 2, 4, 8]
-        let newUserSteps: [Int] = [0, 1, 9, 10, 8]
-        let steps: [Int]
-        switch setupPath {
-        case .browse: steps = browseSteps
-        case .newToNostr: steps = newUserSteps
-        default: steps = fullSteps
-        }
-        return steps.firstIndex(of: currentStep) ?? 0
+        pathSteps.firstIndex(of: currentStep) ?? 0
     }
 
     var body: some View {
@@ -289,7 +292,7 @@ struct SetupWizardView: View {
                                 Image(systemName: "chevron.left")
                                 Text(String(localized: "setup.nav.back"))
                             }
-                            .font(.system(size: 14, weight: .medium))
+                            .font(.appSystem(size: 14, weight: .medium))
                             .foregroundColor(WizardColors.textMuted)
                         }
                         .buttonStyle(.plain)
@@ -540,7 +543,7 @@ struct SetupWizardView: View {
 
             VStack(spacing: 20) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 48))
+                    .font(.appSystem(size: 48))
                     .foregroundColor(WizardColors.accentPrimary)
 
                 VStack(spacing: 6) {
@@ -556,7 +559,7 @@ struct SetupWizardView: View {
 
                 HStack(spacing: 8) {
                     Text("pkill -9 haven")
-                        .font(.system(size: 14, weight: .medium, design: .monospaced))
+                        .font(.appSystem(size: 14, weight: .medium, design: .monospaced))
                         .foregroundColor(WizardColors.textPrimary)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
@@ -571,7 +574,7 @@ struct SetupWizardView: View {
                         PlatformClipboard.copy("pkill -9 haven")
                     }) {
                         Image(systemName: "doc.on.doc")
-                            .font(.system(size: 14))
+                            .font(.appSystem(size: 14))
                             .foregroundColor(WizardColors.textPrimary)
                             .frame(width: 36, height: 36)
                             .background(WizardColors.accentPrimary)
@@ -623,7 +626,7 @@ private struct WelcomeStepView: View {
 
             // App icon
             Image(systemName: "shield.checkered")
-                .font(.system(size: 64, weight: .light))
+                .font(.appSystem(size: 64, weight: .light))
                 .foregroundStyle(WizardColors.accentGradient)
                 .scaleEffect(appeared ? 1.0 : 0.8)
                 .opacity(appeared ? 1 : 0)
@@ -631,7 +634,7 @@ private struct WelcomeStepView: View {
 
             // Title
             Text(String(localized: "setup.welcome.appName"))
-                .font(.system(size: isIOSDevice ? 32 : 36, weight: .bold, design: .default))
+                .font(.appSystem(size: isIOSDevice ? 32 : 36, weight: .bold, design: .default))
                 .foregroundColor(WizardColors.textPrimary)
                 .opacity(appeared ? 1 : 0)
                 .offset(y: appeared ? 0 : 10)
@@ -642,7 +645,7 @@ private struct WelcomeStepView: View {
                 Text(String(localized: "setup.welcome.subtitle1"))
                 Text(String(localized: "setup.welcome.subtitle2"))
             }
-            .font(.system(size: isIOSDevice ? 15 : 16))
+            .font(.appSystem(size: isIOSDevice ? 15 : 16))
             .foregroundColor(WizardColors.textSecondary)
             .multilineTextAlignment(.center)
             .opacity(appeared ? 1 : 0)
@@ -673,17 +676,17 @@ private struct WelcomeStepView: View {
     private func featureCard(icon: String, title: String, line: String) -> some View {
         HStack(spacing: 14) {
             Image(systemName: icon)
-                .font(.system(size: 20))
+                .font(.appSystem(size: 20))
                 .foregroundColor(WizardColors.accentPrimary)
                 .shadow(color: WizardColors.accentGlow, radius: 4)
                 .frame(width: 36)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: isIOSDevice ? 15 : 16, weight: .semibold))
+                    .font(.appSystem(size: isIOSDevice ? 15 : 16, weight: .semibold))
                     .foregroundColor(WizardColors.textPrimary)
                 Text(line)
-                    .font(.system(size: isIOSDevice ? 13 : 14))
+                    .font(.appSystem(size: isIOSDevice ? 13 : 14))
                     .foregroundColor(WizardColors.textSecondary)
             }
 
@@ -711,7 +714,7 @@ private struct ChoosePathStep: View {
             Spacer().frame(height: 40)
 
             Text(String(localized: "setup.path.title"))
-                .font(.system(size: isIOSDevice ? 24 : 28, weight: .semibold))
+                .font(.appSystem(size: isIOSDevice ? 24 : 28, weight: .semibold))
                 .foregroundColor(WizardColors.textPrimary)
                 .multilineTextAlignment(.center)
                 .opacity(appeared ? 1 : 0)
@@ -724,14 +727,14 @@ private struct ChoosePathStep: View {
                     WizardGlassCard(isSelected: selectedPath == .newToNostr) {
                         HStack(alignment: .top, spacing: 14) {
                             Image(systemName: "sparkles")
-                                .font(.system(size: 28))
+                                .font(.appSystem(size: 28))
                                 .foregroundColor(selectedPath == .newToNostr ? WizardColors.accentPrimary : WizardColors.textSecondary)
                                 .frame(width: 36)
 
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack {
                                     Text("New to Nostr")
-                                        .font(.system(size: 18, weight: .semibold))
+                                        .font(.appSystem(size: 18, weight: .semibold))
                                         .foregroundColor(WizardColors.textPrimary)
                                     Spacer()
                                     if selectedPath == .newToNostr {
@@ -741,7 +744,7 @@ private struct ChoosePathStep: View {
                                     }
                                 }
                                 Text("Quick start -- we'll set everything up for you")
-                                    .font(.system(size: 14))
+                                    .font(.appSystem(size: 14))
                                     .foregroundColor(WizardColors.textSecondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
@@ -759,14 +762,14 @@ private struct ChoosePathStep: View {
                     WizardGlassCard(isSelected: selectedPath == .full) {
                         HStack(alignment: .top, spacing: 14) {
                             Image(systemName: "key.fill")
-                                .font(.system(size: 28))
+                                .font(.appSystem(size: 28))
                                 .foregroundColor(selectedPath == .full ? WizardColors.accentPrimary : WizardColors.textSecondary)
                                 .frame(width: 36)
 
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack {
                                     Text(String(localized: "setup.path.full.title"))
-                                        .font(.system(size: 18, weight: .semibold))
+                                        .font(.appSystem(size: 18, weight: .semibold))
                                         .foregroundColor(WizardColors.textPrimary)
                                     Spacer()
                                     if selectedPath == .full {
@@ -776,7 +779,7 @@ private struct ChoosePathStep: View {
                                     }
                                 }
                                 Text(String(localized: "setup.path.full.description"))
-                                    .font(.system(size: 14))
+                                    .font(.appSystem(size: 14))
                                     .foregroundColor(WizardColors.textSecondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
@@ -794,14 +797,14 @@ private struct ChoosePathStep: View {
                     WizardGlassCard(isSelected: selectedPath == .browse) {
                         HStack(alignment: .top, spacing: 14) {
                             Image(systemName: "eye.fill")
-                                .font(.system(size: 28))
+                                .font(.appSystem(size: 28))
                                 .foregroundColor(selectedPath == .browse ? WizardColors.accentPrimary : WizardColors.textSecondary)
                                 .frame(width: 36)
 
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack {
                                     Text(String(localized: "setup.path.browse.title"))
-                                        .font(.system(size: 18, weight: .semibold))
+                                        .font(.appSystem(size: 18, weight: .semibold))
                                         .foregroundColor(WizardColors.textPrimary)
                                     Spacer()
                                     if selectedPath == .browse {
@@ -811,7 +814,7 @@ private struct ChoosePathStep: View {
                                     }
                                 }
                                 Text(String(localized: "setup.path.browse.description"))
-                                    .font(.system(size: 14))
+                                    .font(.appSystem(size: 14))
                                     .foregroundColor(WizardColors.textSecondary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
@@ -860,12 +863,12 @@ private struct NostrIntroStep: View {
             WizardGlassCard(isSelected: false) {
                 VStack(spacing: 12) {
                     Text("Welcome to Nostr")
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(.appSystem(size: 20, weight: .semibold))
                         .foregroundColor(WizardColors.textPrimary)
                         .multilineTextAlignment(.center)
 
                     Text("Nostr is an open social protocol. You own your identity through a cryptographic keypair -- no company controls your account. Your posts are broadcast to relays and can be read by anyone.")
-                        .font(.system(size: 15))
+                        .font(.appSystem(size: 15))
                         .foregroundColor(WizardColors.textSecondary)
                         .multilineTextAlignment(.center)
                         .lineSpacing(4)
@@ -879,12 +882,12 @@ private struct NostrIntroStep: View {
             WizardGlassCard(isSelected: false) {
                 VStack(spacing: 12) {
                     Text("Your Personal Archive")
-                        .font(.system(size: 20, weight: .semibold))
+                        .font(.appSystem(size: 20, weight: .semibold))
                         .foregroundColor(WizardColors.textPrimary)
                         .multilineTextAlignment(.center)
 
                     Text("Nostr Vault runs a HAVEN relay right on your device. Every note, message, and media file you interact with is archived locally. Your data stays with you -- not on someone else's server.")
-                        .font(.system(size: 15))
+                        .font(.appSystem(size: 15))
                         .foregroundColor(WizardColors.textSecondary)
                         .multilineTextAlignment(.center)
                         .lineSpacing(4)
@@ -899,11 +902,11 @@ private struct NostrIntroStep: View {
                 WizardGlassCard(isSelected: false) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Your Secret Key")
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(.appSystem(size: 16, weight: .semibold))
                             .foregroundColor(WizardColors.textPrimary)
 
                         Text("Save this somewhere safe. It's the only way to recover your account. Anyone with this key can post as you.")
-                            .font(.system(size: 13))
+                            .font(.appSystem(size: 13))
                             .foregroundColor(WizardColors.textSecondary)
                             .lineSpacing(2)
 
@@ -916,7 +919,7 @@ private struct NostrIntroStep: View {
                             #endif
                         } label: {
                             Text(nsec)
-                                .font(.system(size: 12, design: .monospaced))
+                                .font(.appSystem(size: 12, design: .monospaced))
                                 .foregroundColor(WizardColors.accentPrimary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(12)
@@ -930,7 +933,7 @@ private struct NostrIntroStep: View {
                         .buttonStyle(.plain)
 
                         Text("Tap to copy")
-                            .font(.system(size: 11))
+                            .font(.appSystem(size: 11))
                             .foregroundColor(WizardColors.textMuted)
                     }
                 }
@@ -940,11 +943,11 @@ private struct NostrIntroStep: View {
                 WizardGlassCard(isSelected: false) {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Protect Your Key")
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(.appSystem(size: 16, weight: .semibold))
                             .foregroundColor(WizardColors.textPrimary)
 
                         Text("Set a password to encrypt your private key. You'll need this password to use Haven.")
-                            .font(.system(size: 13))
+                            .font(.appSystem(size: 13))
                             .foregroundColor(WizardColors.textSecondary)
                             .lineSpacing(2)
 
@@ -952,13 +955,13 @@ private struct NostrIntroStep: View {
                             HStack {
                                 if showPassword {
                                     TextField("Password (minimum 8 characters)", text: $keyPassword)
-                                        .font(.system(size: 14))
+                                        .font(.appSystem(size: 14))
                                         .foregroundColor(WizardColors.textPrimary)
                                         .textFieldStyle(.plain)
                                         .disableAutocorrection(true)
                                 } else {
                                     SecureField("Password (minimum 8 characters)", text: $keyPassword)
-                                        .font(.system(size: 14))
+                                        .font(.appSystem(size: 14))
                                         .foregroundColor(WizardColors.textPrimary)
                                         .textFieldStyle(.plain)
                                         .disableAutocorrection(true)
@@ -967,7 +970,7 @@ private struct NostrIntroStep: View {
                                     showPassword.toggle()
                                 } label: {
                                     Image(systemName: showPassword ? "eye.slash" : "eye")
-                                        .font(.system(size: 14))
+                                        .font(.appSystem(size: 14))
                                         .foregroundColor(WizardColors.textMuted)
                                 }
                                 .buttonStyle(.plain)
@@ -982,7 +985,7 @@ private struct NostrIntroStep: View {
 
                             if showPassword {
                                 TextField("Confirm password", text: $confirmPassword)
-                                    .font(.system(size: 14))
+                                    .font(.appSystem(size: 14))
                                     .foregroundColor(WizardColors.textPrimary)
                                     .textFieldStyle(.plain)
                                     .disableAutocorrection(true)
@@ -995,7 +998,7 @@ private struct NostrIntroStep: View {
                                     )
                             } else {
                                 SecureField("Confirm password", text: $confirmPassword)
-                                    .font(.system(size: 14))
+                                    .font(.appSystem(size: 14))
                                     .foregroundColor(WizardColors.textPrimary)
                                     .textFieldStyle(.plain)
                                     .disableAutocorrection(true)
@@ -1012,9 +1015,9 @@ private struct NostrIntroStep: View {
                         if !keyPassword.isEmpty && keyPassword.count < 8 {
                             HStack(spacing: 4) {
                                 Image(systemName: "exclamationmark.circle")
-                                    .font(.system(size: 12))
+                                    .font(.appSystem(size: 12))
                                 Text("Password must be at least 8 characters")
-                                    .font(.system(size: 12))
+                                    .font(.appSystem(size: 12))
                             }
                             .foregroundColor(WizardColors.error)
                         }
@@ -1022,9 +1025,9 @@ private struct NostrIntroStep: View {
                         if !confirmPassword.isEmpty && keyPassword != confirmPassword {
                             HStack(spacing: 4) {
                                 Image(systemName: "exclamationmark.circle")
-                                    .font(.system(size: 12))
+                                    .font(.appSystem(size: 12))
                                 Text("Passwords do not match")
-                                    .font(.system(size: 12))
+                                    .font(.appSystem(size: 12))
                             }
                             .foregroundColor(WizardColors.error)
                         }
@@ -1042,7 +1045,7 @@ private struct NostrIntroStep: View {
                         Image(systemName: "exclamationmark.triangle")
                             .font(.caption)
                         Text(errorText)
-                            .font(.system(size: 13))
+                            .font(.appSystem(size: 13))
                     }
                     .foregroundColor(WizardColors.error)
                 }
@@ -1176,15 +1179,15 @@ private struct IdentityStepView: View {
             Spacer().frame(height: 20)
 
             Text(isBrowseMode ? String(localized: "setup.identity.title.browse") : String(localized: "setup.identity.title.full"))
-                .font(.system(size: isIOSDevice ? 24 : 28, weight: .semibold))
+                .font(.appSystem(size: isIOSDevice ? 24 : 28, weight: .semibold))
                 .foregroundColor(WizardColors.textPrimary)
                 .opacity(appeared ? 1 : 0)
                 .offset(y: appeared ? 0 : 10)
                 .animation(WizardAnimations.springEnter.delay(0.1), value: appeared)
 
             if isBrowseMode {
-                Text("Enter your npub, NIP-05 (user@domain), or scan a QR code.")
-                    .font(.system(size: 15))
+                Text(isIOSDevice ? "Enter your npub, NIP-05 (user@domain), or scan a QR code." : "Enter your npub or NIP-05 (user@domain).")
+                    .font(.appSystem(size: 15))
                     .foregroundColor(WizardColors.textSecondary)
                     .multilineTextAlignment(.center)
                     .opacity(appeared ? 1 : 0)
@@ -1195,13 +1198,13 @@ private struct IdentityStepView: View {
                 // Browse mode: unified identity input (npub / NIP-05 / QR)
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Identity")
-                        .font(.system(size: 13))
+                        .font(.appSystem(size: 13))
                         .foregroundColor(WizardColors.textSecondary)
 
                     HStack(spacing: 8) {
                         TextField("npub1... or user@domain.com", text: $identityInput)
                             .textFieldStyle(.plain)
-                            .font(.system(size: 15))
+                            .font(.appSystem(size: 15))
                             .foregroundColor(WizardColors.textPrimary)
                             .autocorrectionDisabled()
                             #if os(iOS)
@@ -1250,7 +1253,7 @@ private struct IdentityStepView: View {
                         #if os(iOS)
                         Button(action: { activeScanner = .identity }) {
                             Image(systemName: "qrcode.viewfinder")
-                                .font(.system(size: 20))
+                                .font(.appSystem(size: 20))
                                 .foregroundColor(WizardColors.accentPrimary)
                                 .frame(width: 36, height: 36)
                                 .background(WizardColors.bgElevated)
@@ -1278,7 +1281,7 @@ private struct IdentityStepView: View {
                             .controlSize(.small)
                             .tint(WizardColors.accentPrimary)
                         Text("Resolving NIP-05...")
-                            .font(.system(size: 13))
+                            .font(.appSystem(size: 13))
                             .foregroundColor(WizardColors.textSecondary)
                     }
                 } else if let resolved = resolvedFromNIP05 {
@@ -1286,7 +1289,7 @@ private struct IdentityStepView: View {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundColor(WizardColors.success)
                         Text("Resolved: \(String(resolved.prefix(20)))...")
-                            .font(.system(size: 13))
+                            .font(.appSystem(size: 13))
                             .foregroundColor(WizardColors.success)
                     }
                 } else if let error = nip05Error {
@@ -1294,7 +1297,7 @@ private struct IdentityStepView: View {
                         Image(systemName: "exclamationmark.triangle")
                             .font(.caption)
                         Text(error)
-                            .font(.system(size: 13))
+                            .font(.appSystem(size: 13))
                     }
                     .foregroundColor(WizardColors.error)
                 } else if !identityInput.isEmpty && !isNpubValid && !looksLikeNIP05 {
@@ -1302,7 +1305,7 @@ private struct IdentityStepView: View {
                         Image(systemName: "exclamationmark.triangle")
                             .font(.caption)
                         Text("Enter a valid npub or NIP-05 identifier")
-                            .font(.system(size: 13))
+                            .font(.appSystem(size: 13))
                     }
                     .foregroundColor(WizardColors.error)
                 } else if isNpubValid && !identityInput.isEmpty {
@@ -1310,7 +1313,7 @@ private struct IdentityStepView: View {
                         Image(systemName: "checkmark.circle.fill")
                             .foregroundColor(WizardColors.success)
                         Text("Valid public key")
-                            .font(.system(size: 13))
+                            .font(.appSystem(size: 13))
                             .foregroundColor(WizardColors.success)
                     }
                 }
@@ -1326,7 +1329,7 @@ private struct IdentityStepView: View {
                         Image(systemName: "exclamationmark.triangle")
                             .font(.caption)
                         Text(String(localized: "setup.identity.invalidNpub"))
-                            .font(.system(size: 13))
+                            .font(.appSystem(size: 13))
                     }
                     .foregroundColor(WizardColors.error)
                 }
@@ -1362,7 +1365,7 @@ private struct IdentityStepView: View {
                                 Image(systemName: "exclamationmark.triangle")
                                     .font(.caption)
                                 Text(String(localized: "setup.identity.invalidNsec"))
-                                    .font(.system(size: 13))
+                                    .font(.appSystem(size: 13))
                             }
                             .foregroundColor(WizardColors.error)
                         }
@@ -1372,7 +1375,7 @@ private struct IdentityStepView: View {
                                 .transition(.move(edge: .top).combined(with: .opacity))
 
                             Text(String(localized: "setup.identity.passwordHint"))
-                                .font(.system(size: 12))
+                                .font(.appSystem(size: 12))
                                 .foregroundColor(WizardColors.textMuted)
 
                             if nsecPassword.isEmpty {
@@ -1380,7 +1383,7 @@ private struct IdentityStepView: View {
                                     Image(systemName: "exclamationmark.circle.fill")
                                         .font(.caption)
                                     Text(String(localized: "setup.identity.passwordRequired"))
-                                        .font(.system(size: 13))
+                                        .font(.appSystem(size: 13))
                                 }
                                 .foregroundColor(WizardColors.accentPrimary)
                             }
@@ -1391,7 +1394,7 @@ private struct IdentityStepView: View {
                                 Image(systemName: "sparkles")
                                     .foregroundColor(WizardColors.accentPrimary)
                                 Text(String(localized: "setup.identity.generateKeys"))
-                                    .font(.system(size: 14, weight: .medium))
+                                    .font(.appSystem(size: 14, weight: .medium))
                                     .foregroundColor(WizardColors.accentPrimary)
                             }
                         }
@@ -1402,7 +1405,7 @@ private struct IdentityStepView: View {
                                 Image(systemName: "exclamationmark.shield.fill")
                                     .foregroundColor(WizardColors.accentPrimary)
                                 Text(String(localized: "setup.identity.nsecWarning"))
-                                    .font(.system(size: 13))
+                                    .font(.appSystem(size: 13))
                                     .foregroundColor(WizardColors.accentPrimary)
                             }
                             .padding(12)
@@ -1423,7 +1426,7 @@ private struct IdentityStepView: View {
                         )
 
                         Text(String(localized: "setup.identity.bunkerHint"))
-                            .font(.system(size: 12))
+                            .font(.appSystem(size: 12))
                             .foregroundColor(WizardColors.textMuted)
 
                         if let error = bunkerError {
@@ -1431,7 +1434,7 @@ private struct IdentityStepView: View {
                                 Image(systemName: "exclamationmark.triangle")
                                     .font(.caption)
                                 Text(error)
-                                    .font(.system(size: 13))
+                                    .font(.appSystem(size: 13))
                             }
                             .foregroundColor(WizardColors.error)
                         }
@@ -1441,7 +1444,7 @@ private struct IdentityStepView: View {
                                 Image(systemName: "checkmark.circle.fill")
                                     .foregroundColor(WizardColors.success)
                                 Text(String(localized: "setup.identity.bunkerConnected"))
-                                    .font(.system(size: 13))
+                                    .font(.appSystem(size: 13))
                                     .foregroundColor(WizardColors.success)
                             }
                         }
@@ -1641,15 +1644,15 @@ private struct IdentityStepView: View {
         } label: {
             VStack(spacing: 8) {
                 Image(systemName: icon)
-                    .font(.system(size: 24))
+                    .font(.appSystem(size: 24))
                     .foregroundColor(isSelected ? WizardColors.accentPrimary : WizardColors.textSecondary)
 
                 Text(title)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.appSystem(size: 15, weight: .semibold))
                     .foregroundColor(WizardColors.textPrimary)
 
                 Text(subtitle)
-                    .font(.system(size: 12))
+                    .font(.appSystem(size: 12))
                     .foregroundColor(WizardColors.textSecondary)
             }
             .frame(maxWidth: .infinity)
@@ -1749,7 +1752,7 @@ private struct RelayConfigStep: View {
     private var macOSRelayContent: some View {
         VStack(spacing: 20) {
             Text(String(localized: "setup.relay.mac.title"))
-                .font(.system(size: 28, weight: .semibold))
+                .font(.appSystem(size: 28, weight: .semibold))
                 .foregroundColor(WizardColors.textPrimary)
                 .opacity(appeared ? 1 : 0)
                 .offset(y: appeared ? 0 : 10)
@@ -1763,12 +1766,12 @@ private struct RelayConfigStep: View {
 
             VStack(spacing: 8) {
                 Text(String(localized: "setup.relay.mac.description1"))
-                    .font(.system(size: 15))
+                    .font(.appSystem(size: 15))
                     .foregroundColor(WizardColors.textSecondary)
                     .multilineTextAlignment(.center)
 
                 Text(String(localized: "setup.relay.mac.description2"))
-                    .font(.system(size: 15))
+                    .font(.appSystem(size: 15))
                     .foregroundColor(WizardColors.textSecondary)
                     .multilineTextAlignment(.center)
             }
@@ -1781,7 +1784,7 @@ private struct RelayConfigStep: View {
                 .animation(WizardAnimations.springEnter.delay(0.4), value: appeared)
 
             Text(String(localized: "setup.relay.mac.hint"))
-                .font(.system(size: 12))
+                .font(.appSystem(size: 12))
                 .foregroundColor(WizardColors.textMuted)
         }
     }
@@ -1790,7 +1793,7 @@ private struct RelayConfigStep: View {
     private var iOSRelayContent: some View {
         VStack(spacing: 20) {
             Text(String(localized: "setup.relay.ios.title"))
-                .font(.system(size: 24, weight: .semibold))
+                .font(.appSystem(size: 24, weight: .semibold))
                 .foregroundColor(WizardColors.textPrimary)
                 .multilineTextAlignment(.center)
                 .opacity(appeared ? 1 : 0)
@@ -1805,12 +1808,12 @@ private struct RelayConfigStep: View {
 
             VStack(spacing: 8) {
                 Text(String(localized: "setup.relay.ios.description1"))
-                    .font(.system(size: 15))
+                    .font(.appSystem(size: 15))
                     .foregroundColor(WizardColors.textSecondary)
                     .multilineTextAlignment(.center)
 
                 Text(String(localized: "setup.relay.ios.description2"))
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.appSystem(size: 15, weight: .medium))
                     .foregroundColor(WizardColors.textSecondary)
                     .multilineTextAlignment(.center)
             }
@@ -1823,7 +1826,7 @@ private struct RelayConfigStep: View {
                 .animation(WizardAnimations.springEnter.delay(0.4), value: appeared)
 
             Text(String(localized: "setup.relay.ios.hint"))
-                .font(.system(size: 12))
+                .font(.appSystem(size: 12))
                 .foregroundColor(WizardColors.textMuted)
         }
     }
@@ -1888,21 +1891,21 @@ private struct RelayDiagramMac: View {
                     HStack(spacing: 80) {
                         VStack(spacing: 4) {
                             Image(systemName: "laptopcomputer")
-                                .font(.system(size: 32))
+                                .font(.appSystem(size: 32))
                                 .foregroundColor(WizardColors.textPrimary)
                                 .shadow(color: WizardColors.accentGlow, radius: 6)
                             Text(String(localized: "setup.relay.diagram.mac"))
-                                .font(.system(size: 11))
+                                .font(.appSystem(size: 11))
                                 .foregroundColor(WizardColors.textMuted)
                         }
                         .offset(y: -8)
 
                         VStack(spacing: 4) {
                             Image(systemName: "network")
-                                .font(.system(size: 24))
+                                .font(.appSystem(size: 24))
                                 .foregroundColor(WizardColors.textMuted)
                             Text(String(localized: "setup.relay.diagram.network"))
-                                .font(.system(size: 11))
+                                .font(.appSystem(size: 11))
                                 .foregroundColor(WizardColors.textMuted)
                         }
                         .offset(y: -20)
@@ -1910,10 +1913,10 @@ private struct RelayDiagramMac: View {
 
                     HStack(spacing: 4) {
                         Image(systemName: "server.rack")
-                            .font(.system(size: 16))
+                            .font(.appSystem(size: 16))
                             .foregroundColor(WizardColors.accentPrimary)
                         Text(String(localized: "setup.relay.diagram.relay"))
-                            .font(.system(size: 11))
+                            .font(.appSystem(size: 11))
                             .foregroundColor(WizardColors.accentPrimary)
                     }
                     .offset(y: 8)
@@ -1921,10 +1924,10 @@ private struct RelayDiagramMac: View {
                     if hasURL {
                         HStack(spacing: 4) {
                             Image(systemName: "globe")
-                                .font(.system(size: 14))
+                                .font(.appSystem(size: 14))
                                 .foregroundColor(WizardColors.accentPrimary.opacity(0.7))
                             Text(String(localized: "setup.relay.diagram.public"))
-                                .font(.system(size: 10))
+                                .font(.appSystem(size: 10))
                                 .foregroundColor(WizardColors.textMuted)
                         }
                         .offset(y: -50)
@@ -1951,10 +1954,10 @@ private struct RelayDiagramiOS: View {
             // iPhone
             VStack(spacing: 4) {
                 Image(systemName: "iphone")
-                    .font(.system(size: 28))
+                    .font(.appSystem(size: 28))
                     .foregroundColor(WizardColors.textPrimary)
                 Text(String(localized: "setup.relay.diagram.iphone"))
-                    .font(.system(size: 11))
+                    .font(.appSystem(size: 11))
                     .foregroundColor(WizardColors.textMuted)
             }
 
@@ -1973,7 +1976,7 @@ private struct RelayDiagramiOS: View {
                     }
                 if !hasURL {
                     Text("?")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.appSystem(size: 10, weight: .bold))
                         .foregroundColor(WizardColors.textMuted)
                 }
             }
@@ -1982,14 +1985,14 @@ private struct RelayDiagramiOS: View {
             // Mac + Relay
             VStack(spacing: 4) {
                 Image(systemName: "laptopcomputer")
-                    .font(.system(size: 28))
+                    .font(.appSystem(size: 28))
                     .foregroundColor(hasURL ? WizardColors.textPrimary : WizardColors.textMuted)
                     .shadow(color: hasURL ? WizardColors.accentGlow : .clear, radius: 4)
                 HStack(spacing: 2) {
                     Image(systemName: "server.rack")
-                        .font(.system(size: 10))
+                        .font(.appSystem(size: 10))
                     Text(String(localized: "setup.relay.diagram.macRelay"))
-                        .font(.system(size: 11))
+                        .font(.appSystem(size: 11))
                 }
                 .foregroundColor(hasURL ? WizardColors.accentPrimary : WizardColors.textMuted)
             }
@@ -2002,10 +2005,10 @@ private struct RelayDiagramiOS: View {
             // Network
             VStack(spacing: 4) {
                 Image(systemName: "network")
-                    .font(.system(size: 24))
+                    .font(.appSystem(size: 24))
                     .foregroundColor(WizardColors.textMuted)
                 Text(String(localized: "setup.relay.diagram.nostr"))
-                    .font(.system(size: 11))
+                    .font(.appSystem(size: 11))
                     .foregroundColor(WizardColors.textMuted)
             }
         }
@@ -2034,14 +2037,14 @@ private struct ImportNotesStep: View {
             Spacer().frame(height: 20)
 
             Text(String(localized: "setup.import.title"))
-                .font(.system(size: isIOSDevice ? 24 : 28, weight: .semibold))
+                .font(.appSystem(size: isIOSDevice ? 24 : 28, weight: .semibold))
                 .foregroundColor(WizardColors.textPrimary)
                 .opacity(appeared ? 1 : 0)
                 .offset(y: appeared ? 0 : 10)
                 .animation(WizardAnimations.springEnter.delay(0.1), value: appeared)
 
             Text(String(localized: "setup.import.subtitle"))
-                .font(.system(size: 15))
+                .font(.appSystem(size: 15))
                 .foregroundColor(WizardColors.textSecondary)
                 .multilineTextAlignment(.center)
                 .opacity(appeared ? 1 : 0)
@@ -2114,11 +2117,11 @@ private struct ImportNotesStep: View {
                 VStack(spacing: 12) {
                     HStack {
                         Text(relayManager.importCompleted ? String(localized: "setup.import.done") : String(localized: "setup.import.importing"))
-                            .font(.system(size: 13))
+                            .font(.appSystem(size: 13))
                             .foregroundColor(WizardColors.textSecondary)
                         Spacer()
                         Text("\(Int(relayManager.importProgress * 100))%")
-                            .font(.system(size: 13, design: .monospaced))
+                            .font(.appSystem(size: 13, design: .monospaced))
                             .foregroundColor(WizardColors.accentPrimary)
                     }
 
@@ -2136,7 +2139,7 @@ private struct ImportNotesStep: View {
 
                     if !relayManager.importCompleted {
                         Text(relayManager.importStatusMessage)
-                            .font(.system(size: 12))
+                            .font(.appSystem(size: 12))
                             .foregroundColor(WizardColors.textMuted)
                             .lineLimit(2)
                     }
@@ -2146,7 +2149,7 @@ private struct ImportNotesStep: View {
                     } else {
                         Button(action: { relayManager.cancelImport() }) {
                             Text(String(localized: "setup.import.cancelImport"))
-                                .font(.system(size: 14, weight: .medium))
+                                .font(.appSystem(size: 14, weight: .medium))
                                 .foregroundColor(WizardColors.error)
                         }
                         .buttonStyle(.plain)
@@ -2170,14 +2173,14 @@ private struct ImportNotesStep: View {
                             configService.config.importStartDate = formatter.string(from: $0)
                         }
                     ), displayedComponents: .date)
-                    .font(.system(size: 14))
+                    .font(.appSystem(size: 14))
                     .foregroundColor(WizardColors.textPrimary)
                     .colorScheme(.dark)
 
                     Divider().background(WizardColors.borderSubtle)
 
                     Text(String(localized: "setup.import.seedRelays"))
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.appSystem(size: 14, weight: .semibold))
                         .foregroundColor(WizardColors.textPrimary)
 
                     RelayListEditor(relays: $configService.config.importSeedRelays)
@@ -2206,7 +2209,7 @@ private struct ImportNotesStep: View {
                         .controlSize(.small)
                         .tint(WizardColors.accentPrimary)
                     Text(String(localized: "setup.import.restoring"))
-                        .font(.system(size: 14))
+                        .font(.appSystem(size: 14))
                         .foregroundColor(WizardColors.textSecondary)
                 }
                 .padding(16)
@@ -2219,7 +2222,7 @@ private struct ImportNotesStep: View {
                         .foregroundColor(WizardColors.success)
                         .font(.title2)
                     Text(String(localized: "setup.import.restoreSuccess"))
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.appSystem(size: 15, weight: .medium))
                         .foregroundColor(WizardColors.textPrimary)
                 }
                 .padding(16)
@@ -2240,7 +2243,7 @@ private struct ImportNotesStep: View {
                         Image(systemName: "doc.zipper")
                             .font(.title3)
                         Text(String(localized: "setup.import.chooseBackup"))
-                            .font(.system(size: 15, weight: .medium))
+                            .font(.appSystem(size: 15, weight: .medium))
                     }
                     .foregroundColor(WizardColors.textSecondary)
                     .frame(maxWidth: .infinity)
@@ -2256,7 +2259,7 @@ private struct ImportNotesStep: View {
                 .buttonStyle(.plain)
 
                 Text(String(localized: "setup.import.backupHint"))
-                    .font(.system(size: 12))
+                    .font(.appSystem(size: 12))
                     .foregroundColor(WizardColors.textMuted)
             }
         }
@@ -2340,14 +2343,14 @@ private struct MirrorMediaStep: View {
             Spacer().frame(height: 20)
 
             Text(String(localized: "setup.media.title"))
-                .font(.system(size: isIOSDevice ? 24 : 28, weight: .semibold))
+                .font(.appSystem(size: isIOSDevice ? 24 : 28, weight: .semibold))
                 .foregroundColor(WizardColors.textPrimary)
                 .opacity(appeared ? 1 : 0)
                 .offset(y: appeared ? 0 : 10)
                 .animation(WizardAnimations.springEnter.delay(0.1), value: appeared)
 
             Text(String(localized: "setup.media.subtitle"))
-                .font(.system(size: 15))
+                .font(.appSystem(size: 15))
                 .foregroundColor(WizardColors.textSecondary)
                 .multilineTextAlignment(.center)
                 .opacity(appeared ? 1 : 0)
@@ -2418,12 +2421,12 @@ private struct MirrorMediaStep: View {
                             .animation(WizardAnimations.springGentle, value: progressValue)
 
                         Text("\(syncedCount) / \(totalCount)")
-                            .font(.system(size: 13, weight: .medium, design: .monospaced))
+                            .font(.appSystem(size: 13, weight: .medium, design: .monospaced))
                             .foregroundColor(WizardColors.textPrimary)
                     }
 
                     Text(progressMessage.isEmpty ? String(localized: "setup.media.syncing") : progressMessage)
-                        .font(.system(size: 13))
+                        .font(.appSystem(size: 13))
                         .foregroundColor(WizardColors.textSecondary)
                 }
                 .padding(20)
@@ -2436,7 +2439,7 @@ private struct MirrorMediaStep: View {
                         .foregroundColor(WizardColors.success)
                         .font(.title2)
                     Text(progressMessage.isEmpty ? String(localized: "setup.media.syncSuccess") : progressMessage)
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.appSystem(size: 15, weight: .medium))
                         .foregroundColor(WizardColors.textPrimary)
                 }
                 .padding(16)
@@ -2465,7 +2468,7 @@ private struct MirrorMediaStep: View {
                         .controlSize(.small)
                         .tint(WizardColors.accentPrimary)
                     Text(String(localized: "setup.media.importing"))
-                        .font(.system(size: 14))
+                        .font(.appSystem(size: 14))
                         .foregroundColor(WizardColors.textSecondary)
                 }
                 .padding(16)
@@ -2478,7 +2481,7 @@ private struct MirrorMediaStep: View {
                         .foregroundColor(WizardColors.success)
                         .font(.title2)
                     Text(String(localized: "setup.media.importSuccess"))
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.appSystem(size: 15, weight: .medium))
                         .foregroundColor(WizardColors.textPrimary)
                 }
                 .padding(16)
@@ -2499,7 +2502,7 @@ private struct MirrorMediaStep: View {
                         Image(systemName: "doc.zipper")
                             .font(.title3)
                         Text(String(localized: "setup.media.chooseArchive"))
-                            .font(.system(size: 15, weight: .medium))
+                            .font(.appSystem(size: 15, weight: .medium))
                     }
                     .foregroundColor(WizardColors.textSecondary)
                     .frame(maxWidth: .infinity)
@@ -2515,7 +2518,7 @@ private struct MirrorMediaStep: View {
                 .buttonStyle(.plain)
 
                 Text(String(localized: "setup.media.backupHint"))
-                    .font(.system(size: 12))
+                    .font(.appSystem(size: 12))
                     .foregroundColor(WizardColors.textMuted)
             }
         }
@@ -2619,14 +2622,14 @@ private struct WalletSetupStep: View {
             Spacer().frame(height: 20)
 
             Text(String(localized: "setup.wallet.title"))
-                .font(.system(size: isIOSDevice ? 24 : 28, weight: .semibold))
+                .font(.appSystem(size: isIOSDevice ? 24 : 28, weight: .semibold))
                 .foregroundColor(WizardColors.textPrimary)
                 .opacity(appeared ? 1 : 0)
                 .offset(y: appeared ? 0 : 10)
                 .animation(WizardAnimations.springEnter.delay(0.1), value: appeared)
 
             Text(String(localized: "setup.wallet.subtitle"))
-                .font(.system(size: 15))
+                .font(.appSystem(size: 15))
                 .foregroundColor(WizardColors.textSecondary)
                 .multilineTextAlignment(.center)
                 .opacity(appeared ? 1 : 0)
@@ -2637,14 +2640,14 @@ private struct WalletSetupStep: View {
                 Button(action: { withAnimation(WizardAnimations.springEnter) { lightningExpanded.toggle() } }) {
                     HStack {
                         Image(systemName: "bolt.fill")
-                            .font(.system(size: 18))
+                            .font(.appSystem(size: 18))
                             .foregroundColor(WizardColors.accentPrimary)
                         Text(String(localized: "setup.wallet.lightning.title"))
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(.appSystem(size: 16, weight: .semibold))
                             .foregroundColor(WizardColors.textPrimary)
                         Spacer()
                         Image(systemName: lightningExpanded ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 12))
+                            .font(.appSystem(size: 12))
                             .foregroundColor(WizardColors.textMuted)
                     }
                     .padding(16)
@@ -2658,7 +2661,7 @@ private struct WalletSetupStep: View {
                         WizardInputField(label: String(localized: "setup.wallet.lightning.label"), text: $nwcURI, placeholder: "nostr+walletconnect://...")
 
                         Text(String(localized: "setup.wallet.lightning.hint"))
-                            .font(.system(size: 12))
+                            .font(.appSystem(size: 12))
                             .foregroundColor(WizardColors.textMuted)
 
                         // Connection status
@@ -2666,21 +2669,21 @@ private struct WalletSetupStep: View {
                             HStack(spacing: 6) {
                                 ProgressView().controlSize(.mini).tint(WizardColors.accentPrimary)
                                 Text(String(localized: "setup.wallet.lightning.connecting"))
-                                    .font(.system(size: 13))
+                                    .font(.appSystem(size: 13))
                                     .foregroundColor(WizardColors.textSecondary)
                             }
                         } else if nwcStatus == .connected {
                             HStack(spacing: 6) {
                                 Circle().fill(WizardColors.success).frame(width: 8, height: 8)
                                 Text(String(localized: "setup.wallet.lightning.connected"))
-                                    .font(.system(size: 13))
+                                    .font(.appSystem(size: 13))
                                     .foregroundColor(WizardColors.success)
                             }
                         } else if nwcStatus == .failed {
                             HStack(spacing: 6) {
                                 Circle().fill(WizardColors.error).frame(width: 8, height: 8)
                                 Text(String(localized: "setup.wallet.lightning.failed"))
-                                    .font(.system(size: 13))
+                                    .font(.appSystem(size: 13))
                                     .foregroundColor(WizardColors.error)
                             }
                         }
@@ -2701,14 +2704,14 @@ private struct WalletSetupStep: View {
                 Button(action: { withAnimation(WizardAnimations.springEnter) { cashuExpanded.toggle() } }) {
                     HStack {
                         Image(systemName: "centsign.circle.fill")
-                            .font(.system(size: 18))
+                            .font(.appSystem(size: 18))
                             .foregroundColor(WizardColors.accentPrimary)
                         Text(String(localized: "setup.wallet.cashu.title"))
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(.appSystem(size: 16, weight: .semibold))
                             .foregroundColor(WizardColors.textPrimary)
                         Spacer()
                         Image(systemName: cashuExpanded ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 12))
+                            .font(.appSystem(size: 12))
                             .foregroundColor(WizardColors.textMuted)
                     }
                     .padding(16)
@@ -2722,7 +2725,7 @@ private struct WalletSetupStep: View {
                         WizardInputField(label: String(localized: "setup.wallet.cashu.label"), text: $cashuMintURL, placeholder: "https://mint.example.com")
 
                         Text(String(localized: "setup.wallet.cashu.hint"))
-                            .font(.system(size: 12))
+                            .font(.appSystem(size: 12))
                             .foregroundColor(WizardColors.textMuted)
                     }
                     .padding(.horizontal, 16)
@@ -2761,20 +2764,20 @@ private struct PushNotificationStep: View {
             Spacer().frame(height: 40)
 
             Image(systemName: "bell.badge.fill")
-                .font(.system(size: 56))
+                .font(.appSystem(size: 56))
                 .foregroundColor(WizardColors.accentPrimary)
                 .scaleEffect(appeared ? 1.0 : 0.3)
                 .offset(y: appeared ? 0 : -20)
                 .animation(WizardAnimations.springBounce.delay(0.1), value: appeared)
 
             Text(String(localized: "setup.notifications.title"))
-                .font(.system(size: 24, weight: .semibold))
+                .font(.appSystem(size: 24, weight: .semibold))
                 .foregroundColor(WizardColors.textPrimary)
                 .opacity(appeared ? 1 : 0)
                 .animation(WizardAnimations.fadeIn.delay(0.3), value: appeared)
 
             Text(String(localized: "setup.notifications.subtitle"))
-                .font(.system(size: 15))
+                .font(.appSystem(size: 15))
                 .foregroundColor(WizardColors.textSecondary)
                 .opacity(appeared ? 1 : 0)
                 .animation(WizardAnimations.fadeIn.delay(0.4), value: appeared)
@@ -2805,11 +2808,11 @@ private struct PushNotificationStep: View {
     private func notificationToggle(icon: String, label: String, isOn: Binding<Bool>) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon)
-                .font(.system(size: 16))
+                .font(.appSystem(size: 16))
                 .foregroundColor(WizardColors.accentPrimary)
                 .frame(width: 24)
             Text(label)
-                .font(.system(size: 15))
+                .font(.appSystem(size: 15))
                 .foregroundColor(WizardColors.textPrimary)
             Spacer()
             Toggle("", isOn: isOn)
@@ -2863,7 +2866,7 @@ private struct CompleteStep: View {
 
                 // Checkmark seal
                 Image(systemName: "checkmark.seal.fill")
-                    .font(.system(size: 72))
+                    .font(.appSystem(size: 72))
                     .foregroundStyle(WizardColors.accentGradient)
                     .scaleEffect(showContent ? 1.0 : 0)
                     .animation(WizardAnimations.springBounce.delay(0.5), value: showContent)
@@ -2871,7 +2874,7 @@ private struct CompleteStep: View {
 
             // Title
             Text(isNewUser ? "Welcome to Nostr!" : (isBrowseMode ? String(localized: "setup.complete.title.browse") : String(localized: "setup.complete.title.full")))
-                .font(.system(size: isIOSDevice ? 28 : 32, weight: .bold))
+                .font(.appSystem(size: isIOSDevice ? 28 : 32, weight: .bold))
                 .foregroundColor(WizardColors.textPrimary)
                 .opacity(showContent ? 1 : 0)
                 .offset(y: showContent ? 0 : 15)
@@ -2895,7 +2898,7 @@ private struct CompleteStep: View {
 
             if isNewUser {
                 Text("We'll start you on the Popular feed so you can discover interesting people to follow. You can switch to the Following feed anytime.")
-                    .font(.system(size: 14))
+                    .font(.appSystem(size: 14))
                     .foregroundColor(WizardColors.textSecondary)
                     .multilineTextAlignment(.center)
                     .lineSpacing(2)
@@ -2907,7 +2910,7 @@ private struct CompleteStep: View {
 
             #if os(macOS)
             Text(String(localized: "setup.complete.menuBarHint"))
-                .font(.system(size: 14))
+                .font(.appSystem(size: 14))
                 .foregroundColor(WizardColors.accentPrimary.opacity(0.8))
                 .opacity(showContent ? 1 : 0)
                 .animation(WizardAnimations.fadeIn.delay(1.5), value: showContent)
@@ -2925,20 +2928,30 @@ private struct CompleteStep: View {
         .onAppear {
             showContent = true
 
-            // Ring 1
-            withAnimation(.easeOut(duration: 0.8).delay(0.2)) {
-                ringScale = 2.0
+            // The expanding rings are a pure decorative flourish — no state they
+            // carry is otherwise communicated — so Reduce Motion drops the
+            // animation outright rather than replacing it with a fade, the same
+            // treatment `Motion.ambientPulse` gives the button pulse below.
+            if Motion.isReduced {
                 ringOpacity = 0
-            }
-            // Ring 2
-            withAnimation(.easeOut(duration: 0.8).delay(0.35)) {
-                ring2Scale = 2.0
                 ring2Opacity = 0
-            }
-            // Ring 3
-            withAnimation(.easeOut(duration: 0.8).delay(0.5)) {
-                ring3Scale = 2.0
                 ring3Opacity = 0
+            } else {
+                // Ring 1
+                withAnimation(.easeOut(duration: 0.8).delay(0.2)) {
+                    ringScale = 2.0
+                    ringOpacity = 0
+                }
+                // Ring 2
+                withAnimation(.easeOut(duration: 0.8).delay(0.35)) {
+                    ring2Scale = 2.0
+                    ring2Opacity = 0
+                }
+                // Ring 3
+                withAnimation(.easeOut(duration: 0.8).delay(0.5)) {
+                    ring3Scale = 2.0
+                    ring3Opacity = 0
+                }
             }
 
             // Button pulse loop
@@ -2959,9 +2972,9 @@ private struct CompleteStep: View {
         HStack(spacing: 10) {
             Image(systemName: icon)
                 .foregroundColor(color)
-                .font(.system(size: 18))
+                .font(.appSystem(size: 18))
             Text(text)
-                .font(.system(size: 15))
+                .font(.appSystem(size: 15))
                 .foregroundColor(WizardColors.textPrimary)
         }
         .opacity(showContent ? 1 : 0)
@@ -2975,7 +2988,7 @@ private struct CompleteStep: View {
 private func tabPill(_ title: String, isActive: Bool, action: @escaping () -> Void) -> some View {
     Button(action: action) {
         Text(title)
-            .font(.system(size: 14, weight: .medium))
+            .font(.appSystem(size: 14, weight: .medium))
             .foregroundColor(isActive ? WizardColors.textPrimary : WizardColors.textMuted)
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
@@ -3004,7 +3017,7 @@ struct FeatureRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(.headline, design: .rounded))
+                    .font(.appSystem(size: 17, weight: .semibold, design: .rounded))
                 Text(description)
                     .font(.caption)
                     .foregroundColor(isHovered ? .primary : .secondary)
@@ -3049,7 +3062,7 @@ struct DatabaseOption: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title)
-                        .font(.system(.headline, design: .rounded))
+                        .font(.appSystem(size: 17, weight: .semibold, design: .rounded))
                     Text(description)
                         .font(.caption)
                         .foregroundColor(selected == value ? .primary : .secondary)

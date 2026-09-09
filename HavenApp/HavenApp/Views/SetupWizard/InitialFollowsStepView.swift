@@ -23,11 +23,11 @@ struct InitialFollowsStepView: View {
             // Header
             VStack(spacing: 8) {
                 Text("Discover Accounts")
-                    .font(.system(size: 24, weight: .bold))
+                    .font(.appSystem(size: 24, weight: .bold))
                     .foregroundColor(WizardColors.textPrimary)
 
                 Text("Following accounts helps personalize your feed. Select any that interest you, or skip to explore on your own.")
-                    .font(.system(size: 15))
+                    .font(.appSystem(size: 15))
                     .foregroundColor(WizardColors.textSecondary)
                     .multilineTextAlignment(.center)
                     .lineSpacing(4)
@@ -66,10 +66,10 @@ struct InitialFollowsStepView: View {
             if !selectedNpubs.isEmpty {
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 16))
+                        .font(.appSystem(size: 16))
                         .foregroundColor(WizardColors.accentPrimary)
                     Text("\(selectedNpubs.count) account\(selectedNpubs.count == 1 ? "" : "s") selected")
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.appSystem(size: 14, weight: .medium))
                         .foregroundColor(WizardColors.textPrimary)
                 }
                 .padding(.horizontal, 16)
@@ -99,7 +99,7 @@ struct InitialFollowsStepView: View {
                 if !selectedNpubs.isEmpty {
                     Button(action: onSkip) {
                         Text("Skip and don't follow")
-                            .font(.system(size: 14))
+                            .font(.appSystem(size: 14))
                             .foregroundColor(WizardColors.textMuted)
                     }
                 }
@@ -131,11 +131,11 @@ private struct PackCard: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(pack.name)
-                                .font(.system(size: 17, weight: .semibold))
+                                .font(.appSystem(size: 17, weight: .semibold))
                                 .foregroundColor(WizardColors.textPrimary)
 
                             Text(pack.description)
-                                .font(.system(size: 13))
+                                .font(.appSystem(size: 13))
                                 .foregroundColor(WizardColors.textSecondary)
                                 .lineSpacing(2)
                         }
@@ -144,11 +144,11 @@ private struct PackCard: View {
 
                         VStack(spacing: 4) {
                             Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 14, weight: .medium))
+                                .font(.appSystem(size: 14, weight: .medium))
                                 .foregroundColor(WizardColors.accentPrimary)
 
                             Text("\(pack.accounts.count)")
-                                .font(.system(size: 11))
+                                .font(.appSystem(size: 11))
                                 .foregroundColor(WizardColors.textMuted)
                         }
                     }
@@ -197,7 +197,7 @@ private struct AccountRow: View {
 
                     if isSelected {
                         Image(systemName: "checkmark")
-                            .font(.system(size: 12, weight: .bold))
+                            .font(.appSystem(size: 12, weight: .bold))
                             .foregroundColor(.white)
                     } else {
                         // borderSubtle is #27272A and so is bgElevated, which is
@@ -216,11 +216,11 @@ private struct AccountRow: View {
                 // Account info
                 VStack(alignment: .leading, spacing: 2) {
                     Text(account.name)
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.appSystem(size: 14, weight: .medium))
                         .foregroundColor(WizardColors.textPrimary)
 
                     Text(account.about)
-                        .font(.system(size: 12))
+                        .font(.appSystem(size: 12))
                         .foregroundColor(WizardColors.textSecondary)
                         .lineLimit(1)
                 }
