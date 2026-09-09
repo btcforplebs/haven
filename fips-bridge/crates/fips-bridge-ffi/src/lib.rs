@@ -25,6 +25,14 @@ struct Bridge {
     runtime: Runtime,
     endpoint: Arc<FipsEndpoint>,
     quic: Arc<FipsQuic>,
+    /// Ports handed to the mesh, reported back in the status snapshot.
+    ///
+    /// Tracked here rather than trusted from the host: the host's own flag says
+    /// what it asked for, and "what is actually reachable" is a different
+    /// question that only this side can answer. There is no un-export — the
+    /// egress task lives until the runtime is dropped — so a host that wants to
+    /// stop sharing stops the bridge.
+    exported: Vec<u16>,
     npub: String,
     address: String,
     started: Instant,
@@ -132,6 +140,7 @@ fn start(nsec: Option<String>) -> c_int {
                     runtime,
                     endpoint,
                     quic,
+                    exported: Vec::new(),
                     npub,
                     address,
                     started: Instant::now(),
@@ -161,10 +170,16 @@ pub extern "C" fn FipsBridgeStatusJSON() -> *mut c_char {
         let json = match guard.as_ref() {
             None => r#"{"running":false}"#.to_string(),
             Some(bridge) => format!(
-                r#"{{"running":true,"npub":"{}","address":"{}","uptime_s":{},"peers":[{}]}}"#,
+                r#"{{"running":true,"npub":"{}","address":"{}","uptime_s":{},"exported":[{}],"peers":[{}]}}"#,
                 json_escape(&bridge.npub),
                 json_escape(&bridge.address),
                 bridge.started.elapsed().as_secs(),
+                bridge
+                    .exported
+                    .iter()
+                    .map(|port| port.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
                 peers_json(bridge)
             ),
         };
@@ -211,13 +226,19 @@ fn peers_json(bridge: &Bridge) -> String {
 }
 
 /// Export a local TCP port to the mesh (provider role).
+///
+/// Idempotent: exporting a port twice would stand up a second accept loop on
+/// the same QUIC endpoint for no gain.
 #[no_mangle]
 pub extern "C" fn FipsBridgeExport(local_port: u16) -> c_int {
     std::panic::catch_unwind(|| {
-        let guard = slot().lock().unwrap();
-        let Some(bridge) = guard.as_ref() else {
+        let mut guard = slot().lock().unwrap();
+        let Some(bridge) = guard.as_mut() else {
             return -1;
         };
+        if bridge.exported.contains(&local_port) {
+            return 0;
+        }
         let quic = bridge.quic.clone();
         let target = match format!("127.0.0.1:{local_port}").parse() {
             Ok(addr) => addr,
@@ -226,6 +247,7 @@ pub extern "C" fn FipsBridgeExport(local_port: u16) -> c_int {
         bridge.runtime.spawn(async move {
             let _ = egress::serve(quic, target).await;
         });
+        bridge.exported.push(local_port);
         0
     })
     .unwrap_or(-99)

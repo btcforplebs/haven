@@ -319,6 +319,11 @@ data class HavenConfig(
     // lives in CredentialStore, not in this file, which is plaintext JSON.
     val fipsMeshEnabled: Boolean = false,
 
+    // Offer this device's relay (and the Blossom server sharing its port) to
+    // mesh peers. Separate from fipsMeshEnabled, and off by default: being
+    // findable on the mesh and being reachable are different decisions.
+    val fipsShareRelay: Boolean = false,
+
     // Blossom
     val blossomMirrors: List<String> = emptyList(),
 

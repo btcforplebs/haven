@@ -44,6 +44,17 @@ class MeshSettingsViewModel @Inject constructor(
         viewModelScope.launch { mesh.refresh() }
     }
 
+    val shareRelay = mesh.shareRelay
+
+    fun setShareRelay(enabled: Boolean) {
+        if (_busy.value) return
+        viewModelScope.launch {
+            _busy.value = true
+            mesh.setShareRelay(enabled)
+            _busy.value = false
+        }
+    }
+
     fun setEnabled(enabled: Boolean) {
         if (_busy.value) return
         viewModelScope.launch {
@@ -65,6 +76,7 @@ fun MeshSettingsScreen(
     val status by viewModel.status.collectAsState()
     val lastError by viewModel.lastError.collectAsState()
     val busy by viewModel.busy.collectAsState()
+    val shareRelay by viewModel.shareRelay.collectAsState()
     val colors = LocalNostrVaultColors.current
     val clipboard = LocalClipboardManager.current
 
@@ -165,6 +177,41 @@ fun MeshSettingsScreen(
                 )
                 Spacer(Modifier.height(12.dp))
                 TransitCard(status = status)
+            }
+
+            Spacer(Modifier.height(20.dp))
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Share my relay",
+                        color = PrimaryText,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text(
+                        // Separate switch on purpose: being findable and being
+                        // reachable are different decisions to make.
+                        if (status.exported.isEmpty()) {
+                            "Let mesh peers reach this device's relay and media."
+                        } else {
+                            "Offered on the mesh: port ${status.exported.joinToString()}."
+                        },
+                        color = SecondaryText,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(
+                    checked = shareRelay,
+                    onCheckedChange = viewModel::setShareRelay,
+                    enabled = viewModel.isAvailable && !busy,
+                    colors = SwitchDefaults.colors(checkedTrackColor = colors.primary),
+                )
             }
 
             lastError?.let { error ->

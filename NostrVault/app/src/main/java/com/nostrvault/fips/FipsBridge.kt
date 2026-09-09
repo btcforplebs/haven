@@ -108,6 +108,13 @@ data class FipsStatus(
     val npub: String? = null,
     val address: String? = null,
     @SerialName("uptime_s") val uptimeSeconds: Long = 0,
+    /**
+     * Ports actually offered to the mesh, as the bridge itself reports them.
+     *
+     * Read from the bridge rather than from the setting that asked for it: the
+     * setting says what was wanted, and this says what a peer can reach.
+     */
+    val exported: List<Int> = emptyList(),
     val peers: List<FipsPeer> = emptyList(),
 ) {
     /**
